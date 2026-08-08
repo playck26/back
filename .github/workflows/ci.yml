@@ -38,3 +38,15 @@ jobs:
           JWT_REFRESH_SECRET: ci-e2e-refresh-secret
 
       - run: pnpm build
+
+      # Lacuna registrada em STATUS.md: `openapi.json` (contrato consumido
+      # pelos 3 frontends, ADR-001) é regenerado manualmente
+      # (`pnpm run openapi:export`) e podia ficar stale sem ninguém notar.
+      # Regenera e falha se o resultado diferir do que está commitado —
+      # não precisa de banco nem de porta HTTP (PrismaService é lazy),
+      # só do secret dummy que a strategy do JWT exige pra instanciar.
+      - run: pnpm run openapi:export
+        env:
+          JWT_ACCESS_SECRET: ci-openapi-export-secret
+
+      - run: git diff --exit-code openapi.json
