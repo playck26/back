@@ -377,6 +377,34 @@ export class CourtsService {
     });
   }
 
+  // CON-006.3 (SPEC-006, MOD-006 via PaymentStatusController): único
+  // caminho para mudar `status_pagamento` fora de criar/cancelar reserva
+  // — `ocupacoes_quadra` continua propriedade exclusiva de MOD-005
+  // (TARGET_ARCHITECTURE.md seção 5), MOD-006 nunca escreve na tabela
+  // direto. AC-002: idempotente — marcar o mesmo status de novo não
+  // dispara um update supérfluo nem erro.
+  async updatePaymentStatus(
+    companyId: string,
+    id: string,
+    status: 'pago' | 'cancelado',
+  ) {
+    const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
+      where: { id, companyId },
+    });
+    if (!ocupacao) {
+      throw new NotFoundException();
+    }
+    if (ocupacao.statusPagamento === status) {
+      return this.toOcupacaoResponse(ocupacao);
+    }
+
+    const atualizada = await this.prisma.ocupacaoQuadra.update({
+      where: { id },
+      data: { statusPagamento: status },
+    });
+    return this.toOcupacaoResponse(atualizada);
+  }
+
   // Resolve o registro de Aluno do usuário autenticado, escopado à empresa
   // (SPEC-005) — usado pelo controller para decidir o `alunoId` efetivo em
   // rotas que a role `aluno` compartilha com `company_admin`. 403 (não 404)

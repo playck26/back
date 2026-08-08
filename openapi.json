@@ -1215,6 +1215,109 @@
           "dashboard"
         ]
       }
+    },
+    "/api/v1/payment-config": {
+      "get": {
+        "operationId": "PaymentConfigController_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "payment-config"
+        ]
+      },
+      "put": {
+        "operationId": "PaymentConfigController_update",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePaymentConfigDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "payment-config"
+        ]
+      }
+    },
+    "/api/v1/payment-config/public": {
+      "get": {
+        "operationId": "PaymentConfigController_getPublic",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "payment-config"
+        ]
+      }
+    },
+    "/api/v1/bookings/{id}/payment-status": {
+      "patch": {
+        "operationId": "PaymentStatusController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePaymentStatusDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "bookings"
+        ]
+      }
     }
   },
   "info": {
@@ -1610,6 +1713,33 @@
             ]
           }
         }
+      },
+      "UpdatePaymentConfigDto": {
+        "type": "object",
+        "properties": {
+          "linkPagamentoUrl": {
+            "type": "string"
+          },
+          "whatsappNumero": {
+            "type": "string",
+            "example": "+5511999999999"
+          }
+        }
+      },
+      "UpdatePaymentStatusDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pago",
+              "cancelado"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
       }
     }
   }

@@ -405,6 +405,64 @@ describe('CourtsService', () => {
     });
   });
 
+  describe('updatePaymentStatus (SPEC-006, CON-006.3)', () => {
+    it('lança 404 cross-tenant', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.updatePaymentStatus('c1', 'o1', 'pago'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('marca como pago (REQ-003)', async () => {
+      const base = {
+        id: 'o1',
+        companyId: 'c1',
+        quadraId: 'q1',
+        data: new Date('2026-08-25T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+        horaFim: new Date('1970-01-01T10:00:00.000Z'),
+        origemTipo: 'AVULSO',
+        alunoId: 'a1',
+      };
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        ...base,
+        statusPagamento: 'pendente_pagamento',
+      });
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({
+        ...base,
+        statusPagamento: 'pago',
+      });
+
+      const result = await service.updatePaymentStatus('c1', 'o1', 'pago');
+
+      expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { statusPagamento: 'pago' },
+      });
+      expect(result.statusPagamento).toBe('pago');
+    });
+
+    it('marcar o mesmo status 2x é idempotente, não gera update supérfluo (AC-002)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        quadraId: 'q1',
+        data: new Date('2026-08-25T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+        horaFim: new Date('1970-01-01T10:00:00.000Z'),
+        origemTipo: 'AVULSO',
+        alunoId: 'a1',
+        statusPagamento: 'pago',
+      });
+
+      const result = await service.updatePaymentStatus('c1', 'o1', 'pago');
+
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+      expect(result.statusPagamento).toBe('pago');
+    });
+  });
+
   describe('findAlunoDoUsuario', () => {
     it('lança 403 se o usuário não tem aluno vinculado na empresa', async () => {
       (prisma.aluno.findFirst as jest.Mock).mockResolvedValue(null);

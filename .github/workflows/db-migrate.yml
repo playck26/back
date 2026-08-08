@@ -293,6 +293,7 @@ jobs:
             -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
             -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-26\",\"horaInicio\":\"10:00\",\"horaFim\":\"11:00\",\"alunoId\":\"$STUDENT_ID\"}")
           echo "$OUTRO_BOOKING_RES" | jq -e ".alunoId == \"$ALUNO_PROPRIO_ID\""
+          OUTRO_BOOKING_ID=$(echo "$OUTRO_BOOKING_RES" | jq -r '.id')
 
           echo "--- GET /bookings do aluno só mostra as próprias reservas ---"
           curl -s http://localhost:3000/api/v1/bookings -H "Authorization: Bearer $ALUNO_TOKEN" \
@@ -313,6 +314,59 @@ jobs:
 
           echo "SPEC-005 OK — leitura de quadras, reserva/cancelamento escopados ao próprio aluno (REQ-005) e /me/classes funcionam de ponta a ponta contra o Neon."
 
+          echo "--- SPEC-006: GET /payment-config (company_admin, dado semeado pela etapa 4) ---"
+          CONFIG_RES=$(curl -s http://localhost:3000/api/v1/payment-config -H "Authorization: Bearer $ACCESS_TOKEN")
+          echo "$CONFIG_RES"
+          echo "$CONFIG_RES" | jq -e '.linkPagamentoUrl and .whatsappNumero'
+          CONFIG_LINK_ORIGINAL=$(echo "$CONFIG_RES" | jq -r '.linkPagamentoUrl')
+          CONFIG_WHATSAPP_ORIGINAL=$(echo "$CONFIG_RES" | jq -r '.whatsappNumero')
+
+          echo "--- aluno NÃO consegue ler /payment-config (403, rota exclusiva company_admin) ---"
+          ALUNO_CONFIG_RES=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/v1/payment-config \
+            -H "Authorization: Bearer $ALUNO_TOKEN")
+          [ "$ALUNO_CONFIG_RES" = "403" ] || (echo "esperado 403, veio $ALUNO_CONFIG_RES" && exit 1)
+
+          echo "--- PUT /payment-config (REQ-001) — round trip com um valor novo ---"
+          PUT_RES=$(curl -s -X PUT http://localhost:3000/api/v1/payment-config \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"linkPagamentoUrl\":\"https://pay.example.com/ci-$RUN_ID\",\"whatsappNumero\":\"+5511988887777\"}")
+          echo "$PUT_RES" | jq -e ".linkPagamentoUrl == \"https://pay.example.com/ci-$RUN_ID\" and .whatsappNumero == \"+5511988887777\""
+
+          echo "--- GET /payment-config/public (aluno, REQ-002/AC-003) — vê o link/whatsapp, sem companyId ---"
+          PUBLIC_RES=$(curl -s http://localhost:3000/api/v1/payment-config/public -H "Authorization: Bearer $ALUNO_TOKEN")
+          echo "$PUBLIC_RES"
+          echo "$PUBLIC_RES" | jq -e ".linkPagamentoUrl == \"https://pay.example.com/ci-$RUN_ID\" and (has(\"companyId\") | not)"
+
+          echo "--- company_admin NÃO consegue ler /payment-config/public (403, rota exclusiva aluno) ---"
+          ADMIN_PUBLIC_RES=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/v1/payment-config/public \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          [ "$ADMIN_PUBLIC_RES" = "403" ] || (echo "esperado 403, veio $ADMIN_PUBLIC_RES" && exit 1)
+
+          echo "--- restaura o payment-config semeado (não deixar a empresa demo com dado de teste) ---"
+          curl -s -X PUT http://localhost:3000/api/v1/payment-config \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"linkPagamentoUrl\":\"$CONFIG_LINK_ORIGINAL\",\"whatsappNumero\":\"$CONFIG_WHATSAPP_ORIGINAL\"}" > /dev/null
+
+          echo "--- aluno NÃO consegue marcar pagamento (403, AC-001/INV-007) ---"
+          ALUNO_PAY_RES=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "http://localhost:3000/api/v1/bookings/$OUTRO_BOOKING_ID/payment-status" \
+            -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
+            -d '{"status":"pago"}')
+          [ "$ALUNO_PAY_RES" = "403" ] || (echo "esperado 403, veio $ALUNO_PAY_RES" && exit 1)
+
+          echo "--- company_admin marca reserva como paga (REQ-003) ---"
+          PAY_RES=$(curl -s -X PATCH "http://localhost:3000/api/v1/bookings/$OUTRO_BOOKING_ID/payment-status" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d '{"status":"pago"}')
+          echo "$PAY_RES" | jq -e '.statusPagamento == "pago"'
+
+          echo "--- marcar como pago de novo é idempotente, sem erro (AC-002) ---"
+          PAY_AGAIN_RES=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "http://localhost:3000/api/v1/bookings/$OUTRO_BOOKING_ID/payment-status" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d '{"status":"pago"}')
+          [ "$PAY_AGAIN_RES" = "200" ] || (echo "esperado 200, veio $PAY_AGAIN_RES" && exit 1)
+
+          echo "SPEC-006 OK — configuração de pagamento (escopada a company_admin/aluno) e confirmação manual de status funcionam de ponta a ponta contra o Neon."
+
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
@@ -331,6 +385,6 @@ jobs:
           DELETE FROM usuarios WHERE email = 'aluno-app-ci-$RUN_ID@playck-tests.demo';
           SQL
 
-          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001, aberto a aluno) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
+          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001, aberto a aluno) + MOD-006 (pagamento manual) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

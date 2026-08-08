@@ -202,10 +202,27 @@ async function seedEtapa3(companyId: string) {
   );
 }
 
+// Etapa 4 (SPEC-006): 1 config_pagamento_empresa para a empresa demo.
+// `company_id` é UNIQUE (DATA_MODEL.md) — upsert direto.
+async function seedEtapa4(companyId: string) {
+  await prisma.configPagamentoEmpresa.upsert({
+    where: { companyId },
+    update: {},
+    create: {
+      companyId,
+      linkPagamentoUrl: 'https://pay.example.com/smart-tennis-demo',
+      whatsappNumero: '+5511999999999',
+    },
+  });
+
+  console.log('[seed] etapa 4 ok — config de pagamento da empresa demo');
+}
+
 async function main() {
   const empresa = await seedEtapa1();
   await seedEtapa2(empresa.id);
   await seedEtapa3(empresa.id);
+  await seedEtapa4(empresa.id);
 }
 
 main()

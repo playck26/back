@@ -2,9 +2,10 @@
 // Fonte de verdade do modelo: DATA_MODEL.md (raiz do projeto).
 // Escopo inicial (SPEC-001:TASK-002): empresas, usuarios, refresh_tokens.
 // Estendido por SPEC-003:TASK-000a (niveis, professores, alunos), por
-// SPEC-004:TASK-001 (quadras, ocupacoes_quadra) e por SPEC-003:TASK-000b
-// (turmas, turma_alunos). Demais tabelas entram por spec dona, cada uma
-// estendendo este arquivo (nunca um schema paralelo).
+// SPEC-004:TASK-001 (quadras, ocupacoes_quadra), por SPEC-003:TASK-000b
+// (turmas, turma_alunos) e por SPEC-006:TASK-000 (config_pagamento_empresa).
+// Demais tabelas entram por spec dona, cada uma estendendo este arquivo
+// (nunca um schema paralelo).
 
 generator client {
   provider        = "prisma-client-js"
@@ -48,13 +49,14 @@ model Empresa {
   createdAt DateTime      @default(now()) @map("created_at")
   updatedAt DateTime      @updatedAt @map("updated_at")
 
-  usuarios    Usuario[]
-  niveis      Nivel[]
-  professores Professor[]
-  alunos      Aluno[]
-  quadras     Quadra[]
-  ocupacoes   OcupacaoQuadra[]
-  turmas      Turma[]
+  usuarios         Usuario[]
+  niveis           Nivel[]
+  professores      Professor[]
+  alunos           Aluno[]
+  quadras          Quadra[]
+  ocupacoes        OcupacaoQuadra[]
+  turmas           Turma[]
+  configPagamento  ConfigPagamentoEmpresa?
 
   @@map("empresas")
 }
@@ -264,4 +266,21 @@ model TurmaAluno {
   @@index([turmaId])
   @@index([alunoId])
   @@map("turma_alunos")
+}
+
+// MOD-006 (SPEC-006): configuração de como a empresa recebe pagamento
+// (link externo e/ou WhatsApp) — regra de "pelo menos um preenchido" é
+// validada na aplicação, não em CHECK de banco (DATA_MODEL.md, regra de
+// produto pode mudar mais fácil que constraint).
+model ConfigPagamentoEmpresa {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @unique @map("company_id") @db.Uuid
+  linkPagamentoUrl  String?  @map("link_pagamento_url")
+  whatsappNumero    String?  @map("whatsapp_numero")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  empresa Empresa @relation(fields: [companyId], references: [id])
+
+  @@map("config_pagamento_empresa")
 }

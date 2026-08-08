@@ -10,6 +10,7 @@ import { ClassesModule } from './classes/classes.module';
 import { CompaniesModule } from './companies/companies.module';
 import { CourtsModule } from './courts/courts.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { PaymentConfigModule } from './payment-config/payment-config.module';
 import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -25,6 +26,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CourtsModule,
     ClassesModule,
     DashboardModule,
+    PaymentConfigModule,
   ],
   controllers: [AppController],
   providers: [
