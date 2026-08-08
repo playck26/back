@@ -44,3 +44,40 @@ jobs:
         run: pnpm run db:seed
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Smoke test — login/me de ponta a ponta contra o Neon real
+        if: ${{ inputs.run_seed }}
+        run: |
+          set -e
+          pnpm run build
+          JWT_ACCESS_SECRET=ci-smoke-access JWT_REFRESH_SECRET=ci-smoke-refresh PORT=3000 node dist/main.js &
+          APP_PID=$!
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:3000/api/v1/auth/me -o /dev/null -w '' 2>/dev/null && break
+            sleep 1
+          done
+
+          echo "--- login (senha correta) ---"
+          LOGIN_RES=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"admin@smarttennis.demo","senha":"trocar-em-producao-123"}')
+          echo "$LOGIN_RES"
+          echo "$LOGIN_RES" | jq -e '.accessToken and .refreshToken and .usuario.role == "company_admin"'
+
+          ACCESS_TOKEN=$(echo "$LOGIN_RES" | jq -r '.accessToken')
+
+          echo "--- login (senha errada, precisa ser 401 genérico) ---"
+          WRONG_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"admin@smarttennis.demo","senha":"senha-errada-123"}')
+          [ "$WRONG_RES" = "401" ] || (echo "esperado 401, veio $WRONG_RES" && exit 1)
+
+          echo "--- /auth/me com o token ---"
+          ME_RES=$(curl -s http://localhost:3000/api/v1/auth/me -H "Authorization: Bearer $ACCESS_TOKEN")
+          echo "$ME_RES"
+          echo "$ME_RES" | jq -e '.email == "admin@smarttennis.demo"'
+
+          kill $APP_PID
+          echo "Smoke test OK — login/me funcionam de ponta a ponta contra o Neon."
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
