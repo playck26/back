@@ -1,0 +1,319 @@
+import type { INestApplication } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
+import request from 'supertest';
+import type { App } from 'supertest/types';
+import {
+  buildUsuarioAtivo,
+  COMPANY_ID,
+  loginAndGetTokens,
+  SENHA_VALIDA,
+} from './utils/auth-helpers';
+import { createTestApp } from './utils/create-test-app';
+import { bodyOf } from './utils/http';
+import { buildPrismaMock, type PrismaMock } from './utils/prisma-mock';
+
+interface LoginBody {
+  accessToken: string;
+  refreshToken: string;
+  usuario: {
+    id: string;
+    email: string;
+    role: string;
+    companyId: string | null;
+  };
+}
+interface ErrorBody {
+  message: string;
+}
+interface RefreshBody {
+  accessToken: string;
+}
+interface RegisterAlunoBody {
+  usuario: {
+    id: string;
+    email: string;
+    role: string;
+    companyId: string | null;
+  };
+}
+interface MeBody {
+  email: string;
+}
+
+// TEST-001 (SPEC-001): suíte Supertest formal do módulo de auth — Prisma
+// mockado (sem banco vivo, roda em qualquer CI sem depender do Neon),
+// cobrindo a camada HTTP real: guards, ValidationPipe, throttler e o
+// formato exato de resposta/erro que a rota entrega. A prova com banco
+// vivo (login/refresh/register-aluno reais, FIT-002) já existe no smoke
+// test de `back/.github/workflows/db-migrate.yml` — esta suíte cobre o
+// que aquele smoke test não cobre: validação de DTO (400), rate limit
+// (429) e a garantia de que a senha nunca aparece numa resposta.
+//
+// Cada teste sobe uma instância nova do app (`beforeEach`) de propósito:
+// o ThrottlerModule usa storage em memória por instância de módulo, e o
+// teste de rate limit (NFR-002/TEST-001b) precisa de um contador zerado
+// — instâncias compartilhadas entre testes fariam chamadas de um teste
+// "vazarem" pro orçamento de tentativas de outro (mesma armadilha
+// descoberta ao escrever FIT-002 com login dentro de um loop).
+
+describe('Auth (e2e) - TEST-001', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaMock;
+
+  beforeEach(async () => {
+    prisma = buildPrismaMock();
+    app = await createTestApp(prisma);
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  describe('POST /api/v1/auth/login', () => {
+    it('REQ-002: credenciais válidas retornam accessToken + refreshToken + usuario', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken, refreshToken } = await loginAndGetTokens(
+        app,
+        prisma,
+        usuario,
+      );
+
+      expect(accessToken).toEqual(expect.any(String));
+      expect(refreshToken).toEqual(expect.any(String));
+    });
+
+    it('NFR-001: a resposta nunca inclui o hash da senha', async () => {
+      const usuario = await buildUsuarioAtivo();
+      prisma.usuario.findUnique.mockResolvedValue(usuario);
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: COMPANY_ID,
+        status: 'ativa',
+      });
+      prisma.refreshToken.create.mockResolvedValue({ id: 'rt1' });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: usuario.email, senha: SENHA_VALIDA })
+        .expect(200);
+
+      expect(bodyOf<LoginBody>(res).usuario).toMatchObject({
+        id: usuario.id,
+        email: usuario.email,
+        role: 'company_admin',
+      });
+      expect(JSON.stringify(res.body)).not.toMatch(/senhaHash/i);
+    });
+
+    it('AC-002: senha errada retorna 401 genérico', async () => {
+      const usuario = await buildUsuarioAtivo();
+      prisma.usuario.findUnique.mockResolvedValue(usuario);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: usuario.email, senha: 'senha-errada-123' })
+        .expect(401);
+
+      expect(bodyOf<ErrorBody>(res).message).toBe('Credenciais inválidas');
+    });
+
+    it('AC-002: email inexistente retorna a mesma mensagem genérica (não revela se o email existe)', async () => {
+      prisma.usuario.findUnique.mockResolvedValue(null);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'ninguem@x.com', senha: SENHA_VALIDA })
+        .expect(401);
+
+      expect(bodyOf<ErrorBody>(res).message).toBe('Credenciais inválidas');
+    });
+
+    it('AC-008: bloqueia login se a empresa do usuário está inativa', async () => {
+      const usuario = await buildUsuarioAtivo();
+      prisma.usuario.findUnique.mockResolvedValue(usuario);
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: COMPANY_ID,
+        status: 'inativa',
+      });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: usuario.email, senha: SENHA_VALIDA })
+        .expect(401);
+    });
+
+    it('ValidationPipe: email malformado retorna 400 antes de tocar o banco', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'nao-e-email', senha: SENHA_VALIDA })
+        .expect(400);
+
+      expect(prisma.usuario.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('ValidationPipe: campo desconhecido no corpo retorna 400 (forbidNonWhitelisted)', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'x@x.com', senha: SENHA_VALIDA, role: 'super_admin' })
+        .expect(400);
+    });
+  });
+
+  describe('POST /api/v1/auth/refresh', () => {
+    it('REQ-003: refresh token válido (via cookie) retorna novo access token', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { refreshToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        id: 'rt1',
+        usuarioId: usuario.id,
+        tokenHash: await bcrypt.hash(refreshToken, 4),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        revokedAt: null,
+      });
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue(usuario);
+      prisma.refreshToken.create.mockResolvedValue({ id: 'rt2' });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', [`refresh_token=${refreshToken}`])
+        .expect(200);
+
+      // O refresh token novo só vai no cookie httpOnly (SECURITY_PRIVACY.md)
+      // — a resposta JSON deste endpoint traz só o access token.
+      expect(bodyOf<RefreshBody>(res).accessToken).toEqual(expect.any(String));
+      expect(res.body).not.toHaveProperty('refreshToken');
+      const setCookie = res.headers['set-cookie'];
+      expect(setCookie).toBeDefined();
+      expect(String(setCookie)).toMatch(/refresh_token=/);
+    });
+
+    it('AC-003: reuso de token já rotacionado (claim perdida) retorna 401', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { refreshToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        id: 'rt1',
+        usuarioId: usuario.id,
+        tokenHash: await bcrypt.hash(refreshToken, 4),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        revokedAt: null,
+      });
+      // count: 0 nas duas chamadas de updateMany (claim perdida + revoga
+      // tudo) — simula que outra requisição já rotacionou este token.
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', [`refresh_token=${refreshToken}`])
+        .expect(401);
+    });
+
+    it('REQ-006: sem cookie de refresh retorna 401', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .expect(401);
+    });
+  });
+
+  describe('POST /api/v1/auth/register-aluno', () => {
+    const dto = {
+      email: 'aluno-novo@x.com',
+      senha: SENHA_VALIDA,
+      nome: 'Aluno Novo',
+      companyId: COMPANY_ID,
+    };
+
+    it('REQ-005: cria usuario (role aluno) vinculado a empresa ativa existente', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: COMPANY_ID,
+        status: 'ativa',
+      });
+      prisma.usuario.findUnique.mockResolvedValue(null);
+      prisma.tx.usuario.create.mockResolvedValue({
+        id: 'u2',
+        nome: dto.nome,
+        email: dto.email,
+        role: 'aluno',
+        companyId: COMPANY_ID,
+      });
+      prisma.tx.aluno.create.mockResolvedValue({ id: 'a1' });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/register-aluno')
+        .send(dto)
+        .expect(201);
+
+      expect(bodyOf<RegisterAlunoBody>(res).usuario).toMatchObject({
+        email: dto.email,
+        role: 'aluno',
+        companyId: COMPANY_ID,
+      });
+      expect(prisma.tx.aluno.create).toHaveBeenCalledWith({
+        data: { usuarioId: 'u2', companyId: COMPANY_ID },
+      });
+    });
+
+    it('AC-004: email já cadastrado retorna 409', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: COMPANY_ID,
+        status: 'ativa',
+      });
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'existente' });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register-aluno')
+        .send(dto)
+        .expect(409);
+
+      expect(prisma.tx.usuario.create).not.toHaveBeenCalled();
+    });
+
+    it('empresa inexistente/inativa retorna 422', async () => {
+      prisma.empresa.findUnique.mockResolvedValue(null);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/register-aluno')
+        .send(dto)
+        .expect(422);
+    });
+  });
+
+  describe('GET /api/v1/auth/me', () => {
+    it('REQ-006: sem token retorna 401', async () => {
+      await request(app.getHttpServer()).get('/api/v1/auth/me').expect(401);
+    });
+
+    it('com token válido retorna os dados do usuário autenticado', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue(usuario);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(bodyOf<MeBody>(res).email).toBe(usuario.email);
+      expect(JSON.stringify(res.body)).not.toMatch(/senhaHash/i);
+    });
+  });
+
+  describe('NFR-002 / TEST-001b: rate limit de 10 tentativas/15min em /auth/login', () => {
+    it('a 11ª tentativa na mesma janela retorna 429', async () => {
+      prisma.usuario.findUnique.mockResolvedValue(null);
+
+      for (let i = 0; i < 10; i++) {
+        await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .send({ email: 'x@x.com', senha: 'errada-123' });
+      }
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: 'x@x.com', senha: 'errada-123' })
+        .expect(429);
+    });
+  });
+});

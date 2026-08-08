@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsDefined,
   IsEmail,
   IsOptional,
   IsString,
@@ -47,7 +48,12 @@ export class CreateCompanyDto {
   @IsString({ each: true })
   esportes!: string[];
 
+  // @IsDefined() é necessário além de @ValidateNested(): sem ele, um
+  // corpo sem `adminInicial` passa pela validação (nested validators só
+  // rodam se a propriedade estiver presente) e quebra dentro do service
+  // com erro não tratado em vez de um 400 do ValidationPipe.
   @ApiProperty({ type: AdminInicialDto })
+  @IsDefined()
   @ValidateNested()
   @Type(() => AdminInicialDto)
   adminInicial!: AdminInicialDto;

@@ -28,4 +28,13 @@ jobs:
 
       - run: pnpm test
 
+      # TEST-001/TEST-002 (Fase 5, Hardening): suítes Supertest com Prisma
+      # mockado — não toca o Neon, então não precisa de DATABASE_URL.
+      # JWT_*_SECRET só precisam existir (não são segredos reais; nenhum
+      # token gerado aqui sai deste job).
+      - run: pnpm test:e2e
+        env:
+          JWT_ACCESS_SECRET: ci-e2e-access-secret
+          JWT_REFRESH_SECRET: ci-e2e-refresh-secret
+
       - run: pnpm build
