@@ -1,0 +1,41 @@
+name: DB Migrate & Seed (manual)
+
+# Disparo manual (workflow_dispatch) — roda a migration real do Prisma e o
+# seed de desenvolvimento contra o Neon. Existe porque a rede local (tanto
+# o ambiente do agente quanto a rede doméstica do usuário) não consegue
+# alcançar a porta 5432 do Neon; os runners do GitHub Actions não têm essa
+# restrição. DATABASE_URL vem de um secret do repositório, nunca aparece
+# em log.
+on:
+  workflow_dispatch:
+    inputs:
+      run_seed:
+        description: "Rodar também o seed de desenvolvimento (empresa demo + admin)?"
+        type: boolean
+        default: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prisma migrate deploy
+        run: pnpm exec prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Seed de desenvolvimento
+        if: ${{ inputs.run_seed }}
+        run: pnpm run db:seed
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
