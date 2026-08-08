@@ -677,6 +677,296 @@
           "levels"
         ]
       }
+    },
+    "/api/v1/courts": {
+      "get": {
+        "operationId": "CourtsController_list",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      },
+      "post": {
+        "operationId": "CourtsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCourtDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      }
+    },
+    "/api/v1/courts/{id}": {
+      "get": {
+        "operationId": "CourtsController_findOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      },
+      "patch": {
+        "operationId": "CourtsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCourtDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      }
+    },
+    "/api/v1/courts/{id}/availability": {
+      "get": {
+        "operationId": "CourtsController_availability",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "data",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-20",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      }
+    },
+    "/api/v1/bookings": {
+      "post": {
+        "operationId": "BookingsController_create",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBookingDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "bookings"
+        ]
+      },
+      "get": {
+        "operationId": "BookingsController_list",
+        "parameters": [
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pendente_pagamento",
+                "pago",
+                "cancelado"
+              ]
+            }
+          },
+          {
+            "name": "data",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-20",
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "bookings"
+        ]
+      }
+    },
+    "/api/v1/bookings/{id}/cancel": {
+      "post": {
+        "operationId": "BookingsController_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "bookings"
+        ]
+      }
     }
   },
   "info": {
@@ -921,6 +1211,76 @@
             "type": "number"
           }
         }
+      },
+      "CreateCourtDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "esporte": {
+            "type": "string"
+          },
+          "precoHora": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "nome",
+          "esporte",
+          "precoHora"
+        ]
+      },
+      "UpdateCourtDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "esporte": {
+            "type": "string"
+          },
+          "precoHora": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          }
+        }
+      },
+      "CreateBookingDto": {
+        "type": "object",
+        "properties": {
+          "quadraId": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-08-20"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "14:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "15:00"
+          },
+          "alunoId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "quadraId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "alunoId"
+        ]
       }
     }
   }

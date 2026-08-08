@@ -1,9 +1,10 @@
 // Schema Prisma - back (PlayCK)
 // Fonte de verdade do modelo: DATA_MODEL.md (raiz do projeto).
 // Escopo inicial (SPEC-001:TASK-002): empresas, usuarios, refresh_tokens.
-// Estendido por SPEC-003:TASK-000a (niveis, professores, alunos). Demais
-// tabelas (quadras, turmas, ...) entram por spec dona, cada uma
-// estendendo este arquivo (nunca um schema paralelo).
+// Estendido por SPEC-003:TASK-000a (niveis, professores, alunos) e por
+// SPEC-004:TASK-001 (quadras, ocupacoes_quadra). Demais tabelas (turmas,
+// turma_alunos, ...) entram por spec dona, cada uma estendendo este
+// arquivo (nunca um schema paralelo).
 
 generator client {
   provider        = "prisma-client-js"
@@ -51,21 +52,23 @@ model Empresa {
   niveis      Nivel[]
   professores Professor[]
   alunos      Aluno[]
+  quadras     Quadra[]
+  ocupacoes   OcupacaoQuadra[]
 
   @@map("empresas")
 }
 
 model Usuario {
-  id           String        @id @default(uuid()) @db.Uuid
-  email        String        @unique
-  senhaHash    String        @map("senha_hash")
-  nome         String
-  telefone     String?
-  role         UsuarioRole
-  companyId    String?       @map("company_id") @db.Uuid
-  status       UsuarioStatus @default(ativo)
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
+  id        String        @id @default(uuid()) @db.Uuid
+  email     String        @unique
+  senhaHash String        @map("senha_hash")
+  nome      String
+  telefone  String?
+  role      UsuarioRole
+  companyId String?       @map("company_id") @db.Uuid
+  status    UsuarioStatus @default(ativo)
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
 
   empresa       Empresa?       @relation(fields: [companyId], references: [id])
   refreshTokens RefreshToken[]
@@ -127,10 +130,78 @@ model Aluno {
   status    UsuarioStatus @default(ativo)
   createdAt DateTime      @default(now()) @map("created_at")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  empresa Empresa @relation(fields: [companyId], references: [id])
-  nivel   Nivel?  @relation(fields: [nivelId], references: [id])
+  usuario   Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa   Empresa          @relation(fields: [companyId], references: [id])
+  nivel     Nivel?           @relation(fields: [nivelId], references: [id])
+  ocupacoes OcupacaoQuadra[]
 
   @@index([companyId])
   @@map("alunos")
+}
+
+enum QuadraStatus {
+  ativa
+  inativa
+
+  @@map("quadra_status")
+}
+
+model Quadra {
+  id        String       @id @default(uuid()) @db.Uuid
+  companyId String       @map("company_id") @db.Uuid
+  nome      String
+  esporte   String
+  precoHora Decimal      @map("preco_hora") @db.Decimal(10, 2)
+  status    QuadraStatus @default(ativa)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  empresa   Empresa          @relation(fields: [companyId], references: [id])
+  ocupacoes OcupacaoQuadra[]
+
+  @@index([companyId])
+  @@map("quadras")
+}
+
+enum OrigemTipo {
+  TURMA
+  AVULSO
+
+  @@map("origem_tipo")
+}
+
+enum StatusPagamento {
+  pendente_pagamento
+  pago
+  cancelado
+
+  @@map("status_pagamento")
+}
+
+// Tabela mais crítica do domínio (ADR-009, INV-001) — ver a constraint
+// `EXCLUDE USING gist` adicionada manualmente na migration (não
+// expressável no schema.prisma) logo abaixo do CREATE TABLE gerado.
+model OcupacaoQuadra {
+  id              String          @id @default(uuid()) @db.Uuid
+  companyId       String          @map("company_id") @db.Uuid
+  quadraId        String          @map("quadra_id") @db.Uuid
+  data            DateTime        @db.Date
+  horaInicio      DateTime        @map("hora_inicio") @db.Time
+  horaFim         DateTime        @map("hora_fim") @db.Time
+  origemTipo      OrigemTipo      @map("origem_tipo")
+  // origem_turma_id referenciará `turmas.id` quando SPEC-003:TASK-000b
+  // criar essa tabela — até lá, coluna sem FK (nunca preenchida nesta
+  // spec, que só cria ocupações AVULSO).
+  origemTurmaId   String?         @map("origem_turma_id") @db.Uuid
+  alunoId         String?         @map("aluno_id") @db.Uuid
+  statusPagamento StatusPagamento @default(pendente_pagamento) @map("status_pagamento")
+  clientRequestId String?         @map("client_request_id")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  empresa Empresa @relation(fields: [companyId], references: [id])
+  quadra  Quadra  @relation(fields: [quadraId], references: [id])
+  aluno   Aluno?  @relation(fields: [alunoId], references: [id])
+
+  @@index([companyId, quadraId, data])
+  @@map("ocupacoes_quadra")
 }

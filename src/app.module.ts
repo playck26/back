@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
 import { CompaniesModule } from './companies/companies.module';
+import { CourtsModule } from './courts/courts.module';
 import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -19,6 +20,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CommonModule,
     CompaniesModule,
     PeopleModule,
+    CourtsModule,
   ],
   controllers: [AppController],
   providers: [

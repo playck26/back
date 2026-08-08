@@ -1,0 +1,236 @@
+import {
+  ConflictException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { CourtsService } from './courts.service';
+
+// TEST-005 (SPEC-004): unit tests de MOD-005 com Prisma mockado. FIT-001
+// (concorrência real, INV-001) exige banco vivo — validado à parte via
+// GitHub Actions (ver STATUS.md/TEST_PLAN.md), não reproduzível aqui.
+
+function buildPrismaMock() {
+  return {
+    quadra: {
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    ocupacaoQuadra: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+  } as unknown as PrismaService;
+}
+
+const QUADRA_ATIVA = {
+  id: 'q1',
+  companyId: 'c1',
+  nome: 'Quadra 1',
+  esporte: 'tenis',
+  precoHora: new Prisma.Decimal(100),
+  status: 'ativa',
+  createdAt: new Date(),
+};
+
+describe('CourtsService', () => {
+  let prisma: PrismaService;
+  let service: CourtsService;
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    service = new CourtsService(prisma);
+  });
+
+  describe('create/list/update', () => {
+    it('cria quadra escopada à empresa', async () => {
+      (prisma.quadra.create as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+
+      const result = await service.create('c1', {
+        nome: 'Quadra 1',
+        esporte: 'tenis',
+        precoHora: 100,
+      });
+
+      expect(prisma.quadra.create).toHaveBeenCalledWith({
+        data: {
+          companyId: 'c1',
+          nome: 'Quadra 1',
+          esporte: 'tenis',
+          precoHora: 100,
+        },
+      });
+      expect(result.precoHora).toBe(100);
+    });
+
+    it('update propaga 404 cross-tenant', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.update('c1', 'q1', { nome: 'Nova' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('availability', () => {
+    it('lança 404 se a quadra não é da empresa', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.availability('c1', 'q1', '2026-08-20'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('monta a grade com slots livres e ocupados (REQ-002)', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+          origemTipo: 'AVULSO',
+        },
+      ]);
+
+      const result = await service.availability('c1', 'q1', '2026-08-20');
+
+      const slot14 = result.slots.find((s) => s.slot === '14:00-15:00');
+      const slot10 = result.slots.find((s) => s.slot === '10:00-11:00');
+      expect(slot14?.status).toBe('ocupado_avulso');
+      expect(slot10?.status).toBe('livre');
+    });
+  });
+
+  describe('createBooking', () => {
+    const dto = {
+      quadraId: 'q1',
+      data: '2026-08-20',
+      horaInicio: '14:00',
+      horaFim: '15:00',
+      alunoId: 'a1',
+    };
+
+    it('rejeita horaFim <= horaInicio com 422', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+
+      await expect(
+        service.createBooking('c1', {
+          ...dto,
+          horaInicio: '15:00',
+          horaFim: '14:00',
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    });
+
+    it('idempotência: reenvio com o mesmo client_request_id retorna a ocupação já criada (AC-004)', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        quadraId: 'q1',
+        data: new Date('2026-08-20T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+        horaFim: new Date('1970-01-01T15:00:00.000Z'),
+        origemTipo: 'AVULSO',
+        alunoId: null,
+        statusPagamento: 'pendente_pagamento',
+      });
+
+      const result = await service.createBooking('c1', dto, 'req-123');
+
+      expect(result.id).toBe('o1');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    it('pré-checagem de conflito retorna 409 com conflictWith (REQ-004)', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o-existente',
+        origemTipo: 'TURMA',
+      });
+
+      await expect(service.createBooking('c1', dto)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    it('cria ocupação AVULSO com status_pagamento pendente (REQ-003)', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.create as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        quadraId: 'q1',
+        data: new Date('2026-08-20T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+        horaFim: new Date('1970-01-01T15:00:00.000Z'),
+        origemTipo: 'AVULSO',
+        alunoId: null,
+        statusPagamento: 'pendente_pagamento',
+      });
+
+      const result = await service.createBooking('c1', dto);
+
+      expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          companyId: 'c1',
+          quadraId: 'q1',
+          origemTipo: 'AVULSO',
+        }),
+      });
+      expect(result.statusPagamento).toBe('pendente_pagamento');
+    });
+
+    it('corrida perdida na constraint EXCLUDE vira 409 (INV-001, mesma lógica do FIT-001)', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock)
+        .mockResolvedValueOnce(null) // pré-checagem: sem conflito no momento da leitura
+        .mockResolvedValueOnce({ id: 'o-concorrente', origemTipo: 'AVULSO' }); // conflito real após a corrida
+      (prisma.ocupacaoQuadra.create as jest.Mock).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(
+          'conflicting key value violates exclusion constraint',
+          {
+            code: 'P2004',
+            clientVersion: '6.19.3',
+          },
+        ),
+      );
+
+      await expect(service.createBooking('c1', dto)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+  });
+
+  describe('cancelBooking', () => {
+    it('lança 404 cross-tenant', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.cancelBooking('c1', 'o1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('marca status_pagamento como cancelado (AC-003)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+      });
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
+
+      await service.cancelBooking('c1', 'o1');
+
+      expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { statusPagamento: 'cancelado' },
+      });
+    });
+  });
+});

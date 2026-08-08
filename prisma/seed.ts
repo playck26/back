@@ -56,10 +56,35 @@ async function seedEtapa1() {
   });
 
   console.log(`[seed] etapa 1 ok — empresa "${empresa.nome}" (${empresa.id}), admin ${ADMIN_DEMO_EMAIL}, super admin ${SUPER_ADMIN_EMAIL}`);
+
+  return empresa;
+}
+
+// Etapa 2 (SPEC-004:TASK-008): 2 quadras para a empresa demo. `quadras`
+// não tem UNIQUE(company_id, nome) em DATA_MODEL.md — idempotência via
+// find-then-create (não dá pra usar prisma.quadra.upsert sem uma chave
+// única de verdade).
+async function seedEtapa2(companyId: string) {
+  const quadrasDemo = [
+    { nome: 'Quadra 1', esporte: 'tenis', precoHora: 80 },
+    { nome: 'Quadra 2', esporte: 'tenis', precoHora: 80 },
+  ];
+
+  for (const dadosQuadra of quadrasDemo) {
+    const existente = await prisma.quadra.findFirst({
+      where: { companyId, nome: dadosQuadra.nome },
+    });
+    if (!existente) {
+      await prisma.quadra.create({ data: { companyId, ...dadosQuadra } });
+    }
+  }
+
+  console.log(`[seed] etapa 2 ok — ${quadrasDemo.length} quadras para a empresa demo`);
 }
 
 async function main() {
-  await seedEtapa1();
+  const empresa = await seedEtapa1();
+  await seedEtapa2(empresa.id);
 }
 
 main()
