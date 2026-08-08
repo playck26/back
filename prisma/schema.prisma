@@ -1,8 +1,9 @@
 // Schema Prisma - back (PlayCK)
 // Fonte de verdade do modelo: DATA_MODEL.md (raiz do projeto).
-// Escopo desta migration (SPEC-001:TASK-002): empresas, usuarios,
-// refresh_tokens. Demais tabelas (quadras, turmas, alunos, ...) entram por
-// spec dona, cada uma estendendo este arquivo (nunca um schema paralelo).
+// Escopo inicial (SPEC-001:TASK-002): empresas, usuarios, refresh_tokens.
+// Estendido por SPEC-003:TASK-000a (niveis, professores, alunos). Demais
+// tabelas (quadras, turmas, ...) entram por spec dona, cada uma
+// estendendo este arquivo (nunca um schema paralelo).
 
 generator client {
   provider        = "prisma-client-js"
@@ -46,7 +47,10 @@ model Empresa {
   createdAt DateTime      @default(now()) @map("created_at")
   updatedAt DateTime      @updatedAt @map("updated_at")
 
-  usuarios Usuario[]
+  usuarios    Usuario[]
+  niveis      Nivel[]
+  professores Professor[]
+  alunos      Aluno[]
 
   @@map("empresas")
 }
@@ -65,6 +69,7 @@ model Usuario {
 
   empresa       Empresa?       @relation(fields: [companyId], references: [id])
   refreshTokens RefreshToken[]
+  aluno         Aluno?
 
   @@index([companyId])
   @@map("usuarios")
@@ -82,4 +87,50 @@ model RefreshToken {
 
   @@index([usuarioId])
   @@map("refresh_tokens")
+}
+
+model Nivel {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  nome      String
+  ordem     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  empresa Empresa @relation(fields: [companyId], references: [id])
+  alunos  Aluno[]
+
+  @@unique([companyId, nome])
+  @@index([companyId])
+  @@map("niveis")
+}
+
+model Professor {
+  id        String        @id @default(uuid()) @db.Uuid
+  companyId String        @map("company_id") @db.Uuid
+  nome      String
+  telefone  String?
+  email     String?
+  status    UsuarioStatus @default(ativo)
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  empresa Empresa @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@map("professores")
+}
+
+model Aluno {
+  id        String        @id @default(uuid()) @db.Uuid
+  usuarioId String        @unique @map("usuario_id") @db.Uuid
+  companyId String        @map("company_id") @db.Uuid
+  nivelId   String?       @map("nivel_id") @db.Uuid
+  status    UsuarioStatus @default(ativo)
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa Empresa @relation(fields: [companyId], references: [id])
+  nivel   Nivel?  @relation(fields: [nivelId], references: [id])
+
+  @@index([companyId])
+  @@map("alunos")
 }

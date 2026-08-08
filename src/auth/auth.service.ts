@@ -190,15 +190,30 @@ export class AuthService {
     }
 
     const senhaHash = await bcrypt.hash(dto.senha, BCRYPT_COST);
-    const usuario = await this.prisma.usuario.create({
-      data: {
-        email: dto.email,
-        senhaHash,
-        nome: dto.nome,
-        telefone: dto.telefone,
-        role: 'aluno',
-        companyId: dto.companyId,
-      },
+    // Usuario (identidade) + Aluno (perfil de domínio, MOD-003) nascem
+    // juntos — mesmo padrão de MOD-002 (empresa + admin numa transação):
+    // é uma única operação de provisionamento de conta, não duas escritas
+    // independentes disputando a tabela `alunos` ao longo do tempo.
+    const usuario = await this.prisma.$transaction(async (tx) => {
+      const usuarioCriado = await tx.usuario.create({
+        data: {
+          email: dto.email,
+          senhaHash,
+          nome: dto.nome,
+          telefone: dto.telefone,
+          role: 'aluno',
+          companyId: dto.companyId,
+        },
+      });
+
+      await tx.aluno.create({
+        data: {
+          usuarioId: usuarioCriado.id,
+          companyId: dto.companyId,
+        },
+      });
+
+      return usuarioCriado;
     });
 
     return { usuario: this.toPublicUsuario(usuario) };

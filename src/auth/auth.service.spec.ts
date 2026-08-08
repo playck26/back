@@ -14,8 +14,17 @@ import { AuthService } from './auth.service';
 // provisionado, ver STATUS.md). Contrato HTTP fim a fim (Supertest) fica
 // para quando a spec 001 fechar DoD com Neon disponível.
 
+interface TxMock {
+  usuario: { create: jest.Mock };
+  aluno: { create: jest.Mock };
+}
+
 function buildPrismaMock() {
-  return {
+  const tx: TxMock = {
+    usuario: { create: jest.fn() },
+    aluno: { create: jest.fn() },
+  };
+  const prisma = {
     usuario: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
@@ -30,7 +39,9 @@ function buildPrismaMock() {
       update: jest.fn(),
       updateMany: jest.fn(),
     },
-  } as unknown as PrismaService;
+    $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
+  };
+  return { prisma: prisma as unknown as PrismaService, tx };
 }
 
 function buildConfigMock(overrides: Record<string, string> = {}) {
@@ -60,13 +71,16 @@ function buildJwtMock() {
 }
 
 describe('AuthService', () => {
-  let prisma: ReturnType<typeof buildPrismaMock>;
+  let prisma: PrismaService;
+  let tx: TxMock;
   let config: ConfigService;
   let jwt: JwtService;
   let service: AuthService;
 
   beforeEach(() => {
-    prisma = buildPrismaMock();
+    const built = buildPrismaMock();
+    prisma = built.prisma;
+    tx = built.tx;
     config = buildConfigMock();
     jwt = buildJwtMock();
     service = new AuthService(prisma, jwt, config);
@@ -201,17 +215,22 @@ describe('AuthService', () => {
       );
     });
 
-    it('cria aluno vinculado à empresa (REQ-005)', async () => {
+    it('cria usuario + perfil aluno numa transação (REQ-005)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
         id: 'c1',
         status: 'ativa',
       });
       (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.create as jest.Mock).mockResolvedValue({
+      tx.usuario.create.mockResolvedValue({
         id: 'u2',
         email: dto.email,
         nome: dto.nome,
         role: 'aluno',
+        companyId: 'c1',
+      });
+      tx.aluno.create.mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u2',
         companyId: 'c1',
       });
 
@@ -219,6 +238,9 @@ describe('AuthService', () => {
 
       expect(result.usuario.role).toBe('aluno');
       expect(result.usuario.companyId).toBe('c1');
+      expect(tx.aluno.create).toHaveBeenCalledWith({
+        data: { usuarioId: 'u2', companyId: 'c1' },
+      });
     });
   });
 
