@@ -47,6 +47,7 @@ jobs:
 
       - name: Smoke test — auth + MOD-002 (companies) de ponta a ponta contra o Neon real
         if: ${{ inputs.run_seed }}
+        timeout-minutes: 10
         run: |
           set -e
           pnpm run build
@@ -132,6 +133,11 @@ jobs:
           echo "$COURTS_RES" | jq -e '.total >= 1'
           QUADRA_ID=$(echo "$COURTS_RES" | jq -r '.data[0].id')
 
+          echo "--- limpando reservas de teste residuais de execuções anteriores (idempotência do smoke test) ---"
+          cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+          DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
+          SQL
+
           echo "--- GET /courts/:id/availability ---"
           curl -s "http://localhost:3000/api/v1/courts/$QUADRA_ID/availability?data=2026-08-25" \
             -H "Authorization: Bearer $ACCESS_TOKEN" | jq -e '.slots | length == 16'
@@ -170,11 +176,13 @@ jobs:
           for i in $(seq 1 20); do
             DIA=$(printf "2026-09-%02d" "$i")
             BODY="{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$DIA\",\"horaInicio\":\"10:00\",\"horaFim\":\"11:00\",\"alunoId\":\"$STUDENT_ID\"}"
-            curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
+            curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
               -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY" > "/tmp/fit1_${i}.code" &
-            curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
+            PID1=$!
+            curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
               -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY" > "/tmp/fit2_${i}.code" &
-            wait
+            PID2=$!
+            wait "$PID1" "$PID2"
             C1=$(cat "/tmp/fit1_${i}.code")
             C2=$(cat "/tmp/fit2_${i}.code")
             if { [ "$C1" = "201" ] && [ "$C2" = "409" ]; } || { [ "$C1" = "409" ] && [ "$C2" = "201" ]; }; then
