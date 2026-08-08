@@ -133,9 +133,12 @@ jobs:
           echo "$COURTS_RES" | jq -e '.total >= 1'
           QUADRA_ID=$(echo "$COURTS_RES" | jq -r '.data[0].id')
 
-          echo "--- limpando reservas de teste residuais de execuções anteriores (idempotência do smoke test) ---"
+          echo "--- limpando reservas/turmas de teste residuais de execuções anteriores (idempotência do smoke test) ---"
           cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
           DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
+          DELETE FROM turma_alunos WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
+          DELETE FROM ocupacoes_quadra WHERE origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
+          DELETE FROM turmas WHERE nome LIKE 'Turma CI %';
           SQL
 
           echo "--- GET /courts/:id/availability ---"
@@ -198,17 +201,65 @@ jobs:
           fi
           echo "FIT-001 OK — 20/20 execuções sem overbooking sob concorrência (INV-001 comprovado no banco real)"
 
+          echo "--- MOD-004: cria turma vinculada à quadra semeada (REQ-002/003) ---"
+          DIA_SEMANA_TESTE=3
+          CLASS_RES=$(curl -s -X POST http://localhost:3000/api/v1/classes \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"nome\":\"Turma CI $RUN_ID\",\"quadraId\":\"$QUADRA_ID\",\"diaSemana\":$DIA_SEMANA_TESTE,\"horaInicio\":\"11:00\",\"horaFim\":\"12:00\",\"capacidade\":1}")
+          echo "$CLASS_RES"
+          echo "$CLASS_RES" | jq -e '.id and .alunosAlocados == 0'
+          CLASS_ID=$(echo "$CLASS_RES" | jq -r '.id')
+
+          echo "--- criar 2ª turma na mesma quadra/dia/hora precisa ser 409, turma não criada (AC-001, NFR-001) ---"
+          CLASS_CONFLICT_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/classes \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"nome\":\"Turma CI Conflito $RUN_ID\",\"quadraId\":\"$QUADRA_ID\",\"diaSemana\":$DIA_SEMANA_TESTE,\"horaInicio\":\"11:00\",\"horaFim\":\"12:00\",\"capacidade\":1}")
+          [ "$CLASS_CONFLICT_RES" = "409" ] || (echo "esperado 409, veio $CLASS_CONFLICT_RES" && exit 1)
+
+          echo "--- GET /classes/:id (detalhe com alocação) ---"
+          curl -s "http://localhost:3000/api/v1/classes/$CLASS_ID" -H "Authorization: Bearer $ACCESS_TOKEN" \
+            | jq -e '.capacidade == 1 and (.alunos | length) == 0'
+
+          echo "--- aloca aluno na turma de capacidade 1 (REQ-004) ---"
+          ALLOC_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/classes/$CLASS_ID/students/$STUDENT_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          [ "$ALLOC_RES" = "201" ] || (echo "esperado 201, veio $ALLOC_RES" && exit 1)
+
+          echo "--- alocar o N+1-ésimo aluno (N=1) precisa ser 409 (AC-002, INV-003) ---"
+          STUDENT2_RES=$(curl -s -X POST http://localhost:3000/api/v1/students \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"nome\":\"Aluno CI 2\",\"email\":\"aluno-ci-2-$RUN_ID@playck-tests.demo\"}")
+          STUDENT2_ID=$(echo "$STUDENT2_RES" | jq -r '.id')
+          ALLOC2_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/classes/$CLASS_ID/students/$STUDENT2_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          [ "$ALLOC2_RES" = "409" ] || (echo "esperado 409, veio $ALLOC2_RES" && exit 1)
+
+          echo "--- remover aluno da turma libera vaga (REQ-005) ---"
+          REMOVE_RES=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "http://localhost:3000/api/v1/classes/$CLASS_ID/students/$STUDENT_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          [ "$REMOVE_RES" = "204" ] || (echo "esperado 204, veio $REMOVE_RES" && exit 1)
+          REALLOC_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/classes/$CLASS_ID/students/$STUDENT2_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          [ "$REALLOC_RES" = "201" ] || (echo "esperado 201 após liberar vaga, veio $REALLOC_RES" && exit 1)
+
+          echo "MOD-004 OK — criação de turma com geração de ocupações (AC-001), alocação com limite de capacidade (AC-002) e remoção (REQ-005) funcionam de ponta a ponta contra o Neon."
+
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
           cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
           DELETE FROM usuarios WHERE email = 'ci-$RUN_ID@playck-tests.demo';
           DELETE FROM empresas WHERE id = '$COMPANY_ID';
+          DELETE FROM turma_alunos WHERE turma_id = '$CLASS_ID';
+          DELETE FROM ocupacoes_quadra WHERE origem_turma_id = '$CLASS_ID';
+          DELETE FROM turmas WHERE id = '$CLASS_ID';
           DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
           DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo';
+          DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo');
+          DELETE FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo';
           SQL
 
-          echo "Smoke test OK — auth + MOD-002 + MOD-005 (com FIT-001) funcionam de ponta a ponta contra o Neon."
+          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

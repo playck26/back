@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
+import { ClassesModule } from './classes/classes.module';
 import { CompaniesModule } from './companies/companies.module';
 import { CourtsModule } from './courts/courts.module';
 import { PeopleModule } from './people/people.module';
@@ -21,6 +22,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CompaniesModule,
     PeopleModule,
     CourtsModule,
+    ClassesModule,
   ],
   controllers: [AppController],
   providers: [

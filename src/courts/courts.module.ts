@@ -6,5 +6,6 @@ import { CourtsService } from './courts.service';
 @Module({
   controllers: [CourtsController, BookingsController],
   providers: [CourtsService],
+  exports: [CourtsService],
 })
 export class CourtsModule {}

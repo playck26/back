@@ -1,10 +1,10 @@
 // Schema Prisma - back (PlayCK)
 // Fonte de verdade do modelo: DATA_MODEL.md (raiz do projeto).
 // Escopo inicial (SPEC-001:TASK-002): empresas, usuarios, refresh_tokens.
-// Estendido por SPEC-003:TASK-000a (niveis, professores, alunos) e por
-// SPEC-004:TASK-001 (quadras, ocupacoes_quadra). Demais tabelas (turmas,
-// turma_alunos, ...) entram por spec dona, cada uma estendendo este
-// arquivo (nunca um schema paralelo).
+// Estendido por SPEC-003:TASK-000a (niveis, professores, alunos), por
+// SPEC-004:TASK-001 (quadras, ocupacoes_quadra) e por SPEC-003:TASK-000b
+// (turmas, turma_alunos). Demais tabelas entram por spec dona, cada uma
+// estendendo este arquivo (nunca um schema paralelo).
 
 generator client {
   provider        = "prisma-client-js"
@@ -54,6 +54,7 @@ model Empresa {
   alunos      Aluno[]
   quadras     Quadra[]
   ocupacoes   OcupacaoQuadra[]
+  turmas      Turma[]
 
   @@map("empresas")
 }
@@ -101,6 +102,7 @@ model Nivel {
 
   empresa Empresa @relation(fields: [companyId], references: [id])
   alunos  Aluno[]
+  turmas  Turma[]
 
   @@unique([companyId, nome])
   @@index([companyId])
@@ -117,6 +119,7 @@ model Professor {
   createdAt DateTime      @default(now()) @map("created_at")
 
   empresa Empresa @relation(fields: [companyId], references: [id])
+  turmas  Turma[]
 
   @@index([companyId])
   @@map("professores")
@@ -130,10 +133,11 @@ model Aluno {
   status    UsuarioStatus @default(ativo)
   createdAt DateTime      @default(now()) @map("created_at")
 
-  usuario   Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  empresa   Empresa          @relation(fields: [companyId], references: [id])
-  nivel     Nivel?           @relation(fields: [nivelId], references: [id])
-  ocupacoes OcupacaoQuadra[]
+  usuario     Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa     Empresa          @relation(fields: [companyId], references: [id])
+  nivel       Nivel?           @relation(fields: [nivelId], references: [id])
+  ocupacoes   OcupacaoQuadra[]
+  turmaAlunos TurmaAluno[]
 
   @@index([companyId])
   @@map("alunos")
@@ -157,6 +161,7 @@ model Quadra {
 
   empresa   Empresa          @relation(fields: [companyId], references: [id])
   ocupacoes OcupacaoQuadra[]
+  turmas    Turma[]
 
   @@index([companyId])
   @@map("quadras")
@@ -188,9 +193,6 @@ model OcupacaoQuadra {
   horaInicio      DateTime        @map("hora_inicio") @db.Time
   horaFim         DateTime        @map("hora_fim") @db.Time
   origemTipo      OrigemTipo      @map("origem_tipo")
-  // origem_turma_id referenciará `turmas.id` quando SPEC-003:TASK-000b
-  // criar essa tabela — até lá, coluna sem FK (nunca preenchida nesta
-  // spec, que só cria ocupações AVULSO).
   origemTurmaId   String?         @map("origem_turma_id") @db.Uuid
   alunoId         String?         @map("aluno_id") @db.Uuid
   statusPagamento StatusPagamento @default(pendente_pagamento) @map("status_pagamento")
@@ -198,10 +200,68 @@ model OcupacaoQuadra {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  empresa Empresa @relation(fields: [companyId], references: [id])
-  quadra  Quadra  @relation(fields: [quadraId], references: [id])
-  aluno   Aluno?  @relation(fields: [alunoId], references: [id])
+  empresa     Empresa @relation(fields: [companyId], references: [id])
+  quadra      Quadra  @relation(fields: [quadraId], references: [id])
+  aluno       Aluno?  @relation(fields: [alunoId], references: [id])
+  origemTurma Turma?  @relation(fields: [origemTurmaId], references: [id])
 
   @@index([companyId, quadraId, data])
   @@map("ocupacoes_quadra")
+}
+
+enum TurmaStatus {
+  ativa
+  inativa
+
+  @@map("turma_status")
+}
+
+// Horário recorrente semanal fixo por turma no MVP (DATA_MODEL.md). Nunca
+// escreve em `ocupacoes_quadra` diretamente — só através do método público
+// `CourtsService.registerClassOccupancy(...)` (MOD-005 continua dono
+// exclusivo da linha do tempo da quadra, TARGET_ARCHITECTURE.md seção 6).
+model Turma {
+  id          String      @id @default(uuid()) @db.Uuid
+  companyId   String      @map("company_id") @db.Uuid
+  nome        String
+  nivelId     String?     @map("nivel_id") @db.Uuid
+  professorId String?     @map("professor_id") @db.Uuid
+  quadraId    String      @map("quadra_id") @db.Uuid
+  diaSemana   Int         @map("dia_semana")
+  horaInicio  DateTime    @map("hora_inicio") @db.Time
+  horaFim     DateTime    @map("hora_fim") @db.Time
+  capacidade  Int
+  status      TurmaStatus @default(ativa)
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  empresa   Empresa          @relation(fields: [companyId], references: [id])
+  nivel     Nivel?           @relation(fields: [nivelId], references: [id])
+  professor Professor?       @relation(fields: [professorId], references: [id])
+  quadra    Quadra           @relation(fields: [quadraId], references: [id])
+  alunos    TurmaAluno[]
+  ocupacoes OcupacaoQuadra[]
+
+  @@index([companyId])
+  @@index([quadraId])
+  @@map("turmas")
+}
+
+// Alocação many-to-many aluno<->turma (DATA_MODEL.md). Contagem por
+// turma_id nunca excede turmas.capacidade (INV-003) — checado em
+// transação com `SELECT ... FOR UPDATE` na linha da turma, não só pela
+// UNIQUE(turma_id, aluno_id) abaixo (que só evita duplicata do mesmo
+// aluno, não estoura de capacidade).
+model TurmaAluno {
+  id        String   @id @default(uuid()) @db.Uuid
+  turmaId   String   @map("turma_id") @db.Uuid
+  alunoId   String   @map("aluno_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  turma Turma @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+  aluno Aluno @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+
+  @@unique([turmaId, alunoId])
+  @@index([turmaId])
+  @@index([alunoId])
+  @@map("turma_alunos")
 }

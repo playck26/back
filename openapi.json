@@ -967,6 +967,205 @@
           "bookings"
         ]
       }
+    },
+    "/api/v1/classes": {
+      "get": {
+        "operationId": "ClassesController_list",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      },
+      "post": {
+        "operationId": "ClassesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClassDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
+    "/api/v1/classes/{id}": {
+      "get": {
+        "operationId": "ClassesController_findOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      },
+      "patch": {
+        "operationId": "ClassesController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateClassDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
+    "/api/v1/classes/{id}/students/{alunoId}": {
+      "post": {
+        "operationId": "ClassesController_allocateStudent",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "alunoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      },
+      "delete": {
+        "operationId": "ClassesController_removeStudent",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "alunoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
     }
   },
   "info": {
@@ -1281,6 +1480,88 @@
           "horaFim",
           "alunoId"
         ]
+      },
+      "CreateClassDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "nivelId": {
+            "type": "string"
+          },
+          "professorId": {
+            "type": "string"
+          },
+          "quadraId": {
+            "type": "string"
+          },
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "0=domingo..6=sábado"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "14:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "15:00"
+          },
+          "capacidade": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "nome",
+          "quadraId",
+          "diaSemana",
+          "horaInicio",
+          "horaFim",
+          "capacidade"
+        ]
+      },
+      "UpdateClassDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "nivelId": {
+            "type": "string"
+          },
+          "professorId": {
+            "type": "string"
+          },
+          "quadraId": {
+            "type": "string"
+          },
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "14:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "15:00"
+          },
+          "capacidade": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          }
+        }
       }
     }
   }

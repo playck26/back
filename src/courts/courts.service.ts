@@ -255,6 +255,95 @@ export class CourtsService {
     };
   }
 
+  // Método público chamado por MOD-004 (ClassesService) para registrar o
+  // compromisso de horário recorrente de uma turma — nunca por escrita
+  // direta em `ocupacoes_quadra` (DATA_MODEL.md, TARGET_ARCHITECTURE.md
+  // seção 6: MOD-005 continua dono exclusivo da tabela, evita o ciclo
+  // MOD-004↔MOD-005). Recebe o `tx` da transação aberta por quem chama
+  // (ClassesService.create/update) para que turma + ocupações sejam
+  // all-or-nothing na mesma transação (NFR-001). `createMany` insere as N
+  // ocorrências numa única instrução SQL (NFR-002), não N chamadas.
+  async registerClassOccupancy(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    quadraId: string,
+    turmaId: string,
+    ocorrencias: { data: Date; horaInicio: Date; horaFim: Date }[],
+  ): Promise<void> {
+    const conflitos: ConflitoDetectado[] = [];
+    for (const ocorrencia of ocorrencias) {
+      const conflito = await tx.ocupacaoQuadra.findFirst({
+        where: {
+          companyId,
+          quadraId,
+          data: ocorrencia.data,
+          statusPagamento: { not: 'cancelado' },
+          horaInicio: { lt: ocorrencia.horaFim },
+          horaFim: { gt: ocorrencia.horaInicio },
+        },
+      });
+      if (conflito) {
+        conflitos.push(this.toConflictWith(conflito));
+      }
+    }
+    if (conflitos.length > 0) {
+      throw new ConflictException({
+        message:
+          'Conflito de horário com ocupação existente na quadra (INV-001)',
+        conflicts: conflitos,
+      });
+    }
+
+    try {
+      await tx.ocupacaoQuadra.createMany({
+        data: ocorrencias.map((ocorrencia) => ({
+          companyId,
+          quadraId,
+          data: ocorrencia.data,
+          horaInicio: ocorrencia.horaInicio,
+          horaFim: ocorrencia.horaFim,
+          origemTipo: 'TURMA' as const,
+          origemTurmaId: turmaId,
+        })),
+      });
+    } catch (error) {
+      // Mesma corrida perdida de createBooking (INV-001): a violação da
+      // EXCLUDE constraint não tem P-código dedicado no Prisma.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError ||
+        error instanceof Prisma.PrismaClientUnknownRequestError
+      ) {
+        throw new ConflictException({
+          message:
+            'Conflito de horário com ocupação existente na quadra (INV-001)',
+        });
+      }
+      throw error;
+    }
+  }
+
+  // Cancela (libera) as ocupações futuras ainda não canceladas geradas por
+  // uma turma — usado por MOD-004 quando o admin edita o horário
+  // recorrente (quadra/dia/hora), antes de gerar as novas ocorrências via
+  // registerClassOccupancy, dentro da mesma transação.
+  async cancelFutureClassOccupancies(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    turmaId: string,
+    aPartirDe: Date,
+  ): Promise<void> {
+    await tx.ocupacaoQuadra.updateMany({
+      where: {
+        companyId,
+        origemTipo: 'TURMA',
+        origemTurmaId: turmaId,
+        statusPagamento: { not: 'cancelado' },
+        data: { gte: aPartirDe },
+      },
+      data: { statusPagamento: 'cancelado' },
+    });
+  }
+
   async cancelBooking(companyId: string, id: string): Promise<void> {
     const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
       where: { id, companyId },

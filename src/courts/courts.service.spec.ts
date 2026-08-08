@@ -24,7 +24,9 @@ function buildPrismaMock() {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
+      createMany: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       count: jest.fn(),
     },
   } as unknown as PrismaService;
@@ -210,6 +212,112 @@ describe('CourtsService', () => {
       await expect(service.createBooking('c1', dto)).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+  });
+
+  describe('registerClassOccupancy', () => {
+    // Chamado por MOD-004 (ClassesService) dentro de sua própria transação
+    // (por isso `prisma` aqui faz o papel do `tx` recebido) — ver
+    // TARGET_ARCHITECTURE.md seção 6 (MOD-005 continua dono exclusivo da
+    // tabela, evita o ciclo MOD-004↔MOD-005).
+    const ocorrencias = [
+      {
+        data: new Date('2026-08-25T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+        horaFim: new Date('1970-01-01T15:00:00.000Z'),
+      },
+      {
+        data: new Date('2026-09-01T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+        horaFim: new Date('1970-01-01T15:00:00.000Z'),
+      },
+    ];
+
+    it('gera as ocupações via createMany numa única chamada quando não há conflito (NFR-002)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockResolvedValue({
+        count: 2,
+      });
+
+      await service.registerClassOccupancy(
+        prisma,
+        'c1',
+        'q1',
+        't1',
+        ocorrencias,
+      );
+
+      expect(prisma.ocupacaoQuadra.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.ocupacaoQuadra.createMany).toHaveBeenCalledWith({
+        data: ocorrencias.map((ocorrencia) => ({
+          companyId: 'c1',
+          quadraId: 'q1',
+          data: ocorrencia.data,
+          horaInicio: ocorrencia.horaInicio,
+          horaFim: ocorrencia.horaFim,
+          origemTipo: 'TURMA',
+          origemTurmaId: 't1',
+        })),
+      });
+    });
+
+    it('rejeita com 409 e não insere nada se qualquer ocorrência colide (AC-001)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'o-existente', origemTipo: 'AVULSO' });
+
+      await expect(
+        service.registerClassOccupancy(
+          prisma as unknown as Prisma.TransactionClient,
+          'c1',
+          'q1',
+          't1',
+          ocorrencias,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.ocupacaoQuadra.createMany).not.toHaveBeenCalled();
+    });
+
+    it('corrida perdida na constraint EXCLUDE durante createMany vira 409 (INV-001)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockRejectedValue(
+        new Prisma.PrismaClientUnknownRequestError(
+          'conflicting key value violates exclusion constraint "no_overlap_por_quadra"',
+          { clientVersion: '6.19.3' },
+        ),
+      );
+
+      await expect(
+        service.registerClassOccupancy(
+          prisma as unknown as Prisma.TransactionClient,
+          'c1',
+          'q1',
+          't1',
+          ocorrencias,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('cancelFutureClassOccupancies', () => {
+    it('marca como cancelado só as ocupações futuras de TURMA ainda não canceladas', async () => {
+      (prisma.ocupacaoQuadra.updateMany as jest.Mock).mockResolvedValue({
+        count: 3,
+      });
+
+      const aPartirDe = new Date('2026-08-20T00:00:00.000Z');
+      await service.cancelFutureClassOccupancies(prisma, 'c1', 't1', aPartirDe);
+
+      expect(prisma.ocupacaoQuadra.updateMany).toHaveBeenCalledWith({
+        where: {
+          companyId: 'c1',
+          origemTipo: 'TURMA',
+          origemTurmaId: 't1',
+          statusPagamento: { not: 'cancelado' },
+          data: { gte: aPartirDe },
+        },
+        data: { statusPagamento: 'cancelado' },
+      });
     });
   });
 
