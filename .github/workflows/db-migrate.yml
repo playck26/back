@@ -367,6 +367,36 @@ jobs:
 
           echo "SPEC-006 OK — configuração de pagamento (escopada a company_admin/aluno) e confirmação manual de status funcionam de ponta a ponta contra o Neon."
 
+          echo "--- FIT-002: rotação atômica de refresh token — 2 POST /auth/refresh simultâneos com o mesmo token, 10 execuções ---"
+          FALHAS_FIT2=0
+          for i in $(seq 1 10); do
+            LOGIN_ITER_RES=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
+              -H "Content-Type: application/json" \
+              -d '{"email":"admin@smarttennis.demo","senha":"trocar-em-producao-123"}')
+            REFRESH_TOKEN_ITER=$(echo "$LOGIN_ITER_RES" | jq -r '.refreshToken')
+
+            curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/auth/refresh \
+              -H "Cookie: refresh_token=$REFRESH_TOKEN_ITER" > "/tmp/fit2_a_${i}.code" &
+            PID1=$!
+            curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/auth/refresh \
+              -H "Cookie: refresh_token=$REFRESH_TOKEN_ITER" > "/tmp/fit2_b_${i}.code" &
+            PID2=$!
+            wait "$PID1" "$PID2"
+            C1=$(cat "/tmp/fit2_a_${i}.code")
+            C2=$(cat "/tmp/fit2_b_${i}.code")
+            if { [ "$C1" = "200" ] && [ "$C2" = "401" ]; } || { [ "$C1" = "401" ] && [ "$C2" = "200" ]; }; then
+              echo "  iteração $i OK ($C1/$C2)"
+            else
+              echo "  iteração $i FALHOU ($C1/$C2) — rotação concorrente pode ter emitido 2 pares de token ou erro inesperado"
+              FALHAS_FIT2=$((FALHAS_FIT2 + 1))
+            fi
+          done
+          if [ "$FALHAS_FIT2" -gt 0 ]; then
+            echo "FIT-002 falhou em $FALHAS_FIT2 de 10 execuções"
+            exit 1
+          fi
+          echo "FIT-002 OK — 10/10 execuções, rotação de refresh token sem duplo par emitido sob concorrência real (updateMany WHERE revokedAt: null comprovado no banco real)."
+
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
@@ -385,6 +415,6 @@ jobs:
           DELETE FROM usuarios WHERE email = 'aluno-app-ci-$RUN_ID@playck-tests.demo';
           SQL
 
-          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001, aberto a aluno) + MOD-006 (pagamento manual) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
+          echo "Smoke test OK — auth (com FIT-002) + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001, aberto a aluno) + MOD-006 (pagamento manual) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
