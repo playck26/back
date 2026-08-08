@@ -30,7 +30,7 @@
           }
         },
         "responses": {
-          "201": {
+          "200": {
             "description": ""
           }
         },
@@ -44,7 +44,7 @@
         "operationId": "AuthController_refresh",
         "parameters": [],
         "responses": {
-          "201": {
+          "200": {
             "description": ""
           }
         },

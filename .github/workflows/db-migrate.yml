@@ -108,6 +108,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"email\":\"ci-$RUN_ID@playck-tests.demo\",\"senha\":\"senha-forte-123\"}")
           [ "$NEW_ADMIN_LOGIN" = "200" ] || (echo "esperado 200, veio $NEW_ADMIN_LOGIN" && exit 1)
+          # (login retorna 200 desde a correção de HttpCode em auth.controller.ts)
 
           echo "--- PATCH /companies/:id (renomear) ---"
           curl -s -X PATCH "http://localhost:3000/api/v1/companies/$COMPANY_ID" \
@@ -127,6 +128,13 @@ jobs:
           [ "$BLOCKED_LOGIN" = "401" ] || (echo "esperado 401, veio $BLOCKED_LOGIN" && exit 1)
 
           kill $APP_PID
+
+          echo "--- limpando empresa/admin de teste criados pelo smoke test ---"
+          cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+          DELETE FROM usuarios WHERE email = 'ci-$RUN_ID@playck-tests.demo';
+          DELETE FROM empresas WHERE id = '$COMPANY_ID';
+          SQL
+
           echo "Smoke test OK — auth + MOD-002 (companies) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

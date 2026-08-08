@@ -37,6 +37,7 @@ export class AuthController {
   ) {}
 
   @Post('login')
+  @HttpCode(HttpStatus.OK)
   @Throttle(LOGIN_THROTTLE)
   async login(
     @Body() dto: LoginDto,
@@ -48,6 +49,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @HttpCode(HttpStatus.OK)
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
