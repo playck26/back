@@ -18,6 +18,29 @@ expõe `/api/docs` mesmo sem `DATABASE_URL` válido. Rotas que tocam o banco
 só funcionam depois que o Neon estiver provisionado e a migration
 aplicada (`pnpm run db:migrate:deploy`).
 
+## ⚠️ Migration/seed contra o Neon: use o GitHub Actions, não local
+
+Algumas redes (confirmado: rede doméstica testada em 2026-08-09, muito
+provavelmente bloqueio de porta pelo ISP) não conseguem alcançar a porta
+5432 do Neon, mesmo com a `DATABASE_URL` correta — `prisma migrate
+deploy` trava com `P1001: Can't reach database server`. Antes de assumir
+que é erro de configuração, teste rodando `SELECT 1;` no SQL Editor do
+[console.neon.tech](https://console.neon.tech) — se funcionar lá, o banco
+está bem, o problema é a rede local.
+
+**Solução:** rode a migration/seed pelo GitHub Actions em vez da sua
+máquina — os runners do GitHub não têm essa restrição:
+
+```bash
+gh workflow run db-migrate.yml --repo playck26/back -f run_seed=true
+gh run watch --repo playck26/back
+```
+
+Esse workflow (`.github/workflows/db-migrate.yml`) usa o secret
+`DATABASE_URL` do repositório, aplica a migration, roda o seed, e ainda
+sobe a aplicação dentro do runner pra testar login/`/auth/me` de ponta a
+ponta contra o banco real antes de terminar.
+
 ## Scripts
 
 | Script | O que faz |
