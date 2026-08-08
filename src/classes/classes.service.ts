@@ -1,10 +1,12 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  formatDateOnly,
   formatTimeOnly,
   gerarDatasSemanaisFuturas,
   parseTimeOnly,
@@ -271,6 +273,62 @@ export class ClassesService {
     }
 
     await this.prisma.turmaAluno.delete({ where: { id: alocacao.id } });
+  }
+
+  // CON-004.5 (SPEC-005): próximas aulas do aluno logado — escopado por
+  // aluno_id via turma_alunos, não só por company_id (AC-002: um aluno
+  // não pode ver aula de outro aluno da mesma empresa). View-only: uma
+  // ocupação de turma é compartilhada por todos os alunos matriculados
+  // (não tem aluno_id próprio), então remarcar/cancelar uma ocorrência
+  // individual não é suportado nesta rodada (GAP-008,
+  // TARGET_ARCHITECTURE.md) — CON-004.6/004.7 ficam para depois do MVP.
+  async myUpcomingClasses(companyId: string, usuarioId: string) {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { usuarioId, companyId },
+    });
+    if (!aluno) {
+      throw new ForbiddenException();
+    }
+
+    const alocacoes = await this.prisma.turmaAluno.findMany({
+      where: { alunoId: aluno.id },
+      select: { turmaId: true },
+    });
+    const turmaIds = alocacoes.map((alocacao) => alocacao.turmaId);
+    if (turmaIds.length === 0) {
+      return [];
+    }
+
+    const hojeUTC = new Date(
+      Date.UTC(
+        new Date().getUTCFullYear(),
+        new Date().getUTCMonth(),
+        new Date().getUTCDate(),
+      ),
+    );
+
+    const ocupacoes = await this.prisma.ocupacaoQuadra.findMany({
+      where: {
+        companyId,
+        origemTipo: 'TURMA',
+        origemTurmaId: { in: turmaIds },
+        statusPagamento: { not: 'cancelado' },
+        data: { gte: hojeUTC },
+      },
+      include: { origemTurma: true, quadra: true },
+      orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+    });
+
+    return ocupacoes.map((ocupacao) => ({
+      ocupacaoId: ocupacao.id,
+      turmaId: ocupacao.origemTurmaId,
+      turmaNome: ocupacao.origemTurma?.nome ?? null,
+      quadraId: ocupacao.quadraId,
+      quadraNome: ocupacao.quadra.nome,
+      data: formatDateOnly(ocupacao.data),
+      horaInicio: formatTimeOnly(ocupacao.horaInicio),
+      horaFim: formatTimeOnly(ocupacao.horaFim),
+    }));
   }
 
   private async assertTurmaDaEmpresa(

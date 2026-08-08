@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -223,12 +224,21 @@ export class CourtsService {
     }
   }
 
-  async listBookings(companyId: string, query: ListBookingsQueryDto) {
+  // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, o controller
+  // resolve o próprio `aluno.id` e passa aqui para escopar a listagem só
+  // às reservas do próprio aluno (REQ-005/AC-002) — `company_admin` chama
+  // sem esse parâmetro e continua vendo tudo da empresa, como antes.
+  async listBookings(
+    companyId: string,
+    query: ListBookingsQueryDto,
+    alunoIdScope?: string,
+  ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
     const where: Prisma.OcupacaoQuadraWhereInput = {
       companyId,
+      ...(alunoIdScope ? { alunoId: alunoIdScope } : {}),
       ...(query.status ? { statusPagamento: query.status } : {}),
       ...(query.data ? { data: parseDateOnly(query.data) } : {}),
     };
@@ -340,12 +350,22 @@ export class CourtsService {
     });
   }
 
-  async cancelBooking(companyId: string, id: string): Promise<void> {
+  // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
+  // cancelar reserva onde `aluno_id` bate com o próprio — "dono da reserva
+  // ou company_admin" (API_CONTRACTS.md CON-005.6).
+  async cancelBooking(
+    companyId: string,
+    id: string,
+    alunoIdScope?: string,
+  ): Promise<void> {
     const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
       where: { id, companyId },
     });
     if (!ocupacao) {
       throw new NotFoundException();
+    }
+    if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
+      throw new ForbiddenException();
     }
 
     // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
@@ -355,6 +375,21 @@ export class CourtsService {
       where: { id },
       data: { statusPagamento: 'cancelado' },
     });
+  }
+
+  // Resolve o registro de Aluno do usuário autenticado, escopado à empresa
+  // (SPEC-005) — usado pelo controller para decidir o `alunoId` efetivo em
+  // rotas que a role `aluno` compartilha com `company_admin`. 403 (não 404)
+  // porque a ausência de vínculo aluno é uma falha de autorização do
+  // chamador, não um recurso não encontrado.
+  async findAlunoDoUsuario(companyId: string, usuarioId: string) {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { usuarioId, companyId },
+    });
+    if (!aluno) {
+      throw new ForbiddenException();
+    }
+    return aluno;
   }
 
   private async assertQuadraDaEmpresa(

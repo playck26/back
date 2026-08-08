@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -19,6 +20,9 @@ function buildPrismaMock() {
       create: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
+    },
+    aluno: {
+      findFirst: jest.fn(),
     },
     ocupacaoQuadra: {
       findMany: jest.fn(),
@@ -321,6 +325,32 @@ describe('CourtsService', () => {
     });
   });
 
+  describe('listBookings (SPEC-005)', () => {
+    it('sem alunoIdScope, lista tudo da empresa (comportamento de company_admin)', async () => {
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(0);
+
+      await service.listBookings('c1', {});
+
+      expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { companyId: 'c1' } }),
+      );
+    });
+
+    it('com alunoIdScope, escopa a listagem só ao próprio aluno (REQ-005)', async () => {
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(0);
+
+      await service.listBookings('c1', {}, 'a1');
+
+      expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { companyId: 'c1', alunoId: 'a1' },
+        }),
+      );
+    });
+  });
+
   describe('cancelBooking', () => {
     it('lança 404 cross-tenant', async () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
@@ -343,6 +373,60 @@ describe('CourtsService', () => {
         where: { id: 'o1' },
         data: { statusPagamento: 'cancelado' },
       });
+    });
+
+    it('com alunoIdScope, rejeita cancelar reserva de outro aluno (REQ-005)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        alunoId: 'outro-aluno',
+      });
+
+      await expect(
+        service.cancelBooking('c1', 'o1', 'a1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+    });
+
+    it('com alunoIdScope, cancela a própria reserva normalmente', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        alunoId: 'a1',
+      });
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
+
+      await service.cancelBooking('c1', 'o1', 'a1');
+
+      expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { statusPagamento: 'cancelado' },
+      });
+    });
+  });
+
+  describe('findAlunoDoUsuario', () => {
+    it('lança 403 se o usuário não tem aluno vinculado na empresa', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.findAlunoDoUsuario('c1', 'u1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('retorna o aluno vinculado ao usuário na empresa', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u1',
+        companyId: 'c1',
+      });
+
+      const aluno = await service.findAlunoDoUsuario('c1', 'u1');
+
+      expect(prisma.aluno.findFirst).toHaveBeenCalledWith({
+        where: { usuarioId: 'u1', companyId: 'c1' },
+      });
+      expect(aluno.id).toBe('a1');
     });
   });
 });

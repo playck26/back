@@ -257,6 +257,62 @@ jobs:
             | jq -e '.ocupacaoQuadrasPct >= 0'
           echo "MOD-007 OK — dashboard agrega alunos ativos + ocupação de turma + ocupação de quadra contra o Neon."
 
+          echo "--- SPEC-005: registra e loga como aluno via self-service (register-aluno) ---"
+          DEMO_COMPANY_ID=$(echo "$ME_RES" | jq -r '.companyId')
+          ALUNO_EMAIL="aluno-app-ci-$RUN_ID@playck-tests.demo"
+          curl -s -X POST http://localhost:3000/api/v1/auth/register-aluno \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$ALUNO_EMAIL\",\"senha\":\"senha-forte-123\",\"nome\":\"Aluno App CI\",\"companyId\":\"$DEMO_COMPANY_ID\"}" > /dev/null
+
+          ALUNO_LOGIN_RES=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$ALUNO_EMAIL\",\"senha\":\"senha-forte-123\"}")
+          echo "$ALUNO_LOGIN_RES" | jq -e '.usuario.role == "aluno"'
+          ALUNO_TOKEN=$(echo "$ALUNO_LOGIN_RES" | jq -r '.accessToken')
+
+          echo "--- aluno lê quadras (CON-005.1, leitura aberta a aluno) ---"
+          curl -s http://localhost:3000/api/v1/courts -H "Authorization: Bearer $ALUNO_TOKEN" | jq -e '.total >= 1'
+
+          echo "--- aluno NÃO consegue criar quadra (403, escrita continua company_admin-only) ---"
+          ALUNO_CREATE_COURT_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/courts \
+            -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
+            -d '{"nome":"Quadra Indevida","esporte":"tenis","precoHora":1}')
+          [ "$ALUNO_CREATE_COURT_RES" = "403" ] || (echo "esperado 403, veio $ALUNO_CREATE_COURT_RES" && exit 1)
+
+          echo "--- aluno reserva quadra para si mesmo, sem informar alunoId (REQ-005) ---"
+          ALUNO_BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
+            -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-26\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\"}")
+          echo "$ALUNO_BOOKING_RES"
+          echo "$ALUNO_BOOKING_RES" | jq -e '.alunoId and .origemTipo == "AVULSO"'
+          ALUNO_BOOKING_ID=$(echo "$ALUNO_BOOKING_RES" | jq -r '.id')
+          ALUNO_PROPRIO_ID=$(echo "$ALUNO_BOOKING_RES" | jq -r '.alunoId')
+
+          echo "--- aluno tentando informar alunoId de outro aluno é ignorado, servidor força o próprio id do token (REQ-005) ---"
+          OUTRO_BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
+            -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-26\",\"horaInicio\":\"10:00\",\"horaFim\":\"11:00\",\"alunoId\":\"$STUDENT_ID\"}")
+          echo "$OUTRO_BOOKING_RES" | jq -e ".alunoId == \"$ALUNO_PROPRIO_ID\""
+
+          echo "--- GET /bookings do aluno só mostra as próprias reservas ---"
+          curl -s http://localhost:3000/api/v1/bookings -H "Authorization: Bearer $ALUNO_TOKEN" \
+            | jq -e --arg id "$ALUNO_PROPRIO_ID" '[.data[] | select(.alunoId != $id)] | length == 0'
+
+          echo "--- GET /me/classes do aluno (CON-004.5) — sem turma alocada, lista vazia ---"
+          curl -s http://localhost:3000/api/v1/me/classes -H "Authorization: Bearer $ALUNO_TOKEN" | jq -e '. == []'
+
+          echo "--- aluno cancela a própria reserva (204) ---"
+          CANCEL_ALUNO_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$ALUNO_BOOKING_ID/cancel" \
+            -H "Authorization: Bearer $ALUNO_TOKEN")
+          [ "$CANCEL_ALUNO_RES" = "204" ] || (echo "esperado 204, veio $CANCEL_ALUNO_RES" && exit 1)
+
+          echo "--- aluno NÃO consegue cancelar reserva de outro aluno (403) ---"
+          CANCEL_OUTRO_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
+            -H "Authorization: Bearer $ALUNO_TOKEN")
+          [ "$CANCEL_OUTRO_RES" = "403" ] || (echo "esperado 403, veio $CANCEL_OUTRO_RES" && exit 1)
+
+          echo "SPEC-005 OK — leitura de quadras, reserva/cancelamento escopados ao próprio aluno (REQ-005) e /me/classes funcionam de ponta a ponta contra o Neon."
+
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
@@ -271,8 +327,10 @@ jobs:
           DELETE FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo';
           DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo';
+          DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-app-ci-$RUN_ID@playck-tests.demo');
+          DELETE FROM usuarios WHERE email = 'aluno-app-ci-$RUN_ID@playck-tests.demo';
           SQL
 
-          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
+          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001, aberto a aluno) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

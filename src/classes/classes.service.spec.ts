@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -39,7 +40,13 @@ function buildMocks() {
     quadra: { findFirst: jest.fn() },
     nivel: { findFirst: jest.fn() },
     professor: { findFirst: jest.fn() },
-    turmaAluno: { findFirst: jest.fn(), delete: jest.fn() },
+    aluno: { findFirst: jest.fn() },
+    turmaAluno: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      delete: jest.fn(),
+    },
+    ocupacaoQuadra: { findMany: jest.fn() },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
   const courtsService = {
@@ -324,6 +331,73 @@ describe('ClassesService', () => {
       expect(prisma.turmaAluno.delete).toHaveBeenCalledWith({
         where: { id: 'ta1' },
       });
+    });
+  });
+
+  describe('myUpcomingClasses (CON-004.5, SPEC-005)', () => {
+    it('lança 403 se o usuário não tem aluno vinculado na empresa', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.myUpcomingClasses('c1', 'u1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('retorna lista vazia se o aluno não está alocado em nenhuma turma', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({ id: 'a1' });
+      (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.myUpcomingClasses('c1', 'u1');
+
+      expect(result).toEqual([]);
+      expect(prisma.ocupacaoQuadra.findMany).not.toHaveBeenCalled();
+    });
+
+    it('escopa por aluno_id (via turma_alunos), não só por company_id (AC-002)', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({ id: 'a1' });
+      (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
+        { turmaId: 't1' },
+      ]);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'o1',
+          origemTurmaId: 't1',
+          origemTurma: { nome: 'Turma A' },
+          quadraId: 'q1',
+          quadra: { nome: 'Quadra 1' },
+          data: new Date('2026-08-25T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.myUpcomingClasses('c1', 'u1');
+
+      expect(prisma.turmaAluno.findMany).toHaveBeenCalledWith({
+        where: { alunoId: 'a1' },
+        select: { turmaId: true },
+      });
+      expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            companyId: 'c1',
+            origemTipo: 'TURMA',
+            origemTurmaId: { in: ['t1'] },
+          }),
+        }),
+      );
+      expect(result).toEqual([
+        {
+          ocupacaoId: 'o1',
+          turmaId: 't1',
+          turmaNome: 'Turma A',
+          quadraId: 'q1',
+          quadraNome: 'Quadra 1',
+          data: '2026-08-25',
+          horaInicio: '14:00',
+          horaFim: '15:00',
+        },
+      ]);
     });
   });
 });

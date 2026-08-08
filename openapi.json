@@ -1167,6 +1167,25 @@
         ]
       }
     },
+    "/api/v1/me/classes": {
+      "get": {
+        "operationId": "MeClassesController_myUpcomingClasses",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/dashboard/summary": {
       "get": {
         "operationId": "DashboardController_summary",
@@ -1507,8 +1526,7 @@
           "quadraId",
           "data",
           "horaInicio",
-          "horaFim",
-          "alunoId"
+          "horaFim"
         ]
       },
       "CreateClassDto": {
