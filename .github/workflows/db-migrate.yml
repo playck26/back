@@ -127,14 +127,80 @@ jobs:
             -d "{\"email\":\"ci-$RUN_ID@playck-tests.demo\",\"senha\":\"senha-forte-123\"}")
           [ "$BLOCKED_LOGIN" = "401" ] || (echo "esperado 401, veio $BLOCKED_LOGIN" && exit 1)
 
+          echo "--- GET /courts (quadras semeadas pelo seed etapa 2) ---"
+          COURTS_RES=$(curl -s http://localhost:3000/api/v1/courts -H "Authorization: Bearer $ACCESS_TOKEN")
+          echo "$COURTS_RES" | jq -e '.total >= 1'
+          QUADRA_ID=$(echo "$COURTS_RES" | jq -r '.data[0].id')
+
+          echo "--- GET /courts/:id/availability ---"
+          curl -s "http://localhost:3000/api/v1/courts/$QUADRA_ID/availability?data=2026-08-25" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" | jq -e '.slots | length == 16'
+
+          echo "--- cria aluno de teste pra usar nas reservas ---"
+          STUDENT_RES=$(curl -s -X POST http://localhost:3000/api/v1/students \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"nome\":\"Aluno CI\",\"email\":\"aluno-ci-$RUN_ID@playck-tests.demo\"}")
+          echo "$STUDENT_RES"
+          STUDENT_ID=$(echo "$STUDENT_RES" | jq -r '.id')
+
+          echo "--- POST /bookings (reserva avulsa sem conflito) ---"
+          BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-25\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
+          echo "$BOOKING_RES"
+          echo "$BOOKING_RES" | jq -e '.statusPagamento == "pendente_pagamento" and .origemTipo == "AVULSO"'
+          BOOKING_ID=$(echo "$BOOKING_RES" | jq -r '.id')
+
+          echo "--- POST /bookings no mesmo horário precisa ser 409 (REQ-004) ---"
+          CONFLICT_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-25\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
+          [ "$CONFLICT_RES" = "409" ] || (echo "esperado 409, veio $CONFLICT_RES" && exit 1)
+
+          echo "--- cancelar libera o slot (AC-003) ---"
+          curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" | grep -q 204
+          REBOOK_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-25\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
+          [ "$REBOOK_RES" = "201" ] || (echo "esperado 201 após cancelar, veio $REBOOK_RES" && exit 1)
+
+          echo "--- FIT-001: 2 requisições simultâneas no mesmo slot, 20 execuções, zero overbooking (NFR-001) ---"
+          FALHAS=0
+          for i in $(seq 1 20); do
+            DIA=$(printf "2026-09-%02d" "$i")
+            BODY="{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$DIA\",\"horaInicio\":\"10:00\",\"horaFim\":\"11:00\",\"alunoId\":\"$STUDENT_ID\"}"
+            curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
+              -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY" > "/tmp/fit1_${i}.code" &
+            curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
+              -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY" > "/tmp/fit2_${i}.code" &
+            wait
+            C1=$(cat "/tmp/fit1_${i}.code")
+            C2=$(cat "/tmp/fit2_${i}.code")
+            if { [ "$C1" = "201" ] && [ "$C2" = "409" ]; } || { [ "$C1" = "409" ] && [ "$C2" = "201" ]; }; then
+              echo "  iteração $i OK ($C1/$C2)"
+            else
+              echo "  iteração $i FALHOU ($C1/$C2) — overbooking ou erro inesperado"
+              FALHAS=$((FALHAS + 1))
+            fi
+          done
+          if [ "$FALHAS" -gt 0 ]; then
+            echo "FIT-001 falhou em $FALHAS de 20 execuções"
+            exit 1
+          fi
+          echo "FIT-001 OK — 20/20 execuções sem overbooking sob concorrência (INV-001 comprovado no banco real)"
+
           kill $APP_PID
 
-          echo "--- limpando empresa/admin de teste criados pelo smoke test ---"
+          echo "--- limpando dado de teste criado pelo smoke test ---"
           cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
           DELETE FROM usuarios WHERE email = 'ci-$RUN_ID@playck-tests.demo';
           DELETE FROM empresas WHERE id = '$COMPANY_ID';
+          DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
+          DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo');
+          DELETE FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo';
           SQL
 
-          echo "Smoke test OK — auth + MOD-002 (companies) funcionam de ponta a ponta contra o Neon."
+          echo "Smoke test OK — auth + MOD-002 + MOD-005 (com FIT-001) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
