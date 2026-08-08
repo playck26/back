@@ -194,8 +194,14 @@ export class CourtsService {
       // A constraint EXCLUDE (INV-001) e o índice único de idempotência
       // não têm código Prisma dedicado — qualquer falha de constraint
       // neste insert específico (depois dos pré-checks acima) só pode ser
-      // uma dessas duas, ambas tratadas como corrida perdida.
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      // uma dessas duas, ambas tratadas como corrida perdida. A violação de
+      // EXCLUDE (23P01) chega como PrismaClientUnknownRequestError (não
+      // PrismaClientKnownRequestError, que só cobre os P-códigos que o
+      // Prisma reconhece), então as duas precisam ser pegas aqui.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError ||
+        error instanceof Prisma.PrismaClientUnknownRequestError
+      ) {
         if (clientRequestId) {
           const existente = await this.prisma.ocupacaoQuadra.findFirst({
             where: { companyId, clientRequestId },

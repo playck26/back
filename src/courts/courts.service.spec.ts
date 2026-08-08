@@ -189,15 +189,19 @@ describe('CourtsService', () => {
     });
 
     it('corrida perdida na constraint EXCLUDE vira 409 (INV-001, mesma lógica do FIT-001)', async () => {
+      // A violação da EXCLUDE constraint (código Postgres 23P01) não tem
+      // P-código dedicado no Prisma, então chega como
+      // PrismaClientUnknownRequestError — não PrismaClientKnownRequestError.
+      // Achado real via FIT-001 rodando contra o Neon (18/20 execuções
+      // vazavam como 500 antes desta correção).
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
       (prisma.ocupacaoQuadra.findFirst as jest.Mock)
         .mockResolvedValueOnce(null) // pré-checagem: sem conflito no momento da leitura
         .mockResolvedValueOnce({ id: 'o-concorrente', origemTipo: 'AVULSO' }); // conflito real após a corrida
       (prisma.ocupacaoQuadra.create as jest.Mock).mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError(
-          'conflicting key value violates exclusion constraint',
+        new Prisma.PrismaClientUnknownRequestError(
+          'conflicting key value violates exclusion constraint "no_overlap_por_quadra"',
           {
-            code: 'P2004',
             clientVersion: '6.19.3',
           },
         ),
