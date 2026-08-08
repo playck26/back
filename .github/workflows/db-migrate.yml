@@ -29,6 +29,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Remover tabela de exemplo da Neon (playing_with_neon)
+        run: echo 'DROP TABLE IF EXISTS "playing_with_neon";' | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - name: Prisma migrate deploy
         run: pnpm exec prisma migrate deploy
         env:
