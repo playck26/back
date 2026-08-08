@@ -3,6 +3,14 @@
 // hora importa (mesma convenção usada nas duas pontas: escrita e leitura).
 const TIME_BASE_DATE = '1970-01-01';
 
+// Janela de expediente fixa no MVP (06h-22h) — não há campo de horário de
+// funcionamento configurável em DATA_MODEL.md; assumido como simplificação
+// razoável, registrado como gap em STATUS.md. Usada tanto pela grade de
+// disponibilidade (courts.service.ts) quanto pelo denominador de
+// `ocupacaoQuadrasPct` do dashboard (dashboard.service.ts).
+export const EXPEDIENTE_INICIO_HORA = 6;
+export const EXPEDIENTE_FIM_HORA = 22;
+
 export function parseDateOnly(data: string): Date {
   return new Date(`${data}T00:00:00.000Z`);
 }

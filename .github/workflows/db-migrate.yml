@@ -244,6 +244,19 @@ jobs:
 
           echo "MOD-004 OK — criação de turma com geração de ocupações (AC-001), alocação com limite de capacidade (AC-002) e remoção (REQ-005) funcionam de ponta a ponta contra o Neon."
 
+          echo "--- MOD-007: GET /dashboard/summary (REQ-006) ---"
+          DASHBOARD_RES=$(curl -s http://localhost:3000/api/v1/dashboard/summary -H "Authorization: Bearer $ACCESS_TOKEN")
+          echo "$DASHBOARD_RES"
+          echo "$DASHBOARD_RES" | jq -e '
+            (.alunosAtivos >= 3) and
+            (.ocupacaoTurmasPct >= 0 and .ocupacaoTurmasPct <= 100) and
+            (.ocupacaoQuadrasPct >= 0 and .ocupacaoQuadrasPct <= 100)
+          '
+          echo "--- GET /dashboard/summary?periodo=2026-09 (formato AAAA-MM aceito) ---"
+          curl -s "http://localhost:3000/api/v1/dashboard/summary?periodo=2026-09" -H "Authorization: Bearer $ACCESS_TOKEN" \
+            | jq -e '.ocupacaoQuadrasPct >= 0'
+          echo "MOD-007 OK — dashboard agrega alunos ativos + ocupação de turma + ocupação de quadra contra o Neon."
+
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
@@ -260,6 +273,6 @@ jobs:
           DELETE FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo';
           SQL
 
-          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001) funcionam de ponta a ponta contra o Neon."
+          echo "Smoke test OK — auth + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

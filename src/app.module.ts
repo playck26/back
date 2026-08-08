@@ -9,6 +9,7 @@ import { CommonModule } from './common/common.module';
 import { ClassesModule } from './classes/classes.module';
 import { CompaniesModule } from './companies/companies.module';
 import { CourtsModule } from './courts/courts.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -23,6 +24,7 @@ import { PrismaModule } from './prisma/prisma.module';
     PeopleModule,
     CourtsModule,
     ClassesModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

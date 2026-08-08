@@ -7,6 +7,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  EXPEDIENTE_FIM_HORA,
+  EXPEDIENTE_INICIO_HORA,
   formatDateOnly,
   formatTimeOnly,
   parseDateOnly,
@@ -16,12 +18,6 @@ import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { CreateCourtDto } from './dto/create-court.dto';
 import type { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import type { UpdateCourtDto } from './dto/update-court.dto';
-
-// Janela de expediente fixa no MVP (06h-22h, slots de 1h) — não há campo
-// de horário de funcionamento configurável em DATA_MODEL.md; assumido
-// como simplificação razoável, registrado como gap em STATUS.md.
-const EXPEDIENTE_INICIO_HORA = 6;
-const EXPEDIENTE_FIM_HORA = 22;
 
 interface ConflitoDetectado {
   ocupacaoId: string;
