@@ -7,10 +7,16 @@
 // e CompaniesService.create.
 
 export interface TxMock {
-  usuario: { create: jest.Mock; update: jest.Mock };
+  // `findUnique` entrou com SPEC-009: o aceite de convite checa e-mail
+  // duplicado **dentro** da transação, para a claim do convite voltar
+  // atrás junto se o cadastro não puder ser concluído.
+  usuario: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
   aluno: { create: jest.Mock };
   // SPEC-009: `trocarSenha` revoga as sessões dentro da transação.
   refreshToken: { updateMany: jest.Mock };
+  // SPEC-009/INV-009: o aceite reivindica a linha do convite e só então
+  // cria a conta — as duas escritas na mesma transação.
+  conviteAluno: { updateMany: jest.Mock; findUniqueOrThrow: jest.Mock };
   // `findUnique` entrou em SPEC-009:TASK-000: `CompaniesService.create`
   // gera `slug` único e checa colisão dentro da própria transação.
   empresa: { create: jest.Mock; findUnique: jest.Mock };
@@ -38,15 +44,20 @@ export interface PrismaMock {
   aluno: {
     create: jest.Mock;
   };
+  conviteAluno: {
+    create: jest.Mock;
+    findUnique: jest.Mock;
+  };
   tx: TxMock;
   $transaction: jest.Mock;
 }
 
 export function buildPrismaMock(): PrismaMock {
   const tx: TxMock = {
-    usuario: { create: jest.fn(), update: jest.fn() },
+    usuario: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     aluno: { create: jest.fn() },
     refreshToken: { updateMany: jest.fn() },
+    conviteAluno: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
     empresa: {
       create: jest.fn(),
       // Padrão: nenhum slug colidindo.
@@ -72,6 +83,10 @@ export function buildPrismaMock(): PrismaMock {
       create: jest.fn(),
       findUnique: jest.fn(),
       updateMany: jest.fn(),
+    },
+    conviteAluno: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
     },
     aluno: {
       create: jest.fn(),

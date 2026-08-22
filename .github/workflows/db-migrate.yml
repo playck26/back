@@ -412,10 +412,55 @@ jobs:
           fi
           echo "FIT-002 OK — 3/3 execuções independentes, rotação atômica de refresh token sem duplo par emitido sob concorrência real (updateMany WHERE revokedAt: null comprovado no banco real)."
 
+          echo "--- FIT-003 (SPEC-009/INV-009): 2 aceites simultâneos do MESMO convite, 5 execuções ---"
+          # A garantia é a claim atômica do aceite: um UPDATE só, com
+          # `usado_em IS NULL` no WHERE. Ler-e-depois-escrever sob READ
+          # COMMITTED deixaria as duas requisições concorrentes lerem "não
+          # usado" e criarem duas contas com o mesmo convite.
+          #
+          # 5 execuções, não 20 como FIT-001: aqui a garantia é lock de
+          # linha do Postgres (mesma natureza de FIT-002), não um catch de
+          # tipo de erro. Cada execução consome 1 e-mail novo, e o e-mail é
+          # único global (INV-004) — por isso o RUN_ID no endereço.
+          FALHAS_FIT3=0
+          for i in $(seq 1 5); do
+            CONVITE_RES=$(curl -s -X POST http://localhost:3000/api/v1/invites \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"nome\":\"Convidado CI\",\"email\":\"convite-ci-$i-$RUN_ID@playck-tests.demo\"}")
+            CONVITE_TOKEN=$(echo "$CONVITE_RES" | jq -r '.token')
+
+            curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/auth/aceitar-convite \
+              -H "Content-Type: application/json" \
+              -d "{\"token\":\"$CONVITE_TOKEN\",\"senha\":\"senha-forte-123\"}" > "/tmp/fit3_a_${i}.code" &
+            PID_A=$!
+            curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/auth/aceitar-convite \
+              -H "Content-Type: application/json" \
+              -d "{\"token\":\"$CONVITE_TOKEN\",\"senha\":\"senha-forte-123\"}" > "/tmp/fit3_b_${i}.code" &
+            PID_B=$!
+            wait "$PID_A" "$PID_B"
+            F1=$(cat "/tmp/fit3_a_${i}.code")
+            F2=$(cat "/tmp/fit3_b_${i}.code")
+            if { [ "$F1" = "201" ] && [ "$F2" = "410" ]; } || { [ "$F1" = "410" ] && [ "$F2" = "201" ]; }; then
+              echo "  iteração $i OK ($F1/$F2)"
+            else
+              echo "  iteração $i FALHOU ($F1/$F2) — o mesmo convite pode ter criado 2 contas"
+              FALHAS_FIT3=$((FALHAS_FIT3 + 1))
+            fi
+          done
+          if [ "$FALHAS_FIT3" -gt 0 ]; then
+            echo "FIT-003 falhou em $FALHAS_FIT3 de 5 execuções"
+            exit 1
+          fi
+          echo "FIT-003 OK — 5/5 execuções com exatamente um aceite vencedor (INV-009 comprovado no banco real)."
+
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
           cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+          DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo');
+          DELETE FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
+          DELETE FROM convites_aluno WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
           DELETE FROM usuarios WHERE email = 'ci-$RUN_ID@playck-tests.demo';
           DELETE FROM empresas WHERE id = '$COMPANY_ID';
           DELETE FROM turma_alunos WHERE turma_id = '$CLASS_ID';

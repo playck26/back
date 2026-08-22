@@ -326,6 +326,120 @@ describe('Auth (e2e) - TEST-001', () => {
   });
 
   // =====================================================================
+  // SPEC-009/REQ-002 — convites, na camada HTTP real
+  // =====================================================================
+  describe('convites (SPEC-009)', () => {
+    const CONVITE_VALIDO = {
+      companyId: COMPANY_ID,
+      email: 'convidado@x.com',
+      nome: 'Convidado',
+      telefone: '11999999999',
+      nivelId: 'n1',
+      usadoEm: null,
+      expiraEm: new Date(Date.now() + 86_400_000),
+      empresa: { nome: 'Empresa Demo', status: 'ativa' },
+    };
+
+    it('AC-003: admin cria convite e recebe o token uma única vez', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+      prisma.usuario.findUnique.mockResolvedValue(null);
+      prisma.conviteAluno.create.mockResolvedValue({
+        id: 'c1',
+        expiraEm: new Date(),
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/invites')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ nome: 'Convidado' })
+        .expect(201);
+
+      const body = bodyOf<{ token: string }>(res);
+      expect(body.token).toBeTruthy();
+
+      // O que vai para o banco é o hash; o token existe só nesta resposta.
+      const [args] = prisma.conviteAluno.create.mock.calls[0] as [
+        { data: { tokenHash: string } },
+      ];
+      expect(args.data.tokenHash).not.toBe(body.token);
+      expect(args.data.tokenHash).toHaveLength(64);
+    });
+
+    it('AC-024/AC-025: consulta pública devolve só empresa e nome', async () => {
+      prisma.conviteAluno.findUnique.mockResolvedValue(CONVITE_VALIDO);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/public/invites/token-qualquer')
+        .expect(200);
+
+      expect(res.body).toEqual({
+        empresa: { nome: 'Empresa Demo' },
+        nome: 'Convidado',
+      });
+      const serializado = JSON.stringify(res.body);
+      expect(serializado).not.toContain('convidado@x.com');
+      expect(serializado).not.toContain('11999999999');
+    });
+
+    it('AC-023: convite já usado devolve 410', async () => {
+      prisma.conviteAluno.findUnique.mockResolvedValue({
+        ...CONVITE_VALIDO,
+        usadoEm: new Date(),
+      });
+
+      await request(app.getHttpServer())
+        .get('/api/v1/public/invites/token-qualquer')
+        .expect(410);
+    });
+
+    // INV-009 na camada HTTP: quem perde a claim recebe 410 e nenhuma conta
+    // é criada. A prova de concorrência real contra o banco é FIT-003.
+    it('AC-005: aceite que perde a claim devolve 410 e não cria conta', async () => {
+      prisma.tx.conviteAluno.updateMany.mockResolvedValue({ count: 0 });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/aceitar-convite')
+        .send({ token: 'token-qualquer', senha: 'senha-forte-123' })
+        .expect(410);
+
+      expect(prisma.tx.usuario.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-004: aceite cria a conta com a senha escolhida e vínculo aprovado', async () => {
+      prisma.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
+      prisma.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue({
+        ...CONVITE_VALIDO,
+        nivelId: null,
+      });
+      prisma.tx.usuario.findUnique.mockResolvedValue(null);
+      prisma.tx.usuario.create.mockResolvedValue({
+        id: 'u9',
+        email: CONVITE_VALIDO.email,
+      });
+      prisma.tx.aluno.create.mockResolvedValue({ id: 'a9' });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/aceitar-convite')
+        .send({ token: 'token-qualquer', senha: 'senha-forte-123' })
+        .expect(201);
+
+      const [alunoArgs] = prisma.tx.aluno.create.mock.calls[0] as [
+        { data: { vinculo: string } },
+      ];
+      // Convite é iniciativa da empresa: nasce aprovado, sem passar pela
+      // fila de aprovação (diferente do auto-cadastro público).
+      expect(alunoArgs.data.vinculo).toBe('aprovado');
+
+      const [usuarioArgs] = prisma.tx.usuario.create.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      // Senha escolhida pela pessoa: não há senha temporária neste caminho.
+      expect(usuarioArgs.data.senhaTemporaria).toBeUndefined();
+    });
+  });
+
+  // =====================================================================
   // SPEC-009/REQ-001 — página pública de auto-cadastro
   // =====================================================================
   describe('GET /api/v1/public/companies/:slug', () => {
