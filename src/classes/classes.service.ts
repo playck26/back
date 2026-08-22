@@ -11,6 +11,7 @@ import {
   gerarDatasSemanaisFuturas,
   parseTimeOnly,
 } from '../courts/date-time.util';
+import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateClassDto } from './dto/create-class.dto';
@@ -22,6 +23,9 @@ export class ClassesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly courtsService: CourtsService,
+    // SPEC-009/INV-010: a regra de vínculo é de MOD-003; aqui só se
+    // pergunta a ela.
+    private readonly studentsService: StudentsService,
   ) {}
 
   async list(companyId: string, query: PaginationQueryDto) {
@@ -239,6 +243,10 @@ export class ClassesService {
       if (!aluno) {
         throw new NotFoundException('Aluno não encontrado');
       }
+      // SPEC-009/INV-010 — dentro da transação, com a turma já travada por
+      // FOR UPDATE: checar vínculo antes de abrir a transação deixaria
+      // janela entre a checagem e a escrita.
+      this.studentsService.garantirVinculoAprovado(aluno);
 
       const jaAlocado = await tx.turmaAluno.findFirst({
         where: { turmaId, alunoId },

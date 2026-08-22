@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { StudentsService } from '../people/students.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CourtsService } from './courts.service';
 
@@ -46,13 +47,25 @@ const QUADRA_ATIVA = {
   createdAt: new Date(),
 };
 
+// SPEC-009/INV-010: MOD-004 e MOD-005 perguntam a MOD-003 se o aluno está
+// aprovado. O mock devolve "aprovado" por padrão; os testes de vínculo
+// sobrescrevem para provar o bloqueio.
+function buildStudentsMock() {
+  return {
+    garantirVinculoAprovado: jest.fn(),
+    exigirVinculoAprovado: jest.fn().mockResolvedValue(undefined),
+  } as unknown as StudentsService;
+}
+
 describe('CourtsService', () => {
   let prisma: PrismaService;
   let service: CourtsService;
+  let studentsService: StudentsService;
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    service = new CourtsService(prisma);
+    studentsService = buildStudentsMock();
+    service = new CourtsService(prisma, studentsService);
   });
 
   describe('create/list/update', () => {
@@ -151,6 +164,24 @@ describe('CourtsService', () => {
       const result = await service.createBooking('c1', dto, 'req-123');
 
       expect(result.id).toBe('o1');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    // SPEC-009/INV-010: reserva ocupa horário real numa quadra real
+    // (INV-001). Sem esta trava, qualquer pessoa com o link público de
+    // auto-cadastro bloquearia a agenda da empresa de graça.
+    it('bloqueia reserva de aluno com vínculo pendente antes de tocar a quadra (INV-010)', async () => {
+      // A quadra existe e está ativa: o que barra aqui é o vínculo, não
+      // um 404 de recurso — a ordem do serviço valida a quadra primeiro,
+      // então o teste precisa passar por essa etapa para provar a trava.
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (studentsService.exigirVinculoAprovado as jest.Mock).mockRejectedValue(
+        new ForbiddenException({ code: 'VINCULO_PENDENTE' }),
+      );
+
+      await expect(
+        service.createBooking('c1', { ...dto, alunoId: 'a1' }, 'req-999'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
 

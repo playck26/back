@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,7 +9,7 @@ import * as bcrypt from 'bcrypt';
 import type { Prisma, VinculoAluno } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateStudentDto } from './dto/create-student.dto';
-import type { PaginationQueryDto } from './dto/pagination-query.dto';
+import type { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import type { UpdateStudentDto } from './dto/update-student.dto';
 
 const BCRYPT_COST = 12;
@@ -56,19 +57,24 @@ export class StudentsService {
     });
   }
 
-  async list(companyId: string, query: PaginationQueryDto) {
+  async list(companyId: string, query: ListStudentsQueryDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
+    // SPEC-009/AC-015: `?vinculo=pendente` é a fila de aprovação do admin.
+    const where = {
+      companyId,
+      ...(query.vinculo ? { vinculo: query.vinculo } : {}),
+    };
 
     const [rows, total] = await Promise.all([
       this.prisma.aluno.findMany({
-        where: { companyId },
+        where,
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
         include: { usuario: true },
       }),
-      this.prisma.aluno.count({ where: { companyId } }),
+      this.prisma.aluno.count({ where }),
     ]);
 
     return {
@@ -123,6 +129,112 @@ export class StudentsService {
     });
 
     return this.toResponse(aluno);
+  }
+
+  /**
+   * SPEC-009/INV-010 — a trava de vínculo, em forma pura.
+   *
+   * Vive em MOD-003 (dono da tabela `alunos`) e é chamada por MOD-004 e
+   * MOD-005 no momento da escrita. Se cada consumidor escrevesse a própria
+   * comparação, a regra existiria em três lugares e divergiria no primeiro
+   * ajuste — que é como invariante vira sugestão.
+   */
+  garantirVinculoAprovado(aluno: { vinculo: VinculoAluno }): void {
+    if (aluno.vinculo === 'aprovado') {
+      return;
+    }
+    throw new ForbiddenException({
+      statusCode: 403,
+      code: 'VINCULO_PENDENTE',
+      message:
+        aluno.vinculo === 'pendente'
+          ? 'Cadastro ainda em análise pela empresa.'
+          : 'Cadastro recusado pela empresa.',
+    });
+  }
+
+  /**
+   * Mesma trava, para quem ainda não carregou o aluno (MOD-005). Aceita um
+   * `tx` para rodar dentro da transação de quem chama — checar vínculo
+   * fora da transação que cria a reserva abriria janela entre a checagem e
+   * a escrita.
+   */
+  async exigirVinculoAprovado(
+    companyId: string,
+    alunoId: string,
+    tx: Pick<Prisma.TransactionClient, 'aluno'> = this.prisma,
+  ): Promise<void> {
+    const aluno = await tx.aluno.findFirst({
+      where: { id: alunoId, companyId },
+      select: { vinculo: true },
+    });
+    if (!aluno) {
+      throw new NotFoundException('Aluno não encontrado');
+    }
+    this.garantirVinculoAprovado(aluno);
+  }
+
+  /**
+   * SPEC-009/REQ-008 (AC-015, AC-016) — aprovar e recusar um cadastro.
+   *
+   * Transições permitidas: `pendente -> aprovado`, `pendente -> recusado`
+   * e `recusado -> aprovado` (o admin mudou de ideia). **`aprovado ->
+   * recusado` não existe aqui**: desligar um aluno que já opera é
+   * `status = inativo`, operação diferente, com consequências diferentes
+   * (ele tem histórico, reservas, turmas). Confundir as duas faria "recusar
+   * cadastro" virar um jeito silencioso de desligar aluno ativo.
+   */
+  async decidirVinculo(
+    companyId: string,
+    id: string,
+    decisao: 'aprovado' | 'recusado',
+  ) {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { id, companyId },
+      include: { usuario: true },
+    });
+    if (!aluno) {
+      throw new NotFoundException();
+    }
+
+    // AC-015: idempotente — aprovar duas vezes não é erro nem no-op
+    // silencioso, devolve o estado atual.
+    if (aluno.vinculo === decisao) {
+      return this.toResponse(aluno);
+    }
+
+    if (decisao === 'recusado') {
+      if (aluno.vinculo === 'aprovado') {
+        throw new ConflictException(
+          'Aluno já aprovado não é recusado por este fluxo — use inativação (status).',
+        );
+      }
+
+      // Por INV-010 um pendente não deveria ter reserva nem turma. Se
+      // tiver, é inconsistência de dado ou de ordem de implantação: a
+      // recusa para e mostra o que está pendurado, em vez de cancelar por
+      // conta própria. Cancelar reserva muda a agenda da empresa e é ação
+      // de MOD-005 — não pode ser efeito colateral escondido de um clique.
+      const [ocupacoes, turmas] = await Promise.all([
+        this.prisma.ocupacaoQuadra.count({ where: { alunoId: id } }),
+        this.prisma.turmaAluno.count({ where: { alunoId: id } }),
+      ]);
+      if (ocupacoes > 0 || turmas > 0) {
+        throw new ConflictException({
+          message:
+            'Aluno tem reservas ou turmas vinculadas — resolva antes de recusar o cadastro.',
+          ocupacoes,
+          turmas,
+        });
+      }
+    }
+
+    const atualizado = await this.prisma.aluno.update({
+      where: { id },
+      data: { vinculo: decisao },
+      include: { usuario: true },
+    });
+    return this.toResponse(atualizado);
   }
 
   async findOne(companyId: string, id: string) {

@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -15,7 +17,7 @@ import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { CreateStudentDto } from './dto/create-student.dto';
-import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { StudentsService } from './students.service';
 
@@ -26,12 +28,42 @@ import { StudentsService } from './students.service';
 export class StudentsController {
   constructor(private readonly studentsService: StudentsService) {}
 
+  // `?vinculo=pendente` é a fila de aprovação do admin (SPEC-009/AC-015).
   @Get()
   list(
     @CurrentUser() user: AccessTokenPayload,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListStudentsQueryDto,
   ) {
     return this.studentsService.list(user.companyId as string, query);
+  }
+
+  // SPEC-009/REQ-008: decidir sobre um cadastro é ação exclusiva do
+  // `company_admin` da própria empresa — a autorização já vem dos guards
+  // deste controller (AC-016).
+  @Post(':id/aprovar')
+  @HttpCode(HttpStatus.OK)
+  aprovar(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.studentsService.decidirVinculo(
+      user.companyId as string,
+      id,
+      'aprovado',
+    );
+  }
+
+  @Post(':id/recusar')
+  @HttpCode(HttpStatus.OK)
+  recusar(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.studentsService.decidirVinculo(
+      user.companyId as string,
+      id,
+      'recusado',
+    );
   }
 
   @Post()

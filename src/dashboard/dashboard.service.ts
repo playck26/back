@@ -28,7 +28,13 @@ export class DashboardService {
 
     const [alunosAtivos, turmasAtivas, quadrasAtivasCount, ocupacoesDoPeriodo] =
       await Promise.all([
-        this.prisma.aluno.count({ where: { companyId, status: 'ativo' } }),
+        // SPEC-009/REQ-010: `status` sozinho passou a ser insuficiente —
+        // com auto-cadastro público ligado, qualquer desconhecido que
+        // preenchesse o formulário entraria no KPI de "alunos ativos" da
+        // empresa. Conta só quem a empresa reconhece (INV-010).
+        this.prisma.aluno.count({
+          where: { companyId, status: 'ativo', vinculo: 'aprovado' },
+        }),
         this.prisma.turma.findMany({
           where: { companyId, status: 'ativa' },
           select: { capacidade: true, _count: { select: { alunos: true } } },

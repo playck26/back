@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from './students.service';
 
@@ -16,7 +20,14 @@ function buildPrismaMock() {
   };
   const prisma = {
     usuario: { findUnique: jest.fn() },
-    aluno: { findMany: jest.fn(), count: jest.fn(), findFirst: jest.fn() },
+    aluno: {
+      findMany: jest.fn(),
+      count: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    ocupacaoQuadra: { count: jest.fn() },
+    turmaAluno: { count: jest.fn() },
     nivel: { findFirst: jest.fn() },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
@@ -160,6 +171,107 @@ describe('StudentsService', () => {
         data: { nome: 'Atualizado', telefone: undefined },
       });
       expect(result.nome).toBe('Atualizado');
+    });
+  });
+
+  // =====================================================================
+  // SPEC-009/REQ-008, REQ-009 — vínculo do aluno (INV-010)
+  // =====================================================================
+
+  describe('vínculo (SPEC-009)', () => {
+    const alunoBase = {
+      id: 'a1',
+      companyId: 'c1',
+      usuario: { nome: 'Fulano', email: 'f@x.com', telefone: null },
+      status: 'ativo',
+      nivelId: null,
+      createdAt: new Date(),
+    };
+
+    it('garantirVinculoAprovado bloqueia pendente com 403 VINCULO_PENDENTE', () => {
+      expect(() =>
+        service.garantirVinculoAprovado({ vinculo: 'pendente' }),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('garantirVinculoAprovado bloqueia recusado também', () => {
+      expect(() =>
+        service.garantirVinculoAprovado({ vinculo: 'recusado' }),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('garantirVinculoAprovado deixa passar aprovado', () => {
+      expect(() =>
+        service.garantirVinculoAprovado({ vinculo: 'aprovado' }),
+      ).not.toThrow();
+    });
+
+    it('aprovar move pendente para aprovado (AC-015)', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        ...alunoBase,
+        vinculo: 'pendente',
+      });
+      (prisma.aluno.update as jest.Mock).mockResolvedValue({
+        ...alunoBase,
+        vinculo: 'aprovado',
+      });
+
+      await service.decidirVinculo('c1', 'a1', 'aprovado');
+
+      expect(prisma.aluno.update).toHaveBeenCalledWith({
+        where: { id: 'a1' },
+        data: { vinculo: 'aprovado' },
+        include: { usuario: true },
+      });
+    });
+
+    it('aprovar duas vezes é idempotente e não escreve de novo (AC-015)', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        ...alunoBase,
+        vinculo: 'aprovado',
+      });
+
+      await service.decidirVinculo('c1', 'a1', 'aprovado');
+
+      expect(prisma.aluno.update).not.toHaveBeenCalled();
+    });
+
+    // Recusar aluno já aprovado seria um jeito silencioso de desligar
+    // alguém que já opera — isso é `status = inativo`, outra operação.
+    it('recusar aluno já aprovado retorna 409, não desliga por vias transversas', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        ...alunoBase,
+        vinculo: 'aprovado',
+      });
+
+      await expect(
+        service.decidirVinculo('c1', 'a1', 'recusado'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.aluno.update).not.toHaveBeenCalled();
+    });
+
+    it('recusar com reserva pendurada retorna 409 em vez de cancelar sozinho', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        ...alunoBase,
+        vinculo: 'pendente',
+      });
+      (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(2);
+      (prisma.turmaAluno.count as jest.Mock).mockResolvedValue(0);
+
+      await expect(
+        service.decidirVinculo('c1', 'a1', 'recusado'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.aluno.update).not.toHaveBeenCalled();
+    });
+
+    it('exigirVinculoAprovado carrega do banco e bloqueia pendente (MOD-005)', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        vinculo: 'pendente',
+      });
+
+      await expect(
+        service.exigirVinculoAprovado('c1', 'a1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });

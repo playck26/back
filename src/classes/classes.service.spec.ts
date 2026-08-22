@@ -9,6 +9,7 @@ import {
   gerarDatasSemanaisFuturas,
   parseTimeOnly,
 } from '../courts/date-time.util';
+import type { StudentsService } from '../people/students.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClassesService } from './classes.service';
 
@@ -63,6 +64,16 @@ function buildMocks() {
 
 const QUADRA_ATIVA = { id: 'q1', companyId: 'c1' };
 
+// SPEC-009/INV-010: MOD-004 e MOD-005 perguntam a MOD-003 se o aluno está
+// aprovado. O mock devolve "aprovado" por padrão; os testes de vínculo
+// sobrescrevem para provar o bloqueio.
+function buildStudentsMock() {
+  return {
+    garantirVinculoAprovado: jest.fn(),
+    exigirVinculoAprovado: jest.fn().mockResolvedValue(undefined),
+  } as unknown as StudentsService;
+}
+
 describe('ClassesService', () => {
   let prisma: PrismaService;
   let tx: TxMock;
@@ -72,6 +83,7 @@ describe('ClassesService', () => {
     cancelFutureClassOccupancies: jest.Mock;
   };
   let service: ClassesService;
+  let studentsService: StudentsService;
 
   const dto = {
     nome: 'Turma A',
@@ -88,7 +100,8 @@ describe('ClassesService', () => {
     tx = built.tx;
     courtsService = built.courtsService;
     courtsServiceMock = built.courtsServiceMock;
-    service = new ClassesService(prisma, courtsService);
+    studentsService = buildStudentsMock();
+    service = new ClassesService(prisma, courtsService, studentsService);
   });
 
   describe('create', () => {
@@ -253,6 +266,23 @@ describe('ClassesService', () => {
       await expect(
         service.allocateStudent('c1', 't1', 'a1'),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    // SPEC-009/INV-010: vaga de turma é recurso finito da empresa
+    // (INV-003). Cadastro não aprovado não ocupa.
+    it('bloqueia alocação de aluno com vínculo pendente (INV-010)', async () => {
+      tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
+      tx.aluno.findFirst.mockResolvedValue({ id: 'a1', vinculo: 'pendente' });
+      (studentsService.garantirVinculoAprovado as jest.Mock).mockImplementation(
+        () => {
+          throw new ForbiddenException({ code: 'VINCULO_PENDENTE' });
+        },
+      );
+
+      await expect(
+        service.allocateStudent('c1', 't1', 'a1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(tx.turmaAluno.create).not.toHaveBeenCalled();
     });
 
     it('re-adicionar o mesmo aluno é idempotente (não recria)', async () => {

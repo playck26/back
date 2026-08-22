@@ -32,7 +32,7 @@ describe('DashboardService', () => {
     await service.summary('c1', {});
 
     expect(prisma.aluno.count).toHaveBeenCalledWith({
-      where: { companyId: 'c1', status: 'ativo' },
+      where: { companyId: 'c1', status: 'ativo', vinculo: 'aprovado' },
     });
     expect(prisma.turma.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { companyId: 'c1', status: 'ativa' } }),

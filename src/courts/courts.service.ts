@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { StudentsService } from '../people/students.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   EXPEDIENTE_FIM_HORA,
@@ -27,7 +28,12 @@ interface ConflitoDetectado {
 
 @Injectable()
 export class CourtsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // SPEC-009/INV-010: reserva ocupa horário real (INV-001) — cadastro
+    // não aprovado não bloqueia a agenda da empresa.
+    private readonly studentsService: StudentsService,
+  ) {}
 
   async list(companyId: string, page = 1, pageSize = 20) {
     const [data, total] = await Promise.all([
@@ -158,6 +164,10 @@ export class CourtsService {
     const dataDate = parseDateOnly(dto.data);
     const horaInicioDate = parseTimeOnly(dto.horaInicio);
     const horaFimDate = parseTimeOnly(dto.horaFim);
+
+    if (dto.alunoId) {
+      await this.studentsService.exigirVinculoAprovado(companyId, dto.alunoId);
+    }
 
     const conflitoExistente = await this.findConflito(
       companyId,
