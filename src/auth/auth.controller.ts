@@ -20,7 +20,9 @@ import { PermiteSenhaTemporaria } from '../common/decorators/permite-senha-tempo
 import { parseDurationToMs } from '../common/utils/parse-duration';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { AuthService } from './auth.service';
+import { InvitesService } from './invites.service';
 import { LoginDto } from './dto/login.dto';
+import { AceitarConviteDto } from './dto/aceitar-convite.dto';
 import { RegisterAlunoDto } from './dto/register-aluno.dto';
 import { TrocarSenhaDto } from './dto/trocar-senha.dto';
 
@@ -35,6 +37,7 @@ const LOGIN_THROTTLE = { default: { limit: 10, ttl: 900_000 } };
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly invites: InvitesService,
     private readonly config: ConfigService,
   ) {}
 
@@ -94,6 +97,15 @@ export class AuthController {
     const tokens = await this.authService.trocarSenha(user.sub, dto);
     this.setRefreshCookie(res, tokens.refreshToken);
     return { accessToken: tokens.accessToken };
+  }
+
+  // SPEC-009/REQ-002: o aceite fica em `/auth` porque é criação de conta,
+  // não gestão de convite — quem chama aqui é o aluno, não a empresa.
+  @Post('aceitar-convite')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle(LOGIN_THROTTLE)
+  aceitarConvite(@Body() dto: AceitarConviteDto) {
+    return this.invites.aceitar(dto);
   }
 
   @Post('register-aluno')

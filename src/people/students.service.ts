@@ -22,6 +22,16 @@ export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * SPEC-009 — hash de senha com o custo bcrypt do projeto, exposto para
+   * quem provisiona conta por outro caminho (MOD-001, aceite de convite).
+   * Existe para o custo não ser redefinido em cada módulo e divergir sem
+   * ninguém notar.
+   */
+  hashSenha(senha: string): Promise<string> {
+    return bcrypt.hash(senha, BCRYPT_COST);
+  }
+
+  /**
    * SPEC-009/REQ-007 — único ponto de escrita na tabela `alunos`.
    *
    * `TARGET_ARCHITECTURE.md` (ownership de dados) diz que `alunos` é de
