@@ -5,18 +5,22 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from './students.service';
+import { gerarSenhaTemporaria } from '../common/utils/senha-temporaria';
 
 // TEST-003 (SPEC-003): unit tests de MOD-003 (alunos) com Prisma mockado.
 
 interface TxMock {
   usuario: { create: jest.Mock; update: jest.Mock };
   aluno: { create: jest.Mock; update: jest.Mock };
+  // SPEC-009: `regenerarSenhaTemporaria` revoga sessões na mesma transação.
+  refreshToken: { updateMany: jest.Mock };
 }
 
 function buildPrismaMock() {
   const tx: TxMock = {
     usuario: { create: jest.fn(), update: jest.fn() },
     aluno: { create: jest.fn(), update: jest.fn() },
+    refreshToken: { updateMany: jest.fn() },
   };
   const prisma = {
     usuario: { findUnique: jest.fn() },
@@ -272,6 +276,109 @@ describe('StudentsService', () => {
       await expect(
         service.exigirVinculoAprovado('c1', 'a1'),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  // =====================================================================
+  // SPEC-009/REQ-003, REQ-005 — senha temporária (AC-006, AC-007, AC-010)
+  // =====================================================================
+
+  describe('senha temporária (SPEC-009)', () => {
+    const alunoCriado = {
+      id: 'a1',
+      nivelId: null,
+      status: 'ativo',
+      usuarioId: 'u1',
+      usuario: { nome: 'Fulano', email: 'f@x.com', telefone: null },
+    };
+
+    it('AC-006: create devolve a senha temporária e marca a conta', async () => {
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      tx.usuario.create.mockResolvedValue({ id: 'u1' });
+      tx.aluno.create.mockResolvedValue(alunoCriado);
+
+      const res = await service.create('c1', {
+        nome: 'Fulano',
+        email: 'f@x.com',
+      });
+
+      // Legível de propósito: vai ser lida em voz alta ou copiada de um
+      // print, sem os pares que se confundem (0/O, 1/I/L, 5/S, 2/Z, 8/B).
+      expect(res.senhaTemporaria).toMatch(
+        /^pck-[ACDEFGHJKMNPQRTUVWXY34679]{6}$/,
+      );
+
+      const [dadosUsuario] = tx.usuario.create.mock.calls[0] as [
+        { data: { senhaTemporaria: boolean; senhaTemporariaExpiraEm: Date } },
+      ];
+      expect(dadosUsuario.data.senhaTemporaria).toBe(true);
+      const dias =
+        (dadosUsuario.data.senhaTemporariaExpiraEm.getTime() - Date.now()) /
+        86_400_000;
+      expect(dias).toBeGreaterThan(6.9);
+      expect(dias).toBeLessThan(7.1);
+    });
+
+    it('AC-006: a senha vai só na resposta, nunca em claro no banco', async () => {
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      tx.usuario.create.mockResolvedValue({ id: 'u1' });
+      tx.aluno.create.mockResolvedValue(alunoCriado);
+
+      const res = await service.create('c1', {
+        nome: 'Fulano',
+        email: 'f@x.com',
+      });
+
+      const [dados] = tx.usuario.create.mock.calls[0] as [
+        { data: { senhaHash: string } },
+      ];
+      expect(dados.data.senhaHash).not.toBe(res.senhaTemporaria);
+      expect(dados.data.senhaHash.startsWith('$2')).toBe(true);
+    });
+
+    // AC-007: se a senha vazasse por findOne/list, o "uma única vez" da
+    // spec seria decorativo.
+    it('AC-007: findOne não devolve senha temporária', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue(alunoCriado);
+
+      const res = await service.findOne('c1', 'a1');
+
+      expect(res).not.toHaveProperty('senhaTemporaria');
+    });
+
+    it('AC-010: regenerar devolve senha nova, remarca a conta e derruba sessões', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue(alunoCriado);
+      tx.usuario.update.mockResolvedValue({});
+      tx.refreshToken.updateMany.mockResolvedValue({});
+
+      const res = await service.regenerarSenhaTemporaria('c1', 'a1');
+
+      expect(res.senhaTemporaria).toMatch(/^pck-/);
+      const [upd] = tx.usuario.update.mock.calls[0] as [
+        { where: { id: string }; data: { senhaTemporaria: boolean } },
+      ];
+      expect(upd.where.id).toBe('u1');
+      expect(upd.data.senhaTemporaria).toBe(true);
+      // Se a senha anterior vazou, sessão antiga viva anularia o gesto.
+      expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { usuarioId: 'u1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    it('AC-011: regenerar aluno de outra empresa retorna 404', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.regenerarSenhaTemporaria('c1', 'a-de-outra-empresa'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('duas senhas geradas em sequência não se repetem', () => {
+      const senhas = new Set(
+        Array.from({ length: 20 }, () => gerarSenhaTemporaria()),
+      );
+      expect(senhas.size).toBe(20);
     });
   });
 });

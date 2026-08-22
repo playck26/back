@@ -1,4 +1,7 @@
-import { randomBytes } from 'node:crypto';
+import {
+  gerarSenhaTemporaria,
+  senhaTemporariaExpiraEm,
+} from '../common/utils/senha-temporaria';
 import {
   ConflictException,
   ForbiddenException,
@@ -97,14 +100,13 @@ export class StudentsService {
       await this.assertNivelPertenceAEmpresa(companyId, dto.nivelId);
     }
 
-    // Aluno cadastrado pelo admin não escolhe senha (CON-003.1 não recebe
-    // esse campo) — geramos uma aleatória, nunca exposta/logada. O usuario
-    // nasce funcional (pode ser resetado depois); não é um convite por
-    // e-mail (fora do MVP, GAP-004).
-    const senhaHash = await bcrypt.hash(
-      randomBytes(24).toString('hex'),
-      BCRYPT_COST,
-    );
+    // SPEC-009/REQ-003 — até aqui o sistema gerava uma senha aleatória de
+    // 24 bytes e **nunca a mostrava a ninguém**: o aluno nascia com uma
+    // conta que ninguém conseguia usar. Agora a senha é legível, tem
+    // validade, e volta **uma única vez** nesta resposta, para o admin
+    // encaminhar (ADR-013). No banco continua só o hash.
+    const senhaTemporaria = gerarSenhaTemporaria();
+    const senhaHash = await bcrypt.hash(senhaTemporaria, BCRYPT_COST);
 
     const aluno = await this.prisma.$transaction(async (tx) => {
       const usuario = await tx.usuario.create({
@@ -115,6 +117,8 @@ export class StudentsService {
           telefone: dto.telefone,
           role: 'aluno',
           companyId,
+          senhaTemporaria: true,
+          senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
         },
       });
 
@@ -128,7 +132,52 @@ export class StudentsService {
       });
     });
 
-    return this.toResponse(aluno);
+    // AC-006/AC-007: `senhaTemporaria` sai daqui e **de mais nenhum lugar**
+    // — `toResponse` (usado por list, findOne e update) não a conhece.
+    return { ...this.toResponse(aluno), senhaTemporaria };
+  }
+
+  /**
+   * SPEC-009/REQ-005 (AC-010, AC-011) — o admin gera uma senha nova para
+   * um aluno.
+   *
+   * É o substituto oficial do "esqueci minha senha" enquanto não houver
+   * e-mail transacional (GAP-004, ADR-013): quem perdeu a senha pede ao
+   * admin, que gera outra e reencaminha.
+   *
+   * Revoga as sessões abertas junto. Se a senha anterior circulou por
+   * WhatsApp e o motivo da regeneração for justamente suspeita de que ela
+   * chegou a quem não devia, deixar as sessões antigas vivas anularia o
+   * gesto.
+   */
+  async regenerarSenhaTemporaria(companyId: string, id: string) {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { id, companyId },
+      include: { usuario: true },
+    });
+    if (!aluno) {
+      throw new NotFoundException();
+    }
+
+    const senhaTemporaria = gerarSenhaTemporaria();
+    const senhaHash = await bcrypt.hash(senhaTemporaria, BCRYPT_COST);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.usuario.update({
+        where: { id: aluno.usuarioId },
+        data: {
+          senhaHash,
+          senhaTemporaria: true,
+          senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
+        },
+      });
+      await tx.refreshToken.updateMany({
+        where: { usuarioId: aluno.usuarioId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
+
+    return { ...this.toResponse(aluno), senhaTemporaria };
   }
 
   /**

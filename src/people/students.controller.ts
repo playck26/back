@@ -40,6 +40,20 @@ export class StudentsController {
   // SPEC-009/REQ-008: decidir sobre um cadastro é ação exclusiva do
   // `company_admin` da própria empresa — a autorização já vem dos guards
   // deste controller (AC-016).
+  // SPEC-009/REQ-005: substituto oficial do "esqueci minha senha" enquanto
+  // não houver e-mail transacional (GAP-004, ADR-013).
+  @Post(':id/senha-temporaria')
+  @HttpCode(HttpStatus.OK)
+  regenerarSenhaTemporaria(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.studentsService.regenerarSenhaTemporaria(
+      user.companyId as string,
+      id,
+    );
+  }
+
   @Post(':id/aprovar')
   @HttpCode(HttpStatus.OK)
   aprovar(
