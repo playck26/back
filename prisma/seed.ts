@@ -11,20 +11,36 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-const EMPRESA_DEMO_NOME = 'Smart Tennis (demo)';
-const ADMIN_DEMO_EMAIL = 'admin@smarttennis.demo';
+// SPEC-009:TASK-000 — a empresa demo do seed deixou de ser a empresa do
+// cliente-vitrine. Antes, o seed semeava dentro da mesma empresa que o
+// cliente real usa, então qualquer disparo do workflow `db-migrate.yml`
+// com `run_seed: true` repovoava a base do cliente com aluno falso, quadra
+// falsa e link de pagamento `pay.example.com`. Agora o seed é dono de uma
+// empresa própria, isolada, e nunca escreve em outra.
+//
+// A chave de upsert é o **slug**, não o nome: o nome é editável pelo
+// SAdmin (o do cliente-vitrine foi renomeado em 2026-08-22, o que já teria
+// feito o upsert por nome criar uma segunda empresa em vez de reaproveitar
+// a existente). O slug do QA é fixo e não deve ser renomeado.
+const EMPRESA_QA_SLUG = 'playck-qa-demo';
+const EMPRESA_QA_NOME = 'PlayCK QA (demo)';
+const ADMIN_DEMO_EMAIL = 'admin@playck-qa.demo';
 const ADMIN_DEMO_SENHA = 'trocar-em-producao-123';
 const SUPER_ADMIN_EMAIL = 'superadmin@playck.demo';
 const SUPER_ADMIN_SENHA = 'trocar-em-producao-123';
 
 async function seedEtapa1() {
   const empresa = await prisma.empresa.upsert({
-    where: { nome: EMPRESA_DEMO_NOME },
+    where: { slug: EMPRESA_QA_SLUG },
     update: {},
     create: {
-      nome: EMPRESA_DEMO_NOME,
+      nome: EMPRESA_QA_NOME,
+      slug: EMPRESA_QA_SLUG,
       esportes: ['tenis'],
       status: 'ativa',
+      // Empresa de QA não expõe link público de auto-cadastro: dado de
+      // teste não deve ser alcançável por quem não conhece o ambiente.
+      permiteAutoCadastro: false,
     },
   });
 
@@ -114,15 +130,15 @@ async function seedEtapa3(companyId: string) {
       data: {
         companyId,
         nome: 'Professor Demo',
-        email: 'professor@smarttennis.demo',
+        email: 'professor@playck-qa.demo',
       },
     });
   }
 
   const alunosDemo = [
-    { nome: 'Aluno Demo 1', email: 'aluno1@smarttennis.demo' },
-    { nome: 'Aluno Demo 2', email: 'aluno2@smarttennis.demo' },
-    { nome: 'Aluno Demo 3', email: 'aluno3@smarttennis.demo' },
+    { nome: 'Aluno Demo 1', email: 'aluno1@playck-qa.demo' },
+    { nome: 'Aluno Demo 2', email: 'aluno2@playck-qa.demo' },
+    { nome: 'Aluno Demo 3', email: 'aluno3@playck-qa.demo' },
   ];
   const alunosIds: string[] = [];
   for (const dadosAluno of alunosDemo) {
@@ -152,7 +168,15 @@ async function seedEtapa3(companyId: string) {
         },
       });
       return tx.aluno.create({
-        data: { usuarioId: usuario.id, companyId, nivelId: niveisIds[0] },
+        data: {
+          usuarioId: usuario.id,
+          companyId,
+          nivelId: niveisIds[0],
+          // Aluno semeado pertence à empresa de QA e é criado pelo próprio
+          // seed (equivalente a cadastro pelo admin), então nasce aprovado
+          // — o default do banco é `pendente`, fail-closed (SPEC-009).
+          vinculo: 'aprovado',
+        },
       });
     });
     alunosIds.push(aluno.id);
@@ -218,7 +242,23 @@ async function seedEtapa4(companyId: string) {
   console.log('[seed] etapa 4 ok — config de pagamento da empresa demo');
 }
 
+// Guarda de produção: o seed nunca deve rodar sem alguém ter decidido que
+// deve. Mesmo escrevendo só na empresa de QA, ele cria dado falso visível
+// no SAdmin de produção. `db-migrate.yml` já exige `run_seed: true` para
+// chamar este script; esta é a segunda tranca, do lado do código.
+function assertPodeRodar() {
+  const ehProducao = process.env.NODE_ENV === 'production';
+  if (ehProducao && process.env.SEED_ALLOW_PRODUCTION !== '1') {
+    throw new Error(
+      'Seed bloqueado: NODE_ENV=production sem SEED_ALLOW_PRODUCTION=1. ' +
+        'O seed cria dado de demonstração; rodá-lo em produção precisa ser ' +
+        'decisão explícita, não efeito colateral de um workflow.',
+    );
+  }
+}
+
 async function main() {
+  assertPodeRodar();
   const empresa = await seedEtapa1();
   await seedEtapa2(empresa.id);
   await seedEtapa3(empresa.id);

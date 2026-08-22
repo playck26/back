@@ -67,6 +67,7 @@ export class CompaniesService {
         const empresaCriada = await tx.empresa.create({
           data: {
             nome: dto.nome,
+            slug: await gerarSlugUnico(tx, dto.nome),
             logoUrl: dto.logoUrl,
             esportes: dto.esportes,
           },
@@ -143,4 +144,42 @@ export class CompaniesService {
       companyId: usuario.companyId as string,
     };
   }
+}
+
+// SPEC-009:TASK-000 — toda empresa precisa de `slug` (identificador do link
+// público de auto-cadastro, `/cadastro/<slug>`). O slug é derivado do nome
+// na criação e **não acompanha renomeações**: ele vira parte de um link que
+// a empresa divulga, e link publicado que muda sozinho quebra na mão de
+// quem já recebeu. Renomear a empresa é operação de vitrine; trocar o slug
+// seria operação de endereço, e não é o que o admin pede ao renomear.
+export function slugify(nome: string): string {
+  return nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+type SlugTx = {
+  empresa: {
+    findUnique: (args: { where: { slug: string } }) => Promise<unknown>;
+  };
+};
+
+async function gerarSlugUnico(tx: SlugTx, nome: string): Promise<string> {
+  const base = slugify(nome) || 'empresa';
+  if (!(await tx.empresa.findUnique({ where: { slug: base } }))) {
+    return base;
+  }
+  // Colisão real: "Tênis Clube" e "Tenis Clube" geram o mesmo base. Sufixo
+  // curto e aleatório em vez de contador, para não expor quantas empresas
+  // de nome parecido existem na base (o SAdmin é multi-tenant).
+  for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+    const candidato = `${base}-${Math.random().toString(36).slice(2, 6)}`;
+    if (!(await tx.empresa.findUnique({ where: { slug: candidato } }))) {
+      return candidato;
+    }
+  }
+  throw new Error(`Não foi possível gerar slug único para "${nome}"`);
 }

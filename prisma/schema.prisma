@@ -3,7 +3,9 @@
 // Escopo inicial (SPEC-001:TASK-002): empresas, usuarios, refresh_tokens.
 // Estendido por SPEC-003:TASK-000a (niveis, professores, alunos), por
 // SPEC-004:TASK-001 (quadras, ocupacoes_quadra), por SPEC-003:TASK-000b
-// (turmas, turma_alunos) e por SPEC-006:TASK-000 (config_pagamento_empresa).
+// (turmas, turma_alunos), por SPEC-006:TASK-000 (config_pagamento_empresa)
+// e por SPEC-009:TASK-000 (onboarding de conta do aluno: senha temporaria,
+// slug/auto-cadastro por empresa, vinculo do aluno e convites_aluno).
 // Demais tabelas entram por spec dona, cada uma estendendo este arquivo
 // (nunca um schema paralelo).
 
@@ -40,42 +42,70 @@ enum UsuarioStatus {
   @@map("usuario_status")
 }
 
-model Empresa {
-  id        String        @id @default(uuid()) @db.Uuid
-  nome      String        @unique
-  logoUrl   String?       @map("logo_url")
-  esportes  String[]
-  status    EmpresaStatus @default(ativa)
-  createdAt DateTime      @default(now()) @map("created_at")
-  updatedAt DateTime      @updatedAt @map("updated_at")
+// SPEC-009: separa "a empresa reconhece esta pessoa como aluno" de
+// "a pessoa preencheu um formulario". Quem se auto-cadastra (C1) nasce
+// `pendente`; convite (C2) e cadastro pelo admin (C3) nascem `aprovado`,
+// porque nos dois a iniciativa foi da empresa. O default do banco e
+// `pendente` de proposito (fail-closed): se um caminho novo esquecer de
+// definir o vinculo, a conta nasce restrita, nunca liberada.
+enum VinculoAluno {
+  pendente
+  aprovado
+  recusado
 
-  usuarios         Usuario[]
-  niveis           Nivel[]
-  professores      Professor[]
-  alunos           Aluno[]
-  quadras          Quadra[]
-  ocupacoes        OcupacaoQuadra[]
-  turmas           Turma[]
-  configPagamento  ConfigPagamentoEmpresa?
+  @@map("vinculo_aluno")
+}
+
+model Empresa {
+  id                  String        @id @default(uuid()) @db.Uuid
+  nome                String        @unique
+  // SPEC-009: identifica a empresa no link publico de auto-cadastro
+  // (`/cadastro/<slug>`), para nao expor `company_id` cru na URL.
+  slug                String        @unique
+  logoUrl             String?       @map("logo_url")
+  esportes            String[]
+  status              EmpresaStatus @default(ativa)
+  // SPEC-009/REQ-006: a empresa decide se aceita auto-cadastro publico.
+  // Ligado por padrao (ADR-013); seguro porque quem se auto-cadastra
+  // nasce `pendente` e nao ocupa nada ate um admin aprovar (INV-010).
+  permiteAutoCadastro Boolean       @default(true) @map("permite_auto_cadastro")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  usuarios        Usuario[]
+  convites        ConviteAluno[]
+  niveis          Nivel[]
+  professores     Professor[]
+  alunos          Aluno[]
+  quadras         Quadra[]
+  ocupacoes       OcupacaoQuadra[]
+  turmas          Turma[]
+  configPagamento ConfigPagamentoEmpresa?
 
   @@map("empresas")
 }
 
 model Usuario {
-  id        String        @id @default(uuid()) @db.Uuid
-  email     String        @unique
-  senhaHash String        @map("senha_hash")
-  nome      String
-  telefone  String?
-  role      UsuarioRole
-  companyId String?       @map("company_id") @db.Uuid
-  status    UsuarioStatus @default(ativo)
-  createdAt DateTime      @default(now()) @map("created_at")
-  updatedAt DateTime      @updatedAt @map("updated_at")
+  id                      String        @id @default(uuid()) @db.Uuid
+  email                   String        @unique
+  senhaHash               String        @map("senha_hash")
+  nome                    String
+  telefone                String?
+  role                    UsuarioRole
+  companyId               String?       @map("company_id") @db.Uuid
+  status                  UsuarioStatus @default(ativo)
+  // SPEC-009/REQ-003: conta criada pelo admin nasce com senha temporaria.
+  // Enquanto `senhaTemporaria` for true, INV-008 bloqueia tudo no servidor
+  // fora trocar senha, /auth/me e logout.
+  senhaTemporaria         Boolean       @default(false) @map("senha_temporaria")
+  senhaTemporariaExpiraEm DateTime?     @map("senha_temporaria_expira_em")
+  createdAt               DateTime      @default(now()) @map("created_at")
+  updatedAt               DateTime      @updatedAt @map("updated_at")
 
-  empresa       Empresa?       @relation(fields: [companyId], references: [id])
-  refreshTokens RefreshToken[]
-  aluno         Aluno?
+  empresa         Empresa?       @relation(fields: [companyId], references: [id])
+  refreshTokens   RefreshToken[]
+  aluno           Aluno?
+  convitesCriados ConviteAluno[] @relation("ConviteCriadoPor")
 
   @@index([companyId])
   @@map("usuarios")
@@ -102,9 +132,10 @@ model Nivel {
   ordem     Int
   createdAt DateTime @default(now()) @map("created_at")
 
-  empresa Empresa @relation(fields: [companyId], references: [id])
-  alunos  Aluno[]
-  turmas  Turma[]
+  empresa  Empresa        @relation(fields: [companyId], references: [id])
+  alunos   Aluno[]
+  turmas   Turma[]
+  convites ConviteAluno[]
 
   @@unique([companyId, nome])
   @@index([companyId])
@@ -133,6 +164,11 @@ model Aluno {
   companyId String        @map("company_id") @db.Uuid
   nivelId   String?       @map("nivel_id") @db.Uuid
   status    UsuarioStatus @default(ativo)
+  // SPEC-009/REQ-008: `status` (ativo/inativo) e desligamento de um aluno
+  // que ja opera; `vinculo` e outra coisa — se a empresa reconhece esta
+  // pessoa. Fonte de verdade de INV-010, lida do banco no momento da
+  // escrita, nunca do JWT (2a validacao cruzada, ACHADO-003).
+  vinculo   VinculoAluno  @default(pendente)
   createdAt DateTime      @default(now()) @map("created_at")
 
   usuario     Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
@@ -205,7 +241,13 @@ model OcupacaoQuadra {
   empresa     Empresa @relation(fields: [companyId], references: [id])
   quadra      Quadra  @relation(fields: [quadraId], references: [id])
   aluno       Aluno?  @relation(fields: [alunoId], references: [id])
-  origemTurma Turma?  @relation(fields: [origemTurmaId], references: [id])
+  // `onDelete: Restrict` declarado explicitamente para casar com o que a
+  // migration 20260812000000_classes aplicou à mão no banco. Sem isso o
+  // Prisma assume `SET NULL` (default de relação opcional) e acusa drift,
+  // querendo reescrever a FK — e `SET NULL` seria errado no domínio:
+  // apagar uma turma deixaria ocupações órfãs na linha do tempo da quadra,
+  // sem dono, contrariando INV-001. Drift encontrado em SPEC-009:TASK-000.
+  origemTurma Turma?  @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
 
   @@index([companyId, quadraId, data])
   @@map("ocupacoes_quadra")
@@ -273,14 +315,49 @@ model TurmaAluno {
 // validada na aplicação, não em CHECK de banco (DATA_MODEL.md, regra de
 // produto pode mudar mais fácil que constraint).
 model ConfigPagamentoEmpresa {
-  id                String   @id @default(uuid()) @db.Uuid
-  companyId         String   @unique @map("company_id") @db.Uuid
-  linkPagamentoUrl  String?  @map("link_pagamento_url")
-  whatsappNumero    String?  @map("whatsapp_numero")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @unique @map("company_id") @db.Uuid
+  linkPagamentoUrl String?  @map("link_pagamento_url")
+  whatsappNumero   String?  @map("whatsapp_numero")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   empresa Empresa @relation(fields: [companyId], references: [id])
 
   @@map("config_pagamento_empresa")
+}
+
+// SPEC-009/REQ-002 (MOD-001): convite de uso unico para o aluno criar a
+// propria senha, encaminhado por WhatsApp pelo admin.
+//
+// `tokenHash` e `sha256` deterministico do token aleatorio de 32 bytes —
+// **nunca bcrypt**. Aqui o token e a chave de busca da claim atomica de
+// INV-009 (`UPDATE ... WHERE token_hash = ? AND usado_em IS NULL`), e
+// bcrypt tem salt por hash, entao a busca por igualdade nunca casaria.
+// Isso diverge de propósito do padrao de `refresh_tokens`, onde a linha e
+// achada por `jti` e o hash so e comparado depois (achado NOVO-001 da 2a
+// validacao cruzada). Com 256 bits de entropia, sha256 sem salt nao e
+// forca-bruta-vel.
+model ConviteAluno {
+  id          String    @id @default(uuid()) @db.Uuid
+  companyId   String    @map("company_id") @db.Uuid
+  criadoPorId String    @map("criado_por_id") @db.Uuid
+  // Pre-preenchimento feito pelo admin. `nome` aparece na tela publica
+  // (AC-024); `email`, `telefone` e `nivelId` sao aplicados no aceite sem
+  // serem exibidos (AC-025).
+  email       String?
+  nome        String?
+  telefone    String?
+  nivelId     String?   @map("nivel_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  expiraEm    DateTime  @map("expira_em")
+  usadoEm     DateTime? @map("usado_em")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  empresa   Empresa @relation(fields: [companyId], references: [id])
+  criadoPor Usuario @relation("ConviteCriadoPor", fields: [criadoPorId], references: [id])
+  nivel     Nivel?  @relation(fields: [nivelId], references: [id])
+
+  @@index([companyId])
+  @@map("convites_aluno")
 }

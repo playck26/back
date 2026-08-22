@@ -12,13 +12,20 @@ import { CompaniesService } from './companies.service';
 // acontecem dentro da transação (nunca fora dela).
 
 interface TxMock {
-  empresa: { create: jest.Mock };
+  // `findUnique` entrou em SPEC-009:TASK-000: a criação de empresa agora
+  // gera `slug` único e consulta colisão dentro da própria transação.
+  empresa: { create: jest.Mock; findUnique: jest.Mock };
   usuario: { create: jest.Mock };
 }
 
 function buildPrismaMock() {
   const tx: TxMock = {
-    empresa: { create: jest.fn() },
+    // Padrão: nenhum slug colidindo. Um teste específico sobrescreve para
+    // provar o caminho de colisão.
+    empresa: {
+      create: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     usuario: { create: jest.fn() },
   };
   const prisma = {
@@ -80,6 +87,44 @@ describe('CompaniesService', () => {
         senha: 'senha-forte',
       },
     };
+
+    // SPEC-009:TASK-000 — o slug vira parte do link público de
+    // auto-cadastro (`/cadastro/<slug>`), então precisa ser derivado do
+    // nome e único.
+    it('deriva slug do nome, sem acento nem símbolo (SPEC-009)', async () => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      tx.empresa.create.mockResolvedValue({ id: 'e1' });
+      tx.usuario.create.mockResolvedValue({ id: 'u1' });
+
+      await service.create({ ...dto, nome: 'Tênis Clube & Cia.' });
+
+      expect(tx.empresa.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ slug: 'tenis-clube-cia' }),
+        }),
+      );
+    });
+
+    it('desempata slug quando dois nomes geram o mesmo (SPEC-009)', async () => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      // Primeira consulta acha colisão; a seguinte (com sufixo) não.
+      tx.empresa.findUnique
+        .mockResolvedValueOnce({ id: 'outra-empresa' })
+        .mockResolvedValue(null);
+      tx.empresa.create.mockResolvedValue({ id: 'e1' });
+      tx.usuario.create.mockResolvedValue({ id: 'u1' });
+
+      await service.create({ ...dto, nome: 'Tenis Clube' });
+
+      const primeiraChamada = tx.empresa.create.mock.calls[0] as [
+        { data: { slug: string } },
+      ];
+      const slugUsado = primeiraChamada[0].data.slug;
+      expect(slugUsado).not.toBe('tenis-clube');
+      expect(slugUsado).toMatch(/^tenis-clube-[a-z0-9]{4}$/);
+    });
 
     it('rejeita nome duplicado com 409 e nunca abre transação (AC-002)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
