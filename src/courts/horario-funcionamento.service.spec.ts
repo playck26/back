@@ -41,8 +41,15 @@ function build(linhas: unknown[], ocupacoes: unknown[] = []) {
   };
 }
 
+// `diaSemana` faz parte de toda linha real da tabela. As fixtures o
+// omitiam, e isso passou despercebido enquanto a filtragem por dia ficava
+// na query — quando ela passou para memória (`resolverDeLinhas`, usada
+// pela agenda e pelo dashboard), o mock incompleto deixou de casar.
+const DIA = 1;
+
 const linhaEmpresa = (over: Record<string, unknown> = {}) => ({
   quadraId: null,
+  diaSemana: DIA,
   fechado: false,
   horaInicio: parseTimeOnly('06:00'),
   horaFim: parseTimeOnly('22:00'),
@@ -51,6 +58,7 @@ const linhaEmpresa = (over: Record<string, unknown> = {}) => ({
 
 const linhaQuadra = (over: Record<string, unknown> = {}) => ({
   quadraId: QUADRA,
+  diaSemana: DIA,
   fechado: false,
   horaInicio: parseTimeOnly('08:00'),
   horaFim: parseTimeOnly('18:00'),
@@ -62,7 +70,7 @@ describe('HorarioFuncionamentoService (SPEC-010)', () => {
     it('AC-005: quadra sem horário próprio herda o padrão da empresa', async () => {
       const { service } = build([linhaEmpresa()]);
 
-      const r = await service.resolver(COMPANY, QUADRA, 1);
+      const r = await service.resolver(COMPANY, QUADRA, DIA);
 
       expect(r).toEqual({
         estado: 'aberto',
@@ -74,7 +82,7 @@ describe('HorarioFuncionamentoService (SPEC-010)', () => {
     it('AC-006: horário próprio da quadra vence o padrão', async () => {
       const { service } = build([linhaEmpresa(), linhaQuadra()]);
 
-      const r = await service.resolver(COMPANY, QUADRA, 1);
+      const r = await service.resolver(COMPANY, QUADRA, DIA);
 
       expect(r).toEqual({
         estado: 'aberto',
@@ -88,15 +96,20 @@ describe('HorarioFuncionamentoService (SPEC-010)', () => {
     it('resolve com uma consulta só, buscando as duas linhas de uma vez', async () => {
       const { service, prisma } = build([linhaEmpresa(), linhaQuadra()]);
 
-      await service.resolver(COMPANY, QUADRA, 1);
+      await service.resolver(COMPANY, QUADRA, DIA);
 
       expect(prisma.horarioFuncionamento.findMany).toHaveBeenCalledTimes(1);
     });
 
     it('quadra fechada naquele dia devolve estado fechado, mesmo com a empresa aberta', async () => {
       const { service } = build([
-        linhaEmpresa(),
-        linhaQuadra({ fechado: true, horaInicio: null, horaFim: null }),
+        linhaEmpresa({ diaSemana: 0 }),
+        linhaQuadra({
+          diaSemana: 0,
+          fechado: true,
+          horaInicio: null,
+          horaFim: null,
+        }),
       ]);
 
       expect(await service.resolver(COMPANY, QUADRA, 0)).toEqual({

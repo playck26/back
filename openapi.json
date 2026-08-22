@@ -1324,6 +1324,64 @@
         ]
       }
     },
+    "/api/v1/agenda": {
+      "get": {
+        "operationId": "AgendaController_resumo",
+        "parameters": [
+          {
+            "name": "mes",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM",
+            "schema": {
+              "example": "2026-08",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "agenda"
+        ]
+      }
+    },
+    "/api/v1/agenda/{data}": {
+      "get": {
+        "operationId": "AgendaController_dia",
+        "parameters": [
+          {
+            "name": "data",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "agenda"
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "operationId": "ClassesController_list",

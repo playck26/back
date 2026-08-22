@@ -37,6 +37,15 @@ export interface SlotCanonico {
   fim: Date;
 }
 
+/** Forma mínima de uma linha de `horarios_funcionamento` para resolução. */
+export interface LinhaHorario {
+  quadraId: string | null;
+  diaSemana: number;
+  fechado: boolean;
+  horaInicio: Date | null;
+  horaFim: Date | null;
+}
+
 export type HorarioEfetivo =
   { estado: 'fechado' } | { estado: 'aberto'; horaInicio: Date; horaFim: Date };
 
@@ -77,12 +86,37 @@ export class HorarioFuncionamentoService {
       },
     });
 
+    return this.resolverDeLinhas(linhas, quadraId, diaSemana);
+  }
+
+  /**
+   * A mesma herança, sobre linhas **já carregadas**.
+   *
+   * Existe porque quem precisa resolver muitas combinações de quadra e dia
+   * — o KPI do dashboard (SPEC-010/REQ-009) e o resumo mensal da agenda
+   * (SPEC-012) — não pode consultar o banco por combinação: seriam
+   * centenas de consultas para produzir uma tela. Carregam tudo uma vez e
+   * chamam isto.
+   *
+   * É a mesma regra de `resolver`, num lugar só. Três cópias da herança
+   * divergiriam no primeiro ajuste, e o sintoma seria a agenda dizer que a
+   * quadra está aberta enquanto a reserva é recusada.
+   */
+  resolverDeLinhas(
+    linhas: LinhaHorario[],
+    quadraId: string,
+    diaSemana: number,
+  ): HorarioEfetivo {
     // Herança: a linha da quadra vence a da empresa. Quadra que segue o
     // padrão simplesmente não tem linha própria — por isso a herança
     // acompanha mudanças no padrão sem nenhuma escrita nas quadras
     // (REQ-003/AC-005).
-    const doQuadra = linhas.find((l) => l.quadraId === quadraId);
-    const daEmpresa = linhas.find((l) => l.quadraId === null);
+    const doQuadra = linhas.find(
+      (l) => l.quadraId === quadraId && l.diaSemana === diaSemana,
+    );
+    const daEmpresa = linhas.find(
+      (l) => l.quadraId === null && l.diaSemana === diaSemana,
+    );
     const efetivo = doQuadra ?? daEmpresa;
 
     if (!efetivo) {
