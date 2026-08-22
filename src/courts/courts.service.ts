@@ -443,6 +443,19 @@ export class CourtsService {
       throw new ForbiddenException();
     }
 
+    // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
+    // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
+    // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
+    // esta rota apagaria a aula da agenda de todo mundo a partir de uma
+    // ação pensada para reserva individual.
+    this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+
+    // Cancelar o que já está cancelado é idempotente: sem escrita, sem
+    // erro. Repetir a ação não é engano do usuário, é rede instável.
+    if (ocupacao.statusPagamento === 'cancelado') {
+      return;
+    }
+
     // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
     // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
     // migration), então essa escrita sozinha já resolve.
@@ -458,6 +471,9 @@ export class CourtsService {
   // (TARGET_ARCHITECTURE.md seção 5), MOD-006 nunca escreve na tabela
   // direto. AC-002: idempotente — marcar o mesmo status de novo não
   // dispara um update supérfluo nem erro.
+  //
+  // SPEC-012:TASK-000 fechou dois buracos que estavam em produção:
+  // marcar ocorrência de turma como paga, e ressuscitar reserva cancelada.
   async updatePaymentStatus(
     companyId: string,
     id: string,
@@ -469,8 +485,32 @@ export class CourtsService {
     if (!ocupacao) {
       throw new NotFoundException();
     }
+
+    // AC-007/AC-011: pagamento é coisa de reserva avulsa (CON-006). Aula
+    // recorrente não tem cobrança própria no modelo, então marcar "pago"
+    // numa ocupação de turma é estado sem significado.
+    this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+
     if (ocupacao.statusPagamento === status) {
       return this.toOcupacaoResponse(ocupacao);
+    }
+
+    // AC-012: `cancelado` é terminal.
+    //
+    // Não é preciosismo de máquina de estados: a constraint EXCLUDE de
+    // INV-001 tem `WHERE (status_pagamento <> 'cancelado')`, ou seja,
+    // cancelar **libera o slot de verdade**. Voltar de `cancelado` para
+    // `pago` tenta recolocar a reserva na linha do tempo — se alguém já
+    // reservou aquele horário no meio-tempo, o UPDATE viola a constraint e
+    // devolve erro cru do Postgres; se ninguém reservou, a reserva
+    // ressuscita em silêncio e o aluno que cancelou não fica sabendo.
+    if (ocupacao.statusPagamento === 'cancelado') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'RESERVA_CANCELADA',
+        message:
+          'Esta reserva foi cancelada e o horário pode já ter sido ocupado. Recarregue a agenda.',
+      });
     }
 
     const atualizada = await this.prisma.ocupacaoQuadra.update({
@@ -478,6 +518,23 @@ export class CourtsService {
       data: { statusPagamento: status },
     });
     return this.toOcupacaoResponse(atualizada);
+  }
+
+  /**
+   * SPEC-012:TASK-000 — ações de reserva avulsa não se aplicam a ocupação
+   * gerada por turma. Um método só para as duas chamadas, em vez da mesma
+   * condição escrita duas vezes: a regra é uma, e regra duplicada
+   * diverge no primeiro ajuste.
+   */
+  private assertOcupacaoAvulsa(origemTipo: 'AVULSO' | 'TURMA') {
+    if (origemTipo === 'TURMA') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'OCUPACAO_DE_TURMA',
+        message:
+          'Esta ocupação vem de uma turma. Ajuste a turma, não a reserva.',
+      });
+    }
   }
 
   // Resolve o registro de Aluno do usuário autenticado, escopado à empresa

@@ -681,4 +681,95 @@ describe('CourtsService', () => {
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
   });
+
+  // =====================================================================
+  // SPEC-012:TASK-000 — transições de status que estavam abertas
+  // =====================================================================
+  describe('transições de status (SPEC-012:TASK-000)', () => {
+    const avulsaPendente = {
+      id: 'o1',
+      companyId: 'c1',
+      quadraId: 'q1',
+      origemTipo: 'AVULSO' as const,
+      statusPagamento: 'pendente_pagamento' as const,
+      data: new Date('2026-08-24T00:00:00.000Z'),
+      horaInicio: parseTimeOnly('09:00'),
+      horaFim: parseTimeOnly('10:00'),
+      alunoId: 'a1',
+    };
+
+    // O buraco mais grave: a constraint EXCLUDE ignora linhas canceladas,
+    // então cancelar libera o slot de verdade. Marcar a cancelada como
+    // paga tenta recolocá-la na linha do tempo — com o slot reocupado,
+    // vira violação de constraint; sem, a reserva ressuscita em silêncio.
+    it('AC-012: marcar como pago uma reserva cancelada devolve 422, não ressuscita', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        ...avulsaPendente,
+        statusPagamento: 'cancelado',
+      });
+
+      const erro = (await service
+        .updatePaymentStatus('c1', 'o1', 'pago')
+        .catch((e: Error) => e)) as { response?: { code?: string } };
+
+      expect((erro as unknown) instanceof UnprocessableEntityException).toBe(
+        true,
+      );
+      expect(erro.response?.code).toBe('RESERVA_CANCELADA');
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+    });
+
+    it('AC-011: marcar como pago ocupação de turma devolve 422', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        ...avulsaPendente,
+        origemTipo: 'TURMA',
+        alunoId: null,
+      });
+
+      const erro = (await service
+        .updatePaymentStatus('c1', 'o1', 'pago')
+        .catch((e: Error) => e)) as { response?: { code?: string } };
+
+      expect(erro.response?.code).toBe('OCUPACAO_DE_TURMA');
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+    });
+
+    it('cancelar ocupação de turma devolve 422 (GAP-008)', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        ...avulsaPendente,
+        origemTipo: 'TURMA',
+        alunoId: null,
+      });
+
+      await expect(service.cancelBooking('c1', 'o1')).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+    });
+
+    it('marcar pago segue funcionando para reserva avulsa pendente', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
+        avulsaPendente,
+      );
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({
+        ...avulsaPendente,
+        statusPagamento: 'pago',
+      });
+
+      const r = await service.updatePaymentStatus('c1', 'o1', 'pago');
+
+      expect(r.statusPagamento).toBe('pago');
+    });
+
+    // Repetir a ação não é engano do usuário: é rede instável.
+    it('cancelar o que já está cancelado é idempotente, sem escrita nem erro', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        ...avulsaPendente,
+        statusPagamento: 'cancelado',
+      });
+
+      await expect(service.cancelBooking('c1', 'o1')).resolves.toBeUndefined();
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+    });
+  });
 });
