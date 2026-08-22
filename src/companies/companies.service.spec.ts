@@ -16,6 +16,8 @@ interface TxMock {
   // gera `slug` único e consulta colisão dentro da própria transação.
   empresa: { create: jest.Mock; findUnique: jest.Mock };
   usuario: { create: jest.Mock };
+  // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias.
+  horarioFuncionamento: { createMany: jest.Mock };
 }
 
 function buildPrismaMock() {
@@ -27,6 +29,11 @@ function buildPrismaMock() {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     usuario: { create: jest.fn() },
+    // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias, na
+    // mesma transação.
+    horarioFuncionamento: {
+      createMany: jest.fn().mockResolvedValue({ count: 7 }),
+    },
   };
   const prisma = {
     empresa: {

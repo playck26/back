@@ -20,6 +20,9 @@ export interface TxMock {
   // `findUnique` entrou em SPEC-009:TASK-000: `CompaniesService.create`
   // gera `slug` único e checa colisão dentro da própria transação.
   empresa: { create: jest.Mock; findUnique: jest.Mock };
+  // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias, na mesma
+  // transação da criação.
+  horarioFuncionamento: { createMany: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -58,6 +61,9 @@ export function buildPrismaMock(): PrismaMock {
     aluno: { create: jest.fn() },
     refreshToken: { updateMany: jest.fn() },
     conviteAluno: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
+    horarioFuncionamento: {
+      createMany: jest.fn().mockResolvedValue({ count: 7 }),
+    },
     empresa: {
       create: jest.fn(),
       // Padrão: nenhum slug colidindo.

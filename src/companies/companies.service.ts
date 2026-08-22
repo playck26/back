@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { parseTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateCompanyDto } from './dto/create-company.dto';
 import type { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
@@ -71,6 +72,22 @@ export class CompaniesService {
             logoUrl: dto.logoUrl,
             esportes: dto.esportes,
           },
+        });
+
+        // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias.
+        // Sem isto, uma empresa criada depois da migration não teria
+        // configuração nenhuma e cairia na rede de segurança do resolver —
+        // funcionaria, mas o admin abriria a tela de configuração vazia e
+        // não entenderia de onde vêm os horários que o aluno enxerga.
+        await tx.horarioFuncionamento.createMany({
+          data: Array.from({ length: 7 }, (_, diaSemana) => ({
+            companyId: empresaCriada.id,
+            quadraId: null,
+            diaSemana,
+            horaInicio: parseTimeOnly('06:00'),
+            horaFim: parseTimeOnly('22:00'),
+            fechado: false,
+          })),
         });
 
         const adminCriado = await tx.usuario.create({
