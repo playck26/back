@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { StudentsService } from '../people/students.service';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
@@ -15,20 +16,23 @@ import { AuthService } from './auth.service';
 // para quando a spec 001 fechar DoD com Neon disponível.
 
 interface TxMock {
-  usuario: { create: jest.Mock };
+  usuario: { create: jest.Mock; update: jest.Mock };
   aluno: { create: jest.Mock };
+  refreshToken: { updateMany: jest.Mock };
 }
 
 function buildPrismaMock() {
   const tx: TxMock = {
-    usuario: { create: jest.fn() },
+    usuario: { create: jest.fn(), update: jest.fn() },
     aluno: { create: jest.fn() },
+    refreshToken: { updateMany: jest.fn() },
   };
   const prisma = {
     usuario: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     },
     empresa: {
       findUnique: jest.fn(),
@@ -67,6 +71,7 @@ function buildJwtMock() {
   return {
     signAsync: jest.fn(() => Promise.resolve(`signed-token-${counter++}`)),
     verify: jest.fn(),
+    verifyAsync: jest.fn(),
   } as unknown as JwtService;
 }
 
@@ -75,6 +80,7 @@ describe('AuthService', () => {
   let tx: TxMock;
   let config: ConfigService;
   let jwt: JwtService;
+  let students: StudentsService;
   let service: AuthService;
 
   beforeEach(() => {
@@ -83,7 +89,13 @@ describe('AuthService', () => {
     tx = built.tx;
     config = buildConfigMock();
     jwt = buildJwtMock();
-    service = new AuthService(prisma, jwt, config);
+    // SPEC-009/REQ-007: MOD-001 delega a criação do perfil de aluno a
+    // MOD-003 — o mock prova que a delegação acontece, e que MOD-001 não
+    // toca `tx.aluno` direto.
+    students = {
+      criarPerfilDeAluno: jest.fn().mockResolvedValue({ id: 'a1' }),
+    } as unknown as StudentsService;
+    service = new AuthService(prisma, students, jwt, config);
   });
 
   describe('login', () => {
@@ -163,6 +175,9 @@ describe('AuthService', () => {
         email: 'x@x.com',
         role: 'company_admin',
         companyId: 'c1',
+        // SPEC-009/AC-008: o frontend usa este campo para decidir se manda
+        // a pessoa para a tela de primeiro acesso.
+        senhaTemporaria: false,
       });
       expect(prisma.refreshToken.create).toHaveBeenCalledTimes(1);
     });
@@ -238,8 +253,15 @@ describe('AuthService', () => {
 
       expect(result.usuario.role).toBe('aluno');
       expect(result.usuario.companyId).toBe('c1');
-      expect(tx.aluno.create).toHaveBeenCalledWith({
-        data: { usuarioId: 'u2', companyId: 'c1' },
+      // SPEC-009/REQ-007 (AC-013): MOD-001 delega a MOD-003 e **não** toca
+      // a tabela `alunos` direto. O `tx` é repassado porque conta e perfil
+      // nascem na mesma transação.
+      expect(tx.aluno.create).not.toHaveBeenCalled();
+      expect(students.criarPerfilDeAluno).toHaveBeenCalledWith(tx, {
+        usuarioId: 'u2',
+        companyId: 'c1',
+        // Auto-cadastro público nasce pendente de aprovação (REQ-008).
+        vinculo: 'pendente',
       });
     });
   });
@@ -364,16 +386,146 @@ describe('AuthService', () => {
     });
   });
 
+  // SPEC-009/AC-020 — logout deixou de exigir access token válido; a
+  // identificação vem do cookie de refresh, com o Bearer como alternativa.
   describe('logout', () => {
-    it('revoga todos os refresh tokens ativos do usuário quando não há cookie (REQ-004)', async () => {
+    it('revoga a sessão do refresh token do cookie', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'u1', jti: 'jti-1' });
       (prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({});
 
-      await service.logout('u1');
+      await service.logout({ refreshTokenRaw: 'refresh-valido' });
+
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 'jti-1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    it('cai no Bearer e revoga todas as sessões quando não há cookie', async () => {
+      (jwt.verifyAsync as jest.Mock).mockResolvedValue({ sub: 'u1' });
+      (prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({});
+
+      await service.logout({ accessTokenRaw: 'access-valido' });
 
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
         where: { usuarioId: 'u1', revokedAt: null },
         data: { revokedAt: expect.any(Date) },
       });
+    });
+
+    it('é idempotente sem credencial nenhuma — não revoga nada nem vaza erro', async () => {
+      await expect(service.logout({})).resolves.toBeUndefined();
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ===================================================================
+  // SPEC-009 — senha temporária (INV-008, AC-009, AC-019)
+  // ===================================================================
+
+  describe('senha temporária (SPEC-009)', () => {
+    const usuarioComSenhaTemporariaVencida = (senhaHash: string) => ({
+      id: 'u1',
+      email: 'aluno@x.com',
+      nome: 'Aluno',
+      role: 'aluno' as const,
+      companyId: 'c1',
+      senhaHash,
+      senhaTemporaria: true,
+      senhaTemporariaExpiraEm: new Date(Date.now() - 60_000),
+    });
+
+    it('login recusa senha temporária vencida e derruba as sessões (ADR-013)', async () => {
+      const senhaHash = await bcrypt.hash('pck-ABC123', 12);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(
+        usuarioComSenhaTemporariaVencida(senhaHash),
+      );
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+        id: 'c1',
+        status: 'ativa',
+      });
+      (prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({});
+
+      await expect(
+        service.login({ email: 'aluno@x.com', senha: 'pck-ABC123' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { usuarioId: 'u1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    // Este é o furo que a 1ª validação cruzada encontrou (ACHADO-002): sem
+    // a checagem no refresh, uma sessão aberta antes do vencimento se
+    // renovaria para sempre e a validade de 7 dias não valeria nada.
+    it('refresh recusa senha temporária vencida em vez de renovar a sessão (AC-019)', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'u1', jti: 'jti-1' });
+      const tokenHash = await bcrypt.hash('refresh-valido', 12);
+      (prisma.refreshToken.findUnique as jest.Mock).mockResolvedValue({
+        id: 'jti-1',
+        usuarioId: 'u1',
+        tokenHash,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        revokedAt: null,
+      });
+      (prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({
+        count: 1,
+      });
+      (prisma.usuario.findUniqueOrThrow as jest.Mock).mockResolvedValue(
+        usuarioComSenhaTemporariaVencida('nao-importa'),
+      );
+
+      await expect(service.refresh('refresh-valido')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('trocarSenha exige a senha atual correta', async () => {
+      const senhaHash = await bcrypt.hash('pck-ABC123', 12);
+      (prisma.usuario.findUniqueOrThrow as jest.Mock).mockResolvedValue({
+        ...usuarioComSenhaTemporariaVencida(senhaHash),
+        senhaTemporariaExpiraEm: new Date(Date.now() + 86_400_000),
+      });
+
+      await expect(
+        service.trocarSenha('u1', {
+          senhaAtual: 'chute-errado',
+          novaSenha: 'senha-nova-forte',
+        }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('trocarSenha limpa a flag, revoga sessões antigas e devolve par novo (AC-009)', async () => {
+      const senhaHash = await bcrypt.hash('pck-ABC123', 12);
+      (prisma.usuario.findUniqueOrThrow as jest.Mock).mockResolvedValue({
+        ...usuarioComSenhaTemporariaVencida(senhaHash),
+        senhaTemporariaExpiraEm: new Date(Date.now() + 86_400_000),
+      });
+      tx.usuario.update.mockResolvedValue({});
+      tx.refreshToken.updateMany.mockResolvedValue({});
+      (prisma.refreshToken.create as jest.Mock).mockResolvedValue({});
+
+      const tokens = await service.trocarSenha('u1', {
+        senhaAtual: 'pck-ABC123',
+        novaSenha: 'senha-nova-forte',
+      });
+
+      expect(tx.usuario.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: expect.objectContaining({
+          senhaTemporaria: false,
+          senhaTemporariaExpiraEm: null,
+        }),
+      });
+      expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { usuarioId: 'u1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      expect(tokens.accessToken).toBeDefined();
+      expect(tokens.refreshToken).toBeDefined();
     });
   });
 });

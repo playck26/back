@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import type { Prisma, VinculoAluno } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateStudentDto } from './dto/create-student.dto';
 import type { PaginationQueryDto } from './dto/pagination-query.dto';
@@ -15,6 +16,45 @@ const BCRYPT_COST = 12;
 @Injectable()
 export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * SPEC-009/REQ-007 — único ponto de escrita na tabela `alunos`.
+   *
+   * `TARGET_ARCHITECTURE.md` (ownership de dados) diz que `alunos` é de
+   * MOD-003 e "só MOD-003" escreve nela, mas MOD-001 (`AuthService
+   * .registerAluno`) vinha fazendo `tx.aluno.create` direto. É a mesma
+   * classe de violação que a validação cruzada de 2026-08-07 corrigiu
+   * entre MOD-006 e MOD-005, e a correção segue o mesmo padrão: um método
+   * público aqui, chamado por quem precisa, em vez de acesso à tabela.
+   *
+   * Recebe o `tx` porque provisionar conta é uma operação só — `usuarios`
+   * e `alunos` nascem juntos ou nenhum dos dois. Quem chama é dono da
+   * transação; este método não abre a sua.
+   *
+   * `vinculo` é obrigatório de propósito: quem cria uma conta precisa
+   * declarar se a empresa já reconhece essa pessoa (REQ-008). O default do
+   * banco é `pendente` (fail-closed), mas depender de default silencioso é
+   * o tipo de coisa que passa despercebida numa revisão.
+   */
+  async criarPerfilDeAluno(
+    tx: Prisma.TransactionClient,
+    dados: {
+      usuarioId: string;
+      companyId: string;
+      nivelId?: string | null;
+      vinculo: VinculoAluno;
+    },
+  ) {
+    return tx.aluno.create({
+      data: {
+        usuarioId: dados.usuarioId,
+        companyId: dados.companyId,
+        nivelId: dados.nivelId ?? null,
+        vinculo: dados.vinculo,
+      },
+      include: { usuario: true },
+    });
+  }
 
   async list(companyId: string, query: PaginationQueryDto) {
     const page = query.page ?? 1;
@@ -72,13 +112,13 @@ export class StudentsService {
         },
       });
 
-      return tx.aluno.create({
-        data: {
-          usuarioId: usuario.id,
-          companyId,
-          nivelId: dto.nivelId,
-        },
-        include: { usuario: true },
+      // Cadastro pelo admin (C3): a iniciativa é da empresa, então o
+      // aluno já nasce aprovado (REQ-008/AC-014).
+      return this.criarPerfilDeAluno(tx, {
+        usuarioId: usuario.id,
+        companyId,
+        nivelId: dto.nivelId,
+        vinculo: 'aprovado',
       });
     });
 

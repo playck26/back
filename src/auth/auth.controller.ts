@@ -16,11 +16,13 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { PermiteSenhaTemporaria } from '../common/decorators/permite-senha-temporaria.decorator';
 import { parseDurationToMs } from '../common/utils/parse-duration';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterAlunoDto } from './dto/register-aluno.dto';
+import { TrocarSenhaDto } from './dto/trocar-senha.dto';
 
 const REFRESH_COOKIE_NAME = 'refresh_token';
 const REFRESH_COOKIE_PATH = '/api/v1/auth';
@@ -63,18 +65,35 @@ export class AuthController {
     return { accessToken: result.accessToken };
   }
 
+  // SPEC-009/AC-020: sem `JwtAuthGuard`. Exigir access token válido para
+  // deslogar prende quem está com o token expirado numa sessão que segue
+  // viva no servidor. A identificação vem do cookie de refresh, com o
+  // Bearer como alternativa quando ele existir.
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.authService.logout({
+      refreshTokenRaw: this.readRefreshCookie(req),
+      accessTokenRaw: this.readBearer(req),
+    });
+    res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+  }
+
+  // SPEC-009/REQ-004: única rota de escrita que uma conta em primeiro
+  // acesso alcança (INV-008).
+  @Post('trocar-senha')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
+  @PermiteSenhaTemporaria()
   @ApiBearerAuth()
-  async logout(
+  async trocarSenha(
     @CurrentUser() user: AccessTokenPayload,
-    @Req() req: Request,
+    @Body() dto: TrocarSenhaDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshTokenRaw = this.readRefreshCookie(req);
-    await this.authService.logout(user.sub, refreshTokenRaw);
-    res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+    const tokens = await this.authService.trocarSenha(user.sub, dto);
+    this.setRefreshCookie(res, tokens.refreshToken);
+    return { accessToken: tokens.accessToken };
   }
 
   @Post('register-aluno')
@@ -83,11 +102,22 @@ export class AuthController {
     return this.authService.registerAluno(dto);
   }
 
+  // Alcançável em primeiro acesso: é por aqui que o frontend descobre que
+  // precisa mandar a pessoa trocar a senha (AC-008).
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @PermiteSenhaTemporaria()
   @ApiBearerAuth()
   me(@CurrentUser() user: AccessTokenPayload) {
     return this.authService.me(user.sub);
+  }
+
+  private readBearer(req: Request): string | undefined {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) {
+      return undefined;
+    }
+    return header.slice('Bearer '.length).trim() || undefined;
   }
 
   private readRefreshCookie(req: Request): string | undefined {

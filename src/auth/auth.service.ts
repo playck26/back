@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { StudentsService } from '../people/students.service';
 import { parseDurationToMs } from '../common/utils/parse-duration';
 import type {
   AccessTokenPayload,
@@ -16,6 +17,7 @@ import type {
 } from '../common/types/jwt-payload.type';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterAlunoDto } from './dto/register-aluno.dto';
+import type { TrocarSenhaDto } from './dto/trocar-senha.dto';
 
 const BCRYPT_COST = 12;
 const CREDENCIAIS_INVALIDAS = 'Credenciais inválidas';
@@ -27,6 +29,9 @@ interface IssuedTokens {
 }
 
 export interface PublicUsuario {
+  // SPEC-009/AC-008: o frontend precisa saber que a conta está em primeiro
+  // acesso para redirecionar; a trava em si é do servidor (INV-008).
+  senhaTemporaria?: boolean;
   id: string;
   nome: string;
   email: string;
@@ -38,6 +43,8 @@ export interface PublicUsuario {
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
+    // SPEC-009/REQ-007: MOD-001 não escreve em `alunos` — pede a MOD-003.
+    private readonly students: StudentsService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
@@ -66,6 +73,24 @@ export class AuthService {
       if (!empresa || empresa.status !== 'ativa') {
         throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
       }
+    }
+
+    // SPEC-009: senha temporária vencida não autentica. Mensagem específica
+    // (e não a genérica de credencial) porque aqui a pessoa **acertou** a
+    // senha: esconder o motivo faria ela tentar de novo para sempre, e não
+    // há enumeração de conta a proteger — quem chegou aqui já provou posse
+    // da credencial.
+    if (this.senhaTemporariaVencida(usuario)) {
+      await this.prisma.refreshToken.updateMany({
+        where: { usuarioId: usuario.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException({
+        statusCode: 401,
+        code: 'SENHA_TEMPORARIA_EXPIRADA',
+        message:
+          'Senha temporária expirada. Peça ao administrador da sua empresa uma nova.',
+      });
     }
 
     const tokens = await this.issueTokens(usuario.id, {
@@ -138,6 +163,25 @@ export class AuthService {
     const usuario = await this.prisma.usuario.findUniqueOrThrow({
       where: { id: stored.usuarioId },
     });
+
+    // SPEC-009/AC-019 — sem esta checagem, uma sessão aberta com senha
+    // temporária se renovaria indefinidamente por refresh e a validade de
+    // 7 dias seria decorativa: o vencimento só barraria login novo, nunca
+    // quem já estava dentro. Ao vencer, derruba todas as sessões da conta —
+    // a saída é o admin gerar outra senha temporária (ADR-013).
+    if (this.senhaTemporariaVencida(usuario)) {
+      await this.prisma.refreshToken.updateMany({
+        where: { usuarioId: usuario.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException({
+        statusCode: 401,
+        code: 'SENHA_TEMPORARIA_EXPIRADA',
+        message:
+          'Senha temporária expirada. Peça ao administrador da sua empresa uma nova.',
+      });
+    }
+
     const tokens = await this.issueTokens(usuario.id, {
       sub: usuario.id,
       email: usuario.email,
@@ -152,24 +196,50 @@ export class AuthService {
     };
   }
 
-  async logout(usuarioId: string, refreshTokenRaw?: string): Promise<void> {
-    if (refreshTokenRaw) {
+  /**
+   * SPEC-009/AC-020 — logout deixou de exigir access token válido.
+   *
+   * Antes, a rota era protegida por `JwtAuthGuard`: quem estivesse com o
+   * access token expirado (15 min) não conseguia deslogar, e a sessão
+   * continuava viva no servidor enquanto o cliente apenas "esquecia" o
+   * token localmente. Agora a identificação vem do refresh token do cookie,
+   * com o Bearer como caminho alternativo quando ele existir.
+   *
+   * Continua idempotente: sem credencial nenhuma, não há sessão a revogar e
+   * a resposta é a mesma — logout não é lugar de dar pista sobre sessão
+   * alheia.
+   */
+  async logout(entrada: {
+    refreshTokenRaw?: string;
+    accessTokenRaw?: string;
+  }): Promise<void> {
+    if (entrada.refreshTokenRaw) {
       try {
-        const payload = this.verifyRefreshToken(refreshTokenRaw);
+        const payload = this.verifyRefreshToken(entrada.refreshTokenRaw);
         await this.prisma.refreshToken.updateMany({
-          where: { id: payload.jti, usuarioId, revokedAt: null },
+          where: { id: payload.jti, revokedAt: null },
           data: { revokedAt: new Date() },
         });
         return;
       } catch {
-        // token de refresh inválido/expirado — cai no fallback abaixo
+        // refresh inválido/expirado — tenta pelo Bearer abaixo
       }
     }
 
-    await this.prisma.refreshToken.updateMany({
-      where: { usuarioId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+    if (entrada.accessTokenRaw) {
+      try {
+        const payload = await this.jwt.verifyAsync<AccessTokenPayload>(
+          entrada.accessTokenRaw,
+          { secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET') },
+        );
+        await this.prisma.refreshToken.updateMany({
+          where: { usuarioId: payload.sub, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      } catch {
+        // sem credencial válida: nada a revogar
+      }
+    }
   }
 
   async registerAluno(
@@ -206,11 +276,13 @@ export class AuthService {
         },
       });
 
-      await tx.aluno.create({
-        data: {
-          usuarioId: usuarioCriado.id,
-          companyId: dto.companyId,
-        },
+      // Auto-cadastro público (C1): a iniciativa é de quem chegou pelo
+      // link, não da empresa — nasce `pendente` até um admin aprovar
+      // (REQ-008/AC-014, INV-010).
+      await this.students.criarPerfilDeAluno(tx, {
+        usuarioId: usuarioCriado.id,
+        companyId: dto.companyId,
+        vinculo: 'pendente',
       });
 
       return usuarioCriado;
@@ -286,6 +358,7 @@ export class AuthService {
     email: string;
     role: AccessTokenPayload['role'];
     companyId: string | null;
+    senhaTemporaria?: boolean;
   }): PublicUsuario {
     return {
       id: usuario.id,
@@ -293,6 +366,81 @@ export class AuthService {
       email: usuario.email,
       role: usuario.role,
       companyId: usuario.companyId,
+      senhaTemporaria: usuario.senhaTemporaria ?? false,
     };
+  }
+
+  /**
+   * SPEC-009/REQ-004 — senha temporária vencida não vira acesso permanente.
+   * Chamado no login e no refresh: os dois são portas de entrada de sessão,
+   * e deixar só o login checando permitiria que uma sessão aberta antes do
+   * vencimento sobrevivesse indefinidamente por refresh (achado ACHADO-002
+   * da 1ª validação cruzada).
+   */
+  private senhaTemporariaVencida(usuario: {
+    senhaTemporaria: boolean;
+    senhaTemporariaExpiraEm: Date | null;
+  }): boolean {
+    if (!usuario.senhaTemporaria) {
+      return false;
+    }
+    return (
+      usuario.senhaTemporariaExpiraEm !== null &&
+      usuario.senhaTemporariaExpiraEm.getTime() < Date.now()
+    );
+  }
+
+  /**
+   * SPEC-009/REQ-004 (AC-009) — troca de senha do próprio usuário. Serve
+   * tanto ao primeiro acesso (senha temporária) quanto à troca voluntária.
+   */
+  async trocarSenha(
+    usuarioId: string,
+    dto: TrocarSenhaDto,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const usuario = await this.prisma.usuario.findUniqueOrThrow({
+      where: { id: usuarioId },
+    });
+
+    const senhaConfere = await bcrypt.compare(
+      dto.senhaAtual,
+      usuario.senhaHash,
+    );
+    if (!senhaConfere) {
+      throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
+    }
+
+    const novaSenhaHash = await bcrypt.hash(dto.novaSenha, BCRYPT_COST);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.usuario.update({
+        where: { id: usuarioId },
+        data: {
+          senhaHash: novaSenhaHash,
+          senhaTemporaria: false,
+          senhaTemporariaExpiraEm: null,
+        },
+      });
+
+      // Mesma proteção do REQ-003 de SPEC-001: senha trocada invalida toda
+      // sessão anterior. Vale principalmente para o primeiro acesso — a
+      // senha temporária circulou por WhatsApp, então qualquer sessão
+      // aberta com ela deixa de valer no momento da troca.
+      await tx.refreshToken.updateMany({
+        where: { usuarioId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
+
+    // Emite um par novo para quem trocou: revogar tudo sem devolver sessão
+    // jogaria a pessoa para a tela de login logo depois de ela ter feito
+    // exatamente o que o sistema exigiu.
+    return this.issueTokens(usuarioId, {
+      sub: usuario.id,
+      email: usuario.email,
+      nome: usuario.nome,
+      role: usuario.role,
+      companyId: usuario.companyId,
+    });
   }
 }

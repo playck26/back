@@ -249,8 +249,19 @@ describe('Auth (e2e) - TEST-001', () => {
         role: 'aluno',
         companyId: COMPANY_ID,
       });
+      // SPEC-009/REQ-007: a escrita continua acontecendo, mas por MOD-003
+      // (`StudentsService.criarPerfilDeAluno`), não por MOD-001. Aqui a
+      // suíte roda o serviço real, então o que se prova é a forma final da
+      // linha — inclusive `vinculo: 'pendente'`, porque auto-cadastro
+      // público depende de aprovação do admin (REQ-008/INV-010).
       expect(prisma.tx.aluno.create).toHaveBeenCalledWith({
-        data: { usuarioId: 'u2', companyId: COMPANY_ID },
+        data: {
+          usuarioId: 'u2',
+          companyId: COMPANY_ID,
+          nivelId: null,
+          vinculo: 'pendente',
+        },
+        include: { usuario: true },
       });
     });
 
@@ -276,6 +287,88 @@ describe('Auth (e2e) - TEST-001', () => {
         .post('/api/v1/auth/register-aluno')
         .send(dto)
         .expect(422);
+    });
+  });
+
+  // =====================================================================
+  // SPEC-009 — INV-008 na camada HTTP real (guard + controller + service)
+  // =====================================================================
+  describe('senha temporária (SPEC-009/INV-008)', () => {
+    it('AC-008: conta com senha temporária é barrada com 403 numa rota comum', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      // O guard consulta o banco a cada requisição autenticada — é ele que
+      // decide, não um claim do token já emitido.
+      prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: true });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/companies')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+
+      expect(bodyOf<{ code: string }>(res).code).toBe('SENHA_TEMPORARIA');
+    });
+
+    it('AC-008: /auth/me continua acessível em primeiro acesso e denuncia o estado', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: true });
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue({
+        ...usuario,
+        senhaTemporaria: true,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(bodyOf<{ senhaTemporaria: boolean }>(res).senhaTemporaria).toBe(
+        true,
+      );
+    });
+
+    it('AC-009: trocar a senha libera o acesso e revoga as sessões anteriores', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: true });
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue({
+        ...usuario,
+        senhaTemporaria: true,
+        senhaTemporariaExpiraEm: new Date(Date.now() + 86_400_000),
+      });
+      prisma.tx.usuario.update.mockResolvedValue({});
+      prisma.tx.refreshToken.updateMany.mockResolvedValue({});
+      prisma.refreshToken.create.mockResolvedValue({ id: 'rt2' });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/trocar-senha')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ senhaAtual: SENHA_VALIDA, novaSenha: 'senha-nova-forte-1' })
+        .expect(200);
+
+      const chamada = prisma.tx.usuario.update.mock.calls[0] as [
+        { where: { id: string }; data: { senhaTemporaria: boolean } },
+      ];
+      expect(chamada[0].where.id).toBe(usuario.id);
+      expect(chamada[0].data.senhaTemporaria).toBe(false);
+      expect(prisma.tx.refreshToken.updateMany).toHaveBeenCalled();
+    });
+
+    it('AC-020: logout funciona sem access token válido, pelo cookie de refresh', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { refreshToken } = await loginAndGetTokens(app, prisma, usuario);
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/logout')
+        .set('Cookie', [`refresh_token=${refreshToken}`])
+        .expect(204);
+
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalled();
     });
   });
 

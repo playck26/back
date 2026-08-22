@@ -9,5 +9,8 @@ import { TeachersService } from './teachers.service';
 @Module({
   controllers: [StudentsController, TeachersController, LevelsController],
   providers: [StudentsService, TeachersService, LevelsService],
+  // SPEC-009/REQ-007: MOD-001 provisiona conta de aluno chamando o método
+  // público de MOD-003, então o serviço precisa sair do módulo.
+  exports: [StudentsService],
 })
 export class PeopleModule {}

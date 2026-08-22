@@ -62,6 +62,30 @@
             "description": ""
           }
         },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/trocar-senha": {
+      "post": {
+        "operationId": "AuthController_trocarSenha",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrocarSenhaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
         "security": [
           {
             "bearer": []
@@ -112,201 +136,6 @@
         ],
         "tags": [
           "auth"
-        ]
-      }
-    },
-    "/api/v1/_smoke/tenant-check/{companyId}": {
-      "get": {
-        "operationId": "SmokeController_tenantCheck",
-        "parameters": [
-          {
-            "name": "companyId",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "smoke"
-        ]
-      }
-    },
-    "/api/v1/companies": {
-      "get": {
-        "operationId": "CompaniesController_list",
-        "parameters": [
-          {
-            "name": "page",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "default": 1,
-              "type": "number"
-            }
-          },
-          {
-            "name": "pageSize",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "default": 20,
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "companies"
-        ]
-      },
-      "post": {
-        "operationId": "CompaniesController_create",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateCompanyDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "companies"
-        ]
-      }
-    },
-    "/api/v1/companies/{id}": {
-      "get": {
-        "operationId": "CompaniesController_findOne",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "companies"
-        ]
-      },
-      "patch": {
-        "operationId": "CompaniesController_update",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateCompanyDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "companies"
-        ]
-      }
-    },
-    "/api/v1/companies/{id}/status": {
-      "patch": {
-        "operationId": "CompaniesController_updateStatus",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateCompanyStatusDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "companies"
         ]
       }
     },
@@ -675,6 +504,201 @@
         ],
         "tags": [
           "levels"
+        ]
+      }
+    },
+    "/api/v1/_smoke/tenant-check/{companyId}": {
+      "get": {
+        "operationId": "SmokeController_tenantCheck",
+        "parameters": [
+          {
+            "name": "companyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "smoke"
+        ]
+      }
+    },
+    "/api/v1/companies": {
+      "get": {
+        "operationId": "CompaniesController_list",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
+        ]
+      },
+      "post": {
+        "operationId": "CompaniesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCompanyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
+        ]
+      }
+    },
+    "/api/v1/companies/{id}": {
+      "get": {
+        "operationId": "CompaniesController_findOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
+        ]
+      },
+      "patch": {
+        "operationId": "CompaniesController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCompanyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
+        ]
+      }
+    },
+    "/api/v1/companies/{id}/status": {
+      "patch": {
+        "operationId": "CompaniesController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCompanyStatusDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
         ]
       }
     },
@@ -1352,6 +1376,23 @@
           "senha"
         ]
       },
+      "TrocarSenhaDto": {
+        "type": "object",
+        "properties": {
+          "senhaAtual": {
+            "type": "string",
+            "description": "Senha atual. Para quem está no primeiro acesso, é a senha temporária recebida do admin."
+          },
+          "novaSenha": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "senhaAtual",
+          "novaSenha"
+        ]
+      },
       "RegisterAlunoDto": {
         "type": "object",
         "properties": {
@@ -1376,85 +1417,6 @@
           "senha",
           "nome",
           "companyId"
-        ]
-      },
-      "AdminInicialDto": {
-        "type": "object",
-        "properties": {
-          "nome": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "senha": {
-            "type": "string"
-          },
-          "telefone": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "nome",
-          "email",
-          "senha"
-        ]
-      },
-      "CreateCompanyDto": {
-        "type": "object",
-        "properties": {
-          "nome": {
-            "type": "string"
-          },
-          "logoUrl": {
-            "type": "string"
-          },
-          "esportes": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "adminInicial": {
-            "$ref": "#/components/schemas/AdminInicialDto"
-          }
-        },
-        "required": [
-          "nome",
-          "esportes",
-          "adminInicial"
-        ]
-      },
-      "UpdateCompanyDto": {
-        "type": "object",
-        "properties": {
-          "nome": {
-            "type": "string"
-          },
-          "logoUrl": {
-            "type": "string"
-          },
-          "esportes": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "UpdateCompanyStatusDto": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "ativa",
-              "inativa"
-            ]
-          }
-        },
-        "required": [
-          "status"
         ]
       },
       "CreateStudentDto": {
@@ -1562,6 +1524,85 @@
             "type": "number"
           }
         }
+      },
+      "AdminInicialDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "senha": {
+            "type": "string"
+          },
+          "telefone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "nome",
+          "email",
+          "senha"
+        ]
+      },
+      "CreateCompanyDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "logoUrl": {
+            "type": "string"
+          },
+          "esportes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "adminInicial": {
+            "$ref": "#/components/schemas/AdminInicialDto"
+          }
+        },
+        "required": [
+          "nome",
+          "esportes",
+          "adminInicial"
+        ]
+      },
+      "UpdateCompanyDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "logoUrl": {
+            "type": "string"
+          },
+          "esportes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UpdateCompanyStatusDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
       },
       "CreateCourtDto": {
         "type": "object",

@@ -9,7 +9,11 @@
 export interface TxMock {
   usuario: { create: jest.Mock; update: jest.Mock };
   aluno: { create: jest.Mock };
-  empresa: { create: jest.Mock };
+  // SPEC-009: `trocarSenha` revoga as sessões dentro da transação.
+  refreshToken: { updateMany: jest.Mock };
+  // `findUnique` entrou em SPEC-009:TASK-000: `CompaniesService.create`
+  // gera `slug` único e checa colisão dentro da própria transação.
+  empresa: { create: jest.Mock; findUnique: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -42,7 +46,12 @@ export function buildPrismaMock(): PrismaMock {
   const tx: TxMock = {
     usuario: { create: jest.fn(), update: jest.fn() },
     aluno: { create: jest.fn() },
-    empresa: { create: jest.fn() },
+    refreshToken: { updateMany: jest.fn() },
+    empresa: {
+      create: jest.fn(),
+      // Padrão: nenhum slug colidindo.
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
   };
 
   const mock: PrismaMock = {
