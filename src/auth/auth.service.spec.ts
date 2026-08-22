@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -205,36 +204,81 @@ describe('AuthService', () => {
       email: 'aluno@x.com',
       senha: 'senha-forte',
       nome: 'Aluno',
-      companyId: 'c1',
+      // SPEC-009/REQ-001: a empresa vem pelo slug do link público, não
+      // pelo UUID interno.
+      empresaSlug: 'smart-tennis',
+    };
+    const EMPRESA_OK = {
+      id: 'c1',
+      status: 'ativa',
+      permiteAutoCadastro: true,
     };
 
-    it('rejeita empresa inexistente/inativa com 422', async () => {
-      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+    // SPEC-009/REQ-011 (AC-021): os quatro modos de falha precisam ser
+    // indistinguíveis. Antes, empresa inválida devolvia 422 com uma
+    // mensagem e e-mail duplicado devolvia 409 com outra — o que fazia
+    // deste endpoint aberto um verificador de existência de tenant e de
+    // conta.
+    const casosDeFalha: [string, () => void][] = [
+      [
+        'slug inexistente',
+        () => {
+          (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+          (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+        },
+      ],
+      [
+        'empresa inativa',
+        () => {
+          (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+            ...EMPRESA_OK,
+            status: 'inativa',
+          });
+          (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+        },
+      ],
+      [
+        'auto-cadastro desligado',
+        () => {
+          (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+            ...EMPRESA_OK,
+            permiteAutoCadastro: false,
+          });
+          (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+        },
+      ],
+      [
+        'e-mail já cadastrado',
+        () => {
+          (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(
+            EMPRESA_OK,
+          );
+          (prisma.usuario.findUnique as jest.Mock).mockResolvedValue({
+            id: 'existing',
+          });
+        },
+      ],
+    ];
 
-      await expect(service.registerAluno(dto)).rejects.toBeInstanceOf(
-        UnprocessableEntityException,
-      );
-    });
+    it.each(casosDeFalha)(
+      'AC-021: %s devolve 422 genérico, sempre a mesma mensagem',
+      async (_caso, preparar) => {
+        preparar();
 
-    it('rejeita email já cadastrado com 409 (AC-004)', async () => {
-      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
-        id: 'c1',
-        status: 'ativa',
-      });
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue({
-        id: 'existing',
-      });
+        const erro = (await service
+          .registerAluno(dto)
+          .catch((e: Error) => e)) as Error;
 
-      await expect(service.registerAluno(dto)).rejects.toBeInstanceOf(
-        ConflictException,
-      );
-    });
+        expect(erro).toBeInstanceOf(UnprocessableEntityException);
+        expect(erro.message).toBe(
+          'Não foi possível concluir o cadastro com esses dados.',
+        );
+        expect(tx.usuario.create).not.toHaveBeenCalled();
+      },
+    );
 
     it('cria usuario + perfil aluno numa transação (REQ-005)', async () => {
-      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
-        id: 'c1',
-        status: 'ativa',
-      });
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(EMPRESA_OK);
       (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
       tx.usuario.create.mockResolvedValue({
         id: 'u2',

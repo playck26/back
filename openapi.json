@@ -875,6 +875,29 @@
         ]
       }
     },
+    "/api/v1/public/companies/{slug}": {
+      "get": {
+        "operationId": "PublicCompaniesController_porSlug",
+        "parameters": [
+          {
+            "name": "slug",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "public"
+        ]
+      }
+    },
     "/api/v1/courts": {
       "get": {
         "operationId": "CourtsController_list",
@@ -1606,15 +1629,16 @@
           "telefone": {
             "type": "string"
           },
-          "companyId": {
-            "type": "string"
+          "empresaSlug": {
+            "type": "string",
+            "example": "smart-tennis"
           }
         },
         "required": [
           "email",
           "senha",
           "nome",
-          "companyId"
+          "empresaSlug"
         ]
       },
       "CriarConviteDto": {

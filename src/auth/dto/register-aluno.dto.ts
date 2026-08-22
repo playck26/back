@@ -1,11 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsEmail,
-  IsOptional,
-  IsString,
-  IsUUID,
-  MinLength,
-} from 'class-validator';
+import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class RegisterAlunoDto {
   @ApiProperty()
@@ -27,7 +21,13 @@ export class RegisterAlunoDto {
   @IsString()
   telefone?: string;
 
-  @ApiProperty()
-  @IsUUID()
-  companyId!: string;
+  /**
+   * SPEC-009/REQ-001 — a empresa é identificada pelo `slug` do link
+   * público (`/cadastro/<slug>`), não pelo `company_id` cru. O UUID é
+   * detalhe interno: não deve circular em link divulgado no Instagram nem
+   * ser algo que o aluno precise ter em mãos para se cadastrar.
+   */
+  @ApiProperty({ example: 'smart-tennis' })
+  @IsString()
+  empresaSlug!: string;
 }

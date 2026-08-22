@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  ConflictException,
   Injectable,
   UnauthorizedException,
   UnprocessableEntityException,
@@ -20,6 +19,9 @@ import type { RegisterAlunoDto } from './dto/register-aluno.dto';
 import type { TrocarSenhaDto } from './dto/trocar-senha.dto';
 
 const BCRYPT_COST = 12;
+// REQ-011: uma única mensagem para toda falha do cadastro público.
+const CADASTRO_PUBLICO_RECUSADO =
+  'Não foi possível concluir o cadastro com esses dados.';
 const CREDENCIAIS_INVALIDAS = 'Credenciais inválidas';
 
 interface IssuedTokens {
@@ -245,18 +247,26 @@ export class AuthService {
   async registerAluno(
     dto: RegisterAlunoDto,
   ): Promise<{ usuario: PublicUsuario }> {
+    // SPEC-009/REQ-011 (AC-021) — os quatro modos de falha deste endpoint
+    // público devolvem **a mesma** resposta: slug inexistente, empresa
+    // inativa, auto-cadastro desligado e e-mail já cadastrado.
+    //
+    // Antes, este código distinguia `422 "Empresa inexistente ou inativa"`
+    // de `409 "Email já cadastrado"`, o que fazia de um endpoint aberto um
+    // verificador de existência de tenant e de conta: bastava um POST por
+    // e-mail para descobrir quem tem cadastro na plataforma.
     const empresa = await this.prisma.empresa.findUnique({
-      where: { id: dto.companyId },
+      where: { slug: dto.empresaSlug },
     });
-    if (!empresa || empresa.status !== 'ativa') {
-      throw new UnprocessableEntityException('Empresa inexistente ou inativa');
-    }
+    const empresaAceitaCadastro =
+      empresa?.status === 'ativa' && empresa.permiteAutoCadastro;
 
     const existente = await this.prisma.usuario.findUnique({
       where: { email: dto.email },
     });
-    if (existente) {
-      throw new ConflictException('Email já cadastrado');
+
+    if (!empresa || !empresaAceitaCadastro || existente) {
+      throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
     }
 
     const senhaHash = await bcrypt.hash(dto.senha, BCRYPT_COST);
@@ -272,7 +282,7 @@ export class AuthService {
           nome: dto.nome,
           telefone: dto.telefone,
           role: 'aluno',
-          companyId: dto.companyId,
+          companyId: empresa.id,
         },
       });
 
@@ -281,7 +291,7 @@ export class AuthService {
       // (REQ-008/AC-014, INV-010).
       await this.students.criarPerfilDeAluno(tx, {
         usuarioId: usuarioCriado.id,
-        companyId: dto.companyId,
+        companyId: empresa.id,
         vinculo: 'pendente',
       });
 

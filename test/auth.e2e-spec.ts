@@ -88,6 +88,7 @@ describe('Auth (e2e) - TEST-001', () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: COMPANY_ID,
         status: 'ativa',
+        permiteAutoCadastro: true,
       });
       prisma.refreshToken.create.mockResolvedValue({ id: 'rt1' });
 
@@ -221,13 +222,15 @@ describe('Auth (e2e) - TEST-001', () => {
       email: 'aluno-novo@x.com',
       senha: SENHA_VALIDA,
       nome: 'Aluno Novo',
-      companyId: COMPANY_ID,
+      // SPEC-009/REQ-001: identificação por slug do link público.
+      empresaSlug: 'empresa-demo',
     };
 
     it('REQ-005: cria usuario (role aluno) vinculado a empresa ativa existente', async () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: COMPANY_ID,
         status: 'ativa',
+        permiteAutoCadastro: true,
       });
       prisma.usuario.findUnique.mockResolvedValue(null);
       prisma.tx.usuario.create.mockResolvedValue({
@@ -265,28 +268,117 @@ describe('Auth (e2e) - TEST-001', () => {
       });
     });
 
-    it('AC-004: email já cadastrado retorna 409', async () => {
+    // SPEC-009/REQ-011 (AC-021): antes este caso devolvia `409 "Email já
+    // cadastrado"` e o de empresa inválida devolvia `422` com outra
+    // mensagem — num endpoint aberto, isso é um verificador de existência
+    // de conta e de tenant. Agora os quatro modos de falha devolvem a
+    // mesma resposta, byte a byte.
+    it('AC-021: e-mail já cadastrado devolve 422 genérico', async () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: COMPANY_ID,
         status: 'ativa',
+        permiteAutoCadastro: true,
       });
       prisma.usuario.findUnique.mockResolvedValue({ id: 'existente' });
 
-      await request(app.getHttpServer())
-        .post('/api/v1/auth/register-aluno')
-        .send(dto)
-        .expect(409);
-
-      expect(prisma.tx.usuario.create).not.toHaveBeenCalled();
-    });
-
-    it('empresa inexistente/inativa retorna 422', async () => {
-      prisma.empresa.findUnique.mockResolvedValue(null);
-
-      await request(app.getHttpServer())
+      const res = await request(app.getHttpServer())
         .post('/api/v1/auth/register-aluno')
         .send(dto)
         .expect(422);
+
+      expect(bodyOf<{ message: string }>(res).message).toBe(
+        'Não foi possível concluir o cadastro com esses dados.',
+      );
+      expect(prisma.tx.usuario.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-021: auto-cadastro desligado devolve a MESMA resposta de e-mail duplicado', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: COMPANY_ID,
+        status: 'ativa',
+        permiteAutoCadastro: false,
+      });
+      prisma.usuario.findUnique.mockResolvedValue(null);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/register-aluno')
+        .send(dto)
+        .expect(422);
+
+      expect(bodyOf<{ message: string }>(res).message).toBe(
+        'Não foi possível concluir o cadastro com esses dados.',
+      );
+    });
+
+    it('AC-021: slug inexistente devolve a MESMA resposta dos demais casos', async () => {
+      prisma.empresa.findUnique.mockResolvedValue(null);
+      prisma.usuario.findUnique.mockResolvedValue(null);
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/register-aluno')
+        .send(dto)
+        .expect(422);
+
+      expect(bodyOf<{ message: string }>(res).message).toBe(
+        'Não foi possível concluir o cadastro com esses dados.',
+      );
+    });
+  });
+
+  // =====================================================================
+  // SPEC-009/REQ-001 — página pública de auto-cadastro
+  // =====================================================================
+  describe('GET /api/v1/public/companies/:slug', () => {
+    it('devolve só nome e logo de empresa ativa que aceita auto-cadastro', async () => {
+      prisma.empresa.findUnique.mockResolvedValue({
+        nome: 'Empresa Demo',
+        logoUrl: 'https://x/logo.png',
+        status: 'ativa',
+        permiteAutoCadastro: true,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/public/companies/empresa-demo')
+        .expect(200);
+
+      expect(res.body).toEqual({
+        nome: 'Empresa Demo',
+        logoUrl: 'https://x/logo.png',
+      });
+      // Nada de id, status ou configuração interna numa rota aberta.
+      expect(JSON.stringify(res.body)).not.toMatch(/status|permite|id/i);
+    });
+
+    // AC-022: os três casos devolvem o mesmo 404. Distinguir transformaria
+    // a rota num verificador de existência de tenant.
+    it.each([
+      ['slug inexistente', null],
+      [
+        'empresa inativa',
+        {
+          nome: 'X',
+          logoUrl: null,
+          status: 'inativa',
+          permiteAutoCadastro: true,
+        },
+      ],
+      [
+        'auto-cadastro desligado',
+        {
+          nome: 'X',
+          logoUrl: null,
+          status: 'ativa',
+          permiteAutoCadastro: false,
+        },
+      ],
+    ])('AC-022: %s devolve 404 idêntico', async (_caso, empresa) => {
+      prisma.empresa.findUnique.mockResolvedValue(empresa);
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/public/companies/qualquer')
+        .expect(404);
+
+      expect(bodyOf<{ message: string }>(res).message).toBe('Not Found');
     });
   });
 
