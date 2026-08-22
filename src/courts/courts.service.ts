@@ -7,10 +7,9 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { StudentsService } from '../people/students.service';
+import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  EXPEDIENTE_FIM_HORA,
-  EXPEDIENTE_INICIO_HORA,
   formatDateOnly,
   formatTimeOnly,
   parseDateOnly,
@@ -33,6 +32,8 @@ export class CourtsService {
     // SPEC-009/INV-010: reserva ocupa horário real (INV-001) — cadastro
     // não aprovado não bloqueia a agenda da empresa.
     private readonly studentsService: StudentsService,
+    // SPEC-010: única fonte de verdade sobre "estar aberto".
+    private readonly horarios: HorarioFuncionamentoService,
   ) {}
 
   async list(companyId: string, page = 1, pageSize = 20) {
@@ -104,37 +105,39 @@ export class CourtsService {
       },
     });
 
-    const slots: {
-      slot: string;
-      status: 'livre' | 'ocupado_turma' | 'ocupado_avulso';
-    }[] = [];
-    for (
-      let hora = EXPEDIENTE_INICIO_HORA;
-      hora < EXPEDIENTE_FIM_HORA;
-      hora++
-    ) {
-      const slotInicio = `${String(hora).padStart(2, '0')}:00`;
-      const slotFim = `${String(hora + 1).padStart(2, '0')}:00`;
-      const slotInicioDate = parseTimeOnly(slotInicio);
-      const slotFimDate = parseTimeOnly(slotFim);
+    // SPEC-010/REQ-004: a grade vem do horário efetivo da quadra naquele
+    // dia da semana, não mais de constante. Mesma função usada pela
+    // validação de criação (AC-015) — é o que impede a tela oferecer um
+    // horário que o servidor recusaria depois.
+    const horario = await this.horarios.resolverParaData(
+      companyId,
+      quadraId,
+      dataDate,
+    );
 
+    const slots = this.horarios.gerarSlots(horario).map((slot) => {
+      // Conflito é **semiaberto** (REQ-010/AC-020): uma ocupação que
+      // começa às 10:00 não ocupa o slot que termina às 10:00.
       const conflito = ocupacoes.find(
         (ocupacao) =>
-          ocupacao.horaInicio < slotFimDate &&
-          ocupacao.horaFim > slotInicioDate,
+          ocupacao.horaInicio < slot.fim && ocupacao.horaFim > slot.inicio,
       );
 
-      slots.push({
-        slot: `${slotInicio}-${slotFim}`,
+      return {
+        slot: `${formatTimeOnly(slot.inicio)}-${formatTimeOnly(slot.fim)}`,
         status: !conflito
-          ? 'livre'
+          ? ('livre' as const)
           : conflito.origemTipo === 'TURMA'
-            ? 'ocupado_turma'
-            : 'ocupado_avulso',
-      });
-    }
+            ? ('ocupado_turma' as const)
+            : ('ocupado_avulso' as const),
+      };
+    });
 
-    return { quadraId, data, slots };
+    // AC-008: `estado` distingue "fechado" de "aberto sem nada livre" — as
+    // duas situações produzem lista vazia depois que a tela filtra os
+    // slots ocupados, e sem isto o app do aluno mostraria a mesma grade
+    // vazia sem explicação nos dois casos.
+    return { quadraId, data, estado: horario.estado, slots };
   }
 
   async createBooking(
@@ -167,6 +170,29 @@ export class CourtsService {
 
     if (dto.alunoId) {
       await this.studentsService.exigirVinculoAprovado(companyId, dto.alunoId);
+    }
+
+    // SPEC-010/INV-011: nada é criado fora do expediente. Vem antes da
+    // checagem de conflito de propósito — um horário fora do expediente é
+    // inválido mesmo que a quadra esteja livre, e devolver "conflito"
+    // nesse caso seria mentir sobre o motivo.
+    const horarioDoDia = await this.horarios.resolverParaData(
+      companyId,
+      dto.quadraId,
+      dataDate,
+    );
+    if (
+      !this.horarios.dentroDoExpediente(
+        horarioDoDia,
+        horaInicioDate,
+        horaFimDate,
+      )
+    ) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'FORA_DO_EXPEDIENTE',
+        message: 'Horário fora do funcionamento da quadra.',
+      });
     }
 
     const conflitoExistente = await this.findConflito(
@@ -286,6 +312,45 @@ export class CourtsService {
     turmaId: string,
     ocorrencias: { data: Date; horaInicio: Date; horaFim: Date }[],
   ): Promise<void> {
+    // SPEC-010/INV-011 (AC-018): **todas** as ocorrências são validadas
+    // antes de qualquer escrita. Hoje elas compartilham dia e hora, então
+    // conferir só a primeira daria o mesmo resultado — mas este método é
+    // público e reutilizável, e uma implementação que confere só a
+    // primeira grava as demais fora do expediente sem ninguém notar.
+    const foraDoExpediente: { data: Date; horaInicio: Date }[] = [];
+    for (const ocorrencia of ocorrencias) {
+      const horarioDoDia = await this.horarios.resolverParaData(
+        companyId,
+        quadraId,
+        ocorrencia.data,
+        tx,
+      );
+      if (
+        !this.horarios.dentroDoExpediente(
+          horarioDoDia,
+          ocorrencia.horaInicio,
+          ocorrencia.horaFim,
+        )
+      ) {
+        foraDoExpediente.push({
+          data: ocorrencia.data,
+          horaInicio: ocorrencia.horaInicio,
+        });
+      }
+    }
+    if (foraDoExpediente.length > 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'FORA_DO_EXPEDIENTE',
+        message:
+          'A turma cai fora do horário de funcionamento da quadra em ao menos uma data.',
+        ocorrencias: foraDoExpediente.map((o) => ({
+          data: formatDateOnly(o.data),
+          horaInicio: formatTimeOnly(o.horaInicio),
+        })),
+      });
+    }
+
     const conflitos: ConflitoDetectado[] = [];
     for (const ocorrencia of ocorrencias) {
       const conflito = await tx.ocupacaoQuadra.findFirst({

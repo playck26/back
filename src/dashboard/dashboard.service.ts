@@ -26,38 +26,63 @@ export class DashboardService {
   async summary(companyId: string, query: DashboardQueryDto) {
     const periodo = this.resolvePeriodo(query.periodo);
 
-    const [alunosAtivos, turmasAtivas, quadrasAtivasCount, ocupacoesDoPeriodo] =
-      await Promise.all([
-        // SPEC-009/REQ-010: `status` sozinho passou a ser insuficiente —
-        // com auto-cadastro público ligado, qualquer desconhecido que
-        // preenchesse o formulário entraria no KPI de "alunos ativos" da
-        // empresa. Conta só quem a empresa reconhece (INV-010).
-        this.prisma.aluno.count({
-          where: { companyId, status: 'ativo', vinculo: 'aprovado' },
-        }),
-        this.prisma.turma.findMany({
-          where: { companyId, status: 'ativa' },
-          select: { capacidade: true, _count: { select: { alunos: true } } },
-        }),
-        this.prisma.quadra.count({ where: { companyId, status: 'ativa' } }),
-        this.prisma.ocupacaoQuadra.findMany({
-          where: {
-            companyId,
-            statusPagamento: { not: 'cancelado' },
-            data: { gte: periodo.inicio, lte: periodo.fim },
-            quadra: { status: 'ativa' },
-          },
-          select: { horaInicio: true, horaFim: true },
-        }),
-      ]);
+    const [
+      alunosAtivos,
+      turmasAtivas,
+      quadrasAtivas,
+      ocupacoesDoPeriodo,
+      horariosDaEmpresa,
+    ] = await Promise.all([
+      // SPEC-009/REQ-010: `status` sozinho passou a ser insuficiente —
+      // com auto-cadastro público ligado, qualquer desconhecido que
+      // preenchesse o formulário entraria no KPI de "alunos ativos" da
+      // empresa. Conta só quem a empresa reconhece (INV-010).
+      this.prisma.aluno.count({
+        where: { companyId, status: 'ativo', vinculo: 'aprovado' },
+      }),
+      this.prisma.turma.findMany({
+        where: { companyId, status: 'ativa' },
+        select: { capacidade: true, _count: { select: { alunos: true } } },
+      }),
+      // SPEC-010/REQ-009: precisamos dos ids, não só da contagem — o
+      // denominador passou a depender do horário de cada quadra.
+      this.prisma.quadra.findMany({
+        where: { companyId, status: 'ativa' },
+        select: { id: true },
+      }),
+      this.prisma.ocupacaoQuadra.findMany({
+        where: {
+          companyId,
+          statusPagamento: { not: 'cancelado' },
+          data: { gte: periodo.inicio, lte: periodo.fim },
+          quadra: { status: 'ativa' },
+        },
+        select: { horaInicio: true, horaFim: true },
+      }),
+      // SPEC-010/NFR-003: **uma** consulta traz todas as regras semanais
+      // da empresa (padrão e overrides de quadra). O denominador é
+      // somado em memória a partir daqui — consultar por quadra e por
+      // dia seria N+1 numa rota agregadora.
+      this.prisma.horarioFuncionamento.findMany({
+        where: { companyId },
+        select: {
+          quadraId: true,
+          diaSemana: true,
+          fechado: true,
+          horaInicio: true,
+          horaFim: true,
+        },
+      }),
+    ]);
 
     return {
       alunosAtivos,
       ocupacaoTurmasPct: this.ocupacaoTurmasPct(turmasAtivas),
       ocupacaoQuadrasPct: this.ocupacaoQuadrasPct(
         ocupacoesDoPeriodo,
-        quadrasAtivasCount,
-        periodo.dias,
+        quadrasAtivas.map((q) => q.id),
+        periodo,
+        horariosDaEmpresa,
       ),
     };
   }
@@ -83,17 +108,40 @@ export class DashboardService {
     return Math.round((alocadosTotal / capacidadeTotal) * 100);
   }
 
-  // "Ocupação de quadra" (AC-002, ADR-009): horas ocupadas por qualquer
-  // origem (TURMA ou AVULSO, somadas numa única porcentagem) sobre horas
-  // disponíveis no período — quadras ativas × dias do período × horas de
-  // expediente (mesma janela fixa 06h-22h da grade de disponibilidade).
+  /**
+   * "Ocupação de quadra" (AC-002, ADR-009): horas ocupadas por qualquer
+   * origem sobre horas **realmente disponíveis** no período.
+   *
+   * SPEC-010/REQ-009 — antes o denominador era
+   * `quadras × dias × 16`, com o 16 vindo das constantes de expediente.
+   * Isso fazia o KPI errar **para baixo justamente na empresa que abre
+   * menos**: quem funciona 6 horas por dia aparecia com um terço da
+   * ocupação real, e quem fecha no domingo era penalizado por um dia que
+   * nunca existiu.
+   *
+   * NFR-003 — o denominador é somado **em memória**, a partir de duas
+   * listas já carregadas (quadras ativas e as regras semanais da empresa).
+   * Consultar o expediente por quadra e por dia seria um N+1 disfarçado:
+   * 8 quadras num período de 90 dias viram 720 consultas para produzir um
+   * número numa rota agregadora.
+   */
   private ocupacaoQuadrasPct(
     ocupacoes: { horaInicio: Date; horaFim: Date }[],
-    quadrasAtivasCount: number,
-    diasNoPeriodo: number,
+    quadraIds: string[],
+    periodo: Periodo,
+    horarios: {
+      quadraId: string | null;
+      diaSemana: number;
+      fechado: boolean;
+      horaInicio: Date | null;
+      horaFim: Date | null;
+    }[],
   ): number {
-    const horasDisponiveis =
-      quadrasAtivasCount * diasNoPeriodo * HORAS_EXPEDIENTE_POR_DIA;
+    const horasDisponiveis = this.somarHorasDisponiveis(
+      quadraIds,
+      periodo,
+      horarios,
+    );
     if (horasDisponiveis === 0) {
       return 0;
     }
@@ -105,6 +153,55 @@ export class DashboardService {
       0,
     );
     return Math.round((horasOcupadas / horasDisponiveis) * 100);
+  }
+
+  /**
+   * Soma as horas de funcionamento de cada quadra em cada dia do período,
+   * aplicando a mesma herança de MOD-005 (horário da quadra vence o padrão
+   * da empresa) sobre dados já em memória.
+   */
+  private somarHorasDisponiveis(
+    quadraIds: string[],
+    periodo: Periodo,
+    horarios: {
+      quadraId: string | null;
+      diaSemana: number;
+      fechado: boolean;
+      horaInicio: Date | null;
+      horaFim: Date | null;
+    }[],
+  ): number {
+    const horasDe = (linha?: (typeof horarios)[number]): number => {
+      if (!linha) {
+        // Sem configuração: mesma rede de segurança de MOD-005 — mantém o
+        // comportamento anterior à SPEC-010 em vez de zerar o denominador
+        // e inflar o KPI para o infinito.
+        return HORAS_EXPEDIENTE_POR_DIA;
+      }
+      if (linha.fechado || !linha.horaInicio || !linha.horaFim) {
+        return 0;
+      }
+      return linha.horaFim.getUTCHours() - linha.horaInicio.getUTCHours();
+    };
+
+    let total = 0;
+    for (
+      let dia = new Date(periodo.inicio);
+      dia <= periodo.fim;
+      dia.setUTCDate(dia.getUTCDate() + 1)
+    ) {
+      const diaSemana = dia.getUTCDay();
+      for (const quadraId of quadraIds) {
+        const daQuadra = horarios.find(
+          (h) => h.quadraId === quadraId && h.diaSemana === diaSemana,
+        );
+        const daEmpresa = horarios.find(
+          (h) => h.quadraId === null && h.diaSemana === diaSemana,
+        );
+        total += horasDe(daQuadra ?? daEmpresa);
+      }
+    }
+    return total;
   }
 
   private resolvePeriodo(periodo?: string): Periodo {

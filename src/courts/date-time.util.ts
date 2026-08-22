@@ -3,11 +3,20 @@
 // hora importa (mesma convenção usada nas duas pontas: escrita e leitura).
 const TIME_BASE_DATE = '1970-01-01';
 
-// Janela de expediente fixa no MVP (06h-22h) — não há campo de horário de
-// funcionamento configurável em DATA_MODEL.md; assumido como simplificação
-// razoável, registrado como gap em STATUS.md. Usada tanto pela grade de
-// disponibilidade (courts.service.ts) quanto pelo denominador de
-// `ocupacaoQuadrasPct` do dashboard (dashboard.service.ts).
+// Janela de expediente que valia até a SPEC-010, quando o horário de
+// funcionamento virou dado configurável (`horarios_funcionamento`).
+//
+// **Estas constantes deixaram de ser a fonte de verdade.** Sobrevivem em
+// dois papéis, os dois explícitos:
+//  1. valor do backfill da migration de SPEC-010:TASK-000, para que
+//     empresas existentes mantivessem exatamente o comportamento anterior;
+//  2. rede de segurança para empresa sem nenhuma linha configurada
+//     (`HorarioFuncionamentoService.resolver` e o denominador do
+//     dashboard) — fechar a agenda nesse caso seria "seguro" e erraria
+//     feio, sumindo a empresa da vista dos próprios alunos.
+//
+// Quem quiser saber se uma quadra está aberta pergunta a
+// `HorarioFuncionamentoService`, não a estas constantes.
 export const EXPEDIENTE_INICIO_HORA = 6;
 export const EXPEDIENTE_FIM_HORA = 22;
 

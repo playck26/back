@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { StudentsService } from '../people/students.service';
+import { parseTimeOnly } from './date-time.util';
+import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CourtsService } from './courts.service';
 
@@ -50,6 +52,26 @@ const QUADRA_ATIVA = {
 // SPEC-009/INV-010: MOD-004 e MOD-005 perguntam a MOD-003 se o aluno está
 // aprovado. O mock devolve "aprovado" por padrão; os testes de vínculo
 // sobrescrevem para provar o bloqueio.
+// SPEC-010: por padrão, quadra aberta 06:00–22:00 — o mesmo comportamento
+// de antes da spec, para que os testes existentes continuem descrevendo o
+// que descreviam. Os testes de horário sobrescrevem.
+function buildHorariosMock() {
+  const real = new HorarioFuncionamentoService({} as unknown as PrismaService);
+  const abertoPadrao = {
+    estado: 'aberto' as const,
+    horaInicio: parseTimeOnly('06:00'),
+    horaFim: parseTimeOnly('22:00'),
+  };
+  return {
+    resolver: jest.fn().mockResolvedValue(abertoPadrao),
+    resolverParaData: jest.fn().mockResolvedValue(abertoPadrao),
+    // Geração de slots e checagem de borda são puras: usa-se a
+    // implementação real, senão o teste provaria o mock, não o código.
+    gerarSlots: real.gerarSlots.bind(real),
+    dentroDoExpediente: real.dentroDoExpediente.bind(real),
+  } as unknown as HorarioFuncionamentoService;
+}
+
 function buildStudentsMock() {
   return {
     garantirVinculoAprovado: jest.fn(),
@@ -61,11 +83,13 @@ describe('CourtsService', () => {
   let prisma: PrismaService;
   let service: CourtsService;
   let studentsService: StudentsService;
+  let horarios: HorarioFuncionamentoService;
 
   beforeEach(() => {
     prisma = buildPrismaMock();
     studentsService = buildStudentsMock();
-    service = new CourtsService(prisma, studentsService);
+    horarios = buildHorariosMock();
+    service = new CourtsService(prisma, studentsService, horarios);
   });
 
   describe('create/list/update', () => {
@@ -251,6 +275,55 @@ describe('CourtsService', () => {
   });
 
   describe('registerClassOccupancy', () => {
+    // SPEC-010/AC-018 — a ocorrência inválida fica **no meio** da lista de
+    // propósito. Uma implementação que confere só a primeira passaria por
+    // este teste se ele colocasse a inválida na frente, e gravaria as
+    // demais fora do expediente sem ninguém notar.
+    it('AC-018: recusa quando UMA ocorrência do meio cai fora do expediente', async () => {
+      const tres = [
+        {
+          data: new Date('2026-08-24T00:00:00.000Z'),
+          horaInicio: parseTimeOnly('09:00'),
+          horaFim: parseTimeOnly('10:00'),
+        },
+        {
+          data: new Date('2026-08-31T00:00:00.000Z'),
+          horaInicio: parseTimeOnly('09:00'),
+          horaFim: parseTimeOnly('10:00'),
+        },
+        {
+          data: new Date('2026-09-07T00:00:00.000Z'),
+          horaInicio: parseTimeOnly('09:00'),
+          horaFim: parseTimeOnly('10:00'),
+        },
+      ];
+      (horarios.resolverParaData as jest.Mock)
+        .mockResolvedValueOnce({
+          estado: 'aberto',
+          horaInicio: parseTimeOnly('06:00'),
+          horaFim: parseTimeOnly('22:00'),
+        })
+        .mockResolvedValueOnce({ estado: 'fechado' })
+        .mockResolvedValueOnce({
+          estado: 'aberto',
+          horaInicio: parseTimeOnly('06:00'),
+          horaFim: parseTimeOnly('22:00'),
+        });
+
+      await expect(
+        service.registerClassOccupancy(
+          prisma as unknown as Prisma.TransactionClient,
+          'c1',
+          'q1',
+          't1',
+          tres,
+        ),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+      // Nada gravado: a turma inteira é recusada, não parcialmente criada.
+      expect(prisma.ocupacaoQuadra.createMany).not.toHaveBeenCalled();
+    });
+
     // Chamado por MOD-004 (ClassesService) dentro de sua própria transação
     // (por isso `prisma` aqui faz o papel do `tx` recebido) — ver
     // TARGET_ARCHITECTURE.md seção 6 (MOD-005 continua dono exclusivo da
@@ -516,6 +589,96 @@ describe('CourtsService', () => {
         where: { usuarioId: 'u1', companyId: 'c1' },
       });
       expect(aluno.id).toBe('a1');
+    });
+  });
+
+  // =====================================================================
+  // SPEC-010 — horário de funcionamento (REQ-004, INV-011, REQ-010)
+  // =====================================================================
+  describe('horário de funcionamento (SPEC-010)', () => {
+    const fechado = { estado: 'fechado' as const };
+    const aberto = (inicio: string, fim: string) => ({
+      estado: 'aberto' as const,
+      horaInicio: parseTimeOnly(inicio),
+      horaFim: parseTimeOnly(fim),
+    });
+
+    it('AC-007: a grade vem do horário efetivo, não de constante', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (horarios.resolverParaData as jest.Mock).mockResolvedValue(
+        aberto('08:00', '11:00'),
+      );
+
+      const res = await service.availability('c1', 'q1', '2026-08-24');
+
+      expect(res.estado).toBe('aberto');
+      expect(res.slots.map((s) => s.slot)).toEqual([
+        '08:00-09:00',
+        '09:00-10:00',
+        '10:00-11:00',
+      ]);
+    });
+
+    it('AC-008: dia fechado devolve estado fechado e nenhum slot', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (horarios.resolverParaData as jest.Mock).mockResolvedValue(fechado);
+
+      const res = await service.availability('c1', 'q1', '2026-08-23');
+
+      expect(res.estado).toBe('fechado');
+      expect(res.slots).toEqual([]);
+    });
+
+    // AC-022 — o caso que separa as duas semânticas: a ocupação 10:00–11:00
+    // não conflita com o slot 09:00–10:00 (conflito é semiaberto), mas está
+    // fora de um expediente que fecha às 10:00.
+    it('AC-022: ocupação que começa no fechamento não ocupa o último slot', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          horaInicio: parseTimeOnly('10:00'),
+          horaFim: parseTimeOnly('11:00'),
+          origemTipo: 'AVULSO',
+        },
+      ]);
+      (horarios.resolverParaData as jest.Mock).mockResolvedValue(
+        aberto('06:00', '10:00'),
+      );
+
+      const res = await service.availability('c1', 'q1', '2026-08-24');
+
+      expect(res.slots.at(-1)).toEqual({
+        slot: '09:00-10:00',
+        status: 'livre',
+      });
+    });
+
+    it('AC-009: reserva fora do expediente devolve 422 e não toca a agenda', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (horarios.resolverParaData as jest.Mock).mockResolvedValue(
+        aberto('06:00', '10:00'),
+      );
+
+      const erro = (await service
+        .createBooking(
+          'c1',
+          {
+            quadraId: 'q1',
+            data: '2026-08-24',
+            horaInicio: '10:00',
+            horaFim: '11:00',
+          },
+          'req-fora',
+        )
+        .catch((e: Error) => e)) as { response?: { code?: string } };
+
+      expect((erro as unknown) instanceof UnprocessableEntityException).toBe(
+        true,
+      );
+      expect(erro.response?.code).toBe('FORA_DO_EXPEDIENTE');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
   });
 });
