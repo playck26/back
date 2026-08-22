@@ -4,8 +4,8 @@
 // Estendido por SPEC-003:TASK-000a (niveis, professores, alunos), por
 // SPEC-004:TASK-001 (quadras, ocupacoes_quadra), por SPEC-003:TASK-000b
 // (turmas, turma_alunos), por SPEC-006:TASK-000 (config_pagamento_empresa)
-// e por SPEC-009:TASK-000 (onboarding de conta do aluno: senha temporaria,
-// slug/auto-cadastro por empresa, vinculo do aluno e convites_aluno).
+// por SPEC-009:TASK-000 (onboarding de conta do aluno) e por
+// SPEC-010:TASK-000 (horarios_funcionamento).
 // Demais tabelas entram por spec dona, cada uma estendendo este arquivo
 // (nunca um schema paralelo).
 
@@ -74,6 +74,7 @@ model Empresa {
 
   usuarios        Usuario[]
   convites        ConviteAluno[]
+  horarios        HorarioFuncionamento[]
   niveis          Nivel[]
   professores     Professor[]
   alunos          Aluno[]
@@ -197,9 +198,10 @@ model Quadra {
   status    QuadraStatus @default(ativa)
   createdAt DateTime     @default(now()) @map("created_at")
 
-  empresa   Empresa          @relation(fields: [companyId], references: [id])
+  empresa   Empresa                @relation(fields: [companyId], references: [id])
   ocupacoes OcupacaoQuadra[]
   turmas    Turma[]
+  horarios  HorarioFuncionamento[]
 
   @@index([companyId])
   @@map("quadras")
@@ -360,4 +362,47 @@ model ConviteAluno {
 
   @@index([companyId])
   @@map("convites_aluno")
+}
+
+// SPEC-010/REQ-001..003 (MOD-005) — horário de funcionamento por dia da
+// semana.
+//
+// `quadraId` nulo = **padrão da empresa**; preenchido = horário próprio
+// daquela quadra, que sobrepõe o padrão naquele dia. Quadra que segue o
+// padrão **não tem linha aqui**: a herança é ausência de registro, não
+// cópia de valores — é isso que faz mudar a configuração da empresa
+// alcançar todas as quadras sem escrever em nenhuma.
+//
+// As constraints que valem de verdade são escritas à mão na migration,
+// porque o Prisma não as expressa:
+//  - `UNIQUE NULLS NOT DISTINCT (company_id, quadra_id, dia_semana)` — sem
+//    o `NULLS NOT DISTINCT`, o Postgres considera NULL distinto de NULL e
+//    o padrão da empresa poderia ser cadastrado duas vezes para o mesmo
+//    dia;
+//  - `CHECK` de coerência entre `fechado` e as horas;
+//  - `CHECK` de hora cheia (REQ-008).
+model HorarioFuncionamento {
+  id         String    @id @default(uuid()) @db.Uuid
+  companyId  String    @map("company_id") @db.Uuid
+  quadraId   String?   @map("quadra_id") @db.Uuid
+  /// 0 = domingo, mesma convenção de `Date.getDay()` — evita tradução de
+  /// índice entre banco e aplicação, que é erro que só aparece no domingo.
+  diaSemana  Int       @map("dia_semana") @db.SmallInt
+  horaInicio DateTime? @map("hora_inicio") @db.Time(0)
+  horaFim    DateTime? @map("hora_fim") @db.Time(0)
+  fechado    Boolean   @default(false)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  empresa Empresa @relation(fields: [companyId], references: [id])
+  quadra  Quadra? @relation(fields: [quadraId], references: [id], onDelete: Cascade)
+
+  // Declarado aqui para o Prisma não acusar drift (ele introspecta índices
+  // únicos btree). O `NULLS NOT DISTINCT` — que é o que realmente impede
+  // dois padrões da mesma empresa no mesmo dia — só existe no SQL da
+  // migration: o Prisma não expressa essa cláusula.
+  @@unique([companyId, quadraId, diaSemana], map: "horarios_funcionamento_escopo_dia_key")
+  @@index([companyId])
+  @@index([quadraId])
+  @@map("horarios_funcionamento")
 }
