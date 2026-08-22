@@ -1064,6 +1064,96 @@
         ]
       }
     },
+    "/api/v1/courts/{id}/horarios": {
+      "get": {
+        "operationId": "CourtsController_horarios",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      },
+      "put": {
+        "operationId": "CourtsController_definirHorarios",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinirHorariosDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      },
+      "delete": {
+        "operationId": "CourtsController_removerHorarios",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      }
+    },
     "/api/v1/bookings": {
       "post": {
         "operationId": "BookingsController_create",
@@ -1185,6 +1275,52 @@
         ],
         "tags": [
           "bookings"
+        ]
+      }
+    },
+    "/api/v1/company-settings/horarios": {
+      "get": {
+        "operationId": "CompanySettingsController_listar",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "company-settings"
+        ]
+      },
+      "put": {
+        "operationId": "CompanySettingsController_definir",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinirHorariosDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "company-settings"
         ]
       }
     },
@@ -1882,6 +2018,47 @@
             ]
           }
         }
+      },
+      "DiaHorarioDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "fechado": {
+            "type": "boolean"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "07:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "22:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "fechado"
+        ]
+      },
+      "DefinirHorariosDto": {
+        "type": "object",
+        "properties": {
+          "dias": {
+            "minItems": 7,
+            "maxItems": 7,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiaHorarioDto"
+            }
+          }
+        },
+        "required": [
+          "dias"
+        ]
       },
       "CreateBookingDto": {
         "type": "object",

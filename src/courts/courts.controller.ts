@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Put,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -17,7 +19,9 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { CourtsService } from './courts.service';
+import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { AvailabilityQueryDto } from './dto/availability-query.dto';
+import { DefinirHorariosDto } from './dto/definir-horarios.dto';
 import { CreateCourtDto } from './dto/create-court.dto';
 import { UpdateCourtDto } from './dto/update-court.dto';
 
@@ -29,7 +33,10 @@ import { UpdateCourtDto } from './dto/update-court.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('courts')
 export class CourtsController {
-  constructor(private readonly courtsService: CourtsService) {}
+  constructor(
+    private readonly courtsService: CourtsService,
+    private readonly horariosService: HorarioFuncionamentoService,
+  ) {}
 
   @Get()
   @Roles('company_admin', 'aluno')
@@ -81,5 +88,41 @@ export class CourtsController {
       id,
       query.data,
     );
+  }
+
+  // SPEC-010/REQ-002 — horário próprio da quadra. Escrita é exclusiva de
+  // `company_admin`; a leitura entra junto porque a tela de configuração
+  // precisa mostrar o que está valendo hoje.
+  @Get(':id/horarios')
+  @Roles('company_admin')
+  horarios(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.horariosService.listarDaQuadra(user.companyId as string, id);
+  }
+
+  @Put(':id/horarios')
+  @Roles('company_admin')
+  definirHorarios(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: DefinirHorariosDto,
+  ) {
+    return this.horariosService.definirDaQuadra(
+      user.companyId as string,
+      id,
+      dto,
+    );
+  }
+
+  // AC-004: some o horário próprio e a quadra **volta a herdar** o padrão.
+  @Delete(':id/horarios')
+  @Roles('company_admin')
+  removerHorarios(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.horariosService.removerDaQuadra(user.companyId as string, id);
   }
 }

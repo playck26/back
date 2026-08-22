@@ -12,11 +12,26 @@ import {
 const COMPANY = 'c1';
 const QUADRA = 'q1';
 
-function build(linhas: unknown[]) {
+interface TxHorarios {
+  horarioFuncionamento: { deleteMany: jest.Mock; createMany: jest.Mock };
+}
+
+function build(linhas: unknown[], ocupacoes: unknown[] = []) {
+  const tx: TxHorarios = {
+    horarioFuncionamento: {
+      deleteMany: jest.fn(),
+      createMany: jest.fn(),
+    },
+  };
   const prisma = {
     horarioFuncionamento: {
       findMany: jest.fn().mockResolvedValue(linhas),
+      deleteMany: jest.fn(),
     },
+    ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue(ocupacoes) },
+    quadra: { findFirst: jest.fn().mockResolvedValue({ id: QUADRA }) },
+    $transaction: jest.fn((cb: (t: TxHorarios) => unknown) => cb(tx)),
+    tx,
   };
   return {
     prisma,
@@ -198,6 +213,154 @@ describe('HorarioFuncionamentoService (SPEC-010)', () => {
           parseTimeOnly('10:00'),
         ),
       ).toBe(false);
+    });
+  });
+
+  // =====================================================================
+  // SPEC-010/REQ-001, REQ-002, REQ-006 — configuração e relatório
+  // =====================================================================
+
+  const semanaAberta = (horaInicio = '08:00', horaFim = '18:00') =>
+    Array.from({ length: 7 }, (_, diaSemana) => ({
+      diaSemana,
+      fechado: false,
+      horaInicio,
+      horaFim,
+    }));
+
+  describe('definir', () => {
+    it('AC-002: fechamento antes da abertura devolve 422 com o dia no texto', async () => {
+      const { service } = build([]);
+      const dias = semanaAberta();
+      dias[3] = {
+        diaSemana: 3,
+        fechado: false,
+        horaInicio: '20:00',
+        horaFim: '08:00',
+      };
+
+      await expect(
+        service.definirPadraoDaEmpresa(COMPANY, { dias }),
+      ).rejects.toThrow(/Dia 3/);
+    });
+
+    it('recusa dia aberto sem horas', async () => {
+      const { service } = build([]);
+      const dias = semanaAberta();
+      dias[1] = { diaSemana: 1, fechado: false } as never;
+
+      await expect(
+        service.definirPadraoDaEmpresa(COMPANY, { dias }),
+      ).rejects.toThrow(/Dia 1/);
+    });
+
+    // Substituir a semana inteira numa transação: estado parcial
+    // significaria agenda inconsistente entre dois dias da mesma semana.
+    it('substitui a semana inteira dentro de uma transação', async () => {
+      const { service, prisma } = build([]);
+
+      await service.definirPadraoDaEmpresa(COMPANY, { dias: semanaAberta() });
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.tx.horarioFuncionamento.deleteMany).toHaveBeenCalledWith({
+        where: { companyId: COMPANY, quadraId: null },
+      });
+      const [args] = prisma.tx.horarioFuncionamento.createMany.mock
+        .calls[0] as [{ data: unknown[] }];
+      expect(args.data).toHaveLength(7);
+    });
+
+    it('AC-004: remover o horário próprio apaga só as linhas da quadra', async () => {
+      const { service, prisma } = build([]);
+
+      await service.removerDaQuadra(COMPANY, QUADRA);
+
+      expect(prisma.horarioFuncionamento.deleteMany).toHaveBeenCalledWith({
+        where: { companyId: COMPANY, quadraId: QUADRA },
+      });
+    });
+  });
+
+  describe('relatório de impacto (REQ-006)', () => {
+    const ocupacaoFora = {
+      quadraId: QUADRA,
+      origemTipo: 'AVULSO',
+      data: new Date('2026-09-06T00:00:00.000Z'), // domingo
+      horaInicio: parseTimeOnly('09:00'),
+      horaFim: parseTimeOnly('10:00'),
+      quadra: { nome: 'Quadra 1' },
+      aluno: { usuario: { nome: 'Israel' } },
+      origemTurma: null,
+    };
+
+    it('AC-011/AC-012: lista o que ficou fora e não cancela nada', async () => {
+      // Domingo fechado no novo horário.
+      const novoHorario = Array.from({ length: 7 }, (_, diaSemana) => ({
+        quadraId: null,
+        diaSemana,
+        fechado: diaSemana === 0,
+        horaInicio: diaSemana === 0 ? null : parseTimeOnly('08:00'),
+        horaFim: diaSemana === 0 ? null : parseTimeOnly('18:00'),
+      }));
+      const { service, prisma } = build(novoHorario, [ocupacaoFora]);
+
+      const r = await service.definirPadraoDaEmpresa(COMPANY, {
+        dias: semanaAberta(),
+      });
+
+      expect(r.afetadasCount).toBe(1);
+      expect(r.amostra[0]).toMatchObject({
+        origemTipo: 'AVULSO',
+        quadraNome: 'Quadra 1',
+        responsavel: 'Israel',
+      });
+      // Nada de update/delete em ocupações: a decisão é do gerente.
+      expect(prisma.ocupacaoQuadra).not.toHaveProperty('updateMany');
+    });
+
+    it('AC-019: ocupação de turma é identificada pela turma, não pelo aluno', async () => {
+      const novoHorario = Array.from({ length: 7 }, (_, diaSemana) => ({
+        quadraId: null,
+        diaSemana,
+        fechado: true,
+        horaInicio: null,
+        horaFim: null,
+      }));
+      const { service } = build(novoHorario, [
+        {
+          ...ocupacaoFora,
+          origemTipo: 'TURMA',
+          aluno: null,
+          origemTurma: { nome: 'Turma das 9h' },
+        },
+      ]);
+
+      const r = await service.definirPadraoDaEmpresa(COMPANY, {
+        dias: semanaAberta(),
+      });
+
+      expect(r.amostra[0].responsavel).toBe('Turma das 9h');
+    });
+
+    // AC-011: teto de 20. Lista sem limite cresce com a agenda e transforma
+    // uma resposta de configuração num dump.
+    it('AC-011: amostra tem teto de 20, mas a contagem é total', async () => {
+      const novoHorario = Array.from({ length: 7 }, (_, diaSemana) => ({
+        quadraId: null,
+        diaSemana,
+        fechado: true,
+        horaInicio: null,
+        horaFim: null,
+      }));
+      const muitas = Array.from({ length: 57 }, () => ({ ...ocupacaoFora }));
+      const { service } = build(novoHorario, muitas);
+
+      const r = await service.definirPadraoDaEmpresa(COMPANY, {
+        dias: semanaAberta(),
+      });
+
+      expect(r.afetadasCount).toBe(57);
+      expect(r.amostra).toHaveLength(20);
     });
   });
 });
