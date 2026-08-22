@@ -111,17 +111,17 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
         ...conviteValido,
         usadoEm: new Date(),
       });
-      const usado = await ctx.service
+      const usado = (await ctx.service
         .consultarPublico('t')
-        .catch((e: Error) => e);
+        .catch((e: Error) => e)) as Error;
 
       ctx.prismaRaw.conviteAluno.findUnique.mockResolvedValue({
         ...conviteValido,
         expiraEm: new Date(Date.now() - 1000),
       });
-      const expirado = await ctx.service
+      const expirado = (await ctx.service
         .consultarPublico('t')
-        .catch((e: Error) => e);
+        .catch((e: Error) => e)) as Error;
 
       expect(usado).toBeInstanceOf(GoneException);
       expect(expirado).toBeInstanceOf(GoneException);
@@ -214,9 +214,9 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
       ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
       ctx.tx.usuario.findUnique.mockResolvedValue({ id: 'outro' });
 
-      const erro = await ctx.service
+      const erro = (await ctx.service
         .aceitar({ token: 't', senha: 'senha-forte-123' })
-        .catch((e: Error) => e);
+        .catch((e: Error) => e)) as Error;
 
       expect(erro).toBeInstanceOf(UnprocessableEntityException);
       // Mensagem genérica: superfície pública não confirma existência de
