@@ -26,6 +26,8 @@ export interface ItemDoDia {
   origemTipo: 'AVULSO' | 'TURMA';
   responsavel: string | null;
   statusPagamento: string;
+  /** SPEC-011: quanto foi cobrado. Nulo em ocupação de turma. */
+  valor: number | null;
 }
 
 /**
@@ -149,6 +151,9 @@ export class AgendaService {
           ? (o.origemTurma?.nome ?? null)
           : (o.aluno?.usuario.nome ?? null),
       statusPagamento: o.statusPagamento,
+      // O gestor decide onde cobrar olhando a agenda — o valor precisa
+      // estar ali, e precisa ser o **congelado**, não o recalculado.
+      valor: o.valor != null ? Number(o.valor) : null,
     }));
   }
 

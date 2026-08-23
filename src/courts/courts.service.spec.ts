@@ -961,6 +961,50 @@ describe('CourtsService', () => {
 
     // Compatibilidade: os frontends em produção ainda mandam o formato
     // antigo, e o `back` sobe antes das telas.
+    // AC-004 — a razão de `valor` existir como coluna. Se a resposta
+    // recalculasse pelo preço atual, reajustar a hora mudaria o valor de
+    // reservas antigas, inclusive já pagas.
+    it('AC-004: o valor devolvido é o congelado, não o recalculado pelo preço atual', async () => {
+      const ocupacaoAntiga = {
+        id: 'o1',
+        companyId: 'c1',
+        quadraId: 'q1',
+        data: parseDateOnly('2026-08-01'),
+        horaInicio: parseTimeOnly('09:00'),
+        horaFim: parseTimeOnly('11:00'),
+        origemTipo: 'AVULSO',
+        alunoId: null,
+        statusPagamento: 'pago',
+        // Reservada quando a hora custava R$ 80.
+        valor: 160,
+      };
+      // A quadra hoje custa R$ 100 — se o valor fosse derivado, viraria 200.
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue({
+        ...QUADRA_COM_PRECO,
+        precoHora: 100,
+      });
+      (prisma.pedidoReserva.findUnique as jest.Mock).mockResolvedValue({
+        id: 'p1',
+        fingerprint: 'q1|2026-08-01|09:00-10:00,10:00-11:00',
+        ocupacoes: [ocupacaoAntiga],
+      });
+
+      const r = (await service.createBooking(
+        'c1',
+        {
+          quadraId: 'q1',
+          data: '2026-08-01',
+          slots: [
+            { horaInicio: '09:00', horaFim: '10:00' },
+            { horaInicio: '10:00', horaFim: '11:00' },
+          ],
+        },
+        'chave-antiga',
+      )) as { reservas: { valor: number }[] };
+
+      expect(r.reservas[0].valor).toBe(160);
+    });
+
     it('formato antigo continua funcionando e recebe objeto, não lista', async () => {
       prepararCriacao();
 

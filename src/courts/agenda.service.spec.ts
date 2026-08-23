@@ -153,6 +153,8 @@ describe('AgendaService (SPEC-012)', () => {
       horaInicio: parseTimeOnly('09:00'),
       horaFim: parseTimeOnly('10:00'),
       statusPagamento: 'pendente_pagamento',
+      // SPEC-011: valor congelado na criação.
+      valor: 160,
     };
 
     it('AC-003: devolve quadra, horário, origem, responsável e status', async () => {
@@ -177,6 +179,7 @@ describe('AgendaService (SPEC-012)', () => {
         origemTipo: 'AVULSO',
         responsavel: 'Israel',
         statusPagamento: 'pendente_pagamento',
+        valor: 160,
       });
     });
 

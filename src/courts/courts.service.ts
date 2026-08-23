@@ -37,6 +37,8 @@ interface OcupacaoParaResposta {
   origemTipo: string;
   alunoId: string | null;
   statusPagamento: string;
+  /** SPEC-011: quanto foi cobrado, congelado na criação. Nulo em turma. */
+  valor?: Prisma.Decimal | null;
 }
 
 @Injectable()
@@ -745,6 +747,11 @@ export class CourtsService {
       origemTipo: ocupacao.origemTipo,
       alunoId: ocupacao.alunoId,
       statusPagamento: ocupacao.statusPagamento,
+      // SPEC-011: o valor **congelado**, não recalculado pelo preço atual
+      // da quadra. Sem devolvê-lo, as telas continuariam multiplicando
+      // `preco_hora × horas` por conta própria — e mostrariam um número
+      // diferente do cobrado assim que a escola reajustasse o preço.
+      valor: ocupacao.valor != null ? Number(ocupacao.valor) : null,
     };
   }
 }
