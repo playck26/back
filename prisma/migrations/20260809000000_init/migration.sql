@@ -76,6 +76,13 @@ ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_usuario_id_fkey" FOR
 -- e precisa ser NULL para super_admin. Não expressável no schema.prisma
 -- (sem suporte nativo a CHECK multi-coluna condicional) — mantido só na
 -- migration manual, nunca removido em `prisma migrate dev` subsequente.
+--
+-- ATENÇÃO (2026-08-23): este CHECK **enumera papéis**. Adicionar um papel ao
+-- enum `usuario_role` sem atualizá-lo quebra a criação de contas daquele
+-- papel em runtime, com 500 — e nada avisa antes, porque constraint escrita
+-- à mão não existe no `schema.prisma` nem nos testes com Prisma mockado.
+-- Aconteceu com `professor` (SPEC-013), corrigido em
+-- `20260823010000_inv002_papel_professor`.
 ALTER TABLE "usuarios" ADD CONSTRAINT "usuarios_company_id_role_check" CHECK (
     ("role" = 'super_admin' AND "company_id" IS NULL)
     OR ("role" IN ('company_admin', 'aluno') AND "company_id" IS NOT NULL)
