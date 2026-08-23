@@ -47,6 +47,15 @@ export interface PrismaMock {
   aluno: {
     create: jest.Mock;
   };
+  // SPEC-012: a agenda é leitura agregada sobre estes modelos.
+  ocupacaoQuadra: {
+    groupBy: jest.Mock;
+    findMany: jest.Mock;
+    findFirst: jest.Mock;
+    update: jest.Mock;
+  };
+  quadra: { findMany: jest.Mock; findFirst: jest.Mock };
+  horarioFuncionamento: { findMany: jest.Mock };
   conviteAluno: {
     create: jest.Mock;
     findUnique: jest.Mock;
@@ -93,6 +102,19 @@ export function buildPrismaMock(): PrismaMock {
     conviteAluno: {
       create: jest.fn(),
       findUnique: jest.fn(),
+    },
+    ocupacaoQuadra: {
+      groupBy: jest.fn().mockResolvedValue([]),
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    quadra: {
+      findMany: jest.fn().mockResolvedValue([{ id: 'q1' }]),
+      findFirst: jest.fn(),
+    },
+    horarioFuncionamento: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     aluno: {
       create: jest.fn(),
