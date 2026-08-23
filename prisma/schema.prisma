@@ -32,6 +32,10 @@ enum UsuarioRole {
   super_admin
   company_admin
   aluno
+  // SPEC-013: acrescentado **no fim** de proposito. `ALTER TYPE ADD VALUE`
+  // sem `BEFORE`/`AFTER` anexa ao final; declarar aqui em outra posicao
+  // criaria drift permanente entre schema e banco.
+  professor
 
   @@map("usuario_role")
 }
@@ -108,6 +112,7 @@ model Usuario {
   empresa         Empresa?       @relation(fields: [companyId], references: [id])
   refreshTokens   RefreshToken[]
   aluno           Aluno?
+  professor       Professor?
   convitesCriados ConviteAluno[] @relation("ConviteCriadoPor")
 
   @@index([companyId])
@@ -152,9 +157,14 @@ model Professor {
   telefone  String?
   email     String?
   status    UsuarioStatus @default(ativo)
+  // SPEC-013/INV-014: nulo e o estado normal — professor cadastrado sem
+  // acesso continua valido, e a maioria vai ficar assim. `SetNull` no
+  // delete: apagar a conta nao apaga a ficha do professor, so o vinculo.
+  usuarioId String?       @unique @map("usuario_id") @db.Uuid
   createdAt DateTime      @default(now()) @map("created_at")
 
-  empresa Empresa @relation(fields: [companyId], references: [id])
+  empresa Empresa  @relation(fields: [companyId], references: [id])
+  usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
   turmas  Turma[]
 
   @@index([companyId])

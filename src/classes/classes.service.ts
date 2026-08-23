@@ -416,4 +416,100 @@ export class ClassesService {
       alunosAlocados: turma._count.alunos,
     };
   }
+
+  /**
+   * SPEC-013/INV-012 — resolve o professor a partir do usuario autenticado.
+   *
+   * O JWT **nao** carrega `professorId`, e isso e deliberado (mesma razao de
+   * ACHADO-003 na SPEC-009): claim e fotografia do momento do login, e
+   * autorizacao precisa do presente. Um professor desligado da empresa, ou
+   * cuja ficha mudou de dono, nao pode continuar lendo turma por causa de um
+   * token emitido antes.
+   */
+  private async professorDoUsuario(companyId: string, usuarioId: string) {
+    const professor = await this.prisma.professor.findFirst({
+      where: { usuarioId, companyId },
+      select: { id: true },
+    });
+    if (!professor) {
+      throw new ForbiddenException();
+    }
+    return professor;
+  }
+
+  async myTeachingClasses(companyId: string, usuarioId: string) {
+    const professor = await this.professorDoUsuario(companyId, usuarioId);
+
+    const turmas = await this.prisma.turma.findMany({
+      where: { companyId, professorId: professor.id, status: 'ativa' },
+      include: {
+        quadra: { select: { nome: true } },
+        nivel: { select: { nome: true } },
+        _count: { select: { alunos: true } },
+      },
+      orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }],
+    });
+
+    return turmas.map((turma) => ({
+      id: turma.id,
+      nome: turma.nome,
+      diaSemana: turma.diaSemana,
+      horaInicio: formatTimeOnly(turma.horaInicio),
+      horaFim: formatTimeOnly(turma.horaFim),
+      quadraNome: turma.quadra.nome,
+      nivelNome: turma.nivel?.nome ?? null,
+      capacidade: turma.capacidade,
+      totalAlunos: turma._count.alunos,
+    }));
+  }
+
+  async myTeachingClassDetail(
+    companyId: string,
+    usuarioId: string,
+    turmaId: string,
+  ) {
+    const professor = await this.professorDoUsuario(companyId, usuarioId);
+
+    // `professorId` no WHERE, e nao conferido depois de buscar: turma de
+    // colega devolve 404, nao 403. 403 confirmaria que a turma existe.
+    const turma = await this.prisma.turma.findFirst({
+      where: { id: turmaId, companyId, professorId: professor.id },
+      include: {
+        quadra: { select: { nome: true } },
+        nivel: { select: { nome: true } },
+        alunos: {
+          include: {
+            aluno: {
+              include: {
+                usuario: { select: { nome: true } },
+                nivel: { select: { nome: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!turma) {
+      throw new NotFoundException();
+    }
+
+    return {
+      id: turma.id,
+      nome: turma.nome,
+      diaSemana: turma.diaSemana,
+      horaInicio: formatTimeOnly(turma.horaInicio),
+      horaFim: formatTimeOnly(turma.horaFim),
+      quadraNome: turma.quadra.nome,
+      nivelNome: turma.nivel?.nome ?? null,
+      capacidade: turma.capacidade,
+      // AC-008 — nome e nivel, e so. Telefone, e-mail e qualquer coisa de
+      // pagamento ficam de fora: o professor precisa saber quem esta na
+      // quadra, nao a ficha financeira de ninguem.
+      alunos: turma.alunos.map((vinculo) => ({
+        id: vinculo.aluno.id,
+        nome: vinculo.aluno.usuario.nome,
+        nivelNome: vinculo.aluno.nivel?.nome ?? null,
+      })),
+    };
+  }
 }

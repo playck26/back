@@ -431,3 +431,89 @@ describe('ClassesService', () => {
     });
   });
 });
+
+// =======================================================================
+// SPEC-013/INV-012 — o professor le so as proprias turmas
+// =======================================================================
+describe('ClassesService — visao do professor (SPEC-013)', () => {
+  let prisma: PrismaService;
+  let service: ClassesService;
+
+  beforeEach(() => {
+    const built = buildMocks();
+    prisma = built.prisma;
+    service = new ClassesService(
+      prisma,
+      built.courtsService,
+      buildStudentsMock(),
+    );
+  });
+
+  // A checagem que sustenta INV-012: o professor vem do **banco**, pelo
+  // usuario autenticado. Um token de professor cuja ficha nao existe mais
+  // naquela empresa nao le nada — claim antigo nao vira permissao.
+  it('recusa quem tem papel de professor mas nao tem ficha na empresa', async () => {
+    (prisma.professor.findFirst as jest.Mock).mockResolvedValue(null);
+
+    await expect(service.myTeachingClasses('c1', 'u9')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('filtra por professor_id no WHERE, nao depois de buscar', async () => {
+    (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
+    (prisma.turma.findMany as jest.Mock).mockResolvedValue([]);
+
+    await service.myTeachingClasses('c1', 'u9');
+
+    expect(prisma.turma.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyId: 'c1', professorId: 'p1', status: 'ativa' },
+      }),
+    );
+  });
+
+  // 404 e nao 403 de proposito: 403 confirmaria que a turma existe, e o
+  // professor descobriria a grade dos colegas por tentativa e erro.
+  it('turma de colega devolve 404, nao 403', async () => {
+    (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
+    (prisma.turma.findFirst as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      service.myTeachingClassDetail('c1', 'u9', 't-do-colega'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  // AC-008 — o professor precisa saber quem esta na quadra, nao a ficha
+  // financeira nem o contato de ninguem.
+  it('detalhe traz nome e nivel do aluno, e nada de contato ou dinheiro', async () => {
+    (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
+    (prisma.turma.findFirst as jest.Mock).mockResolvedValue({
+      id: 't1',
+      nome: 'Infantil A',
+      diaSemana: 2,
+      horaInicio: parseTimeOnly('09:00'),
+      horaFim: parseTimeOnly('10:00'),
+      capacidade: 6,
+      quadra: { nome: 'Quadra 1' },
+      nivel: { nome: 'Iniciante' },
+      alunos: [
+        {
+          aluno: {
+            id: 'a1',
+            usuario: { nome: 'Aluno Um', telefone: '11999999999' },
+            nivel: { nome: 'Iniciante' },
+          },
+        },
+      ],
+    });
+
+    const res = await service.myTeachingClassDetail('c1', 'u9', 't1');
+
+    expect(res.alunos).toEqual([
+      { id: 'a1', nome: 'Aluno Um', nivelNome: 'Iniciante' },
+    ]);
+    expect(JSON.stringify(res)).not.toMatch(/11999999999/);
+    expect(JSON.stringify(res)).not.toMatch(/valor|pagamento|preco/i);
+  });
+});

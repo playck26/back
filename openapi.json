@@ -506,6 +506,34 @@
         ]
       }
     },
+    "/api/v1/teachers/{id}/acesso": {
+      "post": {
+        "operationId": "TeachersController_gerarAcesso",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "teachers"
+        ]
+      }
+    },
     "/api/v1/teachers/{id}": {
       "get": {
         "operationId": "TeachersController_findOne",
@@ -1585,6 +1613,53 @@
       "get": {
         "operationId": "MeClassesController_myUpcomingClasses",
         "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/classes": {
+      "get": {
+        "operationId": "MeTeacherClassesController_minhasTurmas",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/classes/{id}": {
+      "get": {
+        "operationId": "MeTeacherClassesController_detalhe",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""

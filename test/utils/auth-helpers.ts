@@ -17,7 +17,7 @@ export async function buildUsuarioAtivo(
   overrides: Partial<{
     id: string;
     email: string;
-    role: 'super_admin' | 'company_admin' | 'aluno';
+    role: 'super_admin' | 'company_admin' | 'aluno' | 'professor';
     companyId: string | null;
   }> = {},
 ) {

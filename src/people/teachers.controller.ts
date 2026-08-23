@@ -42,6 +42,20 @@ export class TeachersController {
     return this.teachersService.create(user.companyId as string, dto);
   }
 
+  /**
+   * SPEC-013 — cria (ou rotaciona) o acesso do professor. `POST` e nao
+   * `PATCH` porque o efeito e gerar uma credencial nova, nao editar um
+   * campo: chamar duas vezes tem consequencia real (a senha anterior para
+   * de valer), e o verbo precisa avisar isso.
+   */
+  @Post(':id/acesso')
+  gerarAcesso(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.teachersService.gerarAcesso(user.companyId as string, id);
+  }
+
   @Get(':id')
   findOne(
     @CurrentUser() user: AccessTokenPayload,

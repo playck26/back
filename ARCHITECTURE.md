@@ -70,7 +70,7 @@ a replicar:
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
 | `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload |
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
-| `professores` | MOD-003 | **cadastro sem identidade**: não tem `usuario_id`. Professor não faz login (GAP-002/GAP-011) |
+| `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas |
 | `niveis` | MOD-003 | único por `(company_id, nome)` |
 | `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor` |
 | `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008 |
@@ -115,8 +115,14 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-41 rotas. A fonte é o `openapi.json` **gerado do código**, com gate de CI
-que falha se ele ficar stale. `API_CONTRACTS.md` (raiz) descreve as regras
+**44 caminhos, 62 operações HTTP** (conferido em 2026-08-22 contra o
+`openapi.json`). As duas medidas aparecem porque "rotas" é ambíguo: a
+versão anterior desta planta dizia "41 rotas" contando caminhos, e trocar
+a métrica em silêncio faria o número parecer um salto de escopo.
+
+A fonte é o `openapi.json` **gerado do código**, com gate de CI
+(`git diff --exit-code openapi.json`) que falha se ele ficar stale —
+verificado funcionando: o arquivo commitado estava em dia. `API_CONTRACTS.md` (raiz) descreve as regras
 de negócio por contrato; este documento não as duplica.
 
 Convenções observadas: prefixo global `api/v1`; datas como `YYYY-MM-DD` e
@@ -133,7 +139,12 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   com senha temporária só alcança trocar senha, `/auth/me` e logout). A trava
   mora aqui, e não num `APP_GUARD`, porque guard global roda antes do guard de
   rota — quando `request.user` ainda não existe.
-- Papéis: `super_admin` (só `/companies`), `company_admin`, `aluno`.
+- Papéis: `super_admin` (só `/companies`), `company_admin`, `aluno`,
+  `professor` (SPEC-013 — só leitura, e só das próprias turmas: INV-012).
+- `usuarios.status = 'inativo'` recusa login, refresh e toda rota
+  autenticada (INV-013). A checagem roda **antes** do atalho de
+  `@PermiteSenhaTemporaria`, senão a conta inativa trocaria a senha e
+  voltaria a operar.
   Guards: `RolesGuard`, `CompanyAdminGuard`, `SuperAdminGuard`, `TenantGuard`.
 - **Escopo por empresa vem sempre do token**, nunca de parâmetro do cliente.
 - Throttle de 10 req/15 min por IP em toda superfície pública.
@@ -159,7 +170,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 
 | # | Gap | Severidade |
 |---|---|---|
-| 1 | **Professor não tem identidade** (`professores` sem `usuario_id`): não faz login (GAP-002/GAP-011) | **Alta** — cliente já pediu |
+| 1 | ~~Professor não tem identidade~~ — **fechado em 2026-08-22 (SPEC-013)**. O que sobra: professor só lê; não há chamada/presença, e não existe modelo para isso | Baixa — escopo declarado |
 | 2 | **Sem fuso horário configurável.** Funciona enquanto todas as empresas estiverem no mesmo fuso; vira defeito silencioso na primeira fora | Média — gatilho declarado |
 | 3 | **Formato antigo de `POST /bookings` ainda aceito**, para não quebrar frontend em produção durante o deploy. Condição de saída no DTO | Média — dívida datada |
 | 4 | **`courts/` acumula 4 controllers e ~750 linhas de service.** Ainda coeso (tudo toca a linha do tempo), mas é o candidato natural a divisão | Média |
@@ -172,10 +183,10 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 
 | ID | Módulo | Escreve em | Invariantes |
 |---|---|---|---|
-| MOD-001 | AuthIdentity | `usuarios`, `refresh_tokens`, `convites_aluno` | INV-002, INV-004, INV-008, INV-009 |
+| MOD-001 | AuthIdentity | `usuarios`, `refresh_tokens`, `convites_aluno` | INV-002, INV-004, INV-008, INV-009, INV-013 |
 | MOD-002 | CompanyManagement | `empresas` | INV-005 |
-| MOD-003 | PeopleManagement | `alunos`, `professores`, `niveis` | INV-002, INV-006, INV-010 |
-| MOD-004 | ClassScheduling | `turmas`, `turma_alunos` | INV-003 |
+| MOD-003 | PeopleManagement | `alunos`, `professores`, `niveis` | INV-002, INV-006, INV-010, INV-013, INV-014 |
+| MOD-004 | ClassScheduling | `turmas`, `turma_alunos` | INV-003, INV-012 |
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |

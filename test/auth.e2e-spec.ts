@@ -703,4 +703,50 @@ describe('Auth (e2e) - TEST-001', () => {
       });
     });
   });
+
+  // =====================================================================
+  // SPEC-013 — o papel `professor` no caminho HTTP completo
+  // =====================================================================
+  describe('AC-007: professor nao alcanca rota de gestao', () => {
+    // O `CompanyAdminGuard` e uma allow-list (`role !== 'company_admin'`),
+    // entao o papel novo ja nasce barrado — por construcao. Este teste
+    // existe porque "por construcao" e exatamente o tipo de garantia que
+    // ninguem confere de novo quando alguem troca o guard por outro.
+    const rotasDeGestao = [
+      '/api/v1/students',
+      '/api/v1/teachers',
+      '/api/v1/courts',
+      '/api/v1/dashboard/summary',
+    ];
+
+    it.each(rotasDeGestao)('403 em GET %s', async (rota) => {
+      const professor = await buildUsuarioAtivo({
+        email: 'prof@escola.demo',
+        role: 'professor',
+      });
+      const { accessToken } = await loginAndGetTokens(app, prisma, professor);
+
+      prisma.usuario.findUnique.mockResolvedValue(professor);
+
+      await request(app.getHttpServer())
+        .get(rota)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+    });
+
+    it('e o aluno tambem nao alcanca a visao do professor', async () => {
+      const aluno = await buildUsuarioAtivo({
+        email: 'aluno@escola.demo',
+        role: 'aluno',
+      });
+      const { accessToken } = await loginAndGetTokens(app, prisma, aluno);
+
+      prisma.usuario.findUnique.mockResolvedValue(aluno);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/me/teacher/classes')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+    });
+  });
 });
