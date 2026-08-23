@@ -90,6 +90,7 @@ model Empresa {
   configPagamento ConfigPagamentoEmpresa?
 
   presencas Presenca[]
+  chamadas  Chamada[]
 
   @@map("empresas")
 }
@@ -117,6 +118,7 @@ model Usuario {
   professor            Professor?
   convitesCriados      ConviteAluno[] @relation("ConviteCriadoPor")
   presencasRegistradas Presenca[]     @relation("PresencaRegistradaPor")
+  chamadasRegistradas   Chamada[]      @relation("ChamadaRegistradaPor")
 
   @@index([companyId])
   @@map("usuarios")
@@ -279,6 +281,11 @@ model OcupacaoQuadra {
   origemTurma Turma?         @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
 
   presencas Presenca[]
+  // Prisma exige unicidade do par `(id, origem_tipo)` para modelar 1-1, e
+  // criar esse UNIQUE seria um índice redundante — `ocupacao_id` já é PK de
+  // `chamadas`. Então aqui o tipo é lista e **o banco é que garante uma
+  // chamada por ocorrência**, pela PK. Mesmo caminho de `presencas`.
+  chamadas  Chamada[]
 
   @@unique([id, origemTipo], map: "ocupacoes_quadra_id_origem_tipo_key")
   @@index([companyId, quadraId, data])
@@ -336,6 +343,48 @@ enum StatusPresenca {
   justificado
 
   @@map("status_presenca")
+}
+
+enum CompletudeChamada {
+  completa
+  desconhecida
+
+  @@map("completude_chamada")
+}
+
+/// SPEC-015/DEF-002/INV-027 — o cabeçalho da chamada.
+///
+/// A SPEC-014 modelou as **linhas** da chamada (`presencas`) e nao o **fato**
+/// dela. Sem cabecalho, duas linhas em `presencas` significam tanto "chamada
+/// completa de uma turma de 2" quanto "chamada pela metade de uma turma de
+/// 10" — e foi por isso que a chamada parcial pode ser gravada e ficou sem
+/// conserto pelo produto.
+///
+/// `completude = desconhecida` marca as chamadas anteriores a correcao. Nao e
+/// estado transitorio: e a unica afirmacao verdadeira possivel sobre elas.
+model Chamada {
+  // PK e parte da FK composta: uma chamada por ocorrencia, com a
+  // cardinalidade vindo do banco.
+  ocupacaoId String     @id @map("ocupacao_id") @db.Uuid
+  // Coluna constante, igual a `presencas`: com o CHECK e a FK composta,
+  // impede cabecalho apontando reserva avulsa (INV-016).
+  origemTipo OrigemTipo @map("origem_tipo")
+
+  companyId     String            @map("company_id") @db.Uuid
+  registradaEm  DateTime          @default(now()) @map("registrada_em")
+  registradaPor String            @map("registrada_por") @db.Uuid
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  completude    CompletudeChamada
+  /// Nulo apenas quando `completude = desconhecida`, garantido por CHECK
+  /// escrito a mao na migration: quem afirma completude diz sobre quantos.
+  esperados     Int?
+
+  empresa     Empresa        @relation(fields: [companyId], references: [id])
+  ocupacao    OcupacaoQuadra @relation(fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Cascade, map: "chamadas_ocupacao_fkey")
+  registrante Usuario        @relation("ChamadaRegistradaPor", fields: [registradaPor], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  @@map("chamadas")
 }
 
 model Presenca {
