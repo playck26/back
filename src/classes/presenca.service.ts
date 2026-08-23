@@ -12,6 +12,14 @@ import { PrismaService } from '../prisma/prisma.service';
 /** SPEC-014/INV-017: janela em que a chamada pode ser lançada. */
 export const JANELA_RETROATIVA_DIAS = 7;
 
+/** Uma linha da tela de chamada: o aluno e o que está marcado para ele. */
+export interface LinhaDaChamada {
+  alunoId: string;
+  nome: string;
+  status: StatusPresenca | null;
+  naTurmaHoje: boolean;
+}
+
 export interface ItemChamada {
   alunoId: string;
   status: StatusPresenca;
@@ -207,10 +215,10 @@ export class PresencaService {
         ? 'completa'
         : 'desconhecida';
 
-    const doSnapshot = presencas.map((p) => ({
+    const doSnapshot: LinhaDaChamada[] = presencas.map((p) => ({
       alunoId: p.alunoId,
       nome: p.aluno.usuario.nome,
-      status: p.status as StatusPresenca | null,
+      status: p.status,
       naTurmaHoje: matriculados.some((m) => m.alunoId === p.alunoId),
     }));
 
@@ -222,10 +230,10 @@ export class PresencaService {
           ...doSnapshot,
           ...matriculados
             .filter((m) => !presencas.some((p) => p.alunoId === m.alunoId))
-            .map((m) => ({
+            .map((m): LinhaDaChamada => ({
               alunoId: m.alunoId,
               nome: m.aluno.usuario.nome,
-              status: null as StatusPresenca | null,
+              status: null,
               naTurmaHoje: true,
             })),
         ];
