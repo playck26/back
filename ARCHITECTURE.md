@@ -184,6 +184,10 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | 7 | Sem e-mail transacional (GAP-004): recuperação de senha é manual, via admin | Baixa — ADR-013 |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
 | 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
+| 11 | **DEF-006 — o `GET` e o `PUT` da chamada discordam sobre quem ela cobre.** `chamada()` com cabeçalho `completa` devolve o snapshot (INV-020 estrita); `salvarChamada()` recalcula `esperados` como `matriculados hoje ∪ já registrados`. Matrícula posterior a uma chamada completa faz o `PUT` do que o próprio `GET` devolveu virar 422 `CHAMADA_INCOMPLETA`, acusando aluno que a tela não mostra — e sem saída pelo produto (LIM-002: o gestor só lê) | **Alta quando ocorrer** — reproduzida em produção em 2026-08-23 |
+| 12 | **O histórico do gestor não expõe `completude`** (`historicoDaTurma`). Ele devolve `chamadaFeita` derivado de `presencas.length > 0`, então o gestor não distingue chamada completa de legada `desconhecida` — a informação existe no cabeçalho e não chega a quem lê | Baixa — some quando a TASK-001..004 da SPEC-015 sair |
+| 13 | **`ocorrenciasDaTurma` ordena `data desc` sem teto futuro**, então as ocorrências futuras ficam acima da única lançável: o card "fazer chamada" é sempre o último da lista. Medido em produção em 2026-08-23 (9º de 9 na Turma 02; 15º de 16 na turma 01, que ainda tem 8 ocupações canceladas duplicando as ativas) | Baixa — atrito na operação mais frequente do professor |
+| 14 | **`PUT /courts/:id/horarios` com o corpo que o `GET` devolveu quebra a herança.** Quadra que herda o padrão devolve `origem: "herdado"` e os 7 dias herdados; salvar isso sem alterar nada cria horário próprio e a quadra para de acompanhar o padrão da empresa. **Não é defeito hoje** — a tela avisa (*"Salvar aqui cria um horário próprio para ela"*) e oferece "Voltar a usar o padrão". **Mas a segurança mora na frase da tela, não no contrato:** qualquer outro cliente que faça a ida e volta quebra a herança em silêncio | Baixa — declarada na UI, não no contrato |
 
 ## 10. Catálogo modular observado
 
@@ -192,7 +196,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | MOD-001 | AuthIdentity | `usuarios`, `refresh_tokens`, `convites_aluno` | INV-002, INV-004, INV-008, INV-009, INV-013 |
 | MOD-002 | CompanyManagement | `empresas` | INV-005 |
 | MOD-003 | PeopleManagement | `alunos`, `professores`, `niveis` | INV-002, INV-006, INV-010, INV-013, INV-014 |
-| MOD-004 | ClassScheduling | `turmas`, `turma_alunos`, `presencas` | INV-003, INV-012, INV-015 a INV-020 |
+| MOD-004 | ClassScheduling | `turmas`, `turma_alunos`, `presencas`, `chamadas` | INV-003, INV-012, INV-015 a INV-020, INV-026, INV-027 |
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
