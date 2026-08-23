@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { StudentsService } from '../people/students.service';
+import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -23,6 +24,19 @@ import type { UpdateCourtDto } from './dto/update-court.dto';
 interface ConflitoDetectado {
   ocupacaoId: string;
   origemTipo: string;
+}
+
+/** Forma mínima de uma ocupação para virar resposta de API. */
+interface OcupacaoParaResposta {
+  id: string;
+  companyId: string;
+  quadraId: string;
+  data: Date;
+  horaInicio: Date;
+  horaFim: Date;
+  origemTipo: string;
+  alunoId: string | null;
+  statusPagamento: string;
 }
 
 @Injectable()
@@ -140,130 +154,239 @@ export class CourtsService {
     return { quadraId, data, estado: horario.estado, slots };
   }
 
+  /**
+   * SPEC-011 — cria uma ou mais reservas a partir de uma seleção de
+   * horários no mesmo dia.
+   *
+   * Ordem das validações fixada na spec, para a mensagem de erro dizer a
+   * verdade: normalizar → recusar duplicado/sobreposto → agrupar → limite
+   * de 6h → expediente (INV-011) → conflito (INV-001) → inserir em
+   * transação. A constraint `EXCLUDE` segue sendo a garantia final; a
+   * pré-checagem existe para a resposta apontar **qual** bloco falhou.
+   */
   async createBooking(
     companyId: string,
     dto: CreateBookingDto,
     clientRequestId?: string,
   ) {
-    await this.assertQuadraDaEmpresa(companyId, dto.quadraId);
+    const quadra = await this.buscarQuadraDaEmpresa(companyId, dto.quadraId);
 
-    if (dto.horaFim <= dto.horaInicio) {
+    // Formato antigo (uma hora por pedido) continua aceito durante a
+    // transição: os frontends em produção ainda enviam assim, e o `back`
+    // sobe antes das telas. A resposta acompanha o formato do pedido —
+    // devolver array para quem mandou o formato antigo quebraria o app do
+    // aluno que está no ar agora.
+    const formatoAntigo = !dto.slots;
+    const slots = dto.slots ?? [
+      { horaInicio: dto.horaInicio as string, horaFim: dto.horaFim as string },
+    ];
+    if (formatoAntigo && (!dto.horaInicio || !dto.horaFim)) {
       throw new UnprocessableEntityException(
-        'horaFim precisa ser depois de horaInicio',
+        'Informe `slots` ou `horaInicio` e `horaFim`.',
       );
     }
 
+    const blocos = agruparEmBlocos(slots);
+    const fingerprint = fingerprintDoPedido(dto.quadraId, dto.data, slots);
+
     if (clientRequestId) {
-      const existente = await this.prisma.ocupacaoQuadra.findFirst({
-        where: { companyId, clientRequestId },
-      });
-      if (existente) {
-        // AC-004: reenvio com o mesmo Idempotency-Key retorna a ocupação
-        // já criada na 1ª chamada, não cria uma nova.
-        return this.toOcupacaoResponse(existente);
+      const jaFeito = await this.pedidoJaAtendido(
+        companyId,
+        clientRequestId,
+        fingerprint,
+      );
+      if (jaFeito) {
+        return this.responderReservas(jaFeito, formatoAntigo);
       }
     }
-
-    const dataDate = parseDateOnly(dto.data);
-    const horaInicioDate = parseTimeOnly(dto.horaInicio);
-    const horaFimDate = parseTimeOnly(dto.horaFim);
 
     if (dto.alunoId) {
       await this.studentsService.exigirVinculoAprovado(companyId, dto.alunoId);
     }
 
-    // SPEC-010/INV-011: nada é criado fora do expediente. Vem antes da
-    // checagem de conflito de propósito — um horário fora do expediente é
-    // inválido mesmo que a quadra esteja livre, e devolver "conflito"
-    // nesse caso seria mentir sobre o motivo.
+    const dataDate = parseDateOnly(dto.data);
     const horarioDoDia = await this.horarios.resolverParaData(
       companyId,
       dto.quadraId,
       dataDate,
     );
-    if (
-      !this.horarios.dentroDoExpediente(
-        horarioDoDia,
-        horaInicioDate,
-        horaFimDate,
-      )
-    ) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'FORA_DO_EXPEDIENTE',
-        message: 'Horário fora do funcionamento da quadra.',
-      });
+
+    for (const bloco of blocos) {
+      // INV-011 antes do conflito: horário fora do expediente é inválido
+      // mesmo com a quadra livre, e responder "conflito" mentiria sobre o
+      // motivo. O bloco precisa caber **inteiro** — meia reserva aceita
+      // faria a pessoa pagar duas horas e ter uma.
+      if (
+        !this.horarios.dentroDoExpediente(
+          horarioDoDia,
+          parseTimeOnly(bloco.horaInicio),
+          parseTimeOnly(bloco.horaFim),
+        )
+      ) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'FORA_DO_EXPEDIENTE',
+          message: `O horário ${bloco.horaInicio}–${bloco.horaFim} está fora do funcionamento da quadra.`,
+          bloco: `${bloco.horaInicio}-${bloco.horaFim}`,
+        });
+      }
     }
 
-    const conflitoExistente = await this.findConflito(
-      companyId,
-      dto.quadraId,
-      dataDate,
-      horaInicioDate,
-      horaFimDate,
-    );
-    if (conflitoExistente) {
-      throw new ConflictException({
-        message: 'Conflito de horário com outra ocupação (INV-001)',
-        conflictWith: conflitoExistente,
-      });
+    for (const bloco of blocos) {
+      const conflito = await this.findConflito(
+        companyId,
+        dto.quadraId,
+        dataDate,
+        parseTimeOnly(bloco.horaInicio),
+        parseTimeOnly(bloco.horaFim),
+      );
+      if (conflito) {
+        throw new ConflictException({
+          message: `Conflito de horário em ${bloco.horaInicio}–${bloco.horaFim} (INV-001)`,
+          bloco: `${bloco.horaInicio}-${bloco.horaFim}`,
+          conflictWith: conflito,
+        });
+      }
     }
 
     try {
-      const ocupacao = await this.prisma.ocupacaoQuadra.create({
-        data: {
-          companyId,
-          quadraId: dto.quadraId,
-          data: dataDate,
-          horaInicio: horaInicioDate,
-          horaFim: horaFimDate,
-          origemTipo: 'AVULSO',
-          alunoId: dto.alunoId,
-          clientRequestId,
-        },
+      // Tudo ou nada (AC-005): um pedido de 3 blocos com 1 inválido não
+      // pode deixar 2 criados. A transação também cobre o pedido em si —
+      // sem ela, uma falha no meio deixaria a chave de idempotência
+      // gravada sem as reservas correspondentes.
+      const criadas = await this.prisma.$transaction(async (tx) => {
+        const pedido = clientRequestId
+          ? await tx.pedidoReserva.create({
+              data: { companyId, clientRequestId, fingerprint },
+            })
+          : null;
+
+        const resultado: OcupacaoParaResposta[] = [];
+        for (const bloco of blocos) {
+          resultado.push(
+            await tx.ocupacaoQuadra.create({
+              data: {
+                companyId,
+                quadraId: dto.quadraId,
+                data: dataDate,
+                horaInicio: parseTimeOnly(bloco.horaInicio),
+                horaFim: parseTimeOnly(bloco.horaFim),
+                origemTipo: 'AVULSO',
+                alunoId: dto.alunoId,
+                // Congelado na criação (AC-004): reajustar o preço da
+                // quadra depois não mexe em reserva existente.
+                valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
+                pedidoId: pedido?.id,
+              },
+            }),
+          );
+        }
+        return resultado;
       });
-      return this.toOcupacaoResponse(ocupacao);
+
+      return this.responderReservas(criadas, formatoAntigo);
     } catch (error) {
-      // A constraint EXCLUDE (INV-001) e o índice único de idempotência
-      // não têm código Prisma dedicado — qualquer falha de constraint
-      // neste insert específico (depois dos pré-checks acima) só pode ser
-      // uma dessas duas, ambas tratadas como corrida perdida. A violação de
-      // EXCLUDE (23P01) chega como PrismaClientUnknownRequestError (não
-      // PrismaClientKnownRequestError, que só cobre os P-códigos que o
-      // Prisma reconhece), então as duas precisam ser pegas aqui.
+      // A constraint EXCLUDE (INV-001) e os índices únicos não têm código
+      // Prisma dedicado — a violação de EXCLUDE (23P01) chega como
+      // PrismaClientUnknownRequestError. Depois dos pré-checks acima, só
+      // pode ser corrida: outra requisição ganhou o slot ou a mesma chave.
       if (
         error instanceof Prisma.PrismaClientKnownRequestError ||
         error instanceof Prisma.PrismaClientUnknownRequestError
       ) {
         if (clientRequestId) {
-          const existente = await this.prisma.ocupacaoQuadra.findFirst({
-            where: { companyId, clientRequestId },
-          });
-          if (existente) {
-            return this.toOcupacaoResponse(existente);
+          const jaFeito = await this.pedidoJaAtendido(
+            companyId,
+            clientRequestId,
+            fingerprint,
+          );
+          if (jaFeito) {
+            return this.responderReservas(jaFeito, formatoAntigo);
           }
         }
 
-        const conflito = await this.findConflito(
-          companyId,
-          dto.quadraId,
-          dataDate,
-          horaInicioDate,
-          horaFimDate,
-        );
-        throw new ConflictException({
-          message: 'Conflito de horário com outra ocupação (INV-001)',
-          conflictWith: conflito ?? undefined,
-        });
+        for (const bloco of blocos) {
+          const conflito = await this.findConflito(
+            companyId,
+            dto.quadraId,
+            dataDate,
+            parseTimeOnly(bloco.horaInicio),
+            parseTimeOnly(bloco.horaFim),
+          );
+          if (conflito) {
+            throw new ConflictException({
+              message: `Conflito de horário em ${bloco.horaInicio}–${bloco.horaFim} (INV-001)`,
+              bloco: `${bloco.horaInicio}-${bloco.horaFim}`,
+              conflictWith: conflito,
+            });
+          }
+        }
       }
       throw error;
     }
   }
 
-  // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, o controller
-  // resolve o próprio `aluno.id` e passa aqui para escopar a listagem só
-  // às reservas do próprio aluno (REQ-005/AC-002) — `company_admin` chama
-  // sem esse parâmetro e continua vendo tudo da empresa, como antes.
+  /**
+   * AC-006/AC-010 — a idempotência é do **pedido**.
+   *
+   * Mesma chave e mesmo payload devolve as reservas originais; mesma chave
+   * e payload diferente é erro explícito. "Encaixar" blocos novos numa
+   * chave antiga produziria um pedido que ninguém fez.
+   */
+  private async pedidoJaAtendido(
+    companyId: string,
+    clientRequestId: string,
+    fingerprint: string,
+  ) {
+    const pedido = await this.prisma.pedidoReserva.findUnique({
+      where: { companyId_clientRequestId: { companyId, clientRequestId } },
+      include: { ocupacoes: true },
+    });
+
+    if (pedido) {
+      if (pedido.fingerprint !== fingerprint) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'IDEMPOTENCY_KEY_REUSED',
+          message:
+            'Esta chave de pedido já foi usada com outra seleção de horários.',
+        });
+      }
+      return pedido.ocupacoes;
+    }
+
+    // Compatibilidade com o mecanismo anterior à SPEC-011: reservas criadas
+    // antes desta versão guardam a chave na própria ocupação. Sem esta
+    // consulta, um retry que atravessasse o deploy criaria duplicata.
+    const legado = await this.prisma.ocupacaoQuadra.findFirst({
+      where: { companyId, clientRequestId },
+    });
+    return legado ? [legado] : null;
+  }
+
+  /**
+   * A resposta acompanha o formato do pedido: quem mandou o formato antigo
+   * recebe um objeto, quem mandou `slots` recebe a lista. Devolver array
+   * para todo mundo quebraria os frontends que estão em produção agora.
+   */
+  private responderReservas(
+    ocupacoes: OcupacaoParaResposta[],
+    formatoAntigo: boolean,
+  ) {
+    const reservas = ocupacoes.map((o) => this.toOcupacaoResponse(o));
+    return formatoAntigo ? reservas[0] : { reservas };
+  }
+
+  private async buscarQuadraDaEmpresa(companyId: string, quadraId: string) {
+    const quadra = await this.prisma.quadra.findFirst({
+      where: { id: quadraId, companyId },
+    });
+    if (!quadra) {
+      throw new NotFoundException();
+    }
+    return quadra;
+  }
+
   async listBookings(
     companyId: string,
     query: ListBookingsQueryDto,
@@ -611,17 +734,7 @@ export class CourtsService {
     };
   }
 
-  private toOcupacaoResponse(ocupacao: {
-    id: string;
-    companyId: string;
-    quadraId: string;
-    data: Date;
-    horaInicio: Date;
-    horaFim: Date;
-    origemTipo: string;
-    alunoId: string | null;
-    statusPagamento: string;
-  }) {
+  private toOcupacaoResponse(ocupacao: OcupacaoParaResposta) {
     return {
       id: ocupacao.id,
       companyId: ocupacao.companyId,

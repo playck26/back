@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { StudentsService } from '../people/students.service';
-import { parseTimeOnly } from './date-time.util';
+import { formatTimeOnly, parseDateOnly, parseTimeOnly } from './date-time.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CourtsService } from './courts.service';
@@ -36,6 +36,13 @@ function buildPrismaMock() {
       updateMany: jest.fn(),
       count: jest.fn(),
     },
+    // SPEC-011: a criação passou a ser transacional — um pedido pode gerar
+    // vários blocos, e metade criada seria pior que nenhum.
+    pedidoReserva: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+    },
+    $transaction: jest.fn(),
   } as unknown as PrismaService;
 }
 
@@ -72,6 +79,16 @@ function buildHorariosMock() {
   } as unknown as HorarioFuncionamentoService;
 }
 
+/**
+ * SPEC-011: `createBooking` devolve objeto quando o pedido veio no formato
+ * antigo (uma hora) e `{ reservas: [...] }` quando veio `slots`. Este
+ * helper deixa os testes do formato antigo continuarem legíveis, em vez de
+ * espalhar `as` por eles.
+ */
+function comoReserva(resultado: unknown) {
+  return resultado as { id: string; statusPagamento: string };
+}
+
 function buildStudentsMock() {
   return {
     garantirVinculoAprovado: jest.fn(),
@@ -87,6 +104,11 @@ describe('CourtsService', () => {
 
   beforeEach(() => {
     prisma = buildPrismaMock();
+    // O `tx` é o próprio mock: os testes conferem as chamadas em
+    // `prisma.ocupacaoQuadra.create`, dentro ou fora da transação.
+    (prisma.$transaction as unknown as jest.Mock).mockImplementation(
+      (cb: (tx: PrismaService) => unknown) => cb(prisma),
+    );
     studentsService = buildStudentsMock();
     horarios = buildHorariosMock();
     service = new CourtsService(prisma, studentsService, horarios);
@@ -187,7 +209,7 @@ describe('CourtsService', () => {
 
       const result = await service.createBooking('c1', dto, 'req-123');
 
-      expect(result.id).toBe('o1');
+      expect(comoReserva(result).id).toBe('o1');
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
 
@@ -246,7 +268,7 @@ describe('CourtsService', () => {
           origemTipo: 'AVULSO',
         }),
       });
-      expect(result.statusPagamento).toBe('pendente_pagamento');
+      expect(comoReserva(result).statusPagamento).toBe('pendente_pagamento');
     });
 
     it('corrida perdida na constraint EXCLUDE vira 409 (INV-001, mesma lógica do FIT-001)', async () => {
@@ -770,6 +792,187 @@ describe('CourtsService', () => {
 
       await expect(service.cancelBooking('c1', 'o1')).resolves.toBeUndefined();
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // =====================================================================
+  // SPEC-011 — múltiplos horários, valor e idempotência de pedido
+  // =====================================================================
+  describe('múltiplos horários (SPEC-011)', () => {
+    const QUADRA_COM_PRECO = {
+      id: 'q1',
+      companyId: 'c1',
+      status: 'ativa',
+      precoHora: 80,
+    };
+
+    function prepararCriacao() {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(
+        QUADRA_COM_PRECO,
+      );
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.pedidoReserva.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.pedidoReserva.create as jest.Mock).mockResolvedValue({
+        id: 'p1',
+      });
+      (prisma.ocupacaoQuadra.create as jest.Mock).mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({
+            id: `o-${String(data.horaInicio)}`,
+            companyId: 'c1',
+            quadraId: 'q1',
+            data: data.data,
+            horaInicio: data.horaInicio,
+            horaFim: data.horaFim,
+            origemTipo: 'AVULSO',
+            alunoId: null,
+            statusPagamento: 'pendente_pagamento',
+          }),
+      );
+    }
+
+    it('AC-001/AC-003: 2 horas seguidas viram 1 reserva, com valor somado', async () => {
+      prepararCriacao();
+
+      const r = (await service.createBooking('c1', {
+        quadraId: 'q1',
+        data: '2026-08-24',
+        slots: [
+          { horaInicio: '09:00', horaFim: '10:00' },
+          { horaInicio: '10:00', horaFim: '11:00' },
+        ],
+      })) as { reservas: unknown[] };
+
+      expect(r.reservas).toHaveLength(1);
+      expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(1);
+      const [args] = (prisma.ocupacaoQuadra.create as jest.Mock).mock
+        .calls[0] as [
+        { data: { valor: { toString(): string }; horaFim: Date } },
+      ];
+      // 2 horas × R$ 80 — congelado agora, não recalculado depois.
+      expect(args.data.valor.toString()).toBe('160');
+      expect(formatTimeOnly(args.data.horaFim)).toBe('11:00');
+    });
+
+    it('AC-002: horas separadas viram 2 reservas independentes', async () => {
+      prepararCriacao();
+
+      const r = (await service.createBooking('c1', {
+        quadraId: 'q1',
+        data: '2026-08-24',
+        slots: [
+          { horaInicio: '09:00', horaFim: '10:00' },
+          { horaInicio: '15:00', horaFim: '16:00' },
+        ],
+      })) as { reservas: unknown[] };
+
+      expect(r.reservas).toHaveLength(2);
+      expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(2);
+    });
+
+    // AC-005: o pedido é atômico. Um bloco fora do expediente derruba o
+    // pedido inteiro — 3 blocos com 1 inválido não podem deixar 2 criados.
+    it('AC-005: um bloco fora do expediente recusa o pedido inteiro', async () => {
+      prepararCriacao();
+      (horarios.resolverParaData as jest.Mock).mockResolvedValue({
+        estado: 'aberto',
+        horaInicio: parseTimeOnly('06:00'),
+        horaFim: parseTimeOnly('10:00'),
+      });
+
+      await expect(
+        service.createBooking('c1', {
+          quadraId: 'q1',
+          data: '2026-08-24',
+          slots: [
+            { horaInicio: '09:00', horaFim: '10:00' },
+            { horaInicio: '10:00', horaFim: '11:00' },
+          ],
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-006: mesma chave e mesmo payload devolve o pedido original, sem criar', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(
+        QUADRA_COM_PRECO,
+      );
+      (prisma.pedidoReserva.findUnique as jest.Mock).mockResolvedValue({
+        id: 'p1',
+        fingerprint: 'q1|2026-08-24|09:00-10:00',
+        ocupacoes: [
+          {
+            id: 'o1',
+            companyId: 'c1',
+            quadraId: 'q1',
+            data: parseDateOnly('2026-08-24'),
+            horaInicio: parseTimeOnly('09:00'),
+            horaFim: parseTimeOnly('10:00'),
+            origemTipo: 'AVULSO',
+            alunoId: null,
+            statusPagamento: 'pendente_pagamento',
+          },
+        ],
+      });
+
+      const r = (await service.createBooking(
+        'c1',
+        {
+          quadraId: 'q1',
+          data: '2026-08-24',
+          slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
+        },
+        'chave-1',
+      )) as { reservas: { id: string }[] };
+
+      expect(r.reservas[0].id).toBe('o1');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    // AC-010 — o caso que a validação cruzada apontou: "encaixar" uma
+    // seleção diferente numa chave antiga produziria um pedido que ninguém
+    // fez.
+    it('AC-010: mesma chave com seleção diferente devolve 422, sem escrita', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(
+        QUADRA_COM_PRECO,
+      );
+      (prisma.pedidoReserva.findUnique as jest.Mock).mockResolvedValue({
+        id: 'p1',
+        fingerprint: 'q1|2026-08-24|09:00-10:00',
+        ocupacoes: [],
+      });
+
+      const erro = (await service
+        .createBooking(
+          'c1',
+          {
+            quadraId: 'q1',
+            data: '2026-08-24',
+            slots: [{ horaInicio: '15:00', horaFim: '16:00' }],
+          },
+          'chave-1',
+        )
+        .catch((e: Error) => e)) as { response?: { code?: string } };
+
+      expect(erro.response?.code).toBe('IDEMPOTENCY_KEY_REUSED');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    // Compatibilidade: os frontends em produção ainda mandam o formato
+    // antigo, e o `back` sobe antes das telas.
+    it('formato antigo continua funcionando e recebe objeto, não lista', async () => {
+      prepararCriacao();
+
+      const r = await service.createBooking('c1', {
+        quadraId: 'q1',
+        data: '2026-08-24',
+        horaInicio: '09:00',
+        horaFim: '10:00',
+      });
+
+      expect(comoReserva(r).id).toBeDefined();
+      expect((r as { reservas?: unknown[] }).reservas).toBeUndefined();
     });
   });
 });

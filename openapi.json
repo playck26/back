@@ -2118,6 +2118,23 @@
           "dias"
         ]
       },
+      "SlotDto": {
+        "type": "object",
+        "properties": {
+          "horaInicio": {
+            "type": "string",
+            "example": "09:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "10:00"
+          }
+        },
+        "required": [
+          "horaInicio",
+          "horaFim"
+        ]
+      },
       "CreateBookingDto": {
         "type": "object",
         "properties": {
@@ -2128,13 +2145,21 @@
             "type": "string",
             "example": "2026-08-20"
           },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlotDto"
+            }
+          },
           "horaInicio": {
             "type": "string",
-            "example": "14:00"
+            "example": "14:00",
+            "deprecated": true
           },
           "horaFim": {
             "type": "string",
-            "example": "15:00"
+            "example": "15:00",
+            "deprecated": true
           },
           "alunoId": {
             "type": "string"
@@ -2142,9 +2167,7 @@
         },
         "required": [
           "quadraId",
-          "data",
-          "horaInicio",
-          "horaFim"
+          "data"
         ]
       },
       "CreateClassDto": {
