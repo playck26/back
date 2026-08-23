@@ -46,6 +46,12 @@ export class TeachersService {
     return professor;
   }
 
+  // SPEC-013/DEF-001: `professores` ainda nao tem `usuario_id`, entao aqui
+  // nao ha acesso a revogar — inativar um professor hoje so muda a ficha, e
+  // isso esta correto porque ele nao consegue entrar de todo jeito. **Quando
+  // a SPEC-013 ligar professor a usuario, esta funcao precisa propagar
+  // status e revogar refresh tokens**, como `StudentsService.update` passou
+  // a fazer. Sem isso, o furo de DEF-001 volta pela porta do professor.
   async update(companyId: string, id: string, dto: UpdateTeacherDto) {
     await this.findOne(companyId, id);
 

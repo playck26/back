@@ -68,6 +68,15 @@ export class AuthService {
       throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
     }
 
+    // SPEC-013/INV-013 (DEF-001) — conta inativa nao autentica. Erro
+    // generico de propósito, ao contrario do de senha temporaria vencida
+    // logo abaixo: la a pessoa provou posse da credencial e so precisa de
+    // uma nova; aqui o acesso foi **revogado**, e dizer isso confirmaria a
+    // existencia da conta para quem esta testando e-mails.
+    if (usuario.status === 'inativo') {
+      throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
+    }
+
     if (usuario.companyId) {
       const empresa = await this.prisma.empresa.findUnique({
         where: { id: usuario.companyId },
@@ -165,6 +174,20 @@ export class AuthService {
     const usuario = await this.prisma.usuario.findUniqueOrThrow({
       where: { id: stored.usuarioId },
     });
+
+    // SPEC-013/INV-013 — sem isto, a inativacao so valeria ate o access
+    // token expirar: a sessao se renovaria sozinha para sempre pelo refresh,
+    // e o guard nunca veria uma conta inativa porque ela seguiria recebendo
+    // tokens novos. O refresh ja foi consumido pela claim atomica acima, e
+    // as demais sessoes caem junto — inativar encerra a sessao, nao a
+    // suspende.
+    if (usuario.status === 'inativo') {
+      await this.prisma.refreshToken.updateMany({
+        where: { usuarioId: usuario.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException();
+    }
 
     // SPEC-009/AC-019 — sem esta checagem, uma sessão aberta com senha
     // temporária se renovaria indefinidamente por refresh e a validade de

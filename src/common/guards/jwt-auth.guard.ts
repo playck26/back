@@ -10,7 +10,8 @@ import { PERMITE_SENHA_TEMPORARIA } from '../decorators/permite-senha-temporaria
 import type { AccessTokenPayload } from '../types/jwt-payload.type';
 
 /**
- * Autenticação por access token + a trava de INV-008 (SPEC-009).
+ * Autenticação por access token + as travas de INV-008 (SPEC-009, senha
+ * temporária) e INV-013 (SPEC-013, conta inativa).
  *
  * A verificação de senha temporária mora **aqui**, e não num guard global
  * separado, por dois motivos:
@@ -23,6 +24,16 @@ import type { AccessTokenPayload } from '../types/jwt-payload.type';
  *    distração.
  * 2. Ordem correta — só faz sentido perguntar "esta conta está com senha
  *    temporária?" depois de saber de que conta se trata.
+ *
+ * INV-013 entra aqui pelos mesmos dois motivos, e por um terceiro: ela roda
+ * **antes** do atalho de `@PermiteSenhaTemporaria`. Aquela marcação libera
+ * /auth/trocar-senha, /auth/me e logout — se a checagem de status viesse
+ * depois dela, uma conta inativa trocaria a senha e voltaria a operar,
+ * furando INV-013 exatamente pela porta que existe para quem ainda não pode
+ * operar. É a diferença entre "ainda não pode" e "não pode mais".
+ *
+ * O custo disso é a consulta deixar de ser pulável na rota marcada. Uma
+ * leitura por PK contra o furo de DEF-001 é troca barata.
  *
  * A fonte de verdade é o **banco**, lido a cada requisição autenticada, não
  * um claim do JWT. Custa um lookup por PK; em troca, revogar o estado é
@@ -45,14 +56,6 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
       return false;
     }
 
-    const permite = this.reflector.getAllAndOverride<boolean | undefined>(
-      PERMITE_SENHA_TEMPORARIA,
-      [context.getHandler(), context.getClass()],
-    );
-    if (permite) {
-      return true;
-    }
-
     const request = context
       .switchToHttp()
       .getRequest<{ user?: AccessTokenPayload }>();
@@ -63,8 +66,27 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
 
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
-      select: { senhaTemporaria: true },
+      select: { senhaTemporaria: true, status: true },
     });
+
+    // INV-013 (SPEC-013/DEF-001) — vale para toda rota autenticada, marcada
+    // ou não. É o que torna a inativação imediata: o access token vivo (até
+    // 15 min) para de valer agora, não quando expirar.
+    if (usuario?.status === 'inativo') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'CONTA_INATIVA',
+        message: 'Esta conta está inativa. Procure o administrador.',
+      });
+    }
+
+    const permite = this.reflector.getAllAndOverride<boolean | undefined>(
+      PERMITE_SENHA_TEMPORARIA,
+      [context.getHandler(), context.getClass()],
+    );
+    if (permite) {
+      return true;
+    }
 
     if (usuario?.senhaTemporaria) {
       throw new ForbiddenException({

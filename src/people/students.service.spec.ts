@@ -176,6 +176,58 @@ describe('StudentsService', () => {
       });
       expect(result.nome).toBe('Atualizado');
     });
+
+    // SPEC-013/DEF-001. Ate 2026-08-22 `status` era gravado so em `alunos`
+    // e o `usuarios` da pessoa nem era tocado — como nenhuma rota lia
+    // `usuarios.status`, inativar nao tirava acesso de ninguem. Estes dois
+    // testes sao o par: sem propagacao, as travas de INV-013 existem e
+    // nunca disparam.
+    it('inativar aluno propaga para o usuario e derruba as sessoes (INV-013)', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u1',
+      });
+      tx.aluno.update.mockResolvedValue({
+        id: 'a1',
+        nivelId: null,
+        status: 'inativo',
+        usuario: { nome: 'X', email: 'x@x.com', telefone: null },
+      });
+
+      await service.update('c1', 'a1', { status: 'inativo' });
+
+      expect(tx.usuario.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { status: 'inativo' },
+      });
+      expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { usuarioId: 'u1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    // Reativar devolve o acesso, mas nao ressuscita sessao nenhuma: quem
+    // foi desligado e voltou entra de novo pela porta da frente.
+    it('reativar propaga status e nao revoga tokens (INV-013)', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u1',
+      });
+      tx.aluno.update.mockResolvedValue({
+        id: 'a1',
+        nivelId: null,
+        status: 'ativo',
+        usuario: { nome: 'X', email: 'x@x.com', telefone: null },
+      });
+
+      await service.update('c1', 'a1', { status: 'ativo' });
+
+      expect(tx.usuario.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { status: 'ativo' },
+      });
+      expect(tx.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   // =====================================================================

@@ -327,6 +327,28 @@ export class StudentsService {
         });
       }
 
+      // SPEC-013/DEF-001 (INV-013) — `alunos.status` é a ficha; quem manda
+      // no acesso é `usuarios.status`. Enquanto os dois não andaram juntos,
+      // inativar mudava o badge e não tirava ninguém de dentro: a pessoa
+      // continuava entrando e continuava ocupando quadra. Na mesma
+      // transação de propósito — meia inativação é pior que nenhuma,
+      // porque o gestor acredita nela.
+      if (dto.status !== undefined) {
+        await tx.usuario.update({
+          where: { id: existente.usuarioId },
+          data: { status: dto.status },
+        });
+
+        // Só na inativação. Reativar devolve o direito de entrar, não as
+        // sessões antigas.
+        if (dto.status === 'inativo') {
+          await tx.refreshToken.updateMany({
+            where: { usuarioId: existente.usuarioId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+        }
+      }
+
       return tx.aluno.update({
         where: { id },
         data: { nivelId: dto.nivelId, status: dto.status },

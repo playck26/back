@@ -615,4 +615,92 @@ describe('Auth (e2e) - TEST-001', () => {
         .expect(429);
     });
   });
+
+  // =====================================================================
+  // SPEC-013/DEF-001 (INV-013) — inativar tem de tirar a pessoa de dentro
+  //
+  // O furo que estes testes fecham: ate 2026-08-22 `usuarios.status` nao era
+  // lido em lugar nenhum. O gestor inativava alguem, o badge mudava, e a
+  // pessoa seguia operando com o token que ja tinha na mao e conseguia
+  // fazer login de novo depois. Os tres cenarios abaixo sao as tres portas.
+  // =====================================================================
+  describe('INV-013: conta inativa', () => {
+    it('porta 1 — token ja emitido para de valer na hora, sem esperar expirar', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      // O gestor inativa **depois** de a sessao existir. E o caso que o
+      // access token de 15 min tornava impossivel barrar sem ler o banco.
+      prisma.usuario.findUnique.mockResolvedValue({
+        ...usuario,
+        status: 'inativo',
+      });
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue({
+        ...usuario,
+        status: 'inativo',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+
+      expect(bodyOf<{ code: string }>(res).code).toBe('CONTA_INATIVA');
+    });
+
+    it('porta 2 — login novo nao autentica, com erro generico', async () => {
+      const usuario = await buildUsuarioAtivo({
+        email: 'inativo@empresa.demo',
+      });
+      prisma.usuario.findUnique.mockResolvedValue({
+        ...usuario,
+        status: 'inativo',
+      });
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: usuario.companyId,
+        status: 'ativa',
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: usuario.email, senha: SENHA_VALIDA })
+        .expect(401);
+
+      // Generico de proposito: a senha estava certa. Dizer "conta inativa"
+      // confirmaria a existencia do e-mail para quem esta testando enderecos.
+      expect(bodyOf<ErrorBody>(res).message).not.toMatch(/inativ/i);
+    });
+
+    it('porta 3 — refresh nao renova a sessao de conta inativada', async () => {
+      const usuario = await buildUsuarioAtivo({
+        email: 'refresh@empresa.demo',
+      });
+      const { refreshToken } = await loginAndGetTokens(app, prisma, usuario);
+
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        id: 'rt1',
+        usuarioId: usuario.id,
+        tokenHash: await bcrypt.hash(refreshToken, 4),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        revokedAt: null,
+      });
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue({
+        ...usuario,
+        status: 'inativo',
+      });
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', [`refresh_token=${refreshToken}`])
+        .expect(401);
+
+      // Nao basta recusar: as outras sessoes da pessoa caem junto. Inativar
+      // encerra a sessao, nao a suspende ate alguem tentar de novo.
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { usuarioId: usuario.id, revokedAt: null },
+        data: { revokedAt: expect.any(Date) as Date },
+      });
+    });
+  });
 });
