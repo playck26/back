@@ -329,4 +329,56 @@ describe('Companies (e2e) - TEST-002', () => {
       await request(app.getHttpServer()).get('/api/v1/me/company').expect(401);
     });
   });
+
+  // DEF-004: a SPEC-009/REQ-006 dizia "a empresa decide se aceita
+  // auto-cadastro" e nenhuma rota escrevia no campo — a decisão ficava
+  // congelada no default `true`. Estes testes fixam o interruptor.
+  describe('PATCH /api/v1/me/company (DEF-004)', () => {
+    it('company_admin desliga o auto-cadastro da própria empresa', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+      prisma.empresa.updateMany.mockResolvedValue({ count: 1 });
+      prisma.empresa.findUnique.mockResolvedValue({
+        nome: 'Clube Teste',
+        slug: 'clube-teste',
+        logoUrl: null,
+        status: 'ativa',
+        permiteAutoCadastro: false,
+      });
+
+      const res = await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ permiteAutoCadastro: false })
+        .expect(200);
+
+      expect(bodyOf<MinhaEmpresaBody>(res).permiteAutoCadastro).toBe(false);
+      // O `where` sai do token: `updateMany` por company_id, nunca por id
+      // vindo do cliente.
+      expect(prisma.empresa.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: COMPANY_ID } }),
+      );
+    });
+
+    it('super_admin recebe 403 — o interruptor é do gestor', async () => {
+      const accessToken = await loginSuperAdmin(app, prisma);
+
+      await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ permiteAutoCadastro: false })
+        .expect(403);
+
+      expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('ValidationPipe: corpo sem booleano retorna 400', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+
+      await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ permiteAutoCadastro: 'talvez' })
+        .expect(400);
+    });
+  });
 });

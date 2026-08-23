@@ -38,6 +38,9 @@ export interface PrismaMock {
     count: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
+    // DEF-004: o interruptor de auto-cadastro escreve por `updateMany`
+    // filtrando pelo company_id do token, nunca por id vindo do cliente.
+    updateMany: jest.Mock;
   };
   refreshToken: {
     create: jest.Mock;
@@ -93,6 +96,7 @@ export function buildPrismaMock(): PrismaMock {
       count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     refreshToken: {
       create: jest.fn(),

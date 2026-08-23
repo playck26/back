@@ -943,6 +943,33 @@
         "tags": [
           "me"
         ]
+      },
+      "patch": {
+        "operationId": "MeCompanyController_definirAutoCadastro",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAutoCadastroDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
       }
     },
     "/api/v1/courts": {
@@ -2265,6 +2292,18 @@
         },
         "required": [
           "status"
+        ]
+      },
+      "UpdateAutoCadastroDto": {
+        "type": "object",
+        "properties": {
+          "permiteAutoCadastro": {
+            "type": "boolean",
+            "description": "Liga ou desliga o link público de auto-cadastro de alunos desta empresa."
+          }
+        },
+        "required": [
+          "permiteAutoCadastro"
         ]
       },
       "CreateCourtDto": {
