@@ -27,7 +27,14 @@ export class SalvarChamadaDto {
    * inteiro com a tela antiga e desfaz o que o primeiro marcou, sem querer
    * e sem perceber.
    */
-  @ApiProperty({ example: '3:1756000000000' })
+  @ApiProperty({
+    description:
+      'Opaca: devolva exatamente o que o GET entregou, sem interpretar. ' +
+      'O formato já mudou duas vezes (ganhou o cabecalho e a impressao ' +
+      'digital da matricula) e pode mudar de novo — quem fizer parse ' +
+      'quebra sem aviso. Serve so para comparacao de igualdade.',
+    example: '<opaco — devolva o valor recebido no GET>',
+  })
   @IsString()
   versao!: string;
 
