@@ -382,6 +382,7 @@ model Chamada {
   empresa     Empresa        @relation(fields: [companyId], references: [id])
   ocupacao    OcupacaoQuadra @relation(fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Cascade, map: "chamadas_ocupacao_fkey")
   registrante Usuario        @relation("ChamadaRegistradaPor", fields: [registradaPor], references: [id], onDelete: Restrict)
+  presencas   Presenca[]
 
   @@index([companyId])
   @@map("chamadas")
@@ -413,6 +414,11 @@ model Presenca {
   // fecha. A migration já foi aplicada em produção: editá-la agora quebraria
   // o checksum que o Prisma guarda, então quem se ajusta é o schema.
   ocupacao    OcupacaoQuadra @relation(fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Cascade, map: "presencas_ocupacao_fkey")
+  // SPEC-015/INV-027 (fase `contract`): presenca sem cabecalho passa a ser
+  // impossivel **no banco**. NoAction e nao Restrict porque apagar a
+  // ocorrencia cascateia para as duas tabelas na mesma instrucao — Restrict
+  // e checado na hora e abortaria; NoAction e checado no fim.
+  chamada     Chamada        @relation(fields: [ocupacaoId], references: [ocupacaoId], onDelete: NoAction, map: "presencas_chamada_fkey")
   aluno       Aluno          @relation(fields: [alunoId], references: [id], onDelete: Restrict)
   registrante Usuario        @relation("PresencaRegistradaPor", fields: [registradoPor], references: [id], onDelete: Restrict)
 
