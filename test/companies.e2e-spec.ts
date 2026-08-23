@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import {
   buildUsuarioAtivo,
+  COMPANY_ID,
   loginAndGetTokens,
   SENHA_VALIDA,
 } from './utils/auth-helpers';
@@ -22,6 +23,11 @@ interface CompanyBody {
   id: string;
   nome?: string;
   status?: string;
+}
+interface MinhaEmpresaBody {
+  nome: string;
+  slug: string;
+  permiteAutoCadastro: boolean;
 }
 
 // TEST-002 (SPEC-002): suíte Supertest formal do módulo de empresas —
@@ -281,6 +287,46 @@ describe('Companies (e2e) - TEST-002', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ status: 'suspensa' })
         .expect(400);
+    });
+  });
+  // DEF-003: o gestor não tinha rota nenhuma que devolvesse o `slug` da
+  // própria empresa, e sem ele não há como divulgar `/cadastro/<slug>`.
+  // O que estes testes fixam é o escopo: a empresa vem do token, não da
+  // URL, e só o `company_admin` lê.
+  describe('GET /api/v1/me/company (DEF-003)', () => {
+    it('company_admin recebe o slug da própria empresa', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+      prisma.empresa.findUnique.mockResolvedValue({
+        nome: 'Clube Teste',
+        slug: 'clube-teste',
+        logoUrl: null,
+        status: 'ativa',
+        permiteAutoCadastro: true,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(bodyOf<MinhaEmpresaBody>(res).slug).toBe('clube-teste');
+      // A empresa sai do token: nenhum id trafega na URL para ser trocado.
+      expect(prisma.empresa.findUnique).toHaveBeenLastCalledWith(
+        expect.objectContaining({ where: { id: COMPANY_ID } }),
+      );
+    });
+
+    it('super_admin recebe 403 — a rota é do gestor, não da plataforma', async () => {
+      const accessToken = await loginSuperAdmin(app, prisma);
+
+      await request(app.getHttpServer())
+        .get('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+    });
+
+    it('sem token retorna 401', async () => {
+      await request(app.getHttpServer()).get('/api/v1/me/company').expect(401);
     });
   });
 });

@@ -926,6 +926,25 @@
         ]
       }
     },
+    "/api/v1/me/company": {
+      "get": {
+        "operationId": "MeCompanyController_minhaEmpresa",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/courts": {
       "get": {
         "operationId": "CourtsController_list",
