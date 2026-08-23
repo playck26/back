@@ -5,7 +5,8 @@
 // SPEC-004:TASK-001 (quadras, ocupacoes_quadra), por SPEC-003:TASK-000b
 // (turmas, turma_alunos), por SPEC-006:TASK-000 (config_pagamento_empresa)
 // por SPEC-009:TASK-000 (onboarding de conta do aluno) e por
-// SPEC-010:TASK-000 (horarios_funcionamento).
+// SPEC-010:TASK-000 (horarios_funcionamento) e por SPEC-011:TASK-000
+// (valor da reserva e pedidos_reserva).
 // Demais tabelas entram por spec dona, cada uma estendendo este arquivo
 // (nunca um schema paralelo).
 
@@ -75,6 +76,7 @@ model Empresa {
   usuarios        Usuario[]
   convites        ConviteAluno[]
   horarios        HorarioFuncionamento[]
+  pedidosReserva  PedidoReserva[]
   niveis          Nivel[]
   professores     Professor[]
   alunos          Aluno[]
@@ -236,20 +238,31 @@ model OcupacaoQuadra {
   origemTurmaId   String?         @map("origem_turma_id") @db.Uuid
   alunoId         String?         @map("aluno_id") @db.Uuid
   statusPagamento StatusPagamento @default(pendente_pagamento) @map("status_pagamento")
+  /// SPEC-011: quanto foi cobrado, congelado na criação. **Nulo para
+  /// origem TURMA** — aula recorrente não tem cobrança própria (CON-006),
+  /// e `NOT NULL` global quebraria a criação de turma. Garantido por CHECK
+  /// escrito à mão na migration.
+  valor           Decimal?        @db.Decimal(10, 2)
+  /// SPEC-011: agrupa os blocos criados por um mesmo pedido. Nulo em
+  /// linhas anteriores à spec e em ocupações de turma.
+  pedidoId        String?         @map("pedido_id") @db.Uuid
+  /// Mecanismo de idempotência anterior à SPEC-011, mantido para as linhas
+  /// já criadas. Escrita nova deixa nulo e usa `pedidoId`.
   clientRequestId String?         @map("client_request_id")
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  empresa     Empresa @relation(fields: [companyId], references: [id])
-  quadra      Quadra  @relation(fields: [quadraId], references: [id])
-  aluno       Aluno?  @relation(fields: [alunoId], references: [id])
+  empresa     Empresa        @relation(fields: [companyId], references: [id])
+  quadra      Quadra         @relation(fields: [quadraId], references: [id])
+  aluno       Aluno?         @relation(fields: [alunoId], references: [id])
+  pedido      PedidoReserva? @relation(fields: [pedidoId], references: [id])
   // `onDelete: Restrict` declarado explicitamente para casar com o que a
   // migration 20260812000000_classes aplicou à mão no banco. Sem isso o
   // Prisma assume `SET NULL` (default de relação opcional) e acusa drift,
   // querendo reescrever a FK — e `SET NULL` seria errado no domínio:
   // apagar uma turma deixaria ocupações órfãs na linha do tempo da quadra,
   // sem dono, contrariando INV-001. Drift encontrado em SPEC-009:TASK-000.
-  origemTurma Turma?  @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
+  origemTurma Turma?         @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
 
   @@index([companyId, quadraId, data])
   @@map("ocupacoes_quadra")
@@ -405,4 +418,28 @@ model HorarioFuncionamento {
   @@index([companyId])
   @@index([quadraId])
   @@map("horarios_funcionamento")
+}
+
+// SPEC-011 (MOD-005) — um pedido de reserva pode gerar mais de uma
+// ocupação: slots contíguos viram um bloco, separados viram blocos
+// independentes. Esta tabela existe para a idempotência valer para o
+// **pedido**, e não para cada linha criada.
+//
+// O `fingerprint` (sha256 do payload normalizado) é o que distingue um
+// retry legítimo de um pedido diferente reusando a mesma chave. Sem ele,
+// reenviar a mesma `clientRequestId` com outra seleção de horários seria
+// indistinguível de repetição — e criaria reservas em silêncio.
+model PedidoReserva {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  clientRequestId String   @map("client_request_id")
+  fingerprint     String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  empresa   Empresa          @relation(fields: [companyId], references: [id])
+  ocupacoes OcupacaoQuadra[]
+
+  @@unique([companyId, clientRequestId])
+  @@index([companyId])
+  @@map("pedidos_reserva")
 }
