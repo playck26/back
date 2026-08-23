@@ -1410,6 +1410,42 @@
         ]
       }
     },
+    "/api/v1/classes/{id}/presencas": {
+      "get": {
+        "operationId": "ClassesController_historicoDePresenca",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dias",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "operationId": "ClassesController_list",
@@ -1660,6 +1696,106 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/classes/{id}/ocorrencias": {
+      "get": {
+        "operationId": "MeTeacherAttendanceController_ocorrencias",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dias",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/attendance/{ocupacaoId}": {
+      "get": {
+        "operationId": "MeTeacherAttendanceController_chamada",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "put": {
+        "operationId": "MeTeacherAttendanceController_salvar",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SalvarChamadaDto"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": ""
@@ -2326,6 +2462,45 @@
             ]
           }
         }
+      },
+      "ItemChamadaDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "presente",
+              "ausente",
+              "justificado"
+            ]
+          }
+        },
+        "required": [
+          "alunoId",
+          "status"
+        ]
+      },
+      "SalvarChamadaDto": {
+        "type": "object",
+        "properties": {
+          "versao": {
+            "type": "string",
+            "example": "3:1756000000000"
+          },
+          "itens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemChamadaDto"
+            }
+          }
+        },
+        "required": [
+          "versao",
+          "itens"
+        ]
       },
       "UpdatePaymentConfigDto": {
         "type": "object",

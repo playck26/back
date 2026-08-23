@@ -1,11 +1,13 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -19,6 +21,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { ClassesService } from './classes.service';
+import { PresencaService } from './presenca.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 
@@ -31,7 +34,29 @@ import { UpdateClassDto } from './dto/update-class.dto';
 @UseGuards(JwtAuthGuard, CompanyAdminGuard)
 @Controller('classes')
 export class ClassesController {
-  constructor(private readonly classesService: ClassesService) {}
+  constructor(
+    private readonly classesService: ClassesService,
+    private readonly presencas: PresencaService,
+  ) {}
+
+  /**
+   * SPEC-014/AC-009 — histórico de presença da turma, **só leitura**
+   * (LIM-002). Fica no controller do gestor, e não no de `me/teacher`,
+   * porque o escopo aqui é a empresa inteira: o gestor vê qualquer turma
+   * dela, o professor só as próprias.
+   */
+  @Get(':id/presencas')
+  historicoDePresenca(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
+  ) {
+    return this.presencas.historicoDaTurma(
+      user.companyId as string,
+      id,
+      Math.min(Math.max(dias, 1), 90),
+    );
+  }
 
   @Get()
   list(

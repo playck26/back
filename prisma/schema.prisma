@@ -89,6 +89,8 @@ model Empresa {
   turmas          Turma[]
   configPagamento ConfigPagamentoEmpresa?
 
+  presencas Presenca[]
+
   @@map("empresas")
 }
 
@@ -109,11 +111,12 @@ model Usuario {
   createdAt               DateTime      @default(now()) @map("created_at")
   updatedAt               DateTime      @updatedAt @map("updated_at")
 
-  empresa         Empresa?       @relation(fields: [companyId], references: [id])
-  refreshTokens   RefreshToken[]
-  aluno           Aluno?
-  professor       Professor?
-  convitesCriados ConviteAluno[] @relation("ConviteCriadoPor")
+  empresa              Empresa?       @relation(fields: [companyId], references: [id])
+  refreshTokens        RefreshToken[]
+  aluno                Aluno?
+  professor            Professor?
+  convitesCriados      ConviteAluno[] @relation("ConviteCriadoPor")
+  presencasRegistradas Presenca[]     @relation("PresencaRegistradaPor")
 
   @@index([companyId])
   @@map("usuarios")
@@ -189,6 +192,7 @@ model Aluno {
   nivel       Nivel?           @relation(fields: [nivelId], references: [id])
   ocupacoes   OcupacaoQuadra[]
   turmaAlunos TurmaAluno[]
+  presencas   Presenca[]
 
   @@index([companyId])
   @@map("alunos")
@@ -274,6 +278,9 @@ model OcupacaoQuadra {
   // sem dono, contrariando INV-001. Drift encontrado em SPEC-009:TASK-000.
   origemTurma Turma?         @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
 
+  presencas Presenca[]
+
+  @@unique([id, origemTipo], map: "ocupacoes_quadra_id_origem_tipo_key")
   @@index([companyId, quadraId, data])
   @@map("ocupacoes_quadra")
 }
@@ -320,6 +327,53 @@ model Turma {
 // transação com `SELECT ... FOR UPDATE` na linha da turma, não só pela
 // UNIQUE(turma_id, aluno_id) abaixo (que só evita duplicata do mesmo
 // aluno, não estoura de capacidade).
+// SPEC-014: os tres estados possiveis de um aluno numa aula. `justificado`
+// e um **estado**, nao um documento — atestado e anexo estao fora de escopo
+// de proposito.
+enum StatusPresenca {
+  presente
+  ausente
+  justificado
+
+  @@map("status_presenca")
+}
+
+model Presenca {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  // SPEC-014/INV-016 imposta **pelo banco**, nao por codigo: `origemTipo` e
+  // uma coluna constante ('TURMA', garantido por CHECK) que participa da FK
+  // composta para `ocupacoes_quadra(id, origem_tipo)`. Assim o Postgres
+  // recusa presenca apontando reserva avulsa — nao ha caminho pelo qual
+  // codigo errado consiga gravar. A parte "nao cancelada" da INV-016 fica
+  // no servico, e isso e deliberado: e regra de **escrita**, e cancelar
+  // depois nao desfaz quem esteve la (AC-012).
+  ocupacaoId String     @map("ocupacao_id") @db.Uuid
+  origemTipo OrigemTipo @map("origem_tipo")
+
+  alunoId       String         @map("aluno_id") @db.Uuid
+  status        StatusPresenca
+  registradoPor String         @map("registrado_por") @db.Uuid
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  empresa     Empresa        @relation(fields: [companyId], references: [id])
+  // `map:` declara o nome que a migration deu à FK. Sem isso o Prisma quer
+  // renomeá-la para o padrão dele a cada `migrate diff`, e o drift nunca
+  // fecha. A migration já foi aplicada em produção: editá-la agora quebraria
+  // o checksum que o Prisma guarda, então quem se ajusta é o schema.
+  ocupacao    OcupacaoQuadra @relation(fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Cascade, map: "presencas_ocupacao_fkey")
+  aluno       Aluno          @relation(fields: [alunoId], references: [id], onDelete: Restrict)
+  registrante Usuario        @relation("PresencaRegistradaPor", fields: [registradoPor], references: [id], onDelete: Restrict)
+
+  // INV-015: um aluno tem no maximo um registro por aula.
+  @@unique([ocupacaoId, alunoId])
+  @@index([companyId, ocupacaoId])
+  @@index([alunoId])
+  @@map("presencas")
+}
+
 model TurmaAluno {
   id        String   @id @default(uuid()) @db.Uuid
   turmaId   String   @map("turma_id") @db.Uuid
