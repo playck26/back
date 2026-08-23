@@ -19,15 +19,58 @@ import { PresencaService } from './presenca.service';
 interface TxMock {
   presenca: { findMany: jest.Mock; upsert: jest.Mock };
   chamada: { findUnique: jest.Mock; upsert: jest.Mock };
+  turmaAluno: { findMany: jest.Mock };
+  $queryRaw: jest.Mock;
+}
+
+// SPEC-015/AC-000i — `salvarChamada` **não** usa mais
+// `prisma.ocupacaoQuadra.findFirst`. Ele faz dois statements dentro da
+// transação: (0a) descobre e trava a linha da turma, (0b) relê ocorrência e
+// dono já com o lock na mão. Os dois passam por `$queryRaw`, e o mock
+// abaixo é o que eles enxergam.
+//
+// **Mock nenhum prova concorrência** — a garantia de que 0b enxerga o
+// commit alheio é do Postgres, e está provada em
+// `harness/chamada-e2e/bloq9-snapshot.ts` e `matriz-raiz.ts`, contra banco
+// real e duas conexões. O que se prova aqui é a lógica: quem é recusado,
+// com que código, e em que ordem.
+interface EstadoDaOcorrencia {
+  ocupacao: Record<string, unknown> | null;
+  professorIdDaTurma: string | null;
 }
 
 function buildMocks() {
+  const estado: EstadoDaOcorrencia = {
+    ocupacao: ocupacao(),
+    professorIdDaTurma: 'p1',
+  };
+  // Ímpar = 0a (o lock), par = 0b (a releitura). Alterna em vez de contar
+  // uma vez só, para que um teste que chame `salvarChamada` duas vezes não
+  // caia num estado impossível.
+  let statement = 0;
   const tx: TxMock = {
     presenca: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn() },
     chamada: {
       findUnique: jest.fn().mockResolvedValue(null),
       upsert: jest.fn(),
     },
+    turmaAluno: { findMany: jest.fn() },
+    $queryRaw: jest.fn(() => {
+      statement += 1;
+      const oc = estado.ocupacao;
+      if (!oc) return Promise.resolve([]);
+      if (statement % 2 === 1) {
+        return Promise.resolve([{ id: oc.origemTurmaId }]);
+      }
+      return Promise.resolve([
+        {
+          origemTurmaId: oc.origemTurmaId,
+          data: oc.data,
+          statusPagamento: oc.statusPagamento,
+          professorId: estado.professorIdDaTurma,
+        },
+      ]);
+    }),
   };
   const prisma = {
     professor: { findFirst: jest.fn() },
@@ -38,7 +81,27 @@ function buildMocks() {
     chamada: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn((cb: (tx: TxMock) => unknown) => cb(tx)),
   };
-  return { prisma: prisma as unknown as PrismaService, tx };
+  // A matrícula lida DENTRO da transação é a mesma que o teste arma em
+  // `prisma.turmaAluno.findMany` — delegar evita ter de armar duas vezes.
+  tx.turmaAluno.findMany = jest.fn(
+    (...args: unknown[]): unknown =>
+      prisma.turmaAluno.findMany(...args) as unknown,
+  );
+  return { prisma: prisma as unknown as PrismaService, tx, estado };
+}
+
+/**
+ * Arma a ocorrência para os DOIS caminhos: o `GET` (`chamada`), que ainda
+ * usa `ocupacaoQuadra.findFirst`, e o `PUT`, que passou a ler por
+ * `$queryRaw` sob o lock. `null` = não existe, ou não é deste professor.
+ */
+function armarOcupacao(
+  prisma: PrismaService,
+  estado: EstadoDaOcorrencia,
+  oc: Record<string, unknown> | null,
+) {
+  (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(oc);
+  estado.ocupacao = oc;
 }
 
 function diaRelativo(dias: number): Date {
@@ -67,24 +130,38 @@ function ocupacao(overrides: Record<string, unknown> = {}) {
 describe('PresencaService (SPEC-014)', () => {
   let prisma: PrismaService;
   let tx: TxMock;
+  let estado: EstadoDaOcorrencia;
   let service: PresencaService;
 
   beforeEach(() => {
     const b = buildMocks();
     prisma = b.prisma;
     tx = b.tx;
+    estado = b.estado;
     service = new PresencaService(prisma);
     (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
+    // O `GET` monta a lista com o nome do aluno; o `PUT` só usa `alunoId`.
+    // Um mock só serve os dois, e é o que permite os testes irem por
+    // `GET -> PUT` em vez de fixar a versão na mão.
     (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
-      { alunoId: 'a1' },
-      { alunoId: 'a2' },
+      { alunoId: 'a1', aluno: { usuario: { nome: 'Aluno 1' } } },
+      { alunoId: 'a2', aluno: { usuario: { nome: 'Aluno 2' } } },
     ]);
   });
 
   // SPEC-015/INV-026: o padrão passou a ser a turma **inteira** (a1 e a2).
   // Antes era um aluno só — e a suíte inteira passava, o que é a prova de
   // que nada cobrava completude. A DEF-002 morava exatamente aqui.
-  const salvar = (
+  // SPEC-015/AC-000j — `versao` é string OPACA, e o teste não deve saber
+  // montá-la. Desde a v8 ela inclui o cabeçalho e a impressão digital da
+  // matrícula; fixar `'0'` aqui fazia a suíte inteira bater em 409 e, pior,
+  // um teste que recalcula a versão do jeito que o serviço calcula não
+  // consegue pegar erro nenhum na regra da versão. Então o caminho é o do
+  // produto: `GET` primeiro, `PUT` com o que ele devolveu.
+  const versaoAtual = async () =>
+    (await service.chamada('c1', 'u1', 'oc1')).versao;
+
+  const salvar = async (
     itens: {
       alunoId: string;
       status: 'presente' | 'ausente' | 'justificado';
@@ -92,7 +169,15 @@ describe('PresencaService (SPEC-014)', () => {
       { alunoId: 'a1', status: 'presente' },
       { alunoId: 'a2', status: 'presente' },
     ],
-  ) => service.salvarChamada('c1', 'u1', 'oc1', '0', itens);
+    versao?: string,
+  ) =>
+    service.salvarChamada(
+      'c1',
+      'u1',
+      'oc1',
+      versao ?? (await versaoAtual()),
+      itens,
+    );
 
   describe('INV-018 — quem escreve', () => {
     it('recusa usuário com papel de professor mas sem ficha na empresa', async () => {
@@ -105,7 +190,7 @@ describe('PresencaService (SPEC-014)', () => {
     // 403 — 403 confirmaria que ela existe, e o professor mapearia a grade
     // dos colegas por tentativa e erro.
     it('ocorrência de turma de colega devolve 404', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      armarOcupacao(prisma, estado, null);
 
       await expect(salvar()).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.ocupacaoQuadra.findFirst).toHaveBeenCalledWith(
@@ -120,9 +205,7 @@ describe('PresencaService (SPEC-014)', () => {
 
   describe('INV-017 — a janela', () => {
     it('recusa aula futura (o toque na linha errada da grade)', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao({ data: diaRelativo(1) }),
-      );
+      armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(1) }));
 
       await expect(salvar()).rejects.toMatchObject({
         response: { code: 'AULA_FUTURA' },
@@ -130,22 +213,16 @@ describe('PresencaService (SPEC-014)', () => {
     });
 
     it('aceita a aula de hoje', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao(),
-      );
+      armarOcupacao(prisma, estado, ocupacao());
 
       await expect(salvar()).resolves.toMatchObject({ total: 2 });
     });
 
     it('aceita aula de 7 dias atrás e recusa a de 8', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao({ data: diaRelativo(-7) }),
-      );
+      armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(-7) }));
       await expect(salvar()).resolves.toMatchObject({ total: 2 });
 
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao({ data: diaRelativo(-8) }),
-      );
+      armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(-8) }));
       await expect(salvar()).rejects.toMatchObject({
         response: { code: 'AULA_ANTIGA' },
       });
@@ -154,9 +231,7 @@ describe('PresencaService (SPEC-014)', () => {
 
   describe('INV-016 — a metade que é regra de escrita', () => {
     it('recusa chamada em aula cancelada', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao({ statusPagamento: 'cancelado' }),
-      );
+      armarOcupacao(prisma, estado, ocupacao({ statusPagamento: 'cancelado' }));
 
       await expect(salvar()).rejects.toMatchObject({
         response: { code: 'AULA_CANCELADA' },
@@ -166,9 +241,7 @@ describe('PresencaService (SPEC-014)', () => {
 
   describe('AC-006 — só aluno alocado', () => {
     beforeEach(() => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao(),
-      );
+      armarOcupacao(prisma, estado, ocupacao());
     });
 
     // "nada é gravado": a chamada inteira falha. Gravar os válidos e
@@ -208,9 +281,7 @@ describe('PresencaService (SPEC-014)', () => {
 
   describe('INV-019 — versão otimista', () => {
     beforeEach(() => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao(),
-      );
+      armarOcupacao(prisma, estado, ocupacao());
     });
 
     it('recusa com 409 quando a chamada mudou desde a leitura', async () => {
@@ -232,22 +303,33 @@ describe('PresencaService (SPEC-014)', () => {
       expect(tx.presenca.findMany).toHaveBeenCalled();
     });
 
+    // SPEC-015/AC-000j — `versao` é OPACA. Este teste fixava
+    // `'1:1700000000000'` e quebrou quando a v8 acrescentou a impressão
+    // digital da matrícula. Fixar formato é transformar detalhe interno em
+    // contrato: o teste falhava por uma mudança pretendida, e não teria
+    // pegado nada se o formato ficasse igual e o VALOR errasse.
+    //
+    // O que importa é a propriedade, e é ela que está aqui: a versão
+    // devolvida **muda** depois da gravação. Sem isso, salvar duas vezes na
+    // mesma tela bateria em 409 contra a própria escrita anterior — que é a
+    // razão de o servidor devolver a versão nova.
     it('devolve versão nova depois de gravar', async () => {
+      const antes = await versaoAtual();
       tx.presenca.findMany
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ updatedAt: new Date(1_700_000_000_000) }]);
 
-      await expect(salvar()).resolves.toMatchObject({
-        versao: '1:1700000000000',
-      });
+      const res = (await salvar(undefined, antes)) as { versao: string };
+
+      expect(typeof res.versao).toBe('string');
+      expect(res.versao.length).toBeGreaterThan(0);
+      expect(res.versao).not.toBe(antes);
     });
   });
 
   describe('INV-020 — a chamada salva é o retrato da turma', () => {
     beforeEach(() => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao(),
-      );
+      armarOcupacao(prisma, estado, ocupacao());
     });
 
     // O caso que a validação cruzada expôs: aula na terça, aluno novo entra
@@ -367,7 +449,9 @@ describe('PresencaService (SPEC-014)', () => {
       const res = await service.chamada('c1', 'u1', 'oc1');
 
       expect(res.alunos.map((a) => a.nome)).toEqual(['Ana', 'Zeca']);
-      expect(res.versao).toBe('0');
+      // AC-000j: opaca. O que se afirma é "nada gravado ainda", e isso se
+      // lê pelo status nulo de todo mundo, logo abaixo — não pelo formato.
+      expect(typeof res.versao).toBe('string');
       expect(res.alunos.every((a) => a.status === null)).toBe(true);
     });
   });
@@ -376,9 +460,7 @@ describe('PresencaService (SPEC-014)', () => {
   // sem perguntar pelo resto.
   describe('INV-026/INV-027 — chamada completa e o cabeçalho', () => {
     beforeEach(() => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
-        ocupacao(),
-      );
+      armarOcupacao(prisma, estado, ocupacao());
     });
 
     it('recusa chamada que não cobre todos os esperados, e não grava nada', async () => {
@@ -432,12 +514,26 @@ describe('PresencaService (SPEC-014)', () => {
     // esperados são a **união** justamente por isso.
     it('aceita corrigir a chamada de quem saiu da turma depois', async () => {
       (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
-        { alunoId: 'a1' },
+        { alunoId: 'a1', aluno: { usuario: { nome: 'Aluno 1' } } },
       ]);
-      (prisma.presenca.findMany as jest.Mock).mockResolvedValue([
-        { alunoId: 'a1' },
-        { alunoId: 'a2' },
-      ]);
+      // `a2` saiu da turma, mas tem registro: o `GET` devolve a união, e é
+      // dela que sai a versão que o `PUT` usa.
+      const registradas = [
+        {
+          alunoId: 'a1',
+          status: 'presente',
+          updatedAt: new Date(1_700_000_000_000),
+          aluno: { usuario: { nome: 'Aluno 1' } },
+        },
+        {
+          alunoId: 'a2',
+          status: 'presente',
+          updatedAt: new Date(1_700_000_000_000),
+          aluno: { usuario: { nome: 'Saiu Depois' } },
+        },
+      ];
+      (prisma.presenca.findMany as jest.Mock).mockResolvedValue(registradas);
+      tx.presenca.findMany.mockResolvedValue(registradas);
 
       await expect(
         salvar([

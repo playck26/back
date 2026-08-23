@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import type { OcupacaoQuadra, StatusPresenca } from '@prisma/client';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -78,7 +79,8 @@ export class PresencaService {
    */
   private versaoDe(
     linhas: { updatedAt: Date }[],
-    cabecalho: { updatedAt: Date } | null,
+    cabecalho: { updatedAt: Date; completude?: string } | null,
+    matriculados: { alunoId: string }[],
   ): string {
     const base =
       linhas.length === 0
@@ -95,7 +97,27 @@ export class PresencaService {
     // (`completude` vive no cabeçalho, não nas linhas), e duas abas se
     // sobrescreveriam exatamente no caso que o controle otimista existe
     // para pegar. Achado da 3ª validação cruzada.
-    return cabecalho ? `${base}#${cabecalho.updatedAt.getTime()}` : base;
+    const comCabecalho = cabecalho
+      ? `${base}#${cabecalho.updatedAt.getTime()}`
+      : base;
+
+    // SPEC-015/INV-028 — quando o piso depende da matrícula, a versão
+    // precisa enxergá-la. Com cabeçalho `completa` o piso é o snapshot, e
+    // matrícula nova não muda o que a tela deve mostrar: incluir a
+    // impressão digital ali só produziria 409 falso. Nos outros dois
+    // estados o `GET` devolve a união, e matrícula que entra entre a
+    // leitura e a escrita muda o conjunto que o professor recebeu —
+    // sem isso, ele leva 422 acusando alguém que a tela não mostrou
+    // (BLOQ-1 da 6ª validação cruzada).
+    if (cabecalho?.completude === 'completa') {
+      return comCabecalho;
+    }
+    const ids = matriculados.map((m) => m.alunoId).sort();
+    const digest = createHash('sha1')
+      .update(ids.join(','))
+      .digest('hex')
+      .slice(0, 12);
+    return `${comCabecalho}@${ids.length}:${digest}`;
   }
 
   /** Ocorrência + turma, já verificando que a turma é do professor (AC-005). */
@@ -246,7 +268,7 @@ export class PresencaService {
       horaFim: formatTimeOnly(ocupacao.horaFim),
       cancelada: ocupacao.statusPagamento === 'cancelado',
       completude,
-      versao: this.versaoDe(presencas, cabecalho),
+      versao: this.versaoDe(presencas, cabecalho, matriculados),
       alunos: alunos.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
     };
   }
@@ -258,42 +280,18 @@ export class PresencaService {
     versao: string,
     itens: ItemChamada[],
   ) {
+    // SPEC-015/AC-000i (v10, BLOQUEADOR da 8ª rodada) — só isto fica fora
+    // da transação, e fica porque é de OUTRO agregado: "este usuário é
+    // professor desta empresa?" se resolve em `professores`, que o lock da
+    // turma não cobre e não deveria cobrir.
+    //
+    // Tudo o que depende da TURMA — quem é o dono dela e qual é o estado da
+    // ocorrência — mudou de lugar na v10: desceu para dentro da transação,
+    // depois do lock. A v9 lia isso aqui em cima e chamava o `FOR UPDATE`
+    // de "passo 0" sem ser: entre autorizar e travar cabia um
+    // `ClassesService.update` trocando o professor, e o `PUT` gravava sem
+    // revalidar. Provado em `bloq8-autorizacao.ts`.
     const professor = await this.professorDoUsuario(companyId, usuarioId);
-    const ocupacao = await this.ocorrenciaDoProfessor(
-      companyId,
-      professor.id,
-      ocupacaoId,
-    );
-
-    // INV-016 (a metade que o banco não impõe): é regra de escrita.
-    if (ocupacao.statusPagamento === 'cancelado') {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'AULA_CANCELADA',
-        message: 'Esta aula foi cancelada e não recebe chamada.',
-      });
-    }
-
-    // INV-017. O limite futuro impede a chamada de virar previsão — o caso
-    // real é banal: o professor abre a grade da semana e toca na linha
-    // errada. O limite passado existe porque a turma de hoje deixa de ser
-    // um retrato confiável do que era há muito tempo (LIM-003).
-    const hoje = this.hoje().getTime();
-    const dia = ocupacao.data.getTime();
-    if (dia > hoje) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'AULA_FUTURA',
-        message: 'Esta aula ainda não aconteceu.',
-      });
-    }
-    if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'AULA_ANTIGA',
-        message: `A chamada pode ser lançada em até ${JANELA_RETROATIVA_DIAS} dias após a aula.`,
-      });
-    }
 
     const idsRecebidos = itens.map((i) => i.alunoId);
     if (new Set(idsRecebidos).size !== idsRecebidos.length) {
@@ -314,30 +312,12 @@ export class PresencaService {
     // matriculados, porque corrigir a chamada de quem saiu da turma depois
     // precisa continuar possível (AC-004 da SPEC-014) — antes disso ele
     // caía no 422 abaixo e a correção era recusada.
-    const [matriculados, jaRegistrados] = await Promise.all([
-      this.prisma.turmaAluno.findMany({
-        where: { turmaId: ocupacao.origemTurmaId },
-        select: { alunoId: true },
-      }),
-      this.prisma.presenca.findMany({
-        where: { ocupacaoId },
-        select: { alunoId: true },
-      }),
-    ]);
-    const esperados = new Set([
-      ...matriculados.map((m) => m.alunoId),
-      ...jaRegistrados.map((p) => p.alunoId),
-    ]);
-
-    const forasteiros = idsRecebidos.filter((id) => !esperados.has(id));
-    if (forasteiros.length > 0) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'ALUNO_FORA_DA_TURMA',
-        message: 'Há aluno que não está nesta turma.',
-        alunoIds: forasteiros,
-      });
-    }
+    // SPEC-015/INV-028 (BLOQ-2 da 6ª validação cruzada) — nada de regra de
+    // domínio sobre estado compartilhado ANTES da checagem de versão. Ler
+    // fora da transação e validar antes do controle otimista faz uma aba
+    // desatualizada levar 422 acusando um aluno invisível, quando a resposta
+    // certa é 409 "recarregue". Daqui para baixo tudo é lido dentro da
+    // transação, e a versão é a primeira coisa conferida.
 
     // SPEC-015/DEF-002/INV-026 — chamada salva é completa.
     //
@@ -346,36 +326,206 @@ export class PresencaService {
     // um professor com o bundle velho manda só os alunos que tocou e cai
     // aqui. Ele não tem como saber que existe uma janela; o texto precisa
     // dizer o que fazer.
-    const recebidos = new Set(idsRecebidos);
-    const faltando = [...esperados].filter((id) => !recebidos.has(id));
-    if (faltando.length > 0) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'CHAMADA_INCOMPLETA',
-        message:
-          'A chamada precisa incluir todos os alunos da turma. Atualize o app e marque quem faltou antes de salvar.',
-        alunoIds: faltando,
-      });
-    }
-
     return this.prisma.$transaction(async (tx) => {
-      const [atuais, cabecalhoAtual] = await Promise.all([
+      // SPEC-015/AC-000i (v9, BLOQ-1 da 7ª rodada) — o passo 0, e ele é o
+      // que torna a ordem dos passos 1..5 uma garantia em vez de uma
+      // promessa. Ler dentro da transação NÃO congela o que foi lido:
+      // em READ COMMITTED cada statement pega um snapshot novo, então
+      // `turma_alunos` pode mudar e commitar entre o passo 1 e o passo 5,
+      // e a versão — conferida no passo 2 — já passou. O resultado é
+      // gravar sobre domínio velho sem 409 nenhum. Provado por execução
+      // em `bloq7-concorrencia.ts`, cenário 1.
+      //
+      // Isolamento não resolve, e a razão não é a que a v9 dava aqui.
+      // Dizia-se que SERIALIZABLE só garante entre transações que estejam
+      // todas em SERIALIZABLE, e que bastaria pôr todo mundo lá. Medido:
+      // com os DOIS lados em SERIALIZABLE o `PUT` continua sendo aceito
+      // (cenários 7 e 8 de `bloq7-concorrencia.ts`).
+      //
+      // A razão verdadeira: ao banco basta existir ALGUMA ordem serial
+      // válida, e "PUT antes da matrícula" é uma delas — serializável, e
+      // ainda assim o que a regra de produto proíbe. SSI detecta anomalia,
+      // não impõe a ordem que o domínio quer. O lock pessimista impõe.
+      //
+      // O lock na linha da turma resolve, e não é disciplina nova: é a
+      // MESMA de REQ-004/INV-003 que `ClassesService.allocateStudent` já
+      // usa em produção. Raw query porque `FOR UPDATE` não é expressável
+      // no query builder do Prisma.
+      //
+      // Só vale acompanhado do par em `removeStudent` (v9, peça 2): lock
+      // de um lado só não trava nada. A entrada está protegida de graça
+      // pela FK `turma_alunos -> turmas`, que obriga o INSERT a pegar
+      // `FOR KEY SHARE` na turma; a SAÍDA não, porque DELETE de filho não
+      // checa FK no pai. Cenários 4 e 5.
+      // O passo 0 são DOIS statements, e a ordem entre eles é o contrato:
+      // **travar primeiro, ler depois**.
+      //
+      // A v10 fazia num ato só — um JOIN com `FOR UPDATE OF t` — e isso
+      // parecia bastar. Não basta, e o BLOQUEADOR da 9ª rodada mostrou por
+      // quê: em READ COMMITTED o snapshot é do STATEMENT. Quando esse
+      // statement esbarra no lock de `turmas` e espera, o Postgres, ao ser
+      // liberado, reavalia só a linha travada (EvalPlanQual) — as outras
+      // relações do JOIN continuam com o snapshot de antes da espera.
+      //
+      // É por isso que a v10 acertava a troca de professor (`professor_id`
+      // vem de `t`, a relação travada, e é reavaliada) e errava o
+      // cancelamento (`status_pagamento` vem de `o`, que não é). Medido em
+      // `bloq9-snapshot.ts`: o JOIN devolveu `pendente_pagamento` com o
+      // banco já em `cancelado`; uma releitura em statement novo, com o
+      // lock na mão, devolveu `cancelado`.
+      //
+      // Continua travando SÓ `turmas`: raiz única é o que garante ordem de
+      // aquisição única (INV-029) e, portanto, ausência de deadlock. E não
+      // faz falta travar a ocorrência — o único caminho que cancela
+      // ocorrência de TURMA é `cancelFutureClassOccupancies`, chamado de
+      // dentro do `ClassesService.update`, que trava esta mesma linha
+      // antes. Os outros dois (`cancelBooking`, `updatePaymentStatus`)
+      // recusam ocorrência de turma com `OCUPACAO_DE_TURMA`.
+
+      // (0a) descobrir a turma da ocorrência e TRAVAR a linha.
+      // `origem_turma_id` é gravado na criação e nunca alterado — os três
+      // `update` de `ocupacoes_quadra` escrevem apenas `status_pagamento`
+      // —, então descobrir por ele não corre risco de travar a turma
+      // errada. A releitura em (0b) confere isso de qualquer forma.
+      const travadas = await tx.$queryRaw<{ id: string }[]>`
+        SELECT t.id
+          FROM turmas t
+         WHERE t.id = (
+                 SELECT o.origem_turma_id
+                   FROM ocupacoes_quadra o
+                  WHERE o.id = ${ocupacaoId}::uuid
+                    AND o.company_id = ${companyId}::uuid
+                    AND o.origem_tipo = 'TURMA'
+               )
+         FOR UPDATE
+      `;
+      if (!travadas[0]) {
+        throw new NotFoundException();
+      }
+
+      // (0b) com o lock na mão, RELER num statement novo. Este snapshot é
+      // posterior ao commit de quem estava segurando a turma.
+      const linhas = await tx.$queryRaw<
+        {
+          origemTurmaId: string;
+          data: Date;
+          statusPagamento: string;
+          professorId: string | null;
+        }[]
+      >`
+        SELECT o.origem_turma_id   AS "origemTurmaId",
+               o.data              AS "data",
+               o.status_pagamento  AS "statusPagamento",
+               t.professor_id      AS "professorId"
+          FROM ocupacoes_quadra o
+          JOIN turmas t ON t.id = o.origem_turma_id
+         WHERE o.id = ${ocupacaoId}::uuid
+           AND o.company_id = ${companyId}::uuid
+           AND o.origem_tipo = 'TURMA'
+      `;
+      const ocupacao = linhas[0];
+
+      // Guarda defensiva: se a ocorrência apontar para outra turma, o lock
+      // que está na mão não é o da turma certa. Não deveria acontecer (ver
+      // acima), e por isso a resposta é 404 e não um código próprio: é
+      // "não achei esta aula", não um estado que o professor possa
+      // resolver.
+      if (ocupacao && ocupacao.origemTurmaId !== travadas[0].id) {
+        throw new NotFoundException();
+      }
+
+      // Mesma razão do `ocorrenciaDoProfessor`: ocorrência de colega
+      // devolve 404, não 403 — 403 confirmaria que existe.
+      if (!ocupacao || ocupacao.professorId !== professor.id) {
+        throw new NotFoundException();
+      }
+
+      // INV-016 (a metade que o banco não impõe): é regra de escrita.
+      if (ocupacao.statusPagamento === 'cancelado') {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'AULA_CANCELADA',
+          message: 'Esta aula foi cancelada e não recebe chamada.',
+        });
+      }
+
+      // INV-017. O limite futuro impede a chamada de virar previsão — o
+      // caso real é banal: o professor abre a grade da semana e toca na
+      // linha errada. O limite passado existe porque a turma de hoje deixa
+      // de ser um retrato confiável do que era há muito tempo (LIM-003).
+      const hoje = this.hoje().getTime();
+      const dia = ocupacao.data.getTime();
+      if (dia > hoje) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'AULA_FUTURA',
+          message: 'Esta aula ainda não aconteceu.',
+        });
+      }
+      if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'AULA_ANTIGA',
+          message: `A chamada pode ser lançada em até ${JANELA_RETROATIVA_DIAS} dias após a aula.`,
+        });
+      }
+
+      const [atuais, cabecalhoAtual, matriculados] = await Promise.all([
         tx.presenca.findMany({
           where: { ocupacaoId },
-          select: { updatedAt: true },
+          select: { alunoId: true, updatedAt: true },
         }),
         tx.chamada.findUnique({ where: { ocupacaoId } }),
+        tx.turmaAluno.findMany({
+          where: { turmaId: ocupacao.origemTurmaId },
+          select: { alunoId: true },
+        }),
       ]);
 
-      // INV-019 — controle otimista. A versão é conferida **dentro** da
-      // transação: conferir fora deixaria a janela entre ler e gravar, que
-      // é exatamente a corrida que este controle existe para fechar.
-      if (this.versaoDe(atuais, cabecalhoAtual) !== versao) {
+      // INV-019 — controle otimista, e é a PRIMEIRA regra a rodar. Qualquer
+      // recusa de domínio antes dela poderia estar julgando uma tela velha
+      // com o estado novo.
+      if (this.versaoDe(atuais, cabecalhoAtual, matriculados) !== versao) {
         throw new ConflictException({
           statusCode: 409,
           code: 'CHAMADA_DESATUALIZADA',
           message:
             'Esta chamada mudou desde que você abriu. Recarregue para ver o estado atual.',
+        });
+      }
+
+      // SPEC-015/DEF-006 — teto e piso são conjuntos DIFERENTES. Usar um só
+      // para os dois papéis era o defeito: com cabeçalho `completa` o `GET`
+      // devolve o snapshot, e a escrita exigia a união — então salvar de
+      // volta o que a tela mostrou virava 422.
+      const permitidos = new Set([
+        ...matriculados.map((m) => m.alunoId),
+        ...atuais.map((p) => p.alunoId),
+      ]);
+      const forasteiros = idsRecebidos.filter((id) => !permitidos.has(id));
+      if (forasteiros.length > 0) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'ALUNO_FORA_DA_TURMA',
+          message: 'Há aluno que não está nesta turma.',
+          alunoIds: forasteiros,
+        });
+      }
+
+      // AC-000h — o piso é, por construção, a lista que o `GET` devolveu.
+      const exigidos =
+        cabecalhoAtual?.completude === 'completa'
+          ? new Set(atuais.map((p) => p.alunoId))
+          : permitidos;
+      const recebidos = new Set(idsRecebidos);
+      const faltando = [...exigidos].filter((id) => !recebidos.has(id));
+      if (faltando.length > 0) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'CHAMADA_INCOMPLETA',
+          message:
+            'A chamada precisa incluir todos os alunos da turma. Atualize o app e marque quem faltou antes de salvar.',
+          alunoIds: faltando,
         });
       }
 
@@ -391,7 +541,7 @@ export class PresencaService {
           companyId,
           registradaPor: usuarioId,
           completude: 'completa',
-          esperados: esperados.size,
+          esperados: itens.length,
         },
         // Promoção de `desconhecida` para `completa` num **único** UPDATE:
         // os dois campos andam juntos, e o CHECK do banco recusa o estado
@@ -399,7 +549,7 @@ export class PresencaService {
         update: {
           registradaPor: usuarioId,
           completude: 'completa',
-          esperados: esperados.size,
+          esperados: itens.length,
         },
       });
 
@@ -429,7 +579,7 @@ export class PresencaService {
       ]);
       return {
         ocupacaoId,
-        versao: this.versaoDe(depois, cabecalhoDepois),
+        versao: this.versaoDe(depois, cabecalhoDepois, matriculados),
         total: itens.length,
       };
     });

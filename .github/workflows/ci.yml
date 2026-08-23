@@ -10,6 +10,23 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # Postgres efêmero do runner, para a suíte de concorrência. Some com o
+    # job; não tem relação com o Neon de produção.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: playck_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +53,21 @@ jobs:
         env:
           JWT_ACCESS_SECRET: ci-e2e-access-secret
           JWT_REFRESH_SECRET: ci-e2e-refresh-secret
+
+      # SPEC-015/AC-000i e INV-029: a rede de regressão da raiz de lock.
+      # Precisa de Postgres DE VERDADE e roda com duas conexões — mock não
+      # tem lock nem snapshot, e não reprovaria nenhum dos defeitos que
+      # esta suíte existe para pegar. Três correções seguidas falharam
+      # aqui, cada uma num caso diferente.
+      #
+      # Banco efêmero do serviço abaixo, nunca o Neon: a suíte escreve.
+      - run: pnpm exec prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://postgres:ci@localhost:5432/playck_ci?schema=public
+
+      - run: pnpm run test:concorrencia
+        env:
+          DATABASE_URL: postgresql://postgres:ci@localhost:5432/playck_ci?schema=public
 
       - run: pnpm build
 

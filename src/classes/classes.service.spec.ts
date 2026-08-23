@@ -22,7 +22,12 @@ interface TxMock {
   turma: { create: jest.Mock; update: jest.Mock };
   $queryRaw: jest.Mock;
   aluno: { findFirst: jest.Mock };
-  turmaAluno: { findFirst: jest.Mock; count: jest.Mock; create: jest.Mock };
+  turmaAluno: {
+    findFirst: jest.Mock;
+    count: jest.Mock;
+    create: jest.Mock;
+    delete: jest.Mock;
+  };
 }
 
 function buildMocks() {
@@ -30,7 +35,12 @@ function buildMocks() {
     turma: { create: jest.fn(), update: jest.fn() },
     $queryRaw: jest.fn(),
     aluno: { findFirst: jest.fn() },
-    turmaAluno: { findFirst: jest.fn(), count: jest.fn(), create: jest.fn() },
+    turmaAluno: {
+      findFirst: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      delete: jest.fn(),
+    },
   };
   const prisma = {
     turma: {
@@ -54,6 +64,17 @@ function buildMocks() {
     registerClassOccupancy: jest.fn(),
     cancelFutureClassOccupancies: jest.fn(),
   };
+  // SPEC-015/INV-029 — `removeStudent` passou a abrir transação e travar a
+  // linha da turma, então ele lê e apaga por `tx`, não mais por `prisma`.
+  // Delegar mantém os testes armando um lugar só.
+  tx.turmaAluno.findFirst = jest.fn(
+    (...args: unknown[]): unknown =>
+      prisma.turmaAluno.findFirst(...args) as unknown,
+  );
+  tx.turmaAluno.delete = jest.fn(
+    (...args: unknown[]): unknown =>
+      prisma.turmaAluno.delete(...args) as unknown,
+  );
   return {
     prisma: prisma as unknown as PrismaService,
     tx,

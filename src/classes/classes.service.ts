@@ -273,14 +273,41 @@ export class ClassesService {
   ): Promise<void> {
     await this.assertTurmaDaEmpresa(companyId, turmaId);
 
-    const alocacao = await this.prisma.turmaAluno.findFirst({
-      where: { turmaId, alunoId },
-    });
-    if (!alocacao) {
-      throw new NotFoundException();
-    }
+    // SPEC-015/AC-000i (v9, BLOQ-1 da 7ª rodada) — o par do lock que
+    // `PresencaService.salvarChamada` passou a pegar. Sem este lado, o de
+    // lá não trava nada: quem não pede lock não respeita lock.
+    //
+    // A entrada (`allocateStudent`) já estava coberta sem saber — a FK
+    // `turma_alunos -> turmas` obriga o INSERT a pegar `FOR KEY SHARE` na
+    // linha da turma, que conflita com o `FOR UPDATE` da chamada. A SAÍDA
+    // não tem essa proteção: DELETE de filho não checa FK no pai, e
+    // passava direto (cenário 5 de `bloq7-concorrencia.ts`).
+    //
+    // Este método também era o único escritor de `turma_alunos` sem
+    // transação nenhuma: `findFirst` e `delete` soltos, com janela entre
+    // os dois. Passam a ser um ato só.
+    await this.prisma.$transaction(async (tx) => {
+      // REQ-004/INV-003 — mesma linha, mesmo lock de `allocateStudent`.
+      // `company_id` no WHERE por higiene defensiva (OBSERVAÇÃO da 8ª
+      // rodada): `assertTurmaDaEmpresa` já escopou acima, mas ali fora da
+      // transação. Repetir o escopo aqui custa nada e mantém a regra de
+      // isolamento entre empresas dentro do mesmo ato que trava a linha —
+      // o `allocateStudent` já fazia assim.
+      await tx.$queryRaw`
+        SELECT id FROM turmas
+        WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+        FOR UPDATE
+      `;
 
-    await this.prisma.turmaAluno.delete({ where: { id: alocacao.id } });
+      const alocacao = await tx.turmaAluno.findFirst({
+        where: { turmaId, alunoId },
+      });
+      if (!alocacao) {
+        throw new NotFoundException();
+      }
+
+      await tx.turmaAluno.delete({ where: { id: alocacao.id } });
+    });
   }
 
   // CON-004.5 (SPEC-005): próximas aulas do aluno logado — escopado por
