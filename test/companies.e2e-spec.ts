@@ -38,6 +38,7 @@ interface MinhaEmpresaBody {
 // cada role errada, 400 de validação, e o corpo de erro em cada caso.
 
 const OUTRA_COMPANY_ID = '22222222-2222-4222-8222-222222222222';
+const ADMIN_ID = '33333333-3333-4333-8333-333333333333';
 
 async function loginSuperAdmin(app: INestApplication<App>, prisma: PrismaMock) {
   const superAdmin = await buildUsuarioAtivo({
@@ -379,6 +380,96 @@ describe('Companies (e2e) - TEST-002', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ permiteAutoCadastro: 'talvez' })
         .expect(400);
+    });
+  });
+  // SPEC-016 — recuperação de senha do gestor. O que a suíte prova aqui é a
+  // camada HTTP: quem pode chamar, o que volta, e que o 404 não confirma
+  // existência. O efeito no banco (revogação de sessão) é do AuthService e
+  // está provado em unidade.
+  describe('SPEC-016 — senha temporária de gestor', () => {
+    it('super_admin lista os gestores da empresa', async () => {
+      const accessToken = await loginSuperAdmin(app, prisma);
+      prisma.empresa.findUnique.mockResolvedValue({ id: OUTRA_COMPANY_ID });
+      prisma.usuario.findMany.mockResolvedValue([
+        {
+          id: 'u1',
+          nome: 'Gestor',
+          email: 'g@clube.demo',
+          status: 'ativo',
+          senhaTemporaria: false,
+        },
+      ]);
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/companies/${OUTRA_COMPANY_ID}/admins`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(bodyOf<{ id: string }[]>(res)[0].id).toBe('u1');
+    });
+
+    it('gera senha temporária e devolve o valor uma vez', async () => {
+      const accessToken = await loginSuperAdmin(app, prisma);
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: OUTRA_COMPANY_ID,
+        status: 'ativa',
+      });
+      prisma.usuario.findFirst.mockResolvedValue({
+        id: 'u1',
+        nome: 'Gestor',
+        email: 'g@clube.demo',
+      });
+      prisma.usuario.findUniqueOrThrow.mockResolvedValue({
+        id: 'u1',
+        status: 'ativo',
+      });
+
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/companies/${OUTRA_COMPANY_ID}/admins/${ADMIN_ID}/senha-temporaria`,
+        )
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const body = bodyOf<{ senhaTemporaria: string; empresaInativa: boolean }>(
+        res,
+      );
+      // O formato é o mesmo do aluno e do professor (INV-028): mecanismo
+      // reusado, não reinventado.
+      expect(body.senhaTemporaria).toMatch(/^pck-[A-Za-z0-9]{6}$/);
+      expect(body.empresaInativa).toBe(false);
+    });
+
+    it('company_admin recebe 403 nas duas rotas', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+
+      await request(app.getHttpServer())
+        .get(`/api/v1/companies/${OUTRA_COMPANY_ID}/admins`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .post(
+          `/api/v1/companies/${OUTRA_COMPANY_ID}/admins/${ADMIN_ID}/senha-temporaria`,
+        )
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+    });
+
+    it('gestor de outra empresa devolve 404, não 403 (AC-006)', async () => {
+      const accessToken = await loginSuperAdmin(app, prisma);
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: OUTRA_COMPANY_ID,
+        status: 'ativa',
+      });
+      prisma.usuario.findFirst.mockResolvedValue(null);
+
+      await request(app.getHttpServer())
+        .post(
+          `/api/v1/companies/${OUTRA_COMPANY_ID}/admins/${ADMIN_ID}/senha-temporaria`,
+        )
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(404);
     });
   });
 });

@@ -120,9 +120,8 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**48 caminhos, 68 operações HTTP** (conferido em 2026-08-23 contra o
-`openapi.json`, depois da DEF-003 e da DEF-004, que somaram
-`GET` e `PATCH /me/company`). As duas medidas aparecem porque "rotas" é ambíguo: a
+**50 caminhos, 70 operações HTTP** (conferido em 2026-08-23 contra o
+`openapi.json`, depois da DEF-003, da DEF-004 e da SPEC-016). As duas medidas aparecem porque "rotas" é ambíguo: a
 versão anterior desta planta dizia "41 rotas" contando caminhos, e trocar
 a métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -184,7 +183,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | 6 | Cancelar parte de um bloco de reserva não é suportado (GAP-013) | Baixa |
 | 7 | Sem e-mail transacional (GAP-004): recuperação de senha é manual, via admin | Baixa — ADR-013 |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
-| 10 | **Nenhum papel de painel tem recuperação de senha.** Aluno e professor têm substituto manual (o admin regenera); `company_admin` e `super_admin` não têm nada — perder a senha hoje só se resolve com `UPDATE` direto no banco. Agravado desde a rotação de 2026-08-22, que tirou a senha conhecida do código | Alta — sem contorno |
+| 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
 
 ## 10. Catálogo modular observado
 

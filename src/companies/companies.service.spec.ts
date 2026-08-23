@@ -45,6 +45,9 @@ function buildPrismaMock() {
     },
     usuario: {
       findUnique: jest.fn(),
+      // SPEC-016: a busca do gestor amarra id + empresa + papel no WHERE.
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
@@ -55,12 +58,24 @@ describe('CompaniesService', () => {
   let prisma: PrismaService;
   let tx: ReturnType<typeof buildPrismaMock>['tx'];
   let service: CompaniesService;
+  // SPEC-016/INV-031: MOD-002 não escreve senha nem sessão — delega a
+  // MOD-001. O mock existe para provar a delegação, não o efeito.
+  let auth: { gerarSenhaTemporariaParaUsuario: jest.Mock };
 
   beforeEach(() => {
     const built = buildPrismaMock();
     prisma = built.prisma;
     tx = built.tx;
-    service = new CompaniesService(prisma);
+    auth = {
+      gerarSenhaTemporariaParaUsuario: jest.fn().mockResolvedValue({
+        senhaTemporaria: 'pck-ABC234',
+        expiraEm: new Date('2026-09-01T00:00:00.000Z'),
+      }),
+    };
+    service = new CompaniesService(
+      prisma,
+      auth as unknown as ConstructorParameters<typeof CompaniesService>[1],
+    );
   });
 
   describe('list', () => {
@@ -292,6 +307,72 @@ describe('CompaniesService', () => {
         data: { status: 'inativa' },
       });
       expect(result.status).toBe('inativa');
+    });
+  });
+  // SPEC-016 — a fronteira é o ponto: MOD-002 valida escopo, MOD-001
+  // escreve. Estes testes provam a delegação e o 404 que não confirma
+  // existência.
+  describe('gerarSenhaTemporariaDeAdmin (SPEC-016)', () => {
+    beforeEach(() => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+        id: 'e1',
+        status: 'ativa',
+      });
+    });
+
+    it('delega a escrita a MOD-001 com a política de conta inativa', async () => {
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue({
+        id: 'u1',
+        nome: 'Gestor',
+        email: 'gestor@clube.demo',
+      });
+
+      const res = await service.gerarSenhaTemporariaDeAdmin('e1', 'u1');
+
+      expect(auth.gerarSenhaTemporariaParaUsuario).toHaveBeenCalledWith({
+        usuarioId: 'u1',
+        contaInativa: 'rejeitar',
+      });
+      expect(res.senhaTemporaria).toBe('pck-ABC234');
+      expect(res.empresaInativa).toBe(false);
+    });
+
+    it('empresa inativa gera, mas avisa (AC-007)', async () => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+        id: 'e1',
+        status: 'inativa',
+      });
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue({
+        id: 'u1',
+        nome: 'Gestor',
+        email: 'gestor@clube.demo',
+      });
+
+      const res = await service.gerarSenhaTemporariaDeAdmin('e1', 'u1');
+
+      expect(res.empresaInativa).toBe(true);
+    });
+
+    it('usuário que não é gestor daquela empresa devolve 404, e nada é gerado', async () => {
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.gerarSenhaTemporariaDeAdmin('e1', 'u1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(auth.gerarSenhaTemporariaParaUsuario).not.toHaveBeenCalled();
+    });
+
+    it('o WHERE amarra empresa e papel — não basta o id existir', async () => {
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.gerarSenhaTemporariaDeAdmin('e1', 'u1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.usuario.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u1', companyId: 'e1', role: 'company_admin' },
+        }),
+      );
     });
   });
 });

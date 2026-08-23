@@ -7,6 +7,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { parseTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthService } from '../auth/auth.service';
 import type { CreateCompanyDto } from './dto/create-company.dto';
 import type { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import type { UpdateCompanyDto } from './dto/update-company.dto';
@@ -24,7 +25,10 @@ export interface PublicAdminUsuario {
 
 @Injectable()
 export class CompaniesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auth: AuthService,
+  ) {}
 
   async list(query: ListCompaniesQueryDto) {
     const page = query.page ?? 1;
@@ -114,6 +118,68 @@ export class CompaniesService {
       throw new NotFoundException();
     }
     return empresa;
+  }
+
+  /**
+   * SPEC-016/AC-001 — os gestores da empresa, para o super admin saber a
+   * quem devolver acesso. Sem esta lista, a rota de senha exigiria que ele
+   * descobrisse o `usuarioId` de outro jeito, e não há nenhum.
+   */
+  async listAdmins(companyId: string) {
+    await this.findOne(companyId);
+
+    return this.prisma.usuario.findMany({
+      where: { companyId, role: 'company_admin' },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        status: true,
+        senhaTemporaria: true,
+      },
+      orderBy: { nome: 'asc' },
+    });
+  }
+
+  /**
+   * SPEC-016/AC-002 — devolve o acesso de um gestor trancado do lado de
+   * fora.
+   *
+   * **A escrita não acontece aqui.** MOD-002 valida o escopo (a empresa
+   * existe, o usuário é gestor dela) e **delega** a MOD-001, dono de
+   * `usuarios` e `refresh_tokens` (INV-031). É a mesma correção de
+   * fronteira que a SPEC-009/REQ-007 fez quando `auth` parou de escrever
+   * direto em `alunos`.
+   */
+  async gerarSenhaTemporariaDeAdmin(companyId: string, usuarioId: string) {
+    const empresa = await this.findOne(companyId);
+
+    // 404 e não 403 para usuário de outra empresa ou que não é gestor:
+    // 403 confirmaria que o id existe (AC-006).
+    const admin = await this.prisma.usuario.findFirst({
+      where: { id: usuarioId, companyId, role: 'company_admin' },
+      select: { id: true, nome: true, email: true },
+    });
+    if (!admin) {
+      throw new NotFoundException();
+    }
+
+    const { senhaTemporaria, expiraEm } =
+      await this.auth.gerarSenhaTemporariaParaUsuario({
+        usuarioId: admin.id,
+        // AC-007b: gestor inativo é recusado, não reativado em silêncio.
+        contaInativa: 'rejeitar',
+      });
+
+    return {
+      usuario: admin,
+      senhaTemporaria,
+      expiraEm,
+      // AC-007 — a senha é gerada, mas não vai funcionar enquanto a empresa
+      // estiver inativa: o login recusa antes de olhar a senha. Dizer isso
+      // aqui evita o super admin entregar credencial achando que funciona.
+      empresaInativa: empresa.status !== 'ativa',
+    };
   }
 
   async update(id: string, dto: UpdateCompanyDto) {

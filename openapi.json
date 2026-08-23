@@ -865,6 +865,70 @@
         ]
       }
     },
+    "/api/v1/companies/{id}/admins": {
+      "get": {
+        "operationId": "CompaniesController_listAdmins",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
+        ]
+      }
+    },
+    "/api/v1/companies/{id}/admins/{usuarioId}/senha-temporaria": {
+      "post": {
+        "operationId": "CompaniesController_gerarSenhaDeAdmin",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "usuarioId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "companies"
+        ]
+      }
+    },
     "/api/v1/companies/{id}/status": {
       "patch": {
         "operationId": "CompaniesController_updateStatus",

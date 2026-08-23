@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  ConflictException,
   Injectable,
   UnauthorizedException,
   UnprocessableEntityException,
@@ -10,6 +11,10 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../people/students.service';
 import { parseDurationToMs } from '../common/utils/parse-duration';
+import {
+  gerarSenhaTemporaria,
+  senhaTemporariaExpiraEm,
+} from '../common/utils/senha-temporaria';
 import type {
   AccessTokenPayload,
   RefreshTokenPayload,
@@ -427,6 +432,71 @@ export class AuthService {
    * SPEC-009/REQ-004 (AC-009) — troca de senha do próprio usuário. Serve
    * tanto ao primeiro acesso (senha temporária) quanto à troca voluntária.
    */
+  /**
+   * SPEC-016/INV-031 — gera senha temporária para uma conta **qualquer**,
+   * como método público de MOD-001.
+   *
+   * Existe porque `usuarios` e `refresh_tokens` são tabelas de MOD-001 e o
+   * `TARGET_ARCHITECTURE.md` proíbe escrita nelas de fora. `students` e
+   * `teachers` fazem isso hoje (dívida declarada em LIM-013 da SPEC-016);
+   * esta seria a terceira ocorrência, e é onde ela para de crescer — daqui
+   * em diante existe para onde migrar.
+   *
+   * **`contaInativa` é política nomeada, não booleano** (2ª validação
+   * cruzada). Os três valores são os três comportamentos que já existem no
+   * produto: o gestor **rejeita** (SPEC-016/AC-007b), o aluno **preserva**
+   * (`students.service.ts`) e o professor **reativa**
+   * (`teachers.service.ts`). Um `reativar: false` não distinguiria "recusa"
+   * de "mantém como está".
+   */
+  async gerarSenhaTemporariaParaUsuario({
+    usuarioId,
+    contaInativa,
+  }: {
+    usuarioId: string;
+    contaInativa: 'rejeitar' | 'preservar' | 'reativar';
+  }): Promise<{ senhaTemporaria: string; expiraEm: Date }> {
+    const usuario = await this.prisma.usuario.findUniqueOrThrow({
+      where: { id: usuarioId },
+      select: { id: true, status: true },
+    });
+
+    if (usuario.status === 'inativo' && contaInativa === 'rejeitar') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'CONTA_INATIVA',
+        message:
+          'Esta conta está inativa. Reative-a antes de gerar uma senha nova.',
+      });
+    }
+
+    const senha = gerarSenhaTemporaria();
+    const senhaHash = await bcrypt.hash(senha, BCRYPT_COST);
+    const expiraEm = senhaTemporariaExpiraEm();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.usuario.update({
+        where: { id: usuarioId },
+        data: {
+          senhaHash,
+          senhaTemporaria: true,
+          senhaTemporariaExpiraEm: expiraEm,
+          ...(contaInativa === 'reativar' ? { status: 'ativo' as const } : {}),
+        },
+      });
+
+      // INV-030 — sem isto a senha nova é decorativa: quem estivesse com
+      // sessão aberta continuaria operando com a antiga. Foi o ACHADO-002
+      // da SPEC-009, e vale igual aqui.
+      await tx.refreshToken.updateMany({
+        where: { usuarioId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
+
+    return { senhaTemporaria: senha, expiraEm };
+  }
+
   async trocarSenha(
     usuarioId: string,
     dto: TrocarSenhaDto,

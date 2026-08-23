@@ -29,6 +29,10 @@ export interface PrismaMock {
   usuario: {
     findUnique: jest.Mock;
     findUniqueOrThrow: jest.Mock;
+    // SPEC-016: a busca do gestor amarra id + empresa + papel no WHERE, e
+    // devolve null (404) em vez de confirmar que o id existe.
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
   };
@@ -87,6 +91,8 @@ export function buildPrismaMock(): PrismaMock {
     usuario: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
