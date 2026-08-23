@@ -25,9 +25,32 @@ const prisma = new PrismaClient();
 const EMPRESA_QA_SLUG = 'playck-qa-demo';
 const EMPRESA_QA_NOME = 'PlayCK QA (demo)';
 const ADMIN_DEMO_EMAIL = 'admin@playck-qa.demo';
-const ADMIN_DEMO_SENHA = 'trocar-em-producao-123';
 const SUPER_ADMIN_EMAIL = 'superadmin@playck.demo';
-const SUPER_ADMIN_SENHA = 'trocar-em-producao-123';
+
+/**
+ * SPEC-014:TASK-000 — a senha do seed sai do codigo.
+ *
+ * Ate 2026-08-22 este arquivo trazia `'trocar-em-producao-123'` literal, em
+ * **duas** constantes, num repositorio **publico** — e era a senha viva das
+ * duas contas de administracao em producao. O nome dizia o que fazer e
+ * ninguem fez, porque nao havia tela de troca de senha no Admin nem no
+ * SAdmin: a porta so foi aberta nesta mesma task.
+ *
+ * Agora vem de variavel de ambiente e **falha alto** se faltar. Um default
+ * seria a mesma armadilha com outro nome: quem roda sem a variavel merece
+ * um erro, nao uma conta previsivel.
+ */
+function senhaObrigatoria(variavel: string): string {
+  const valor = process.env[variavel];
+  if (!valor || valor.length < 12) {
+    throw new Error(
+      `${variavel} ausente ou curta demais (minimo 12 caracteres). ` +
+        'O seed nao cria conta com senha embutida no codigo — defina a ' +
+        'variavel de ambiente antes de rodar.',
+    );
+  }
+  return valor;
+}
 
 async function seedEtapa1() {
   const empresa = await prisma.empresa.upsert({
@@ -44,7 +67,7 @@ async function seedEtapa1() {
     },
   });
 
-  const senhaHash = await bcrypt.hash(ADMIN_DEMO_SENHA, 12);
+  const senhaHash = await bcrypt.hash(senhaObrigatoria('SEED_ADMIN_SENHA'), 12);
   await prisma.usuario.upsert({
     where: { email: ADMIN_DEMO_EMAIL },
     update: {},
@@ -58,7 +81,7 @@ async function seedEtapa1() {
     },
   });
 
-  const superAdminSenhaHash = await bcrypt.hash(SUPER_ADMIN_SENHA, 12);
+  const superAdminSenhaHash = await bcrypt.hash(senhaObrigatoria('SEED_SUPER_ADMIN_SENHA'), 12);
   await prisma.usuario.upsert({
     where: { email: SUPER_ADMIN_EMAIL },
     update: {},
