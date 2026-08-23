@@ -60,7 +60,7 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**14 tabelas e 8 enums** no `schema.prisma` (conferido em 2026-08-22).
+**15 tabelas e 9 enums** no `schema.prisma` (conferido em 2026-08-23).
 
 | Tabela | Dono | Papel / quirk |
 |---|---|---|
@@ -75,7 +75,8 @@ a replicar:
 | `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor` |
 | `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008 |
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
-| `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas |
+| `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
+| `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
@@ -115,7 +116,7 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**44 caminhos, 62 operações HTTP** (conferido em 2026-08-22 contra o
+**47 caminhos, 66 operações HTTP** (conferido em 2026-08-23 contra o
 `openapi.json`). As duas medidas aparecem porque "rotas" é ambíguo: a
 versão anterior desta planta dizia "41 rotas" contando caminhos, e trocar
 a métrica em silêncio faria o número parecer um salto de escopo.
@@ -174,7 +175,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | 2 | **Sem fuso horário configurável.** Funciona enquanto todas as empresas estiverem no mesmo fuso; vira defeito silencioso na primeira fora | Média — gatilho declarado |
 | 3 | **Formato antigo de `POST /bookings` ainda aceito**, para não quebrar frontend em produção durante o deploy. Condição de saída no DTO | Média — dívida datada |
 | 4 | **`courts/` acumula 4 controllers e ~750 linhas de service.** Ainda coeso (tudo toca a linha do tempo), mas é o candidato natural a divisão | Média |
-| 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008) | Média — adiado por decisão |
+| 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008). `presencas` é base para resolver, mas **não resolve** — remarcar exige estado além de presente/ausente/justificado | Média — adiado por decisão |
 | 6 | Cancelar parte de um bloco de reserva não é suportado (GAP-013) | Baixa |
 | 7 | Sem e-mail transacional (GAP-004): recuperação de senha é manual, via admin | Baixa — ADR-013 |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
@@ -186,7 +187,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | MOD-001 | AuthIdentity | `usuarios`, `refresh_tokens`, `convites_aluno` | INV-002, INV-004, INV-008, INV-009, INV-013 |
 | MOD-002 | CompanyManagement | `empresas` | INV-005 |
 | MOD-003 | PeopleManagement | `alunos`, `professores`, `niveis` | INV-002, INV-006, INV-010, INV-013, INV-014 |
-| MOD-004 | ClassScheduling | `turmas`, `turma_alunos` | INV-003, INV-012 |
+| MOD-004 | ClassScheduling | `turmas`, `turma_alunos`, `presencas` | INV-003, INV-012, INV-015 a INV-020 |
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
