@@ -68,15 +68,26 @@ export class PresencaService {
    * quem esquecesse de incrementar criaria um controle de concorrência que
    * não controla nada.
    */
-  private versaoDe(linhas: { updatedAt: Date }[]): string {
-    if (linhas.length === 0) {
-      return '0';
-    }
-    const maior = linhas.reduce(
-      (max, l) => (l.updatedAt > max ? l.updatedAt : max),
-      linhas[0].updatedAt,
-    );
-    return `${linhas.length}:${maior.getTime()}`;
+  private versaoDe(
+    linhas: { updatedAt: Date }[],
+    cabecalho: { updatedAt: Date } | null,
+  ): string {
+    const base =
+      linhas.length === 0
+        ? '0'
+        : `${linhas.length}:${linhas
+            .reduce(
+              (max, l) => (l.updatedAt > max ? l.updatedAt : max),
+              linhas[0].updatedAt,
+            )
+            .getTime()}`;
+
+    // SPEC-015/AC-000g — o cabeçalho entra na versão. Sem isso, promover
+    // uma chamada de `desconhecida` para `completa` não muda a versão
+    // (`completude` vive no cabeçalho, não nas linhas), e duas abas se
+    // sobrescreveriam exatamente no caso que o controle otimista existe
+    // para pegar. Achado da 3ª validação cruzada.
+    return cabecalho ? `${base}#${cabecalho.updatedAt.getTime()}` : base;
   }
 
   /** Ocorrência + turma, já verificando que a turma é do professor (AC-005). */
@@ -158,7 +169,7 @@ export class PresencaService {
       ocupacaoId,
     );
 
-    const [presencas, matriculados] = await Promise.all([
+    const [presencas, matriculados, cabecalho] = await Promise.all([
       this.prisma.presenca.findMany({
         where: { ocupacaoId },
         include: {
@@ -171,26 +182,53 @@ export class PresencaService {
           aluno: { include: { usuario: { select: { nome: true } } } },
         },
       }),
+      this.prisma.chamada.findUnique({ where: { ocupacaoId } }),
     ]);
 
-    // INV-020 — chamada salva é o retrato da turma naquela aula. Se já
-    // existe, ela manda; reabrir **não** reconcilia com a turma de hoje.
-    // Sem isso, uma chamada de 3 dias atrás ganharia aluno que entrou
-    // ontem, como se ele estivesse lá.
-    const alunos =
-      presencas.length > 0
-        ? presencas.map((p) => ({
-            alunoId: p.alunoId,
-            nome: p.aluno.usuario.nome,
-            status: p.status,
-            naTurmaHoje: matriculados.some((m) => m.alunoId === p.alunoId),
-          }))
-        : matriculados.map((m) => ({
-            alunoId: m.alunoId,
-            nome: m.aluno.usuario.nome,
-            status: null as StatusPresenca | null,
-            naTurmaHoje: true,
-          }));
+    // SPEC-015/AC-000c — o que devolver depende da **completude declarada
+    // pelo cabeçalho**, não de haver ou não linhas em `presencas`.
+    //
+    // Era daí que vinha a DEF-002: duas linhas significam tanto "chamada
+    // completa de uma turma de 2" quanto "chamada pela metade de uma turma
+    // de 10". Devolver sempre o snapshot escondia os alunos que faltavam
+    // marcar; devolver sempre a união obrigaria o professor a marcar quem
+    // entrou na turma depois da aula (contra-exemplo da 2ª validação
+    // cruzada). Com o cabeçalho, os dois casos deixam de se confundir.
+    //
+    // Cabeçalho ausente **com** presenças é o legado — inclusive o que
+    // instâncias antigas possam gravar na janela entre este deploy e o
+    // `contract`. Trata igual a `desconhecida`, que é o que o backfill vai
+    // registrar.
+    const completa = cabecalho?.completude === 'completa';
+    const semRegistro = presencas.length === 0 && !cabecalho;
+    const completude: 'completa' | 'desconhecida' | null = semRegistro
+      ? null
+      : completa
+        ? 'completa'
+        : 'desconhecida';
+
+    const doSnapshot = presencas.map((p) => ({
+      alunoId: p.alunoId,
+      nome: p.aluno.usuario.nome,
+      status: p.status as StatusPresenca | null,
+      naTurmaHoje: matriculados.some((m) => m.alunoId === p.alunoId),
+    }));
+
+    // INV-020, agora estrita: chamada **completa** não ganha aluno novo ao
+    // ser reaberta.
+    const alunos = completa
+      ? doSnapshot
+      : [
+          ...doSnapshot,
+          ...matriculados
+            .filter((m) => !presencas.some((p) => p.alunoId === m.alunoId))
+            .map((m) => ({
+              alunoId: m.alunoId,
+              nome: m.aluno.usuario.nome,
+              status: null as StatusPresenca | null,
+              naTurmaHoje: true,
+            })),
+        ];
 
     return {
       ocupacaoId,
@@ -199,7 +237,8 @@ export class PresencaService {
       horaInicio: formatTimeOnly(ocupacao.horaInicio),
       horaFim: formatTimeOnly(ocupacao.horaFim),
       cancelada: ocupacao.statusPagamento === 'cancelado',
-      versao: this.versaoDe(presencas),
+      completude,
+      versao: this.versaoDe(presencas, cabecalho),
       alunos: alunos.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
     };
   }
@@ -261,12 +300,28 @@ export class PresencaService {
     // `vinculo` não bloqueiam, e isso é decisão registrada na spec:
     // presença registra o que aconteceu, e quem assistiu segunda e foi
     // desligado terça esteve lá na segunda.
-    const matriculados = await this.prisma.turmaAluno.findMany({
-      where: { turmaId: ocupacao.origemTurmaId },
-      select: { alunoId: true },
-    });
-    const permitidos = new Set(matriculados.map((m) => m.alunoId));
-    const forasteiros = idsRecebidos.filter((id) => !permitidos.has(id));
+    //
+    // SPEC-015/INV-026 — os **esperados** são a união de "matriculados
+    // hoje" com "já registrados nesta ocorrência". A união, e não só os
+    // matriculados, porque corrigir a chamada de quem saiu da turma depois
+    // precisa continuar possível (AC-004 da SPEC-014) — antes disso ele
+    // caía no 422 abaixo e a correção era recusada.
+    const [matriculados, jaRegistrados] = await Promise.all([
+      this.prisma.turmaAluno.findMany({
+        where: { turmaId: ocupacao.origemTurmaId },
+        select: { alunoId: true },
+      }),
+      this.prisma.presenca.findMany({
+        where: { ocupacaoId },
+        select: { alunoId: true },
+      }),
+    ]);
+    const esperados = new Set([
+      ...matriculados.map((m) => m.alunoId),
+      ...jaRegistrados.map((p) => p.alunoId),
+    ]);
+
+    const forasteiros = idsRecebidos.filter((id) => !esperados.has(id));
     if (forasteiros.length > 0) {
       throw new UnprocessableEntityException({
         statusCode: 422,
@@ -276,16 +331,38 @@ export class PresencaService {
       });
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const atuais = await tx.presenca.findMany({
-        where: { ocupacaoId },
-        select: { updatedAt: true },
+    // SPEC-015/DEF-002/INV-026 — chamada salva é completa.
+    //
+    // A mensagem é deliberadamente **acionável para cliente antigo**
+    // (AC-000e): na janela entre a publicação da tela nova e este deploy,
+    // um professor com o bundle velho manda só os alunos que tocou e cai
+    // aqui. Ele não tem como saber que existe uma janela; o texto precisa
+    // dizer o que fazer.
+    const recebidos = new Set(idsRecebidos);
+    const faltando = [...esperados].filter((id) => !recebidos.has(id));
+    if (faltando.length > 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'CHAMADA_INCOMPLETA',
+        message:
+          'A chamada precisa incluir todos os alunos da turma. Atualize o app e marque quem faltou antes de salvar.',
+        alunoIds: faltando,
       });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const [atuais, cabecalhoAtual] = await Promise.all([
+        tx.presenca.findMany({
+          where: { ocupacaoId },
+          select: { updatedAt: true },
+        }),
+        tx.chamada.findUnique({ where: { ocupacaoId } }),
+      ]);
 
       // INV-019 — controle otimista. A versão é conferida **dentro** da
       // transação: conferir fora deixaria a janela entre ler e gravar, que
       // é exatamente a corrida que este controle existe para fechar.
-      if (this.versaoDe(atuais) !== versao) {
+      if (this.versaoDe(atuais, cabecalhoAtual) !== versao) {
         throw new ConflictException({
           statusCode: 409,
           code: 'CHAMADA_DESATUALIZADA',
@@ -293,6 +370,30 @@ export class PresencaService {
             'Esta chamada mudou desde que você abriu. Recarregue para ver o estado atual.',
         });
       }
+
+      // INV-027 — o cabeçalho primeiro, e na mesma transação. A ordem
+      // importa a partir do `contract`: a FK de `presencas` para `chamadas`
+      // recusa linha sem cabeçalho. Escrever nesta ordem desde agora evita
+      // que a fase seguinte precise mexer neste código de novo.
+      await tx.chamada.upsert({
+        where: { ocupacaoId },
+        create: {
+          ocupacaoId,
+          origemTipo: 'TURMA',
+          companyId,
+          registradaPor: usuarioId,
+          completude: 'completa',
+          esperados: esperados.size,
+        },
+        // Promoção de `desconhecida` para `completa` num **único** UPDATE:
+        // os dois campos andam juntos, e o CHECK do banco recusa o estado
+        // intermediário (achado da 4ª validação cruzada).
+        update: {
+          registradaPor: usuarioId,
+          completude: 'completa',
+          esperados: esperados.size,
+        },
+      });
 
       for (const item of itens) {
         await tx.presenca.upsert({
@@ -311,11 +412,18 @@ export class PresencaService {
         });
       }
 
-      const depois = await tx.presenca.findMany({
-        where: { ocupacaoId },
-        select: { updatedAt: true },
-      });
-      return { ocupacaoId, versao: this.versaoDe(depois), total: itens.length };
+      const [depois, cabecalhoDepois] = await Promise.all([
+        tx.presenca.findMany({
+          where: { ocupacaoId },
+          select: { updatedAt: true },
+        }),
+        tx.chamada.findUnique({ where: { ocupacaoId } }),
+      ]);
+      return {
+        ocupacaoId,
+        versao: this.versaoDe(depois, cabecalhoDepois),
+        total: itens.length,
+      };
     });
   }
 
