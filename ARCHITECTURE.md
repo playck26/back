@@ -1,7 +1,9 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: 2026-08-22.
-**Commit de referência:** `3fd85e5`.
+**Fonte: análise direta do código.** Data: 2026-08-24.
+**Commit de referência:** o commit `SPEC-017/TASK-001` (2026-08-24), filho de
+`f75615b`. Por nome e não por hash porque este arquivo faz parte do próprio
+commit — um documento não consegue citar o hash que ele ajuda a formar.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -15,6 +17,7 @@ Do `package.json` (produção):
 
 | Lib | Versão | Papel |
 |---|---|---|
+| `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` | ^3.1116 | storage de objeto (Spaces, ADR-015) — **só o adaptador importa** |
 | `@nestjs/core`, `common`, `platform-express` | ^11.0.1 | framework HTTP |
 | `@nestjs/config` | ^4.0.4 | env |
 | `@nestjs/jwt`, `@nestjs/passport`, `passport`, `passport-jwt` | ^11 / ^0.7 / ^4 | autenticação |
@@ -32,7 +35,15 @@ Do `package.json` (produção):
 **NÃO existem no projeto** (docs antigos ou suposições comuns podem citar):
 Turborepo ou qualquer monorepo (ADR-001 é poly-repo), Redis, fila/worker,
 GraphQL, ORM além do Prisma, provedor de e-mail, gateway de pagamento,
-storage de arquivos, WebSocket.
+WebSocket.
+
+**Storage de arquivo passou a existir em 2026-08-24** (SPEC-017/TASK-001) e é
+o único item que saiu desta lista. Existe a **fundação**: porta
+`StorageProvider`, adaptador S3 para o Spaces e a config das seis variáveis
+`SPACES_*`. **Não existe nada acima dela**: nenhuma rota de upload, nenhuma
+coluna de mídia, nenhum validador de WebP, nenhuma fila de exclusão — são as
+TASK-002 a 007 da SPEC-017 e a SPEC-018 inteira. Ler `storage/` esperando
+upload funcionando é ler errado.
 
 ## 2. Visão geral e fluxo de referência
 
@@ -106,6 +117,7 @@ src/
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
   dashboard/       MOD-007 — agregações de leitura
+  storage/         MOD-008 — porta + adaptador S3 (SPEC-017, sem controller)
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
@@ -115,7 +127,11 @@ src/
 verdade transversal ganha arquivo próprio (`horario-funcionamento.service.ts`,
 `agenda.service.ts`, `slots.util.ts`).
 
-**`frequencia/` não tem controller nem MOD próprio**, e é o único assim. O
+**`frequencia/` não tem controller nem MOD próprio**, e é o único assim.
+(`storage/` também não tem controller, mas tem MOD — e por decisão da
+SPEC-017: a rota que exercita o serviço é um controller de teste, fora do
+`AppModule`, na TASK-002b. Rota de upload temporária em produção é
+superfície de ataque esperando uso.) O
 serviço é consumido por `ClassesModule` (relatório da turma) e por
 `PeopleModule` (relatório do aluno), e `ClassesModule` já importa
 `PeopleModule` — deixá-lo em qualquer um dos dois fecharia ciclo.
@@ -208,11 +224,14 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
+| MOD-008 | StorageMedia | — (nenhuma tabela ainda; a fila é a TASK-004) | INV-031, INV-032 |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
 `PaymentConfigModule → CourtsModule`;
 `ClassesModule, PeopleModule, DashboardModule → FrequenciaModule`. Sem ciclos.
+**`StorageModule` não tem dependente nenhum hoje** — é fundação registrada
+antes do consumidor, e quem passa a depender dela é a SPEC-018.
 
 **Concorrência: `turmas` é a raiz de lock do agregado da turma (INV-029).**
 Quatro caminhos a travam antes de qualquer outra linha —

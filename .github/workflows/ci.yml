@@ -49,10 +49,20 @@ jobs:
       # mockado — não toca o Neon, então não precisa de DATABASE_URL.
       # JWT_*_SECRET só precisam existir (não são segredos reais; nenhum
       # token gerado aqui sai deste job).
+      # SPEC-017/TASK-001: o AppModule agora registra o StorageModule, que
+      # valida as seis variaveis do Spaces no boot. Aqui elas so precisam
+      # EXISTIR e ter forma valida — nenhum teste do CI fala com o bucket
+      # (quem fala e o FIT-006, contra o bucket real, fora do CI).
       - run: pnpm test:e2e
         env:
           JWT_ACCESS_SECRET: ci-e2e-access-secret
           JWT_REFRESH_SECRET: ci-e2e-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
 
       # SPEC-015 — as suítes que precisam de Postgres DE VERDADE:
       # a rede de regressão da raiz de lock (AC-000i/INV-029, duas
@@ -80,5 +90,11 @@ jobs:
       - run: pnpm run openapi:export
         env:
           JWT_ACCESS_SECRET: ci-openapi-export-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
 
       - run: git diff --exit-code openapi.json

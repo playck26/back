@@ -13,6 +13,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { PaymentConfigModule } from './payment-config/payment-config.module';
 import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -27,6 +28,10 @@ import { PrismaModule } from './prisma/prisma.module';
     ClassesModule,
     DashboardModule,
     PaymentConfigModule,
+    // SPEC-017 (MOD-008) — fundação de mídia. Registrado sem consumidor de
+    // propósito: é o que faz a validação das seis variáveis do Spaces
+    // rodar no boot. Nenhuma rota depende dele até a SPEC-018.
+    StorageModule,
   ],
   controllers: [AppController],
   providers: [
