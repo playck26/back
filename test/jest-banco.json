@@ -6,7 +6,7 @@
   ],
   "rootDir": ".",
   "testEnvironment": "node",
-  "testRegex": ".conc-spec.ts$",
+  "testRegex": ".db-spec.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   }

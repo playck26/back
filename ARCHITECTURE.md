@@ -104,6 +104,7 @@ src/
   classes/         MOD-004 — turmas
   courts/          MOD-005 — quadras, ocupações, horários, agenda
   payment-config/  MOD-006 — meio de pagamento e status
+  frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
   dashboard/       MOD-007 — agregações de leitura
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
@@ -113,6 +114,13 @@ src/
 `*.service.ts`, `*.service.spec.ts`, `dto/`. Serviço que virou fonte de
 verdade transversal ganha arquivo próprio (`horario-funcionamento.service.ts`,
 `agenda.service.ts`, `slots.util.ts`).
+
+**`frequencia/` não tem controller nem MOD próprio**, e é o único assim. O
+serviço é consumido por `ClassesModule` (relatório da turma) e por
+`PeopleModule` (relatório do aluno), e `ClassesModule` já importa
+`PeopleModule` — deixá-lo em qualquer um dos dois fecharia ciclo.
+`forwardRef` resolveria e esconderia o problema: ele depende só do Prisma e
+não pertence a nenhum dos dois.
 
 **`courts/` concentra 4 controllers** (courts, bookings, company-settings,
 agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
@@ -203,7 +211,28 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
-`PaymentConfigModule → CourtsModule`. Sem ciclos.
+`PaymentConfigModule → CourtsModule`;
+`ClassesModule, PeopleModule, DashboardModule → FrequenciaModule`. Sem ciclos.
+
+**Concorrência: `turmas` é a raiz de lock do agregado da turma (INV-029).**
+Quatro caminhos a travam antes de qualquer outra linha —
+`allocateStudent`, `removeStudent`, `ClassesService.update` (por
+`tx.turma.update`, que já é lock exclusivo) e `PresencaService.salvarChamada`
+(passo 0). Ordem de aquisição única, logo sem ciclo de lock.
+
+Duas armadilhas, cada uma descoberta por uma rodada de validação cruzada:
+**ler antes de travar** é ter o lock sem a garantia; e **travar e ler no
+mesmo statement** também não basta, porque em `READ COMMITTED` o snapshot é
+do statement e só a linha travada é reavaliada (EvalPlanQual) — as demais
+relações do `JOIN` ficam no snapshot de antes da espera. Detalhe em
+`DATA_MODEL.md`, seção "Concorrência".
+
+**Três runners de teste, e a diferença entre eles é o que cada um consegue
+reprovar:** `pnpm test` (unit, Prisma mockado), `pnpm test:e2e` (Supertest,
+também mockado) e **`pnpm test:banco`** — suítes que exigem Postgres real,
+que o CI sobe como serviço. Mock não tem lock, snapshot nem constraint;
+`test/banco/` existe porque metade das provas da SPEC-014/015 depende
+exatamente disso.
 
 ## 11. Patterns observados
 

@@ -54,18 +54,18 @@ jobs:
           JWT_ACCESS_SECRET: ci-e2e-access-secret
           JWT_REFRESH_SECRET: ci-e2e-refresh-secret
 
-      # SPEC-015/AC-000i e INV-029: a rede de regressão da raiz de lock.
-      # Precisa de Postgres DE VERDADE e roda com duas conexões — mock não
-      # tem lock nem snapshot, e não reprovaria nenhum dos defeitos que
-      # esta suíte existe para pegar. Três correções seguidas falharam
-      # aqui, cada uma num caso diferente.
+      # SPEC-015 — as suítes que precisam de Postgres DE VERDADE:
+      # a rede de regressão da raiz de lock (AC-000i/INV-029, duas
+      # conexões) e a tabela de provas FIT-005 (chamada de ponta a ponta).
+      # Mock não tem lock, nem snapshot, nem constraint — não reprovaria
+      # nenhum dos defeitos que estas suítes existem para pegar.
       #
       # Banco efêmero do serviço abaixo, nunca o Neon: a suíte escreve.
       - run: pnpm exec prisma migrate deploy
         env:
           DATABASE_URL: postgresql://postgres:ci@localhost:5432/playck_ci?schema=public
 
-      - run: pnpm run test:concorrencia
+      - run: pnpm run test:banco
         env:
           DATABASE_URL: postgresql://postgres:ci@localhost:5432/playck_ci?schema=public
 
