@@ -562,3 +562,56 @@ model PedidoReserva {
   @@index([companyId])
   @@map("pedidos_reserva")
 }
+
+// SPEC-017/TASK-004 (MOD-008) — a fila de exclusão de objeto de storage.
+//
+// Chave por conteúdo (AC-007) cria um caso que a lógica ingênua "troquei,
+// enfileiro a anterior" resolve errado: reenviar a mesma foto, ou trocar
+// A -> B -> A, apagaria o objeto que acabou de virar o atual. Esta tabela
+// é a segunda das três defesas — a primeira é não enfileirar chave igual
+// (AC-013), a terceira é o advisory lock por chave (INV-039).
+//
+// **Não tem FK para `empresas`, e é a única tabela assim.** A fila precisa
+// sobreviver à exclusão da empresa: é exatamente aí que há mais objeto
+// para apagar. FK com RESTRICT impediria apagar a empresa; com CASCADE,
+// apagaria a fila e deixaria o arquivo órfão no bucket para sempre. O
+// `company_id` é amarrado à `key` por CHECK escrito à mão na migration
+// (INV-030) — o vínculo é com o caminho do objeto, não com a linha.
+model ArquivoPendenteExclusao {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// `empresas/<company_id>/<tipo>/<recurso>/<sha256>.webp` (INV-030/035).
+  /// Única: duas linhas para o mesmo objeto são ruído, e fariam a carência
+  /// (AC-016b) e o teto por ciclo (AC-016c) contarem o mesmo arquivo duas
+  /// vezes.
+  key String @unique
+
+  /// Redundante com o prefixo da `key` e amarrado a ele por CHECK. Existe
+  /// porque o teto por empresa (AC-016c) é uma agregação, e agregação sobre
+  /// `split_part()` não usa índice.
+  companyId String @map("company_id") @db.Uuid
+
+  /// Por que esta chave entrou na fila. Vai para o alerta de operação.
+  motivo String
+
+  /// Tentativas de exclusão que FALHARAM (AC-012/016). Conflito de lock
+  /// **não** conta aqui — tem contador próprio, porque concorrência normal
+  /// não é erro (AC-016d/INV-046).
+  tentativas Int @default(0)
+
+  ultimoErro String? @map("ultimo_erro")
+
+  /// Base da carência de 1 hora (AC-016b): exclusão errada ganha uma janela
+  /// em que alguém pode perceber.
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  /// AC-016d — contador do reagendamento por lock, separado de
+  /// `tentativas`. Concorrência normal não é erro; concorrência eterna é
+  /// estado degradado, e só o contador próprio distingue as duas.
+  lockSkipCount      Int       @default(0) @map("lock_skip_count")
+  lastLockConflictAt DateTime? @map("last_lock_conflict_at")
+
+  @@index([criadoEm])
+  @@index([companyId])
+  @@map("arquivos_pendentes_exclusao")
+}

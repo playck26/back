@@ -1,9 +1,10 @@
 # ARCHITECTURE — `back` (PlayCK)
 
 **Fonte: análise direta do código.** Data: 2026-08-24.
-**Commit de referência:** o commit `SPEC-017/TASK-001` (2026-08-24), filho de
-`f75615b`. Por nome e não por hash porque este arquivo faz parte do próprio
-commit — um documento não consegue citar o hash que ele ajuda a formar.
+**Commit de referência:** os commits `SPEC-017/TASK-001`, `TASK-002` e
+`TASK-004` (2026-08-24), a partir de `f75615b`. Por nome e não por hash
+porque este arquivo faz parte do próprio commit — um documento não consegue
+citar o hash que ele ajuda a formar.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -37,13 +38,19 @@ Turborepo ou qualquer monorepo (ADR-001 é poly-repo), Redis, fila/worker,
 GraphQL, ORM além do Prisma, provedor de e-mail, gateway de pagamento,
 WebSocket.
 
-**Storage de arquivo passou a existir em 2026-08-24** (SPEC-017/TASK-001) e é
-o único item que saiu desta lista. Existe a **fundação**: porta
-`StorageProvider`, adaptador S3 para o Spaces e a config das seis variáveis
-`SPACES_*`. **Não existe nada acima dela**: nenhuma rota de upload, nenhuma
-coluna de mídia, nenhum validador de WebP, nenhuma fila de exclusão — são as
-TASK-002 a 007 da SPEC-017 e a SPEC-018 inteira. Ler `storage/` esperando
-upload funcionando é ler errado.
+**Storage de arquivo passou a existir em 2026-08-24** (SPEC-017) e é o único
+item que saiu desta lista. Existem, das TASK-001/002/004: a porta
+`StorageProvider`, o adaptador S3, a config das seis variáveis `SPACES_*`, o
+**validador de WebP** e a **tabela** da fila de exclusão.
+
+**Não existe nada acima disso**, e a lista importa mais que o que existe:
+nenhuma rota de upload, nenhuma coluna de mídia, nenhum parser de chave,
+**nenhum worker** — a tabela da fila está criada e vazia, e ninguém escreve
+nela. São as TASK-002b, 003, 005, 006 e 007 da SPEC-017, e a SPEC-018
+inteira. Ler `storage/` esperando upload funcionando é ler errado.
+
+**`fila/worker` continua na lista de não-existe acima**, e continua certo:
+há a tabela, não há o worker.
 
 ## 2. Visão geral e fluxo de referência
 
@@ -71,7 +78,7 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**16 tabelas e 10 enums** no `schema.prisma` (conferido em 2026-08-23, depois da SPEC-015:TASK-000b).
+**17 tabelas e 10 enums** no `schema.prisma` (conferido em 2026-08-24, depois da SPEC-017:TASK-004).
 
 | Tabela | Dono | Papel / quirk |
 |---|---|---|
@@ -90,6 +97,7 @@ a replicar:
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
 | `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
+| `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a TASK-005** |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
 que são a garantia real):
@@ -104,6 +112,8 @@ que são a garantia real):
 | `chamadas_origem_tipo_check` + FK composta | cabeçalho de chamada só existe para aula de turma — mesma construção de `presencas` |
 | `chamadas_completude_esperados_check` | `completa` exige `esperados > 0`; `desconhecida` exige `esperados` nulo. Amarra os dois sentidos: afirmação sem lastro e lastro sem afirmação são igualmente recusados |
 | `presencas_chamada_fkey` (`ON DELETE NO ACTION`) | presença sem cabeçalho é impossível — INV-027 imposta pelo banco. `NO ACTION` e não `RESTRICT` porque apagar a ocorrência cascateia para as duas tabelas na mesma instrução; `RESTRICT` é checado na hora e abortaria |
+| `arquivos_pendentes_key_da_empresa_check` | INV-030 no banco: `key LIKE 'empresas/%'` e `split_part(key,'/',2) = company_id::text`. É o que substitui a FK que esta tabela não pode ter |
+| `arquivos_pendentes_erro_com_tentativa_check`, `..._lock_com_conflito_check` | erro sem tentativa é afirmação sem lastro; contador de lock e data do conflito existem ou não existem juntos |
 
 ## 4. Estrutura de pastas
 
@@ -117,7 +127,7 @@ src/
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
   dashboard/       MOD-007 — agregações de leitura
-  storage/         MOD-008 — porta + adaptador S3 (SPEC-017, sem controller)
+  storage/         MOD-008 — porta, adaptador S3 e validador WebP (SPEC-017)
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
@@ -224,7 +234,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
-| MOD-008 | StorageMedia | — (nenhuma tabela ainda; a fila é a TASK-004) | INV-031, INV-032 |
+| MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030, INV-031, INV-032 |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
@@ -248,10 +258,12 @@ relações do `JOIN` ficam no snapshot de antes da espera. Detalhe em
 
 **Três runners de teste, e a diferença entre eles é o que cada um consegue
 reprovar:** `pnpm test` (unit, Prisma mockado), `pnpm test:e2e` (Supertest,
-também mockado) e **`pnpm test:banco`** — suítes que exigem Postgres real,
+também mockado) e **`pnpm test:banco`** — 3 suítes que exigem Postgres real,
 que o CI sobe como serviço. Mock não tem lock, snapshot nem constraint;
 `test/banco/` existe porque metade das provas da SPEC-014/015 depende
-exatamente disso.
+exatamente disso, e a SPEC-017 acrescentou `fila-exclusao.db-spec.ts`, que é
+o **ensaio de violação** das constraints da fila: cada teste tenta escrever o
+estado proibido e exige que o banco recuse.
 
 ## 11. Patterns observados
 
