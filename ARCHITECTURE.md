@@ -2,7 +2,8 @@
 
 **Fonte: análise direta do código.** Data: 2026-08-24.
 **Commit de referência:** os commits `SPEC-017/TASK-001`, `TASK-002`,
-`TASK-004`, `TASK-003` e `TASK-002b` (2026-08-24), a partir de `f75615b`. Por nome e não por hash
+`TASK-004`, `TASK-003`, `TASK-002b` e `TASK-005` (2026-08-24), a partir de
+`f75615b`. Por nome e não por hash
 porque este arquivo faz parte do próprio commit — um documento não consegue
 citar o hash que ele ajuda a formar.
 
@@ -34,9 +35,8 @@ Do `package.json` (produção):
 2026-08-22.
 
 **NÃO existem no projeto** (docs antigos ou suposições comuns podem citar):
-Turborepo ou qualquer monorepo (ADR-001 é poly-repo), Redis, fila/worker,
-GraphQL, ORM além do Prisma, provedor de e-mail, gateway de pagamento,
-WebSocket.
+Turborepo ou qualquer monorepo (ADR-001 é poly-repo), Redis, GraphQL, ORM
+além do Prisma, provedor de e-mail, gateway de pagamento, WebSocket.
 
 **Storage de arquivo passou a existir em 2026-08-24** (SPEC-017) e é o único
 item que saiu desta lista. Existem, das TASK-001/002/002b/003/004: a porta `StorageProvider`, o
@@ -58,8 +58,16 @@ superfície de ataque esperando uso. O que é real ali é o interceptor, o
 validador e o `StorageService` — a configuração vem da **mesma** fonte que as
 rotas da SPEC-018 vão usar.
 
-**`fila/worker` continua na lista de não-existe acima**, e continua certo:
-há a tabela, não há o worker.
+**`fila/worker` saiu da lista em 2026-08-24** (TASK-005). Existe uma fila
+(`arquivos_pendentes_exclusao`) e um worker que roda por `setInterval` — **não
+há Redis, não há broker, não há job queue de biblioteca**. A serialização é
+`pg_try_advisory_xact_lock`, e o agendamento é um temporizador. Quem procurar
+BullMQ ou Redis aqui não vai achar, e é decisão: o projeto não tem nenhum
+outro job agendado.
+
+**E o worker está fail-closed:** sem `KeyReferenceChecker` registrado — que é
+da SPEC-018 — ele **não apaga nada**. Rodando hoje, ele não faz nada visível,
+e isso é o estado esperado.
 
 ## 2. Visão geral e fluxo de referência
 
@@ -137,8 +145,8 @@ src/
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
   dashboard/       MOD-007 — agregações de leitura
   storage/         MOD-008 — porta, adaptador S3, validador WebP, gramática
-                   da chave, StorageService e a fonte única do upload
-                   (SPEC-017). **Sem controller** — ver abaixo
+                   da chave, StorageService, fonte única do upload, fila,
+                   worker e advisory lock (SPEC-017). **Sem controller**
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
@@ -245,7 +253,7 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
-| MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030, INV-031, INV-032, INV-033, INV-035, **INV-037** |
+| MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030 a INV-033, INV-035 a INV-039, INV-042 a INV-044, INV-046 a INV-048 |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
@@ -256,6 +264,17 @@ antes do consumidor, e quem passa a depender dela é a SPEC-018. Exporta
 `StorageService` (o caminho de leitura, com a conferência obrigatória) e
 `STORAGE_PROVIDER`; **não exporta a configuração**, que carrega o segredo do
 Spaces.
+
+**Duas raízes de lock, e são de naturezas diferentes.** `turmas` é a raiz do
+agregado da turma (INV-029), com `FOR UPDATE` de linha. A **chave do objeto**
+é a raiz do storage (INV-039), com advisory lock — e a raiz é o objeto, não o
+recurso de domínio, porque o recurso disputado é o objeto no bucket.
+
+**Ordem global (INV-042):** locks de domínio primeiro, advisory por chave
+depois, nunca ao contrário; múltiplas chaves em ordem lexicográfica; e **o
+worker de exclusão nunca toma lock de linha** — é a regra que mais protege,
+porque ele é assíncrono e roda sozinho, o candidato natural a segurar uma
+linha esperando outra coisa.
 
 **Concorrência: `turmas` é a raiz de lock do agregado da turma (INV-029).**
 Quatro caminhos a travam antes de qualquer outra linha —

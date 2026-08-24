@@ -1,6 +1,8 @@
 import { Inject, Injectable, Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { execSync } from 'node:child_process';
+import { join } from 'node:path';
 import { S3StorageProvider } from './s3-storage.provider';
 import {
   STORAGE_PROVIDER,
@@ -27,34 +29,52 @@ const VALIDAS: Record<string, string> = {
   SPACES_SECRET: 'segredo-de-teste',
 };
 
+/**
+ * **O `ConfigService` é substituído, e a razão é um achado deste ciclo.**
+ *
+ * A primeira versão daqui montava o `ConfigModule.forRoot` com `load` e
+ * limpava as variáveis de `process.env`. Parou de funcionar quando o
+ * `StorageModule` passou a importar o `PrismaModule` — e o motivo não é o
+ * Nest: **`@prisma/client` carrega o `.env` no `process.env`**, no import e
+ * de novo ao instanciar o cliente. O `ConfigService` lê `process.env` ao
+ * vivo, então a variável "ausente" reaparecia com o valor **real de
+ * produção**, e o teste de fail-fast passava a compilar em vez de recusar.
+ *
+ * Medido: `node -e "require('@prisma/client')"` basta para
+ * `process.env.SPACES_SECRET` sair de ausente para presente.
+ *
+ * Em produção isso é inofensivo (não há `.env` no container, e o `dotenv`
+ * não sobrescreve variável já definida). Em teste, é a diferença entre
+ * provar o fail-fast e provar nada — daí o dublê.
+ */
 function compilarCom(valores: Record<string, string | undefined>) {
   return Test.createTestingModule({
-    // Mesmo arranjo do AppModule: ConfigModule global + StorageModule.
     imports: [
-      ConfigModule.forRoot({
-        isGlobal: true,
-        ignoreEnvFile: true,
-        load: [() => valores],
-      }),
+      ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
       StorageModule,
     ],
-  }).compile();
+  })
+    .overrideProvider(ConfigService)
+    .useValue({ get: (nome: string) => valores[nome] })
+    .compile();
 }
 
 describe('StorageModule', () => {
-  // `ConfigService` cai em `process.env` quando a chave não está na config
-  // carregada. Sem esta limpeza, a máquina de quem tem as variáveis
-  // exportadas no shell passaria no teste de ausência sem provar nada.
-  const ambienteOriginal = { ...process.env };
-
-  beforeEach(() => {
+  it('o `.env` REALMENTE chega ao processo pelo Prisma — não pelo Nest', () => {
+    // Este teste não prova o módulo: prova o ambiente, e existe para que
+    // ninguém "conserte" o dublê acima achando que a limpeza de
+    // `process.env` bastaria. Se um dia o Prisma parar de carregar o
+    // `.env`, este teste cai e o comentário de cima vira mentira.
     for (const variavel of VARIAVEIS_DE_STORAGE) {
       delete process.env[variavel];
     }
-  });
-
-  afterEach(() => {
-    process.env = { ...ambienteOriginal };
+    // `execSync` e não `require`: num processo limpo, sem o que este mesmo
+    // arquivo já importou. É a única forma de medir o efeito do import.
+    const saida = execSync(
+      `node -e "require('@prisma/client'); console.log(process.env.SPACES_SECRET ? 'PRESENTE' : 'ausente')"`,
+      { cwd: join(__dirname, '..', '..'), encoding: 'utf8' },
+    );
+    expect(saida.trim()).toBe('PRESENTE');
   });
 
   it('resolve a porta STORAGE_PROVIDER com as seis variáveis presentes', async () => {
