@@ -2,7 +2,7 @@
 
 **Fonte: análise direta do código.** Data: 2026-08-24.
 **Commit de referência:** os commits `SPEC-017/TASK-001`, `TASK-002`,
-`TASK-004` e `TASK-003` (2026-08-24), a partir de `f75615b`. Por nome e não por hash
+`TASK-004`, `TASK-003` e `TASK-002b` (2026-08-24), a partir de `f75615b`. Por nome e não por hash
 porque este arquivo faz parte do próprio commit — um documento não consegue
 citar o hash que ele ajuda a formar.
 
@@ -39,16 +39,24 @@ GraphQL, ORM além do Prisma, provedor de e-mail, gateway de pagamento,
 WebSocket.
 
 **Storage de arquivo passou a existir em 2026-08-24** (SPEC-017) e é o único
-item que saiu desta lista. Existem, das TASK-001/002/003/004: a porta
-`StorageProvider`, o adaptador S3, a config das seis variáveis `SPACES_*`, o
-**validador de WebP**, a **gramática da chave**, o **`StorageService`** (que
-impõe a INV-037: nunca assina chave crua) e a **tabela** da fila de exclusão.
+item que saiu desta lista. Existem, das TASK-001/002/002b/003/004: a porta `StorageProvider`, o
+adaptador S3, a config das seis variáveis `SPACES_*`, o **validador de
+WebP**, a **gramática da chave**, o **`StorageService`** (que impõe a
+INV-037: nunca assina chave crua), a **fonte única da configuração de
+upload** (`@UploadDeMidia()`, INV-048) e a **tabela** da fila de exclusão.
 
 **Não existe nada acima disso**, e a lista importa mais que o que existe:
-nenhuma rota de upload, nenhuma coluna de mídia, **nenhum worker** — a tabela
-da fila está criada e vazia, e ninguém escreve nela. São as TASK-002b, 005,
-006 e 007 da SPEC-017, e a SPEC-018 inteira. Ler `storage/` esperando upload
-funcionando é ler errado.
+**nenhuma rota de upload do produto**, nenhuma coluna de mídia, **nenhum
+worker** — a tabela da fila está criada e vazia, e ninguém escreve nela. São
+as TASK-005, 006 e 007 da SPEC-017, e a SPEC-018 inteira. Ler `storage/`
+esperando upload funcionando é ler errado.
+
+**O contrato de upload é exercitado por um controller que mora em `test/`**
+(`test/storage/fixture-upload.controller.ts`), e é decisão da spec: rota
+temporária em produção nunca é temporária, e uma que aceita upload sem dono é
+superfície de ataque esperando uso. O que é real ali é o interceptor, o
+validador e o `StorageService` — a configuração vem da **mesma** fonte que as
+rotas da SPEC-018 vão usar.
 
 **`fila/worker` continua na lista de não-existe acima**, e continua certo:
 há a tabela, não há o worker.
@@ -128,8 +136,9 @@ src/
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
   dashboard/       MOD-007 — agregações de leitura
-  storage/         MOD-008 — porta, adaptador S3, validador WebP,
-                   gramática da chave e StorageService (SPEC-017)
+  storage/         MOD-008 — porta, adaptador S3, validador WebP, gramática
+                   da chave, StorageService e a fonte única do upload
+                   (SPEC-017). **Sem controller** — ver abaixo
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
