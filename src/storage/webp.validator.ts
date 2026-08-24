@@ -132,19 +132,99 @@ function analisar(corpo: Buffer): ResultadoDaValidacao {
     }
   }
 
-  const vp8x = chunks.find((c) => c.fourcc === 'VP8X');
-  if (vp8x) {
-    return validarEstendido(corpo, vp8x);
+  // Allowlist responde QUAIS chunks. Não responde QUANTOS nem EM QUE ORDEM,
+  // e essa era a brecha. Ver `validarSequencia`.
+  const sequenciaInvalida = validarSequencia(chunks);
+  if (sequenciaInvalida) {
+    return sequenciaInvalida;
   }
 
-  const principal = chunks[0];
-  if (principal.fourcc === 'VP8 ') {
-    return comDimensao('VP8', lerDimensaoVp8(corpo, principal));
+  const vp8x = chunks[0].fourcc === 'VP8X' ? chunks[0] : null;
+  if (vp8x) {
+    const flagsInvalidos = validarFlagsVp8x(corpo, vp8x);
+    if (flagsInvalidos) {
+      return flagsInvalidos;
+    }
   }
-  if (principal.fourcc === 'VP8L') {
-    return comDimensao('VP8L', lerDimensaoVp8l(corpo, principal));
+
+  const imagem = chunks[chunks.length - 1];
+  const dimensao =
+    imagem.fourcc === 'VP8 '
+      ? lerDimensaoVp8(corpo, imagem)
+      : lerDimensaoVp8l(corpo, imagem);
+
+  // Com `VP8X`, a dimensão que vale é a do CANVAS, não a do frame: são
+  // campos diferentes, e é a do canvas que diz o tamanho da imagem exibida.
+  // A do frame ainda é lida acima, porque um frame ilegível é arquivo
+  // quebrado mesmo com canvas bem formado.
+  if (typeof dimensao === 'string') {
+    return NAO_E_WEBP('cabeçalho de imagem malformado');
   }
-  return NAO_E_WEBP('sem chunk de imagem');
+  if (vp8x) {
+    return comDimensao('VP8X', lerCanvasVp8x(corpo, vp8x));
+  }
+  return comDimensao(imagem.fourcc === 'VP8 ' ? 'VP8' : 'VP8L', dimensao);
+}
+
+/**
+ * **O BLOQUEADOR da validação cruzada de 2026-08-24.**
+ *
+ * A allowlist responde *quais* chunks podem existir. Não respondia *quantos*
+ * nem *em que ordem* — e o revisor montou um `VP8 ` válido seguido de um
+ * segundo chunk `VP8L` com 41 bytes de carga arbitrária. Todos os FourCC
+ * estavam na allowlist, a dimensão vinha do primeiro chunk, e o veredito era
+ * `valido: true`. Carga arbitrária entrava num arquivo "bem formado".
+ *
+ * **Nenhuma das 22 mutações tinha achado**, e o motivo é a lição: mutação
+ * prova que os testes matam o código que você ESCREVEU. Não diz nada sobre
+ * o código que você esqueceu de escrever.
+ *
+ * A sequência legal é curta, e é a do container spec reduzida ao que a
+ * allowlist deixa passar:
+ *
+ *     VP8X?  ALPH?  (VP8 | VP8L)
+ *
+ * cada um no máximo uma vez, nessa ordem, e **nada depois da imagem**.
+ */
+function validarSequencia(chunks: ChunkLido[]): ResultadoDaValidacao | null {
+  const fourccs = chunks.map((c) => c.fourcc);
+  const estendido = fourccs[0] === 'VP8X';
+  let i = estendido ? 1 : 0;
+
+  if (fourccs[i] === 'ALPH') {
+    if (!estendido) {
+      // `ALPH` é chunk do formato estendido; sozinho com um `VP8 ` ele é
+      // um contêiner que não existe no formato simples.
+      return NAO_E_WEBP('ALPH fora do container estendido');
+    }
+    i++;
+  }
+
+  const imagem = fourccs[i];
+  if (imagem !== 'VP8 ' && imagem !== 'VP8L') {
+    // Cobre VP8X duplicado, ALPH repetido, VP8X sozinho e imagem ausente:
+    // em todos, o que está nesta posição não é chunk de imagem.
+    return NAO_E_WEBP('sem chunk de imagem na posição esperada');
+  }
+
+  if (i + 1 !== fourccs.length) {
+    // Chunk depois da imagem, ainda que da allowlist. É por aqui que a
+    // carga arbitrária entrava.
+    return TEM_METADADO(
+      `${fourccs.length - i - 1} chunk(s) além da imagem: ${fourccs
+        .slice(i + 1)
+        .map(sanitizar)
+        .join(', ')}`,
+    );
+  }
+
+  if (i > 0 && fourccs[i - 1] === 'ALPH' && imagem === 'VP8L') {
+    // O lossless já carrega o próprio alpha; um `ALPH` ao lado dele é
+    // payload que ninguém vai desenhar.
+    return NAO_E_WEBP('ALPH junto de VP8L');
+  }
+
+  return null;
 }
 
 /**
@@ -189,10 +269,10 @@ function lerChunks(corpo: Buffer): ChunkLido[] | null {
   return chunks;
 }
 
-function validarEstendido(
+function validarFlagsVp8x(
   corpo: Buffer,
   vp8x: ChunkLido,
-): ResultadoDaValidacao {
+): ResultadoDaValidacao | null {
   if (vp8x.tamanho !== TAMANHO_PAYLOAD_VP8X) {
     return NAO_E_WEBP('cabeçalho VP8X com tamanho errado');
   }
@@ -204,9 +284,15 @@ function validarEstendido(
       `VP8X anuncia ${nomesDosFlags(flags).join(', ')} no flag`,
     );
   }
-  const largura = lerUInt24LE(corpo, vp8x.inicio + 4) + 1;
-  const altura = lerUInt24LE(corpo, vp8x.inicio + 7) + 1;
-  return comDimensao('VP8X', { largura, altura });
+  return null;
+}
+
+/** O canvas do `VP8X`: dois inteiros de 24 bits, cada um menos 1. */
+function lerCanvasVp8x(corpo: Buffer, vp8x: ChunkLido): Dimensao {
+  return {
+    largura: lerUInt24LE(corpo, vp8x.inicio + 4) + 1,
+    altura: lerUInt24LE(corpo, vp8x.inicio + 7) + 1,
+  };
 }
 
 /** `VP8 `: 3 bytes de frame tag, o sync code `9D 01 2A`, e as dimensões. */

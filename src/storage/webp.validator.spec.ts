@@ -117,6 +117,57 @@ describe('validarWebp', () => {
     });
   });
 
+  describe('sequência de chunks — o BLOQUEADOR da validação cruzada', () => {
+    // A allowlist responde QUAIS chunks. Não respondia QUANTOS nem EM QUE
+    // ORDEM, e o revisor independente montou um `VP8 ` válido seguido de um
+    // segundo `VP8L` com 41 bytes de carga arbitrária: todos os FourCC na
+    // allowlist, dimensão lida do primeiro, veredito `valido: true`.
+    //
+    // Nenhuma das 22 mutações tinha achado, e a lição é essa: mutação prova
+    // que os testes matam o código que você ESCREVEU. Não diz nada sobre o
+    // código que você esqueceu de escrever.
+
+    it('recusa carga arbitrária num VP8L extra depois da imagem', () => {
+      const resultado = validar('webp-carga-em-vp8l-extra.webp');
+      expect(resultado).toMatchObject({
+        valido: false,
+        codigo: 'IMAGEM_COM_METADADOS',
+      });
+      if (!resultado.valido) {
+        expect(resultado.motivo).toMatch(/além da imagem/);
+        expect(resultado.motivo).not.toContain('CARGA ARBITRARIA');
+      }
+    });
+
+    it('recusa a mesma carga num ALPH extra', () => {
+      expect(validar('webp-carga-em-alph-extra.webp')).toMatchObject({
+        valido: false,
+        codigo: 'IMAGEM_COM_METADADOS',
+      });
+    });
+
+    it.each([
+      ['webp-alph-depois-da-imagem.webp', 'ALPH depois da imagem'],
+      ['webp-alph-sem-vp8x.webp', 'ALPH fora do container estendido'],
+      ['webp-dois-vp8x.webp', 'VP8X duplicado'],
+      ['webp-dois-alph.webp', 'ALPH duplicado'],
+      ['webp-vp8x-sem-imagem.webp', 'VP8X e ALPH sem chunk de imagem'],
+      ['webp-alph-antes-do-vp8x.webp', 'ALPH antes do VP8X'],
+      ['webp-alph-com-vp8l.webp', 'ALPH junto de VP8L, que já tem alpha'],
+    ])('recusa %s (%s)', (nome) => {
+      expect(validar(nome).valido).toBe(false);
+    });
+
+    it('mas aceita VP8X embrulhando um VP8L, que é sequência legal', () => {
+      // A regra nova não pode virar recusa de imagem legítima: o container
+      // estendido sem ALPH é forma válida do formato.
+      expect(validar('valido-vp8x-com-vp8l.webp')).toMatchObject({
+        valido: true,
+        formato: 'VP8X',
+      });
+    });
+  });
+
   describe('AC-003 — animação, por chunk e por FLAG', () => {
     it('recusa WebP animado de verdade (ANIM + ANMF)', () => {
       expect(validar('webp-animado.webp')).toMatchObject({
@@ -236,6 +287,15 @@ describe('validarWebp', () => {
       ['webp-riff-mentindo-tamanho.webp', /tamanho declarado no RIFF/],
       ['webp-vp8x-tamanho-errado.webp', /VP8X com tamanho errado/],
       ['webp-vp8-largura-zero.webp', /dimensão inválida/],
+      // Os quatro abaixo entraram porque a mutação correspondente
+      // SOBREVIVEU olhando só o `codigo`: outro portão pegava o arquivo
+      // antes, com o mesmo código, e a checagem removida não fazia falta
+      // nenhuma. Motivo é saída real — vai para log — e é o que separa
+      // "foi recusado" de "foi recusado POR ISTO".
+      ['webp-dois-vp8x.webp', /sem chunk de imagem na posição esperada/],
+      ['webp-vp8x-sem-imagem.webp', /sem chunk de imagem na posição esperada/],
+      ['webp-alph-antes-do-vp8x.webp', /ALPH fora do container estendido/],
+      ['webp-com-chunk-minusculo.webp', /chunk não permitido: vp8/],
     ])('%s recusa pelo motivo certo', (nome, esperado) => {
       const resultado = validar(nome);
       expect(resultado.valido).toBe(false);

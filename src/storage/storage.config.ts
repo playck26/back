@@ -25,8 +25,13 @@ export interface StorageConfig {
   readonly secret: string;
 }
 
-/** AC-010 — URL assinada expira em 15 minutos. */
-export const EXPIRACAO_URL_ASSINADA_SEGUNDOS = 15 * 60;
+/**
+ * AC-010 — **teto**, não só default (achado da validação cruzada de
+ * 2026-08-24). O adaptador recusa expiração acima disto em vez de aparar em
+ * silêncio: `Math.min` escondido é regra que alguém só descobre debugando,
+ * e a AC-010 é contrato público do MOD-008, não conveniência do chamador.
+ */
+export const TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS = 15 * 60;
 
 /**
  * LIM-005 — o cache de terceiros é incontrolável; o que controlamos é o

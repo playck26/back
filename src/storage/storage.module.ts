@@ -28,6 +28,10 @@ import {
     },
     { provide: STORAGE_PROVIDER, useClass: S3StorageProvider },
   ],
-  exports: [STORAGE_PROVIDER, STORAGE_CONFIG],
+  // **Exporta só a porta.** `STORAGE_CONFIG` carrega `key` e `secret`, e
+  // exportá-lo abria uma fronteira pública para o segredo sem nenhum
+  // consumidor pedindo (achado da validação cruzada de 2026-08-24). Quem
+  // precisar de configuração de storage fora daqui precisa justificar.
+  exports: [STORAGE_PROVIDER],
 })
 export class StorageModule {}

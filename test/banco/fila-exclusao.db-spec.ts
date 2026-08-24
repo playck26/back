@@ -14,8 +14,13 @@
  * tabela existe.
  */
 import { PrismaClient } from '@prisma/client';
+import { exigirBancoLocal } from './exigir-banco-local';
 
 jest.setTimeout(60_000);
+
+// Antes de qualquer conexão: esta suíte escreve, e o `.env` real
+// aponta para o Neon de produção (achado da validação cruzada).
+exigirBancoLocal();
 
 const prisma = new PrismaClient();
 

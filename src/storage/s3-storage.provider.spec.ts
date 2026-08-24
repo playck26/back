@@ -11,7 +11,7 @@ import { FalhaDeStorage } from './storage-provider.interface';
 import {
   CACHE_CONTROL_PRIVADO,
   CACHE_CONTROL_PUBLICO,
-  EXPIRACAO_URL_ASSINADA_SEGUNDOS,
+  TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS,
   type StorageConfig,
 } from './storage.config';
 
@@ -211,8 +211,8 @@ describe('S3StorageProvider', () => {
       ];
       expect(comando).toBeInstanceOf(GetObjectCommand);
       expect(comando.input).toMatchObject({ Bucket: 'playck-media', Key: KEY });
-      expect(opcoes.expiresIn).toBe(EXPIRACAO_URL_ASSINADA_SEGUNDOS);
-      expect(EXPIRACAO_URL_ASSINADA_SEGUNDOS).toBe(900);
+      expect(opcoes.expiresIn).toBe(TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS);
+      expect(TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS).toBe(900);
     });
 
     it('aceita expiração menor quando pedida', async () => {
@@ -226,6 +226,28 @@ describe('S3StorageProvider', () => {
         { expiresIn: number },
       ];
       expect(opcoes.expiresIn).toBe(60);
+    });
+
+    it.each([[86400], [901], [0], [-1], [1.5], [Number.NaN]])(
+      'RECUSA expiração de %p — AC-010 é teto, não default',
+      async (segundos) => {
+        // Achado da validação cruzada: o default de 900 não impedia
+        // `urlAssinada(key, 86400)`. Recusa explícita, e não `Math.min`
+        // silencioso: quem pede 24 h precisa saber que não recebeu.
+        const erro = await provider
+          .urlAssinada(KEY, segundos)
+          .catch((e: unknown) => e);
+        expect(erro).toBeInstanceOf(FalhaDeStorage);
+        expect((erro as Error).message).toMatch(/teto de 900s/);
+        expect(getSignedUrl as jest.Mock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('aceita exatamente o teto', async () => {
+      (getSignedUrl as jest.Mock).mockResolvedValue('https://assinada.exemplo');
+      await expect(
+        provider.urlAssinada(KEY, TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS),
+      ).resolves.toBe('https://assinada.exemplo');
     });
 
     it('a falha de assinatura não carrega assinatura nenhuma (INV-032/AC-011)', async () => {

@@ -72,8 +72,11 @@ export interface StorageProvider {
   urlPublica(key: string): string;
 
   /**
-   * URL assinada, com expiração (AC-010). **Nunca persistir nem logar o
-   * retorno** (INV-032/AC-011): ela é a credencial de leitura.
+   * URL assinada. **Nunca persistir nem logar o retorno** (INV-032/AC-011):
+   * ela é a credencial de leitura.
+   *
+   * `expiraEmSegundos` tem **teto** de 15 min (AC-010), não default: pedir
+   * mais que isso é `FalhaDeStorage`, não um valor aparado em silêncio.
    */
   urlAssinada(key: string, expiraEmSegundos?: number): Promise<string>;
 }

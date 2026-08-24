@@ -13,10 +13,15 @@
  * porque prova que não se pode rodar de novo não é prova.
  */
 import { PrismaClient } from '@prisma/client';
+import { exigirBancoLocal } from './exigir-banco-local';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(120_000);
+
+// Antes de qualquer conexão: esta suíte escreve, e o `.env` real
+// aponta para o Neon de produção (achado da validação cruzada).
+exigirBancoLocal();
 
 const db = new PrismaClient();
 const service = new PresencaService(db as unknown as PrismaService);

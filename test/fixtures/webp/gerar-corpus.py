@@ -236,6 +236,50 @@ def main() -> None:
     curto = lossy[: inicio_vp8 - 4] + struct.pack("<I", 8) + lossy[inicio_vp8 : inicio_vp8 + 8]
     salvar("webp-vp8-chunk-curto.webp", corrigir_riff(curto))
 
+    print()
+    print("SEQUENCIA DE CHUNKS — o BLOQUEADOR da validacao cruzada:")
+    # A allowlist responde QUAIS chunks. Nao respondia QUANTOS nem EM QUE
+    # ORDEM. Estes arquivos existem porque o revisor independente montou o
+    # primeiro deles e o validador respondeu `valido: true` com 41 bytes de
+    # carga arbitraria dentro. Nenhuma das 22 mutacoes tinha achado.
+    def com_chunk(base_bytes, fourcc, payload):
+        cabecalho = fourcc + struct.pack("<I", len(payload))
+        pad = b"" if len(payload) % 2 == 0 else bytes(1)
+        return corrigir_riff(base_bytes + cabecalho + payload + pad)
+
+    CARGA = b"CARGA ARBITRARIA QUE NAO E IMAGEM NENHUMA"
+
+    # O exploit, exatamente como o revisor montou.
+    salvar("webp-carga-em-vp8l-extra.webp", com_chunk(lossy, b"VP8L", CARGA))
+    # A mesma ideia com ALPH, que tambem esta na allowlist.
+    salvar("webp-carga-em-alph-extra.webp", com_chunk(com_alpha, b"ALPH", CARGA))
+    # Chunk permitido DEPOIS da imagem, no container estendido.
+    salvar("webp-alph-depois-da-imagem.webp", com_chunk(com_alpha, b"ALPH", bytes(16)))
+
+    def remontar(chunks_lista):
+        corpo = b"".join(chunks_lista)
+        return corrigir_riff(b"RIFF" + bytes(4) + b"WEBP" + corpo)
+
+    def extrair(b, alvo):
+        for fourcc, inicio, tamanho in percorrer_chunks(b):
+            if fourcc == alvo:
+                return b[inicio - 8 : inicio + tamanho + (tamanho % 2)]
+        raise AssertionError(f"sem chunk {alvo!r}")
+
+    vp8x_c = extrair(com_alpha, b"VP8X")
+    alph_c = extrair(com_alpha, b"ALPH")
+    vp8_c = extrair(com_alpha, b"VP8 ")
+    vp8l_c = extrair(webp(rgb, lossless=True), b"VP8L")
+
+    salvar("webp-alph-sem-vp8x.webp", remontar([alph_c, vp8_c]))
+    salvar("webp-dois-vp8x.webp", remontar([vp8x_c, vp8x_c, vp8_c]))
+    salvar("webp-dois-alph.webp", remontar([vp8x_c, alph_c, alph_c, vp8_c]))
+    salvar("webp-vp8x-sem-imagem.webp", remontar([vp8x_c, alph_c]))
+    salvar("webp-alph-antes-do-vp8x.webp", remontar([alph_c, vp8x_c, vp8_c]))
+    salvar("webp-alph-com-vp8l.webp", remontar([vp8x_c, alph_c, vp8l_c]))
+    # Valido: o container estendido pode embrulhar um VP8L sem ALPH.
+    salvar("valido-vp8x-com-vp8l.webp", remontar([vp8x_c, vp8l_c]))
+
     salvar("bytes-aleatorios.bin", bytes(range(256)) * 4)
 
     print("\nfeito.")

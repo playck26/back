@@ -25,10 +25,15 @@
  * prova é o harness do `workspace` (`bloq7-concorrencia.ts`).
  */
 import { PrismaClient } from '@prisma/client';
+import { exigirBancoLocal } from './exigir-banco-local';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(120_000);
+
+// Antes de qualquer conexão: esta suíte escreve, e o `.env` real
+// aponta para o Neon de produção (achado da validação cruzada).
+exigirBancoLocal();
 
 const A = new PrismaClient(); // o PUT
 const B = new PrismaClient(); // quem segura a raiz

@@ -10,7 +10,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   CACHE_CONTROL_PRIVADO,
   CACHE_CONTROL_PUBLICO,
-  EXPIRACAO_URL_ASSINADA_SEGUNDOS,
+  TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS,
   STORAGE_CONFIG,
   type StorageConfig,
 } from './storage.config';
@@ -119,8 +119,26 @@ export class S3StorageProvider implements StorageProvider {
 
   async urlAssinada(
     key: string,
-    expiraEmSegundos: number = EXPIRACAO_URL_ASSINADA_SEGUNDOS,
+    expiraEmSegundos: number = TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS,
   ): Promise<string> {
+    // AC-010 é TETO, e a recusa é explícita: aparar em silêncio faria uma
+    // chamada pedindo 24 h receber 15 min sem nunca saber disso, e a
+    // diferença entre pedir errado e ser corrigido às escondidas é o que
+    // separa um contrato de uma gentileza.
+    if (
+      !Number.isInteger(expiraEmSegundos) ||
+      expiraEmSegundos <= 0 ||
+      expiraEmSegundos > TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS
+    ) {
+      throw new FalhaDeStorage(
+        'assinar',
+        key,
+        new Error(
+          `expiração de ${expiraEmSegundos}s fora do teto de ` +
+            `${TETO_EXPIRACAO_URL_ASSINADA_SEGUNDOS}s (AC-010)`,
+        ),
+      );
+    }
     try {
       // O retorno é credencial de leitura: não logar, não persistir
       // (INV-032/AC-011). O `catch` abaixo carrega a chave, nunca a URL.

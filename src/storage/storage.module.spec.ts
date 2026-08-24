@@ -1,3 +1,4 @@
+import { Inject, Injectable, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { S3StorageProvider } from './s3-storage.provider';
@@ -65,6 +66,58 @@ describe('StorageModule', () => {
       bucket: 'playck-media',
     });
 
+    await modulo.close();
+  });
+
+  it('NÃO exporta a configuração: o segredo não atravessa a fronteira', async () => {
+    // Achado da validação cruzada de 2026-08-24: o módulo exportava
+    // `STORAGE_CONFIG`, e esse objeto carrega `key` e `secret`. Não havia
+    // consumidor — era fronteira pública aberta à toa.
+    @Injectable()
+    class Curioso {
+      constructor(@Inject(STORAGE_CONFIG) readonly config: unknown) {}
+    }
+
+    @Module({ imports: [StorageModule], providers: [Curioso] })
+    class ModuloCurioso {}
+
+    await expect(
+      Test.createTestingModule({
+        imports: [
+          ConfigModule.forRoot({
+            isGlobal: true,
+            ignoreEnvFile: true,
+            load: [() => VALIDAS],
+          }),
+          ModuloCurioso,
+        ],
+      }).compile(),
+    ).rejects.toThrow(/STORAGE_CONFIG/);
+  });
+
+  it('mas a PORTA atravessa, e é o que os consumidores injetam', async () => {
+    @Injectable()
+    class Consumidor {
+      constructor(
+        @Inject(STORAGE_PROVIDER) readonly storage: StorageProvider,
+      ) {}
+    }
+
+    @Module({ imports: [StorageModule], providers: [Consumidor] })
+    class ModuloConsumidor {}
+
+    const modulo = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => VALIDAS],
+        }),
+        ModuloConsumidor,
+      ],
+    }).compile();
+
+    expect(modulo.get(Consumidor).storage).toBeInstanceOf(S3StorageProvider);
     await modulo.close();
   });
 
