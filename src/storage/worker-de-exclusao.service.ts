@@ -196,32 +196,47 @@ export class WorkerDeExclusao {
     item: ItemDaFila,
   ): Promise<'apagado' | 'descartado' | 'reagendado' | 'falhou'> {
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        if (!(await tentarLockDeChave(tx, item.key))) {
-          await this.reagendarPorLock(tx, item);
-          return 'reagendado';
-        }
+      return await this.prisma.$transaction(
+        async (tx) => {
+          if (!(await tentarLockDeChave(tx, item.key))) {
+            await this.reagendarPorLock(tx, item);
+            return 'reagendado';
+          }
 
-        // AC-014 — a reconferência acontece DEPOIS do lock. Antes dele, a
-        // resposta poderia envelhecer entre a pergunta e o `DELETE`, que é
-        // exatamente o defeito que o lock existe para fechar.
-        if (await this.registry.estaReferenciada(item.key)) {
-          await tx.$executeRaw`
+          // AC-014 — a reconferência acontece DEPOIS do lock. Antes dele, a
+          // resposta poderia envelhecer entre a pergunta e o `DELETE`, que é
+          // exatamente o defeito que o lock existe para fechar.
+          if (await this.registry.estaReferenciada(item.key)) {
+            await tx.$executeRaw`
             DELETE FROM arquivos_pendentes_exclusao WHERE id = ${item.id}::uuid
           `;
-          return 'descartado';
-        }
+            return 'descartado';
+          }
 
-        await this.provider.apagar(item.key);
-        // INV-036 — a ordem importa: apaga o objeto, depois a linha. Se a
-        // linha sobreviver a uma falha aqui, o próximo ciclo tenta de novo e
-        // `apagar` é idempotente. O inverso deixaria o objeto no bucket sem
-        // ninguém para lembrar dele.
-        await tx.$executeRaw`
+          await this.provider.apagar(item.key);
+          // INV-036 — a ordem importa: apaga o objeto, depois a linha. Se a
+          // linha sobreviver a uma falha aqui, o próximo ciclo tenta de novo e
+          // `apagar` é idempotente. O inverso deixaria o objeto no bucket sem
+          // ninguém para lembrar dele.
+          await tx.$executeRaw`
           DELETE FROM arquivos_pendentes_exclusao WHERE id = ${item.id}::uuid
         `;
-        return 'apagado';
-      });
+          return 'apagado';
+        },
+        {
+          // **Explícito porque o default do Prisma são 5 s**, e há uma
+          // chamada de rede ao Spaces aqui dentro. Um `DeleteObject` lento
+          // estouraria o default, abortaria a transação e contaria como
+          // tentativa falha — um erro fabricado pelo relógio, não pelo
+          // storage. 20 s é folga larga para um `DELETE` de objeto.
+          //
+          // O outro lado da conta: a transação segura uma conexão do pool
+          // por até esse tempo. Com o teto de 50 por ciclo e processamento
+          // em série, o pior caso é uma conexão ocupada — não cinquenta.
+          timeout: 20_000,
+          maxWait: 5_000,
+        },
+      );
     } catch (causa) {
       await this.registrarFalha(item, causa);
       return 'falhou';
