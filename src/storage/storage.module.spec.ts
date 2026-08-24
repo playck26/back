@@ -2,6 +2,7 @@ import { Inject, Injectable, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { S3StorageProvider } from './s3-storage.provider';
 import {
@@ -11,7 +12,6 @@ import {
 import {
   ConfiguracaoDeStorageInvalida,
   STORAGE_CONFIG,
-  VARIAVEIS_DE_STORAGE,
 } from './storage.config';
 import { StorageModule } from './storage.module';
 
@@ -60,22 +60,40 @@ function compilarCom(valores: Record<string, string | undefined>) {
 }
 
 describe('StorageModule', () => {
-  it('o `.env` REALMENTE chega ao processo pelo Prisma — não pelo Nest', () => {
-    // Este teste não prova o módulo: prova o ambiente, e existe para que
-    // ninguém "conserte" o dublê acima achando que a limpeza de
-    // `process.env` bastaria. Se um dia o Prisma parar de carregar o
-    // `.env`, este teste cai e o comentário de cima vira mentira.
-    for (const variavel of VARIAVEIS_DE_STORAGE) {
-      delete process.env[variavel];
-    }
-    // `execSync` e não `require`: num processo limpo, sem o que este mesmo
-    // arquivo já importou. É a única forma de medir o efeito do import.
-    const saida = execSync(
-      `node -e "require('@prisma/client'); console.log(process.env.SPACES_SECRET ? 'PRESENTE' : 'ausente')"`,
-      { cwd: join(__dirname, '..', '..'), encoding: 'utf8' },
-    );
-    expect(saida.trim()).toBe('PRESENTE');
-  });
+  // Este teste não prova o módulo: prova o AMBIENTE, e existe para que
+  // ninguém "conserte" o dublê acima achando que limpar `process.env`
+  // bastaria.
+  //
+  // **Ele só roda onde existe um `.env`, e isso é a própria conclusão.** O
+  // Prisma carrega o `.env` que fica ao lado do schema — não o do diretório
+  // corrente — então a armadilha existe exatamente nas máquinas que têm um
+  // `.env`, e não existe no CI, que não tem. A primeira versão deste teste
+  // afirmava o fato incondicionalmente e **quebrou no CI**: ela estava
+  // afirmando um fato da máquina de quem escreveu.
+  const temEnvLocal = existsSync(join(__dirname, '..', '..', '.env'));
+
+  (temEnvLocal ? it : it.skip)(
+    'o `.env` REALMENTE chega ao processo pelo Prisma — não pelo Nest',
+    () => {
+      const saida = execSync(
+        `node -e "require('@prisma/client'); console.log(process.env.DATABASE_URL ? 'PRESENTE' : 'ausente')"`,
+        {
+          cwd: join(__dirname, '..', '..'),
+          encoding: 'utf8',
+          env: semDatabaseUrl(),
+        },
+      );
+      expect(saida.trim()).toBe('PRESENTE');
+    },
+  );
+
+  function semDatabaseUrl(): NodeJS.ProcessEnv {
+    // Sem isto o teste passaria pela variável herdada do shell, sem o Prisma
+    // ter feito nada — provaria o ambiente do runner, não o carregamento.
+    const copia = { ...process.env };
+    delete copia.DATABASE_URL;
+    return copia;
+  }
 
   it('resolve a porta STORAGE_PROVIDER com as seis variáveis presentes', async () => {
     const modulo = await compilarCom(VALIDAS);
