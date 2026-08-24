@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3StorageProvider } from './s3-storage.provider';
+import { StorageService } from './storage.service';
 import { STORAGE_PROVIDER } from './storage-provider.interface';
 import {
   carregarStorageConfig,
@@ -27,11 +28,15 @@ import {
       inject: [ConfigService],
     },
     { provide: STORAGE_PROVIDER, useClass: S3StorageProvider },
+    StorageService,
   ],
   // **Exporta só a porta.** `STORAGE_CONFIG` carrega `key` e `secret`, e
   // exportá-lo abria uma fronteira pública para o segredo sem nenhum
   // consumidor pedindo (achado da validação cruzada de 2026-08-24). Quem
   // precisar de configuração de storage fora daqui precisa justificar.
-  exports: [STORAGE_PROVIDER],
+  // `StorageService` é o que a SPEC-018 consome. `STORAGE_PROVIDER` sai
+  // junto porque o worker da TASK-005 apaga por chave já conferida, sem
+  // passar pelo caminho de leitura.
+  exports: [StorageService, STORAGE_PROVIDER],
 })
 export class StorageModule {}

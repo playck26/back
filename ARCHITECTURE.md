@@ -1,8 +1,8 @@
 # ARCHITECTURE — `back` (PlayCK)
 
 **Fonte: análise direta do código.** Data: 2026-08-24.
-**Commit de referência:** os commits `SPEC-017/TASK-001`, `TASK-002` e
-`TASK-004` (2026-08-24), a partir de `f75615b`. Por nome e não por hash
+**Commit de referência:** os commits `SPEC-017/TASK-001`, `TASK-002`,
+`TASK-004` e `TASK-003` (2026-08-24), a partir de `f75615b`. Por nome e não por hash
 porque este arquivo faz parte do próprio commit — um documento não consegue
 citar o hash que ele ajuda a formar.
 
@@ -39,15 +39,16 @@ GraphQL, ORM além do Prisma, provedor de e-mail, gateway de pagamento,
 WebSocket.
 
 **Storage de arquivo passou a existir em 2026-08-24** (SPEC-017) e é o único
-item que saiu desta lista. Existem, das TASK-001/002/004: a porta
+item que saiu desta lista. Existem, das TASK-001/002/003/004: a porta
 `StorageProvider`, o adaptador S3, a config das seis variáveis `SPACES_*`, o
-**validador de WebP** e a **tabela** da fila de exclusão.
+**validador de WebP**, a **gramática da chave**, o **`StorageService`** (que
+impõe a INV-037: nunca assina chave crua) e a **tabela** da fila de exclusão.
 
 **Não existe nada acima disso**, e a lista importa mais que o que existe:
-nenhuma rota de upload, nenhuma coluna de mídia, nenhum parser de chave,
-**nenhum worker** — a tabela da fila está criada e vazia, e ninguém escreve
-nela. São as TASK-002b, 003, 005, 006 e 007 da SPEC-017, e a SPEC-018
-inteira. Ler `storage/` esperando upload funcionando é ler errado.
+nenhuma rota de upload, nenhuma coluna de mídia, **nenhum worker** — a tabela
+da fila está criada e vazia, e ninguém escreve nela. São as TASK-002b, 005,
+006 e 007 da SPEC-017, e a SPEC-018 inteira. Ler `storage/` esperando upload
+funcionando é ler errado.
 
 **`fila/worker` continua na lista de não-existe acima**, e continua certo:
 há a tabela, não há o worker.
@@ -127,7 +128,8 @@ src/
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
   dashboard/       MOD-007 — agregações de leitura
-  storage/         MOD-008 — porta, adaptador S3 e validador WebP (SPEC-017)
+  storage/         MOD-008 — porta, adaptador S3, validador WebP,
+                   gramática da chave e StorageService (SPEC-017)
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
@@ -234,14 +236,17 @@ são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
 | MOD-005 | CourtBooking | `quadras`, `ocupacoes_quadra`, `horarios_funcionamento`, `pedidos_reserva` | **INV-001**, INV-007, INV-011 |
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
-| MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030, INV-031, INV-032 |
+| MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030, INV-031, INV-032, INV-033, INV-035, **INV-037** |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
 `PaymentConfigModule → CourtsModule`;
 `ClassesModule, PeopleModule, DashboardModule → FrequenciaModule`. Sem ciclos.
 **`StorageModule` não tem dependente nenhum hoje** — é fundação registrada
-antes do consumidor, e quem passa a depender dela é a SPEC-018.
+antes do consumidor, e quem passa a depender dela é a SPEC-018. Exporta
+`StorageService` (o caminho de leitura, com a conferência obrigatória) e
+`STORAGE_PROVIDER`; **não exporta a configuração**, que carrega o segredo do
+Spaces.
 
 **Concorrência: `turmas` é a raiz de lock do agregado da turma (INV-029).**
 Quatro caminhos a travam antes de qualquer outra linha —
