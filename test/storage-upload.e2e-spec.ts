@@ -165,17 +165,23 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
       await app.listen(0);
       const servidor = app.getHttpServer() as { address(): AddressInfo };
       const { port } = servidor.address();
-      const medida = await enviarSemEsperarFim(port, 3 * 1024 * 1024);
+      // 30 MB, e o tamanho é escolhido para a prova ser ROBUSTA: quanto
+      // maior o corpo, menor a fração que o buffer de socket representa.
+      // A primeira versão mandava 3 MB e comparava com o teto de 2 MB —
+      // passava na minha máquina (393 KB escritos) e reprovava no runner do
+      // CI (2,69 MB), porque buffer de socket varia por sistema. A
+      // afirmação estava certa e a barra é que era arbitrária.
+      const CORPO = 30 * 1024 * 1024;
+      const medida = await enviarSemEsperarFim(port, CORPO);
 
       expect(medida.status).toBe(413);
       expect(medida.body.code).toBe('CORPO_GRANDE_DEMAIS');
-      // A prova de que não consumiu o stream. Medido nesta máquina: ~393 KB
-      // de 3 MB, ou seja, respondeu com 13% do corpo transferido — o resto é
-      // buffer de socket, que varia por sistema. A barra é o próprio teto de
-      // 2 MB: **recusou antes de trafegar sequer o tamanho máximo
-      // permitido**. Se o servidor bufferizasse o corpo, este número seria
-      // 3 MB inteiros.
-      expect(medida.bytesEscritos).toBeLessThan(TAMANHO_MAXIMO_BYTES);
+      // A prova de que não consumiu o stream: respondeu com menos de um
+      // terço do corpo transferido. O número exato é buffer de socket e
+      // varia por sistema (393 KB aqui, 2,7 MB no runner do CI); o que não
+      // varia é a ordem de grandeza — se o servidor bufferizasse o corpo,
+      // seriam 30 MB inteiros.
+      expect(medida.bytesEscritos).toBeLessThan(CORPO / 3);
       expect(gravados).toHaveLength(0);
     });
 
