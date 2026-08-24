@@ -26,7 +26,7 @@ import {
   FrequenciaService,
   JANELA_MAXIMA_DIAS,
   JANELA_PADRAO_DIAS,
-} from './frequencia.service';
+} from '../frequencia/frequencia.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 

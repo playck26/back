@@ -215,6 +215,42 @@
         ]
       }
     },
+    "/api/v1/students/{id}/frequencia": {
+      "get": {
+        "operationId": "StudentsController_frequencia",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dias",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students": {
       "get": {
         "operationId": "StudentsController_list",
@@ -1954,6 +1990,34 @@
         ],
         "tags": [
           "me"
+        ]
+      }
+    },
+    "/api/v1/dashboard/evasao": {
+      "get": {
+        "operationId": "DashboardController_evasao",
+        "parameters": [
+          {
+            "name": "dias",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "dashboard"
         ]
       }
     },

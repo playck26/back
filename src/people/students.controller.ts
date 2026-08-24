@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -20,13 +22,44 @@ import { CreateStudentDto } from './dto/create-student.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { StudentsService } from './students.service';
+import {
+  FrequenciaService,
+  JANELA_MAXIMA_DIAS,
+  JANELA_PADRAO_DIAS,
+} from '../frequencia/frequencia.service';
 
 @ApiTags('students')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CompanyAdminGuard)
 @Controller('students')
 export class StudentsController {
-  constructor(private readonly studentsService: StudentsService) {}
+  constructor(
+    private readonly studentsService: StudentsService,
+    private readonly frequencias: FrequenciaService,
+  ) {}
+
+  /**
+   * SPEC-015/AC-007 — relatório de frequência do aluno: agregado, quebra
+   * por turma e as últimas ocorrências.
+   *
+   * Mesmo guard do resto do controller (`CompanyAdminGuard`), que é o que
+   * faz a AC-010 valer. **O aluno não vê a própria frequência nesta spec**
+   * — é decisão de produto com efeito na relação dele com o professor, e
+   * está fora de escopo de propósito.
+   */
+  @Get(':id/frequencia')
+  frequencia(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('dias', new DefaultValuePipe(JANELA_PADRAO_DIAS), ParseIntPipe)
+    dias: number,
+  ) {
+    return this.frequencias.doAluno(
+      user.companyId as string,
+      id,
+      Math.min(Math.max(dias, 1), JANELA_MAXIMA_DIAS),
+    );
+  }
 
   // `?vinculo=pendente` é a fila de aprovação do admin (SPEC-009/AC-015).
   @Get()
