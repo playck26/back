@@ -1520,6 +1520,42 @@
         ]
       }
     },
+    "/api/v1/classes/{id}/frequencia": {
+      "get": {
+        "operationId": "ClassesController_frequencia",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dias",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/presencas": {
       "get": {
         "operationId": "ClassesController_historicoDePresenca",

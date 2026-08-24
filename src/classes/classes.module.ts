@@ -6,6 +6,7 @@ import { ClassesService } from './classes.service';
 import { MeClassesController } from './me-classes.controller';
 import { MeTeacherAttendanceController } from './me-teacher-attendance.controller';
 import { MeTeacherClassesController } from './me-teacher-classes.controller';
+import { FrequenciaService } from './frequencia.service';
 import { PresencaService } from './presenca.service';
 
 @Module({
@@ -16,6 +17,6 @@ import { PresencaService } from './presenca.service';
     MeTeacherClassesController,
     MeTeacherAttendanceController,
   ],
-  providers: [ClassesService, PresencaService],
+  providers: [ClassesService, PresencaService, FrequenciaService],
 })
 export class ClassesModule {}

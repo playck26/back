@@ -22,6 +22,11 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { ClassesService } from './classes.service';
 import { PresencaService } from './presenca.service';
+import {
+  FrequenciaService,
+  JANELA_MAXIMA_DIAS,
+  JANELA_PADRAO_DIAS,
+} from './frequencia.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 
@@ -37,6 +42,7 @@ export class ClassesController {
   constructor(
     private readonly classesService: ClassesService,
     private readonly presencas: PresencaService,
+    private readonly frequencias: FrequenciaService,
   ) {}
 
   /**
@@ -45,6 +51,28 @@ export class ClassesController {
    * porque o escopo aqui é a empresa inteira: o gestor vê qualquer turma
    * dela, o professor só as próprias.
    */
+  /**
+   * SPEC-015/AC-001..AC-006 — relatório de frequência da turma.
+   *
+   * Mesmo guard do resto deste controller (`CompanyAdminGuard`), que é o
+   * que faz AC-010 valer: `aluno`, `professor` e `super_admin` levam 403.
+   * O professor **não** vê frequência nesta spec (LIM-004) — ele lança a
+   * chamada, quem lê o agregado é o gestor.
+   */
+  @Get(':id/frequencia')
+  frequencia(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('dias', new DefaultValuePipe(JANELA_PADRAO_DIAS), ParseIntPipe)
+    dias: number,
+  ) {
+    return this.frequencias.daTurma(
+      user.companyId as string,
+      id,
+      Math.min(Math.max(dias, 1), JANELA_MAXIMA_DIAS),
+    );
+  }
+
   @Get(':id/presencas')
   historicoDePresenca(
     @CurrentUser() user: AccessTokenPayload,
