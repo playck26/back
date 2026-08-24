@@ -54,6 +54,32 @@ describe('validarWebp', () => {
       });
     });
 
+    it.each([
+      ['ff-lossy.webp', 'VP8', 320, 240],
+      ['ff-lossless.webp', 'VP8L', 320, 240],
+      ['ff-alpha-lossy.webp', 'VP8X', 200, 150],
+      ['ff-alpha-lossless.webp', 'VP8L', 200, 150],
+      ['ff-preset-photo.webp', 'VP8', 64, 64],
+    ] as const)(
+      'aceita %s, do libwebp — encoder que não montou este corpus',
+      (nome, formato, largura, altura) => {
+        // Todo o resto do corpus sai do Pillow. Validador afinado num
+        // encoder só passa a codificar as manias dele, e ninguém percebe até
+        // chegar arquivo de outra origem. Estes cinco vêm do **libwebp**, o
+        // mesmo que o Chrome usa por baixo do `canvas.toBlob`.
+        //
+        // Entraram para responder à dúvida que sobrou da validação cruzada:
+        // `validarSequencia` recusa forma legítima do container? Estes
+        // arquivos dizem que não, e não fui eu que os montei.
+        expect(validar(nome)).toEqual({
+          valido: true,
+          formato,
+          largura,
+          altura,
+        });
+      },
+    );
+
     it('aceita exatamente 2500px — a fronteira da AC-004 é inclusiva', () => {
       const resultado = validar('valido-2500px-no-limite.webp');
       expect(resultado).toMatchObject({ valido: true, largura: 2500 });

@@ -1,6 +1,6 @@
 # Corpus de WebP — SPEC-017 / TASK-002
 
-São 37 arquivos. **Os 27 primeiros existiam antes da primeira linha do
+São 52 arquivos, de **dois encoders independentes**. **Os 27 primeiros existiam antes da primeira linha do
 validador** — a spec pede assim de propósito: *"validador escrito primeiro
 e testado depois acaba testado contra o que ele já faz"*.
 
@@ -14,9 +14,26 @@ o defeito não era falta de arquivo (ver a última seção).
 Passar em corpus não é prova de nada se o corpus foi escolhido depois.
 
 São binários commitados, não gerados em tempo de teste — o CI não tem
-Pillow, e corpus que muda com a versão da biblioteca deixa de ser corpus.
-Para regerar: `python test/fixtures/webp/gerar-corpus.py` (Pillow; os
-arquivos daqui saíram do Pillow 12.3.0, em 2026-08-24).
+Pillow nem ffmpeg, e corpus que muda com a versão da biblioteca deixa de ser
+corpus.
+
+| Origem | Regerar com | O que cobre |
+|---|---|---|
+| **Pillow 12.3.0** | `python gerar-corpus.py` | os válidos, todas as recusas e as mutações |
+| **libwebp (ffmpeg 8.1.2)** | `./gerar-corpus-ffmpeg.sh` | os 5 `ff-*.webp` — só válidos |
+
+**Por que dois encoders.** Todo o corpus vinha de um só, e validador afinado
+num encoder passa a codificar as manias dele — ninguém percebe até chegar
+arquivo de outra origem. Os `ff-*.webp` entraram depois da validação cruzada
+de 2026-08-24, para responder à dúvida que sobrou dela: *`validarSequencia`
+recusa forma legítima do container?* Eles dizem que não, e **não fui eu que
+os montei** — é o mesmo libwebp que o Chrome usa por baixo do
+`canvas.toBlob`.
+
+**O que eles NÃO atestam:** nenhum dos dois encoders produz `VP8X` +
+`VP8L` sem `ALPH`. Essa forma é legal pelo container spec e está no corpus
+como `valido-vp8x-com-vp8l.webp`, montada à mão — **é a única forma válida
+cuja aceitação só tem a minha palavra.**
 
 ## Válidos — precisam passar
 
