@@ -1,4 +1,13 @@
-import { Module, ValidationPipe, type INestApplication } from '@nestjs/common';
+import {
+  Controller,
+  Module,
+  Param,
+  ParseUUIDPipe,
+  Put,
+  UploadedFile,
+  ValidationPipe,
+  type INestApplication,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { request as requisicaoCrua } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -15,7 +24,9 @@ import {
 import { StorageService } from '../src/storage/storage.service';
 import {
   CAMPO_DO_ARQUIVO,
+  exigirArquivo,
   TAMANHO_MAXIMO_BYTES,
+  UploadDeMidia,
 } from '../src/storage/upload-de-midia';
 import {
   EMPRESA_FIXTURE,
@@ -306,6 +317,77 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
         .expect(404);
 
       expect(corpo(resposta).code).toBe('OBJETO_NAO_ENCONTRADO');
+    });
+  });
+
+  describe('o upload NÃO mascara o erro da própria rota', () => {
+    // Achado da 2ª validação cruzada, reproduzido antes de corrigir: o
+    // decorator usava um filtro de rota, e filtro de rota captura por TIPO —
+    // no escopo da rota, `BadRequestException` significa qualquer coisa.
+    // Um id inválido virava "Envie o arquivo no campo arquivo".
+    //
+    // O fixture sozinho nunca pegaria isto: ele não valida parâmetro. É
+    // preciso uma rota que recuse por conta própria, e é o que este bloco
+    // monta — a rota real da SPEC-018 vai ter exatamente essa forma.
+    let appComPipe: INestApplication<App>;
+
+    beforeEach(async () => {
+      @Controller('comPipe')
+      class RotaComPipe {
+        @Put(':id')
+        @UploadDeMidia()
+        subir(
+          @Param('id', ParseUUIDPipe) id: string,
+          @UploadedFile() arquivo?: Express.Multer.File,
+        ) {
+          exigirArquivo(arquivo);
+          return { id };
+        }
+      }
+
+      @Module({ controllers: [RotaComPipe] })
+      class ModuloComPipe {}
+
+      const ref = await Test.createTestingModule({
+        imports: [ModuloComPipe],
+      }).compile();
+      appComPipe = ref.createNestApplication<INestApplication<App>>();
+      appComPipe.setGlobalPrefix('api/v1');
+      await appComPipe.init();
+    });
+
+    afterEach(async () => {
+      await appComPipe.close();
+    });
+
+    it('id inválido devolve o erro do PIPE, não o do upload', async () => {
+      const resposta = await request(appComPipe.getHttpServer())
+        .put('/api/v1/comPipe/nao-e-uuid')
+        .attach(CAMPO_DO_ARQUIVO, ler('valido-vp8-lossy.webp'), 'f.webp')
+        .expect(400);
+
+      expect(corpo(resposta).code).toBeUndefined();
+      expect(JSON.stringify(resposta.body)).toMatch(/uuid/i);
+    });
+
+    it('e o erro DE upload continua traduzido na mesma rota', async () => {
+      const resposta = await request(appComPipe.getHttpServer())
+        .put('/api/v1/comPipe/f1c70000-0000-4000-8000-000000000002')
+        .attach('campo-errado', ler('valido-vp8-lossy.webp'), 'f.webp')
+        .expect(400);
+
+      expect(corpo(resposta).code).toBe('CAMPO_INESPERADO');
+    });
+
+    it('id válido com arquivo válido passa', async () => {
+      const resposta = await request(appComPipe.getHttpServer())
+        .put('/api/v1/comPipe/f1c70000-0000-4000-8000-000000000002')
+        .attach(CAMPO_DO_ARQUIVO, ler('valido-vp8-lossy.webp'), 'f.webp')
+        .expect(200);
+
+      expect(resposta.body).toMatchObject({
+        id: 'f1c70000-0000-4000-8000-000000000002',
+      });
     });
   });
 

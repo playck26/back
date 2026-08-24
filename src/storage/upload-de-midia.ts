@@ -1,20 +1,20 @@
 import {
   applyDecorators,
-  ArgumentsHost,
   BadRequestException,
-  Catch,
+  CallHandler,
   CanActivate,
-  ExceptionFilter,
   ExecutionContext,
   HttpStatus,
   Injectable,
+  NestInterceptor,
   PayloadTooLargeException,
-  UseFilters,
+  Type,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
+import type { Observable } from 'rxjs';
 
 /**
  * SPEC-017/TASK-002b — **a fonte única da configuração de upload** (INV-048).
@@ -74,37 +74,62 @@ export class TamanhoDeCorpoGuard implements CanActivate {
 }
 
 /**
- * O segundo portão de tamanho, e a forma do erro.
+ * O segundo portão de tamanho, e a tradução do erro — **na origem, não na
+ * rota**.
  *
- * **O status já vem certo do Nest**, e isso foi medido, não suposto: o
+ * A primeira versão era um `@UseFilters(@Catch(PayloadTooLargeException,
+ * BadRequestException))`. Funcionava para o upload e **mascarava tudo o mais
+ * que a rota recusasse**: a validação cruzada de 2026-08-24 montou uma rota
+ * com `ParseUUIDPipe` e um id inválido virou *"Envie o arquivo no campo
+ * arquivo"*. Reproduzido antes de corrigir.
+ *
+ * O erro do filtro era de posição: ele capturava **por tipo, no escopo da
+ * rota**, e no escopo da rota `BadRequestException` significa qualquer coisa.
+ * Traduzir aqui, em volta do interceptor que **produz** o erro, só alcança o
+ * que veio do upload — e o que a rota recusar por conta própria passa
+ * intacto.
+ *
+ * **O status já vem certo do Nest**, e isso foi medido: o
  * `transformException` do `@nestjs/platform-express` traduz `MulterError`
- * antes de qualquer filtro nosso — `LIMIT_FILE_SIZE` vira 413,
- * `LIMIT_UNEXPECTED_FILE` vira 400. A primeira versão deste arquivo tinha um
- * `@Catch(MulterError)` que **nunca era alcançado**, e o teste mostrou:
- * status certo, corpo do Nest, sem o nosso `code`.
- *
- * O que falta, e é o que este filtro faz, é o **`code` estável** — convenção
- * do projeto para erro de domínio (`FORA_DO_EXPEDIENTE`, `SENHA_TEMPORARIA`
- * e companhia). Frontend que decide por string de mensagem quebra na
- * primeira revisão de texto.
- *
- * **Não há ramo para `MulterError` aqui.** Se um dia o Nest parar de
- * traduzir, o erro vira 500 e as suítes de contrato reprovam — o que é
- * melhor que um ramo que ninguém exercita e ninguém sabe se funciona.
+ * antes de qualquer coisa nossa — `LIMIT_FILE_SIZE` vira 413,
+ * `LIMIT_UNEXPECTED_FILE` vira 400. O que falta é o **`code` estável**, que é
+ * a convenção do projeto para erro de domínio; frontend que decide por
+ * string de mensagem quebra na primeira revisão de texto.
  */
-@Catch(PayloadTooLargeException, BadRequestException)
-export class ErroDeUploadFilter implements ExceptionFilter {
-  catch(
-    erro: PayloadTooLargeException | BadRequestException,
-    host: ArgumentsHost,
-  ): void {
-    const res = host.switchToHttp().getResponse<Response>();
-    const corpo =
-      erro instanceof PayloadTooLargeException
-        ? CORPO_GRANDE_DEMAIS
-        : CAMPO_INESPERADO;
-    res.status(corpo.statusCode).json(corpo);
+export function InterceptorDeMidia(): Type<NestInterceptor> {
+  const Base = FileInterceptor(CAMPO_DO_ARQUIVO, opcoesDeUpload());
+
+  @Injectable()
+  class InterceptorComErroTraduzido extends Base {
+    async intercept(
+      contexto: ExecutionContext,
+      proximo: CallHandler,
+    ): Promise<Observable<unknown>> {
+      try {
+        return (await super.intercept(
+          contexto,
+          proximo,
+        )) as Observable<unknown>;
+      } catch (erro) {
+        throw traduzirErroDeUpload(erro);
+      }
+    }
   }
+
+  return InterceptorComErroTraduzido;
+}
+
+/** Só é chamada com erro vindo do interceptor de upload. */
+export function traduzirErroDeUpload(erro: unknown): unknown {
+  if (erro instanceof PayloadTooLargeException) {
+    return new PayloadTooLargeException(CORPO_GRANDE_DEMAIS);
+  }
+  if (erro instanceof BadRequestException) {
+    return new BadRequestException(CAMPO_INESPERADO);
+  }
+  // Qualquer outra coisa sobe como está: inventar `code` para erro que não
+  // conhecemos é dizer ao cliente que sabemos o que aconteceu.
+  return erro;
 }
 
 /**
@@ -134,10 +159,11 @@ export function opcoesDeUpload() {
  * é a única forma suportada de aceitar upload de mídia neste projeto.
  */
 export function UploadDeMidia(): MethodDecorator {
+  // **Sem `UseFilters`**: filtro de rota captura por tipo, e no escopo da
+  // rota `BadRequestException` significa qualquer coisa. Ver acima.
   return applyDecorators(
     UseGuards(TamanhoDeCorpoGuard),
-    UseFilters(ErroDeUploadFilter),
-    UseInterceptors(FileInterceptor(CAMPO_DO_ARQUIVO, opcoesDeUpload())),
+    UseInterceptors(InterceptorDeMidia()),
   );
 }
 

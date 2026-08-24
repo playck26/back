@@ -1,15 +1,16 @@
 import {
   BadRequestException,
   ExecutionContext,
+  NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import {
   CAMPO_DO_ARQUIVO,
-  ErroDeUploadFilter,
   exigirArquivo,
   opcoesDeUpload,
   TamanhoDeCorpoGuard,
   TAMANHO_MAXIMO_BYTES,
+  traduzirErroDeUpload,
 } from './upload-de-midia';
 
 // SPEC-017/TASK-002b — a fonte única (INV-048). O comportamento pela rota é
@@ -57,31 +58,35 @@ describe('TamanhoDeCorpoGuard — o portão do Content-Length', () => {
   });
 });
 
-describe('ErroDeUploadFilter — o `code` estável', () => {
-  function responder(erro: PayloadTooLargeException | BadRequestException) {
-    const json = jest.fn();
-    const status = jest.fn().mockReturnValue({ json });
-    const host = {
-      switchToHttp: () => ({ getResponse: () => ({ status }) }),
-    } as never;
-    new ErroDeUploadFilter().catch(erro, host);
-    return { status, json };
-  }
+describe('a tradução do erro acontece na ORIGEM, não na rota', () => {
+  // A primeira versão usava um filtro de rota, e ele mascarava qualquer
+  // `BadRequestException` — a validação cruzada montou uma rota com
+  // `ParseUUIDPipe` e um id inválido virou "Envie o arquivo no campo
+  // arquivo". O comportamento pela rota é provado em
+  // `test/storage-upload.e2e-spec.ts`; aqui fica a função de tradução.
 
-  it('413 vira CORPO_GRANDE_DEMAIS', () => {
-    const { status, json } = responder(new PayloadTooLargeException());
-    expect(status).toHaveBeenCalledWith(413);
-    expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'CORPO_GRANDE_DEMAIS' }),
+  it('413 do interceptor vira CORPO_GRANDE_DEMAIS', () => {
+    const traduzido = traduzirErroDeUpload(new PayloadTooLargeException('x'));
+    expect(traduzido).toBeInstanceOf(PayloadTooLargeException);
+    expect((traduzido as PayloadTooLargeException).getResponse()).toMatchObject(
+      { code: 'CORPO_GRANDE_DEMAIS' },
     );
   });
 
-  it('400 vira CAMPO_INESPERADO', () => {
-    const { status, json } = responder(new BadRequestException());
-    expect(status).toHaveBeenCalledWith(400);
-    expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'CAMPO_INESPERADO' }),
-    );
+  it('400 do interceptor vira CAMPO_INESPERADO', () => {
+    const traduzido = traduzirErroDeUpload(new BadRequestException('x'));
+    expect((traduzido as BadRequestException).getResponse()).toMatchObject({
+      code: 'CAMPO_INESPERADO',
+    });
+  });
+
+  it('o que não é de upload sobe INTACTO', () => {
+    // Inventar `code` para erro que não conhecemos é dizer ao cliente que
+    // sabemos o que aconteceu.
+    const outro = new NotFoundException('sumiu');
+    expect(traduzirErroDeUpload(outro)).toBe(outro);
+    const cru = new Error('qualquer coisa');
+    expect(traduzirErroDeUpload(cru)).toBe(cru);
   });
 });
 

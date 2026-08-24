@@ -24,6 +24,8 @@ export const HORAS_EM_FILA_ANTES_DE_SINALIZAR = 24;
 
 export interface ResultadoDoCiclo {
   readonly elegiveis: number;
+  /** Itens que estouraram as tentativas e esperam operação (AC-016). */
+  readonly travados: number;
   readonly apagados: number;
   readonly descartados: number;
   readonly reagendados: number;
@@ -78,12 +80,27 @@ export class WorkerDeExclusao {
   async executarCiclo(): Promise<ResultadoDoCiclo> {
     const vazio: ResultadoDoCiclo = {
       elegiveis: 0,
+      travados: 0,
       apagados: 0,
       descartados: 0,
       reagendados: 0,
       falhas: 0,
       pausado: false,
     };
+
+    // Item que chegou às 5 falhas sai dos elegíveis e **para de aparecer**.
+    // A AC-016 diz que ele não some em silêncio, e um alerta disparado uma
+    // única vez, no ciclo em que ele estourou, some junto com o log daquele
+    // dia. Aqui a condição é a própria fila — o mesmo princípio da pausa do
+    // teto: enquanto houver item travado, o alerta se repete, e ele sobrevive
+    // a restart porque não depende de estado guardado.
+    //
+    // (Achado da 2ª validação cruzada: o harness da TASK-004 prometia esse
+    // redisparo, e o código não o sustentava.)
+    const travados = await this.contarTravados();
+    if (travados > 0) {
+      this.alerta.disparar(ALERTAS.EXCLUSAO_FALHANDO, { travados });
+    }
 
     const elegiveis = await this.lerElegiveis();
 
@@ -100,7 +117,7 @@ export class WorkerDeExclusao {
       } else if (this.registry.jaTeveChecker()) {
         this.alerta.disparar(ALERTAS.CHECKER_SUMIU, {});
       }
-      return { ...vazio, elegiveis: elegiveis.length };
+      return { ...vazio, travados, elegiveis: elegiveis.length };
     }
     if (!this.registry.jaTeveChecker()) {
       // Impossível hoje (`temChecker` implica `jaTeve`), mas a assimetria
@@ -118,7 +135,7 @@ export class WorkerDeExclusao {
       // a anomalia durar — inclusive depois de um restart, que é justamente
       // quando um flag em memória evaporaria.
       this.alerta.disparar(ALERTAS.TETO_ESTOURADO, estouro);
-      return { ...vazio, elegiveis: elegiveis.length, pausado: true };
+      return { ...vazio, travados, elegiveis: elegiveis.length, pausado: true };
     }
 
     // ---- Trabalho -------------------------------------------------------
@@ -137,6 +154,7 @@ export class WorkerDeExclusao {
 
     return {
       elegiveis: elegiveis.length,
+      travados,
       apagados,
       descartados,
       reagendados,
@@ -159,6 +177,14 @@ export class WorkerDeExclusao {
       ORDER BY criado_em ASC
       LIMIT ${(TETO_POR_CICLO + 1) * 4}
     `;
+  }
+
+  private async contarTravados(): Promise<number> {
+    const linhas = await this.prisma.$queryRaw<{ total: bigint }[]>`
+      SELECT count(*) AS total FROM arquivos_pendentes_exclusao
+      WHERE tentativas >= ${MAXIMO_DE_TENTATIVAS}
+    `;
+    return Number(linhas[0]?.total ?? 0);
   }
 
   private medirEstouro(
@@ -201,6 +227,24 @@ export class WorkerDeExclusao {
           if (!(await tentarLockDeChave(tx, item.key))) {
             await this.reagendarPorLock(tx, item);
             return 'reagendado';
+          }
+
+          // A lista de elegíveis foi lida antes do lock, então ela pode
+          // estar velha: outra réplica — ou o ciclo anterior deste mesmo
+          // processo — pode ter cuidado deste item enquanto esperávamos.
+          // Sem esta conferência, o worker chamaria `DeleteObject` num
+          // objeto já apagado. É idempotente e não corrompe nada, mas é uma
+          // chamada de rede inventada, e um `apagados++` que não aconteceu.
+          //
+          // (Achado ao investigar a ressalva de escala da 2ª validação
+          // cruzada. O teste de duas réplicas passava por TIMING antes
+          // disto, não por desenho.)
+          const linhas = await tx.$queryRaw<unknown[]>`
+            SELECT 1 FROM arquivos_pendentes_exclusao
+            WHERE id = ${item.id}::uuid
+          `;
+          if (linhas.length === 0) {
+            return 'descartado';
           }
 
           // AC-014 — a reconferência acontece DEPOIS do lock. Antes dele, a

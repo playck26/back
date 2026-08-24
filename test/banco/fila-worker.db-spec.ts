@@ -490,6 +490,89 @@ describe('WorkerDeExclusao contra Postgres real', () => {
     });
   });
 
+  describe('duas réplicas — o que o teto garante e o que não garante', () => {
+    // A 2ª validação cruzada levantou que `TETO_POR_CICLO` seria "por
+    // processo", virando 100 com duas instâncias. Estes testes medem.
+    function outroWorker(cliente: PrismaClient) {
+      return new WorkerDeExclusao(
+        cliente as unknown as PrismaService,
+        registry,
+        alerta,
+        provider,
+      );
+    }
+
+    beforeEach(() => {
+      registry.registrar({ estaReferenciada: () => Promise.resolve(false) });
+    });
+
+    it('o teto é avaliado sobre a FILA, que é compartilhada: as duas pausam', async () => {
+      for (let i = 0; i < TETO_POR_EMPRESA + 1; i++) {
+        await enfileirar(chave(`r${i}`));
+      }
+
+      const [a, b] = await Promise.all([
+        worker.executarCiclo(),
+        outroWorker(B).executarCiclo(),
+      ]);
+
+      // O teto não multiplica por réplica porque não conta o que ESTE
+      // processo fez — conta o que está na fila, e a fila é uma só.
+      expect(a.pausado).toBe(true);
+      expect(b.pausado).toBe(true);
+      expect(apagados).toEqual([]);
+    });
+
+    it('linha que sumiu entre a leitura e o lock NÃO vira DeleteObject', async () => {
+      // O teste abaixo passava por TIMING. Este força o interleaving exato:
+      // enquanto o worker processa o primeiro item, a linha do segundo é
+      // apagada por fora — como faria outra réplica que chegou primeiro.
+      const primeiro = chave('x1');
+      const segundo = chave('x2');
+      await enfileirar(primeiro);
+      await enfileirar(segundo);
+
+      registry.desregistrar();
+      registry.registrar({
+        estaReferenciada: async (k) => {
+          if (k === primeiro) {
+            await A.$executeRawUnsafe(
+              'DELETE FROM arquivos_pendentes_exclusao WHERE key = $1',
+              segundo,
+            );
+          }
+          return false;
+        },
+      });
+
+      const r = await worker.executarCiclo();
+
+      // O segundo não pode ter virado chamada de rede: a linha dele já não
+      // existia quando o worker pegou o lock.
+      expect(apagados).toEqual([primeiro]);
+      expect(r.apagados).toBe(1);
+      expect(r.descartados).toBe(1);
+    });
+
+    it('abaixo do teto, cada objeto é apagado UMA vez só', async () => {
+      // O que a concorrência poderia duplicar é a CHAMADA ao Spaces: a
+      // réplica B leu a fila antes de A commitar, e chegaria com o lock já
+      // livre e a linha já apagada.
+      const chaves = [chave('r1'), chave('r2'), chave('r3')];
+      for (const k of chaves) {
+        await enfileirar(k);
+      }
+
+      await Promise.all([
+        worker.executarCiclo(),
+        outroWorker(B).executarCiclo(),
+      ]);
+
+      expect([...apagados].sort()).toEqual([...chaves].sort());
+      expect(apagados).toHaveLength(chaves.length);
+    });
+  });
+
   describe('AC-012/016 — falha de exclusão', () => {
     beforeEach(() => {
       registry.registrar({ estaReferenciada: () => Promise.resolve(false) });
@@ -520,6 +603,40 @@ describe('WorkerDeExclusao contra Postgres real', () => {
       // esperando alguém olhar.
       expect(await linhaDe(key)).toMatchObject({ tentativas: 5 });
       expect((await worker.executarCiclo()).elegiveis).toBe(0);
+    });
+
+    it('o alerta do item travado se REPETE nos ciclos seguintes', async () => {
+      // Achado da 2ª validação cruzada: o alerta disparava uma vez, no ciclo
+      // em que o item estourou — e some junto com o log daquele dia. A
+      // AC-016 diz que ele não some em silêncio, então a condição virou a
+      // própria fila, como na pausa do teto.
+      await enfileirar(chave('a'), { tentativas: 5 });
+
+      const primeiro = await worker.executarCiclo();
+      expect(primeiro.elegiveis).toBe(0); // já saiu do trabalho normal
+      expect(primeiro.travados).toBe(1);
+      expect(alerta.codigos()).toEqual([ALERTAS.EXCLUSAO_FALHANDO]);
+
+      // Worker novo: prova que o redisparo não depende de estado em memória,
+      // e portanto sobrevive a restart.
+      const depoisDoRestart = new WorkerDeExclusao(
+        A as unknown as PrismaService,
+        registry,
+        alerta,
+        provider,
+      );
+      await depoisDoRestart.executarCiclo();
+      expect(alerta.codigos()).toEqual([
+        ALERTAS.EXCLUSAO_FALHANDO,
+        ALERTAS.EXCLUSAO_FALHANDO,
+      ]);
+    });
+
+    it('sem item travado, nenhum alerta de exclusão falhando', async () => {
+      await enfileirar(chave('a'));
+      const r = await worker.executarCiclo();
+      expect(r.travados).toBe(0);
+      expect(alerta.codigos()).not.toContain(ALERTAS.EXCLUSAO_FALHANDO);
     });
 
     it('INV-036: falha ao apagar NÃO remove a linha da fila', async () => {

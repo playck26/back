@@ -45,11 +45,18 @@ WebP**, a **gramática da chave**, o **`StorageService`** (que impõe a
 INV-037: nunca assina chave crua), a **fonte única da configuração de
 upload** (`@UploadDeMidia()`, INV-048) e a **tabela** da fila de exclusão.
 
-**Não existe nada acima disso**, e a lista importa mais que o que existe:
-**nenhuma rota de upload do produto**, nenhuma coluna de mídia, **nenhum
-worker** — a tabela da fila está criada e vazia, e ninguém escreve nela. São
-as TASK-005, 006 e 007 da SPEC-017, e a SPEC-018 inteira. Ler `storage/`
-esperando upload funcionando é ler errado.
+Existem também, da TASK-005: a **fila**, o **worker**, o advisory lock por
+chave e a porta `KeyReferenceChecker`.
+
+**O que NÃO existe, e a lista importa mais que o que existe:** **nenhuma
+rota de upload do produto**, nenhuma coluna de mídia, e **nenhum
+`KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e não
+apaga nada. A tabela da fila está criada e **vazia**, porque quem enfileira é
+quem apaga referência, e isso é da SPEC-018. Faltam as TASK-006 e 007 da
+SPEC-017, e a SPEC-018 inteira.
+
+**Ler `storage/` esperando upload funcionando é ler errado**, e ler o worker
+esperando que ele apague alguma coisa hoje também.
 
 **O contrato de upload é exercitado por um controller que mora em `test/`**
 (`test/storage/fixture-upload.controller.ts`), e é decisão da spec: rota
@@ -114,7 +121,7 @@ a replicar:
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
 | `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
-| `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a TASK-005** |
+| `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
 que são a garantia real):
