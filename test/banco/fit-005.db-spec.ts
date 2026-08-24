@@ -16,6 +16,7 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
 
@@ -95,20 +96,10 @@ const contaPresencas = (ocupacaoId: string) =>
 
 beforeAll(async () => {
   const q = (s: string) => db.$executeRawUnsafe(s);
-  for (const t of [
-    'presencas',
-    'chamadas',
-    'turma_alunos',
-    'ocupacoes_quadra',
-    'turmas',
-    'alunos',
-    'professores',
-    'quadras',
-    'usuarios',
-    'empresas',
-  ]) {
-    await q(`DELETE FROM ${t}`);
-  }
+  // DEF-009 — apaga SÓ a empresa desta suíte. Aqui havia um
+  // `DELETE FROM <tabela>` sem `WHERE`, dez tabelas, o banco inteiro;
+  // em 2026-08-24 isso rodou contra produção e apagou os dados.
+  await limparEmpresa(db, EMPRESA);
   await q(
     `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT','fit',now())`,
   );
