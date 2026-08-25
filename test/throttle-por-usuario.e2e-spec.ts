@@ -13,6 +13,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { Throttle, ThrottlerModule } from '@nestjs/throttler';
+import { ContagemPorIp } from '../src/common/throttle/contagem-por-ip';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { ThrottlerPorUsuario } from '../src/storage/limite-de-upload';
@@ -62,6 +63,33 @@ class ProtegidaController {
   }
 }
 
+/**
+ * Como `/auth/login`: sem guard de auth, e com teto de força bruta.
+ *
+ * `@ContagemPorIp()` é o que a 4ª validação cruzada cobrou. Sem ela, um
+ * Bearer válido comprava um balde novo — e **este produto tem
+ * auto-cadastro**, então "um balde por conta" é o mesmo que limite nenhum.
+ */
+@Controller('publica')
+class PublicaController {
+  @Get()
+  @Throttle({ default: { limit: TETO, ttl: 60_000 } })
+  @ContagemPorIp()
+  ok() {
+    return { ok: true };
+  }
+}
+
+/** A mesma rota SEM a marca, para provar que a marca é quem faz a diferença. */
+@Controller('publica-sem-marca')
+class PublicaSemMarcaController {
+  @Get()
+  @Throttle({ default: { limit: TETO, ttl: 60_000 } })
+  ok() {
+    return { ok: true };
+  }
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -72,7 +100,11 @@ class ProtegidaController {
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
     JwtModule.register({}),
   ],
-  controllers: [ProtegidaController],
+  controllers: [
+    ProtegidaController,
+    PublicaController,
+    PublicaSemMarcaController,
+  ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerPorUsuario }],
 })
 class ModuloComAFormaDoAppModule {}
@@ -127,6 +159,35 @@ describe('throttle por usuário — com a forma do AppModule', () => {
     // Rota pública não tem quem identificar, e o IP é o que sobra. Aqui o
     // compartilhamento é o comportamento certo, não o defeito.
     await request(app.getHttpServer()).get('/protegida').expect(429);
+  });
+
+  it('token válido NÃO compra balde novo em rota de força bruta', async () => {
+    // A aresta que a 4ª validação cruzada achou. Sem `@ContagemPorIp()`,
+    // este último pedido voltava 200 — e com auto-cadastro, o teto de 10
+    // tentativas viraria "10 vezes o número de contas que o atacante criar".
+    for (let i = 0; i < TETO; i++) {
+      await request(app.getHttpServer()).get('/publica').expect(200);
+    }
+    await request(app.getHttpServer()).get('/publica').expect(429);
+
+    await request(app.getHttpServer())
+      .get('/publica')
+      .set('Authorization', tokenDe('conta-criada-pelo-atacante'))
+      .expect(429);
+  });
+
+  it('e a marca é quem faz a diferença — sem ela, o balde é do usuário', async () => {
+    // O contraste importa: prova que o 429 acima vem da marca, e não de
+    // alguma outra coisa ter mudado no caminho.
+    for (let i = 0; i < TETO; i++) {
+      await request(app.getHttpServer()).get('/publica-sem-marca').expect(200);
+    }
+    await request(app.getHttpServer()).get('/publica-sem-marca').expect(429);
+
+    await request(app.getHttpServer())
+      .get('/publica-sem-marca')
+      .set('Authorization', tokenDe('outra-conta'))
+      .expect(200);
   });
 
   it('token FORJADO não compra um balde novo', async () => {

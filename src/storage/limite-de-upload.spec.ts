@@ -1,7 +1,9 @@
-import { HttpException } from '@nestjs/common';
+import { HttpException, type ExecutionContext } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
+import { ContagemPorIp } from '../common/throttle/contagem-por-ip';
 import {
   JANELA_DE_UPLOAD_MS,
   LIMITE_DE_UPLOADS,
@@ -29,10 +31,12 @@ const OUTRO_SEGREDO = 'segredo-do-atacante';
 const jwt = new JwtService({});
 
 function guardCom(config: ConfigService): ThrottlerPorUsuario {
+  // `Reflector` de verdade: é ele que lê a marca `@ContagemPorIp()`, e um
+  // dublê aqui provaria a leitura que o teste inventou, não a do Nest.
   return new ThrottlerPorUsuario(
     {} as never,
     {} as never,
-    {} as never,
+    new Reflector(),
     jwt,
     config,
   );
@@ -70,11 +74,59 @@ function bearer(
   })}`;
 }
 
+/** Rota comum, sem marca nenhuma. */
+class RotaQualquer {
+  handler() {}
+}
+
+/** Rota de força bruta, como `/auth/login`. */
+class RotaPorIp {
+  @ContagemPorIp()
+  handler() {}
+}
+
+/**
+ * Contexto como o Nest entrega: o guard lê a marca do **handler** e da
+ * classe. Um contexto ausente é caso próprio, testado à parte.
+ */
+function contextoDe(alvo: { new (): { handler(): void } }): ExecutionContext {
+  return {
+    getHandler: () => alvo.prototype.handler,
+    getClass: () => alvo,
+  } as unknown as ExecutionContext;
+}
+
 /** `getTracker` é `protected` — o teste precisa do mesmo acesso do Nest. */
-function tracker(g: ThrottlerPorUsuario, r: Request): Promise<string> {
+function chamarGetTracker(
+  g: ThrottlerPorUsuario,
+  r: Request,
+  contexto: ExecutionContext | undefined,
+): Promise<string> {
   return (
-    g as unknown as { getTracker(r: Request): Promise<string> }
-  ).getTracker(r);
+    g as unknown as {
+      getTracker(r: Request, c?: ExecutionContext): Promise<string>;
+    }
+  ).getTracker(r, contexto);
+}
+
+function tracker(
+  g: ThrottlerPorUsuario,
+  r: Request,
+  contexto: ExecutionContext = contextoDe(RotaQualquer),
+): Promise<string> {
+  return chamarGetTracker(g, r, contexto);
+}
+
+/**
+ * Helper separado, e de propósito: **valor padrão de parâmetro captura o
+ * `undefined` explícito**, então `tracker(g, r, undefined)` usaria o padrão
+ * e provaria o contrário do que diz. Tropecei nisso duas vezes nesta spec.
+ */
+function trackerSemContexto(
+  g: ThrottlerPorUsuario,
+  r: Request,
+): Promise<string> {
+  return chamarGetTracker(g, r, undefined);
 }
 
 describe('ThrottlerPorUsuario', () => {
@@ -147,6 +199,32 @@ describe('ThrottlerPorUsuario', () => {
         tracker(
           guard(),
           req({ authorization: bearer({ email: 'x@y.z' }), ip: '10.0.0.1' }),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('rota marcada com `@ContagemPorIp()` conta por IP mesmo com token bom', async () => {
+      // `/auth/login` e companhia. Este produto tem auto-cadastro: se o
+      // token comprasse um balde, o teto de 10 tentativas viraria "10 vezes
+      // o número de contas que o atacante criar".
+      await expect(
+        tracker(
+          guard(),
+          req({ authorization: bearer({ sub: 'u-123' }), ip: '10.0.0.1' }),
+          contextoDe(RotaPorIp),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('SEM contexto, o piso é o IP — na dúvida, o limite mais estreito', async () => {
+      // Só acontece se alguém chamar `getTracker` fora do guard. O default
+      // oposto deixaria uma rota de login contando por usuário sem ninguém
+      // notar, e é exatamente esse tipo de silêncio que custou um deploy
+      // nesta spec.
+      await expect(
+        trackerSemContexto(
+          guard(),
+          req({ authorization: bearer({ sub: 'u-123' }), ip: '10.0.0.1' }),
         ),
       ).resolves.toBe('ip:10.0.0.1');
     });

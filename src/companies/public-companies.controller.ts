@@ -1,10 +1,7 @@
 import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Throttle } from '@nestjs/throttler';
+import { LimitePublico } from '../common/throttle/contagem-por-ip';
 import { PrismaService } from '../prisma/prisma.service';
-
-// NFR-001: mesma política do login para superfície pública.
-const PUBLICO_THROTTLE = { default: { limit: 10, ttl: 900_000 } };
 
 /**
  * SPEC-009/REQ-001 — o que a página pública de auto-cadastro precisa saber
@@ -20,7 +17,7 @@ export class PublicCompaniesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get(':slug')
-  @Throttle(PUBLICO_THROTTLE)
+  @LimitePublico()
   async porSlug(@Param('slug') slug: string) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slug },

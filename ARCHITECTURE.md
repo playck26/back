@@ -221,7 +221,10 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   Guards: `RolesGuard`, `CompanyAdminGuard`, `SuperAdminGuard`, `TenantGuard`.
 - **Escopo por empresa vem sempre do token**, nunca de parâmetro do cliente.
 - Throttle: **a chave é o usuário quando o Bearer token confere**, e o IP
-  quando não confere ou não existe (SPEC-017/TASK-006). Ver seção 10.
+  quando não confere ou não existe (SPEC-017/TASK-006). **Exceto onde o
+  limite existe para conter quem ainda não é ninguém** — login, aceite de
+  convite, auto-cadastro e leitura pública contam **sempre por IP**, via
+  `@ContagemPorIp()`. Ver seção 10.
 
 ## 7. Regras de camada (com gate)
 
@@ -334,6 +337,14 @@ não existe. A primeira versão lia `request.user` e caía no IP em silêncio;
 foi a 3ª validação cruzada que pegou. É `verify`, nunca `decode`: um `sub`
 não conferido daria baldes infinitos a quem trocasse o `sub`, o que é pior
 que contar por IP. Sem token, o IP é o piso.
+
+**E há rota onde identidade não pode mudar a chave.** `/auth/login` e
+companhia contam sempre por IP: este produto tem **auto-cadastro**, então um
+balde por conta seria o mesmo que limite nenhum. A marca `@ContagemPorIp()`
+vem junto com o `@Throttle` em `LimiteDeLogin()` / `LimitePublico()`
+(`common/throttle/contagem-por-ip.ts`) — as duas metades de uma decisão só,
+pelo mesmo motivo da INV-048. **Rota pública nova precisa usar as fábricas**;
+o gate é `contagem-por-ip.spec.ts`, que confere os handlers reais.
 
 ## 11. Patterns observados
 

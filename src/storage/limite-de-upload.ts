@@ -1,4 +1,10 @@
-import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  type ExecutionContext,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
@@ -11,6 +17,7 @@ import {
   type ThrottlerStorage,
 } from '@nestjs/throttler';
 import type { Request } from 'express';
+import { CONTAGEM_POR_IP } from '../common/throttle/contagem-por-ip';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 
 /**
@@ -64,6 +71,20 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
  * infinitos — **pior que contar por IP**, não melhor. Token inválido,
  * expirado ou ausente cai no IP, que é o piso correto para quem não provou
  * quem é.
+ *
+ * ---
+ *
+ * ## E há rota onde identidade NÃO pode mudar a chave (4ª validação cruzada)
+ *
+ * `/auth/login` e companhia contam **sempre por IP**, mesmo com token
+ * válido. A revisão externa pegou a aresta: sem isso, um atacante com
+ * auto-cadastro criaria contas e **cada token compraria um balde novo** de
+ * 10 tentativas.
+ *
+ * **Identidade só pode estreitar o limite, nunca comprar um limite novo.**
+ * A marca é `@ContagemPorIp()`, e ela vem junto com o `@Throttle` nas
+ * fábricas de `common/throttle/contagem-por-ip.ts` — separadas, seria
+ * questão de tempo até alguém aplicar uma sem a outra.
  */
 
 /**
@@ -97,19 +118,41 @@ export class ThrottlerPorUsuario extends ThrottlerGuard {
   constructor(
     @Inject(getOptionsToken()) options: ThrottlerModuleOptions,
     @Inject(getStorageToken()) storageService: ThrottlerStorage,
-    reflector: Reflector,
+    protected readonly reflector: Reflector,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {
     super(options, storageService, reflector);
   }
 
-  protected async getTracker(req: Request): Promise<string> {
-    const sub = await this.subConferido(req);
-    if (sub) {
-      return `${PREFIXO_USUARIO}${sub}`;
+  protected async getTracker(
+    req: Request,
+    context?: ExecutionContext,
+  ): Promise<string> {
+    if (!this.contaSemprePorIp(context)) {
+      const sub = await this.subConferido(req);
+      if (sub) {
+        return `${PREFIXO_USUARIO}${sub}`;
+      }
     }
     return `${PREFIXO_IP}${req.ip ?? 'desconhecido'}`;
+  }
+
+  /**
+   * Sem contexto — só acontece se alguém chamar `getTracker` fora do guard —
+   * a resposta é **`true`**: na dúvida, o limite mais estreito. Um `false`
+   * aqui deixaria uma rota de login contando por usuário sem ninguém notar.
+   */
+  private contaSemprePorIp(context?: ExecutionContext): boolean {
+    if (!context) {
+      return true;
+    }
+    return (
+      this.reflector.getAllAndOverride<boolean>(CONTAGEM_POR_IP, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true
+    );
   }
 
   /**

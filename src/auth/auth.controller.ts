@@ -12,13 +12,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PermiteSenhaTemporaria } from '../common/decorators/permite-senha-temporaria.decorator';
 import { parseDurationToMs } from '../common/utils/parse-duration';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import { LimiteDeLogin } from '../common/throttle/contagem-por-ip';
 import { AuthService } from './auth.service';
 import { InvitesService } from './invites.service';
 import { LoginDto } from './dto/login.dto';
@@ -28,9 +28,6 @@ import { TrocarSenhaDto } from './dto/trocar-senha.dto';
 
 const REFRESH_COOKIE_NAME = 'refresh_token';
 const REFRESH_COOKIE_PATH = '/api/v1/auth';
-
-// NFR-002: 10 tentativas / 15min por IP.
-const LOGIN_THROTTLE = { default: { limit: 10, ttl: 900_000 } };
 
 @ApiTags('auth')
 @Controller('auth')
@@ -43,7 +40,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle(LOGIN_THROTTLE)
+  @LimiteDeLogin()
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -103,13 +100,13 @@ export class AuthController {
   // não gestão de convite — quem chama aqui é o aluno, não a empresa.
   @Post('aceitar-convite')
   @HttpCode(HttpStatus.CREATED)
-  @Throttle(LOGIN_THROTTLE)
+  @LimiteDeLogin()
   aceitarConvite(@Body() dto: AceitarConviteDto) {
     return this.invites.aceitar(dto);
   }
 
   @Post('register-aluno')
-  @Throttle(LOGIN_THROTTLE)
+  @LimiteDeLogin()
   registerAluno(@Body() dto: RegisterAlunoDto) {
     return this.authService.registerAluno(dto);
   }
