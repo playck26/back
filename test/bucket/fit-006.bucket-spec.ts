@@ -85,9 +85,14 @@ describe('FIT-006 — o bucket é real', () => {
   it('a suíte só toca no próprio prefixo', () => {
     // A primeira prova é sobre a própria suíte: se ela puder escrever fora
     // daqui, nenhuma das outras importa.
+    //
+    // O bucket NÃO é conferido aqui. Era, e a 3ª validação cruzada mostrou
+    // por que estava errado: uma asserção dentro de um `it` deixa os
+    // outros testes rodarem — e eles escrevem. A conferência mudou para
+    // `exigirBucketDeTeste()`, que estoura no carregamento do módulo, e tem
+    // prova própria em `trava-do-bucket.e2e-spec.ts` (essa roda no CI).
     const key = chaveDe(conteudo('valido-vp8-lossy.webp'), 'quadra');
     expect(key.startsWith(PREFIXO_DE_TESTE)).toBe(true);
-    expect(config.bucket).toBe('playck-media');
   });
 
   describe('AC-009 — objeto público abre em aba anônima', () => {

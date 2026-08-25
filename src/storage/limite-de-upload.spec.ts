@@ -1,4 +1,6 @@
 import { HttpException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import {
   JANELA_DE_UPLOAD_MS,
@@ -12,13 +14,60 @@ import {
 // **O que está em jogo não é o nosso bucket.** A assinatura do Spaces é por
 // CONTA (ADR-015), e o `opinii-media` divide a mesma cota: abuso de um
 // tenant daqui estoura o produto do lado, que não tem como se defender.
+//
+// ---
+//
+// **Estes testes usam `JwtService` de verdade, não dublê.** A 3ª validação
+// cruzada derrubou a versão anterior porque ela lia `request.user`, que não
+// existe quando o guard global roda — e o unitário passava, porque o dublê
+// entregava o usuário que a produção nunca entregou. Dublê que responde o
+// que o teste quer não prova nada sobre o que o servidor faz.
 
-function guard(): ThrottlerPorUsuario {
-  return new ThrottlerPorUsuario({} as never, {} as never, {} as never);
+const SEGREDO = 'segredo-de-teste-nao-usado-em-lugar-nenhum';
+const OUTRO_SEGREDO = 'segredo-do-atacante';
+
+const jwt = new JwtService({});
+
+function guardCom(config: ConfigService): ThrottlerPorUsuario {
+  return new ThrottlerPorUsuario(
+    {} as never,
+    {} as never,
+    {} as never,
+    jwt,
+    config,
+  );
 }
 
-function req(dados: { user?: { sub: string }; ip?: string }): Request {
-  return dados as unknown as Request;
+function guard(): ThrottlerPorUsuario {
+  return guardCom(new ConfigService({ JWT_ACCESS_SECRET: SEGREDO }));
+}
+
+/** `ConfigService` cai para `process.env` quando não acha a chave, então o
+ *  "sem segredo" precisa ser um dublê que recusa de verdade. */
+function guardSemSegredo(): ThrottlerPorUsuario {
+  return guardCom({ get: () => undefined } as unknown as ConfigService);
+}
+
+function req(dados: {
+  authorization?: string;
+  ip?: string;
+  user?: { sub: string };
+}): Request {
+  const { authorization, ...resto } = dados;
+  return {
+    ...resto,
+    headers: authorization ? { authorization } : {},
+  } as unknown as Request;
+}
+
+function bearer(
+  payload: Record<string, unknown>,
+  opcoes: { secret?: string; expiresIn?: number } = {},
+): string {
+  return `Bearer ${jwt.sign(payload, {
+    secret: opcoes.secret ?? SEGREDO,
+    ...(opcoes.expiresIn === undefined ? {} : { expiresIn: opcoes.expiresIn }),
+  })}`;
 }
 
 /** `getTracker` é `protected` — o teste precisa do mesmo acesso do Nest. */
@@ -29,30 +78,109 @@ function tracker(g: ThrottlerPorUsuario, r: Request): Promise<string> {
 }
 
 describe('ThrottlerPorUsuario', () => {
-  it('conta por USUÁRIO quando há um', async () => {
-    // Por IP seria errado nos dois sentidos: o wi-fi do clube faria um
-    // gestor legítimo bater no teto do colega, e um abusador com IP
-    // rotativo passaria batido. Era assim que o projeto contava até hoje.
-    await expect(
-      tracker(guard(), req({ user: { sub: 'u-123' }, ip: '10.0.0.1' })),
-    ).resolves.toBe('usuario:u-123');
+  describe('a identidade vem do token CONFERIDO', () => {
+    it('token válido conta por USUÁRIO', async () => {
+      // Por IP seria errado nos dois sentidos: o wi-fi do clube faria um
+      // gestor legítimo bater no teto do colega, e um abusador com IP
+      // rotativo passaria batido. Era assim que o projeto contava.
+      await expect(
+        tracker(
+          guard(),
+          req({ authorization: bearer({ sub: 'u-123' }), ip: '10.0.0.1' }),
+        ),
+      ).resolves.toBe('usuario:u-123');
+    });
+
+    it('token FORJADO cai para o IP — é a prova que mais importa', async () => {
+      // Se bastasse `decode`, um atacante trocaria o `sub` a cada
+      // requisição e teria baldes infinitos: PIOR que contar por IP, não
+      // melhor. O token abaixo é bem formado e tem `sub` — só está assinado
+      // com outra chave.
+      await expect(
+        tracker(
+          guard(),
+          req({
+            authorization: bearer({ sub: 'vitima' }, { secret: OUTRO_SEGREDO }),
+            ip: '10.0.0.1',
+          }),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('token EXPIRADO cai para o IP', async () => {
+      await expect(
+        tracker(
+          guard(),
+          req({
+            authorization: bearer({ sub: 'u-123' }, { expiresIn: -60 }),
+            ip: '10.0.0.1',
+          }),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('token válido SEM `sub` cai para o IP', async () => {
+      await expect(
+        tracker(
+          guard(),
+          req({ authorization: bearer({ email: 'x@y.z' }), ip: '10.0.0.1' }),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('`request.user` NÃO é fonte de identidade', async () => {
+      // O guard global roda antes do `JwtAuthGuard`, então em produção isto
+      // é sempre `undefined`. O teste existe para que ninguém "conserte" o
+      // guard voltando a ler daqui: seria ramo morto que passa no unitário
+      // e nunca roda no servidor. Foi assim que o defeito se escondeu.
+      await expect(
+        tracker(guard(), req({ user: { sub: 'u-999' }, ip: '10.0.0.1' })),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
   });
 
-  it('cai para o IP quando não há usuário', async () => {
-    // Rota pública não tem quem identificar, e o IP é o que sobra.
-    await expect(tracker(guard(), req({ ip: '10.0.0.1' }))).resolves.toBe(
-      'ip:10.0.0.1',
-    );
-  });
+  describe('o piso é o IP', () => {
+    it('sem header, conta por IP', async () => {
+      await expect(tracker(guard(), req({ ip: '10.0.0.1' }))).resolves.toBe(
+        'ip:10.0.0.1',
+      );
+    });
 
-  it('sem usuário e sem IP, ainda devolve uma chave', async () => {
-    // Chave vazia colapsaria todo mundo num balde só, e o primeiro abusador
-    // derrubaria o acesso de todos.
-    await expect(tracker(guard(), req({}))).resolves.toBe('ip:desconhecido');
+    it.each([
+      ['esquema errado', 'Basic YWJjOmRlZg=='],
+      ['sem esquema', 'abc.def.ghi'],
+      ['Bearer vazio', 'Bearer '],
+      ['Bearer com lixo', 'Bearer nao-e-um-jwt'],
+    ])('header %s cai para o IP', async (_nome, authorization) => {
+      await expect(
+        tracker(guard(), req({ authorization, ip: '10.0.0.1' })),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('sem segredo configurado, degrada para IP em vez de derrubar', async () => {
+      // O app não sobe sem `JWT_ACCESS_SECRET`. Mas um guard que estoura
+      // aqui derrubaria TODA requisição por causa do limite de abuso — a
+      // falha certa neste ponto é contar por IP.
+      await expect(
+        tracker(
+          guardSemSegredo(),
+          req({ authorization: bearer({ sub: 'u-123' }), ip: '10.0.0.1' }),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
+    it('sem usuário e sem IP, ainda devolve uma chave', async () => {
+      // Chave vazia colapsaria todo mundo num balde só, e o primeiro
+      // abusador derrubaria o acesso de todos.
+      await expect(tracker(guard(), req({}))).resolves.toBe('ip:desconhecido');
+    });
   });
 
   it('usuário e IP nunca colidem — as chaves são prefixadas', async () => {
-    const porUsuario = await tracker(guard(), req({ user: { sub: 'x' } }));
+    const porUsuario = await tracker(
+      guard(),
+      req({ authorization: bearer({ sub: 'x' }) }),
+    );
     const porIp = await tracker(guard(), req({ ip: 'x' }));
     expect(porUsuario).not.toBe(porIp);
   });

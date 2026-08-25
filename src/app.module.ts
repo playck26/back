@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -20,6 +21,11 @@ import { StorageModule } from './storage/storage.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
+    // O `ThrottlerPorUsuario` confere o Bearer token ele mesmo, porque
+    // `APP_GUARD` roda ANTES do `JwtAuthGuard` de rota — ver o cabeçalho
+    // de `limite-de-upload.ts`. Registro próprio, sem segredo fixado: o
+    // segredo vai explícito em cada `verifyAsync`.
+    JwtModule.register({}),
     PrismaModule,
     AuthModule,
     CommonModule,

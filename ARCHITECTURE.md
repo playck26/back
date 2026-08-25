@@ -45,15 +45,22 @@ INV-037: nunca assina chave crua), a **fonte única da configuração de
 upload** (`@UploadDeMidia()`, INV-048) e a **tabela** da fila de exclusão.
 
 Existem também: a **fila**, o **worker**, o advisory lock por chave, a porta
-`KeyReferenceChecker` (TASK-005), o **limite de upload por usuário** e o
-**medidor de bucket** (TASK-006).
+`KeyReferenceChecker` (TASK-005), o **limite por usuário** e o **medidor de
+bucket** (TASK-006), e o **FIT-006** contra o bucket real (TASK-007).
+
+**O limite conta por usuário porque o guard confere o Bearer token ele
+mesmo** — não porque lê `request.user`. Ler `request.user` foi a primeira
+versão e **não funcionava**: `APP_GUARD` roda antes do `JwtAuthGuard` de
+rota, e naquele instante não há usuário. Quem mexer aqui precisa saber
+disso, porque a versão errada compila, passa no unitário e cai no IP em
+silêncio.
 
 **O que NÃO existe, e a lista importa mais que o que existe:** **nenhuma
 rota de upload do produto**, nenhuma coluna de mídia, e **nenhum
 `KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e não
 apaga nada. A tabela da fila está criada e **vazia**, porque quem enfileira é
-quem apaga referência, e isso é da SPEC-018. Faltam as TASK-006 e 007 da
-SPEC-017, e a SPEC-018 inteira.
+quem apaga referência, e isso é da SPEC-018. **A SPEC-017 está completa**;
+falta a SPEC-018 inteira.
 
 **Ler `storage/` esperando upload funcionando é ler errado**, e ler o worker
 esperando que ele apague alguma coisa hoje também.
@@ -213,7 +220,8 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   voltaria a operar.
   Guards: `RolesGuard`, `CompanyAdminGuard`, `SuperAdminGuard`, `TenantGuard`.
 - **Escopo por empresa vem sempre do token**, nunca de parâmetro do cliente.
-- Throttle de 10 req/15 min por IP em toda superfície pública.
+- Throttle: **a chave é o usuário quando o Bearer token confere**, e o IP
+  quando não confere ou não existe (SPEC-017/TASK-006). Ver seção 10.
 
 ## 7. Regras de camada (com gate)
 
@@ -306,17 +314,26 @@ exatamente disso, e a SPEC-017 acrescentou `fila-exclusao.db-spec.ts`, que é
 o **ensaio de violação** das constraints da fila: cada teste tenta escrever o
 estado proibido e exige que o banco recuse.
 
-E **`pnpm run test:bucket`** (FIT-006), que fala com o **bucket real** e por
-isso **não roda no CI** — é opt-in, exige as 6 variáveis `SPACES_*`, e só
-escreve sob um prefixo próprio. É o único runner que consegue reprovar ACL
-por arquivo, CDN, assinatura que expira e "1 objeto". A tabela de provas está
-em `specs/changes/017-armazenamento-de-arquivo/FIT-006.md`.
+E **`pnpm run test:bucket`** (FIT-006), que fala com o **bucket real**. Exige
+as 6 variáveis `SPACES_*` e só escreve sob um prefixo próprio. É o único
+runner que consegue reprovar ACL por arquivo, CDN, assinatura que expira e
+"1 objeto". A tabela de provas está em
+`specs/changes/017-armazenamento-de-arquivo/FIT-006.md`.
+
+Ele tem **job próprio no CI** (`fit-006`), serializado por `concurrency` — a
+chave é derivada do conteúdo, então dois jobs simultâneos gerariam a mesma
+chave e um apagaria o objeto que o outro lê. **Sem os secrets configurados o
+job avisa em vez de passar em silêncio**: job verde sobre nada é pior que job
+nenhum. A *trava* da suíte tem prova separada
+(`test/bucket/trava-do-bucket.e2e-spec.ts`), que roda no CI sem credencial.
 
 **Throttle: a chave é o USUÁRIO, não o IP** (SPEC-017/TASK-006). O guard
-global é o `ThrottlerPorUsuario`; rota pública cai no IP porque lá não há
-quem identificar. IP sozinho era a chave errada para um clube — wi-fi
-compartilhado fazia um gestor bater no teto do colega, e IP rotativo passava
-batido.
+global é o `ThrottlerPorUsuario`, e **ele confere o Bearer token ele mesmo** —
+`APP_GUARD` roda antes do `JwtAuthGuard` de rota, então `request.user` ainda
+não existe. A primeira versão lia `request.user` e caía no IP em silêncio;
+foi a 3ª validação cruzada que pegou. É `verify`, nunca `decode`: um `sub`
+não conferido daria baldes infinitos a quem trocasse o `sub`, o que é pior
+que contar por IP. Sem token, o IP é o piso.
 
 ## 11. Patterns observados
 

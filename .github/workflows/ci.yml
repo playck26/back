@@ -98,3 +98,52 @@ jobs:
           SPACES_SECRET: ci-spaces-secret
 
       - run: git diff --exit-code openapi.json
+
+  # SPEC-017/TASK-007 — FIT-006 contra o bucket REAL.
+  #
+  # A 3ª validação cruzada apontou, com razão: "rodado à mão antes de
+  # publicar mudança em `storage/`" é hábito humano, não gate. Em três meses
+  # o FIT-006 vira decoração.
+  #
+  # Este job é o gate. Duas escolhas de segurança nele:
+  #
+  # 1. **`concurrency` serializa.** A suíte escreve e apaga objetos com chave
+  #    derivada do conteúdo — dois jobs simultâneos gerariam a MESMA chave e
+  #    um apagaria o objeto que o outro ainda está lendo. Falha por corrida
+  #    num teste de bucket é a pior espécie: parece defeito do produto.
+  # 2. **Sem os secrets, avisa em vez de fingir que passou.** Um job que
+  #    "passa" pulando em silêncio é pior que job nenhum — vira sinal verde
+  #    sobre nada. O `::warning::` aparece no resumo do run.
+  #
+  # A suíte só escreve sob o próprio prefixo, e a trava recusa qualquer
+  # bucket que não seja o `playck-media` — e essa trava tem prova própria em
+  # `test/bucket/trava-do-bucket.e2e-spec.ts`, que roda no job acima.
+  fit-006:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fit-006-bucket-real
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: FIT-006 contra o bucket real
+        env:
+          SPACES_REGION: ${{ secrets.SPACES_REGION }}
+          SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+          SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
+          SPACES_CDN_URL: ${{ secrets.SPACES_CDN_URL }}
+          SPACES_KEY: ${{ secrets.SPACES_KEY }}
+          SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
+        run: |
+          if [ -z "$SPACES_KEY" ]; then
+            echo "::warning title=FIT-006 não rodou::Os secrets SPACES_* não estão configurados neste repositório. As 13 provas contra o bucket real ficam sem gate — rode 'pnpm run test:bucket' à mão antes de publicar mudança em src/storage/."
+            exit 0
+          fi
+          pnpm run test:bucket

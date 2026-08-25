@@ -8,7 +8,9 @@ import {
   ValidationPipe,
   type INestApplication,
 } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { JwtModule } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { request as requisicaoCrua } from 'node:http';
@@ -93,10 +95,18 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
     @Module({
       // O `@UploadDeMidia()` traz o limite de abuso junto (TASK-006), e o
       // limite precisa do `ThrottlerModule`. O fixture espelha o `AppModule`
-      // de propósito — inclusive o guard global por IP — porque a INV-048
-      // existe justamente para o fixture não provar o que a produção não faz.
+      // de propósito — inclusive o guard global — porque a INV-048 existe
+      // justamente para o fixture não provar o que a produção não faz.
+      //
+      // `JwtModule` e `ConfigModule` entram porque o guard confere o Bearer
+      // token ele mesmo. **Isto aqui não prova a contagem por usuário** —
+      // este fixture não tem auth, e foi essa cegueira que deixou a 3ª
+      // validação cruzada achar o defeito. Quem prova é
+      // `throttle-por-usuario.e2e-spec.ts`, com a forma do `AppModule`.
       imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
         ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
+        JwtModule.register({}),
       ],
       controllers: [FixtureUploadController],
       providers: [
@@ -429,9 +439,12 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
 
       @Module({
         imports: [
+          ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
           ThrottlerModule.forRoot([
             { name: 'default', ttl: 60_000, limit: 100 },
           ]),
+          // O guard global confere o Bearer token ele mesmo (TASK-006).
+          JwtModule.register({}),
         ],
         controllers: [RotaComPipe],
         providers: [{ provide: APP_GUARD, useClass: ThrottlerPorUsuario }],
