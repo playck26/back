@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -13,6 +13,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { PaymentConfigModule } from './payment-config/payment-config.module';
 import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ThrottlerPorUsuario } from './storage/limite-de-upload';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
@@ -38,7 +39,11 @@ import { StorageModule } from './storage/storage.module';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      // SPEC-017/TASK-006 — conta por USUÁRIO quando há um, e só cai no IP
+      // quando não há. IP é a chave errada para um clube: o wi-fi
+      // compartilhado faria um gestor bater no teto do colega, e um abusador
+      // com IP rotativo passaria batido.
+      useClass: ThrottlerPorUsuario,
     },
   ],
 })

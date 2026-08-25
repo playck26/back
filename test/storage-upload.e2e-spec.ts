@@ -8,7 +8,9 @@ import {
   ValidationPipe,
   type INestApplication,
 } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { request as requisicaoCrua } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
@@ -22,6 +24,10 @@ import {
   type StorageProvider,
 } from '../src/storage/storage-provider.interface';
 import { StorageService } from '../src/storage/storage.service';
+import {
+  LIMITE_DE_UPLOADS,
+  ThrottlerPorUsuario,
+} from '../src/storage/limite-de-upload';
 import {
   CAMPO_DO_ARQUIVO,
   exigirArquivo,
@@ -80,13 +86,22 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
       metadados: () => Promise.resolve(null),
       urlPublica: (key) => `https://cdn.exemplo/${key}`,
       urlAssinada: (key) => Promise.resolve(`https://assinada.exemplo/${key}`),
+      medirUso: () => Promise.resolve({ objetos: 0, bytes: 0, completo: true }),
     };
 
     @Module({
+      // O `@UploadDeMidia()` traz o limite de abuso junto (TASK-006), e o
+      // limite precisa do `ThrottlerModule`. O fixture espelha o `AppModule`
+      // de propósito — inclusive o guard global por IP — porque a INV-048
+      // existe justamente para o fixture não provar o que a produção não faz.
+      imports: [
+        ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
+      ],
       controllers: [FixtureUploadController],
       providers: [
         { provide: STORAGE_PROVIDER, useValue: provider },
         StorageService,
+        { provide: APP_GUARD, useClass: ThrottlerPorUsuario },
       ],
     })
     class ModuloDeFixture {}
@@ -326,6 +341,29 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
     });
   });
 
+  describe('TASK-006 — o limite de abuso vem junto com o decorator', () => {
+    it(`recusa o ${LIMITE_DE_UPLOADS + 1}º envio da mesma janela com 429`, async () => {
+      // O `@UploadDeMidia()` traz o limite junto, e é de propósito: limite
+      // que a rota pode esquecer de pedir é limite que uma rota nova não vai
+      // ter. Aqui o fixture não pede nada além do decorator.
+      const enviar = () =>
+        request(app.getHttpServer())
+          .put(rota('quadra'))
+          .attach(CAMPO_DO_ARQUIVO, ler('valido-vp8-lossy.webp'), 'f.webp');
+
+      for (let i = 0; i < LIMITE_DE_UPLOADS; i++) {
+        await enviar().expect(200);
+      }
+
+      const barrado = await enviar().expect(429);
+      expect(corpo(barrado).code).toBe('REQUISICOES_DEMAIS');
+
+      // O que passou, passou: o limite recusa o excedente, não desfaz o
+      // trabalho já aceito.
+      expect(gravados).toHaveLength(LIMITE_DE_UPLOADS);
+    });
+  });
+
   describe('o upload NÃO mascara o erro da própria rota', () => {
     // Achado da 2ª validação cruzada, reproduzido antes de corrigir: o
     // decorator usava um filtro de rota, e filtro de rota captura por TIPO —
@@ -351,7 +389,15 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
         }
       }
 
-      @Module({ controllers: [RotaComPipe] })
+      @Module({
+        imports: [
+          ThrottlerModule.forRoot([
+            { name: 'default', ttl: 60_000, limit: 100 },
+          ]),
+        ],
+        controllers: [RotaComPipe],
+        providers: [{ provide: APP_GUARD, useClass: ThrottlerPorUsuario }],
+      })
       class ModuloComPipe {}
 
       const ref = await Test.createTestingModule({

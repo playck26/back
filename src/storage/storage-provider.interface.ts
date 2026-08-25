@@ -47,6 +47,13 @@ export class FalhaDeStorage extends Error {
   }
 }
 
+export interface UsoDoBucket {
+  readonly objetos: number;
+  readonly bytes: number;
+  /** `false` quando a varredura bateu no teto de páginas. */
+  readonly completo: boolean;
+}
+
 export interface StorageProvider {
   /**
    * Grava (ou sobrescreve) o objeto. Mesmo conteúdo produz a mesma chave,
@@ -79,6 +86,16 @@ export interface StorageProvider {
    * mais que isso é `FalhaDeStorage`, não um valor aparado em silêncio.
    */
   urlAssinada(key: string, expiraEmSegundos?: number): Promise<string>;
+
+  /**
+   * Quanto o bucket ocupa (NFR-004/TASK-006).
+   *
+   * **Não existe "tamanho do bucket" como número pronto no S3** — é preciso
+   * listar e somar. Por isso o teto de páginas e o `completo`: medição que
+   * pode rodar para sempre é medição que um dia trava o processo, e uma
+   * resposta parcial precisa dizer que é parcial.
+   */
+  medirUso(maximoDePaginas: number): Promise<UsoDoBucket>;
 }
 
 export const STORAGE_PROVIDER = Symbol('STORAGE_PROVIDER');

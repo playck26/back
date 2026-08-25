@@ -15,6 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import type { Observable } from 'rxjs';
+import { LimiteDeUpload } from './limite-de-upload';
 
 /**
  * SPEC-017/TASK-002b — **a fonte única da configuração de upload** (INV-048).
@@ -161,7 +162,12 @@ export function opcoesDeUpload() {
 export function UploadDeMidia(): MethodDecorator {
   // **Sem `UseFilters`**: filtro de rota captura por tipo, e no escopo da
   // rota `BadRequestException` significa qualquer coisa. Ver acima.
+  //
+  // O limite de abuso (TASK-006/NFR-004) entra aqui junto, e é de propósito:
+  // **limite que a rota pode esquecer de pedir é limite que uma rota nova
+  // não vai ter.**
   return applyDecorators(
+    LimiteDeUpload(),
     UseGuards(TamanhoDeCorpoGuard),
     UseInterceptors(InterceptorDeMidia()),
   );

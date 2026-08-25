@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -176,6 +177,84 @@ describe('S3StorageProvider', () => {
       await expect(provider.metadados(KEY)).rejects.toBeInstanceOf(
         FalhaDeStorage,
       );
+    });
+  });
+
+  describe('medirUso — NFR-004/TASK-006', () => {
+    // **Não existe "tamanho do bucket" pronto no S3**: é preciso listar e
+    // somar, página a página. Por isso o teto e o `completo`.
+    function pagina(objetos: number[], token?: string) {
+      return {
+        Contents: objetos.map((Size) => ({ Size })),
+        NextContinuationToken: token,
+      };
+    }
+
+    it('soma o tamanho de todas as páginas', async () => {
+      enviar
+        .mockResolvedValueOnce(pagina([100, 200], 'p2'))
+        .mockResolvedValueOnce(pagina([300], undefined));
+
+      await expect(provider.medirUso(10)).resolves.toEqual({
+        objetos: 3,
+        bytes: 600,
+        completo: true,
+      });
+      expect(comandoEnviado<ListObjectsV2Command>()).toBeInstanceOf(
+        ListObjectsV2Command,
+      );
+
+      // A prova de que PAGINOU, e não pediu a mesma página duas vezes: o
+      // segundo pedido carrega o token que o primeiro devolveu. Sem esta
+      // asserção o mock responde por chamada e não percebe a diferença.
+      const pedidos = enviar.mock.calls.map(
+        ([c]) => (c as ListObjectsV2Command).input.ContinuationToken,
+      );
+      expect(pedidos).toEqual([undefined, 'p2']);
+    });
+
+    it('para no TETO de páginas e diz que a medição é PARCIAL', async () => {
+      // Medição que pode rodar para sempre é medição que um dia trava o
+      // processo. E número parcial que se apresenta como total é pior que
+      // número nenhum: levaria a operação a concluir "está tudo bem"
+      // olhando meia medição.
+      enviar.mockResolvedValue(pagina([50], 'sempre-tem-mais'));
+
+      const uso = await provider.medirUso(3);
+
+      expect(uso.completo).toBe(false);
+      expect(uso.objetos).toBe(3);
+      expect(enviar).toHaveBeenCalledTimes(3);
+    });
+
+    it('bucket vazio devolve zero, e completo', async () => {
+      enviar.mockResolvedValue({ Contents: undefined });
+      await expect(provider.medirUso(10)).resolves.toEqual({
+        objetos: 0,
+        bytes: 0,
+        completo: true,
+      });
+    });
+
+    it('objeto sem `Size` conta como zero, não quebra a soma', async () => {
+      enviar.mockResolvedValue({
+        Contents: [{ Size: undefined }, { Size: 7 }],
+      });
+      await expect(provider.medirUso(10)).resolves.toMatchObject({
+        objetos: 2,
+        bytes: 7,
+      });
+    });
+
+    it('falha do SDK vira FalhaDeStorage, e o erro fala do BUCKET', async () => {
+      // A operação é sobre o bucket, não sobre um objeto. Pôr uma chave
+      // qualquer no erro faria ele mentir sobre o que falhou.
+      enviar.mockRejectedValue(new Error('AccessDenied'));
+
+      const erro = await provider.medirUso(10).catch((e: unknown) => e);
+
+      expect(erro).toBeInstanceOf(FalhaDeStorage);
+      expect((erro as FalhaDeStorage).key).toContain('playck-media');
     });
   });
 

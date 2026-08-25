@@ -26,6 +26,7 @@ describe('StorageService', () => {
       metadados: jest.fn(),
       urlPublica: jest.fn().mockReturnValue('https://cdn.exemplo/objeto'),
       urlAssinada: jest.fn().mockResolvedValue('https://assinada.exemplo'),
+      medirUso: jest.fn(),
     };
     service = new StorageService(provider);
   });

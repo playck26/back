@@ -122,6 +122,7 @@ describe('WorkerDeExclusao contra Postgres real', () => {
       metadados: () => Promise.resolve(null),
       urlPublica: (k) => k,
       urlAssinada: (k) => Promise.resolve(k),
+      medirUso: () => Promise.resolve({ objetos: 0, bytes: 0, completo: true }),
     };
     worker = new WorkerDeExclusao(
       A as unknown as PrismaService,

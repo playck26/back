@@ -5,6 +5,7 @@ import { AgendadorDeExclusao } from './agendador-de-exclusao.service';
 import { AlertaDeStorage, AlertaPorLog } from './alerta-de-storage';
 import { FilaDeExclusao } from './fila-de-exclusao.service';
 import { KeyReferenceRegistry } from './key-reference-checker';
+import { MedidorDeBucket } from './medidor-de-bucket.service';
 import { S3StorageProvider } from './s3-storage.provider';
 import { StorageService } from './storage.service';
 import { WorkerDeExclusao } from './worker-de-exclusao.service';
@@ -47,6 +48,10 @@ import {
     FilaDeExclusao,
     WorkerDeExclusao,
     AgendadorDeExclusao,
+    // TASK-006 — NFR-004. O `ThrottlerDeUpload` não entra aqui: ele é
+    // aplicado por rota, pelo `@UploadDeMidia()`, e o Nest o instancia a
+    // partir do `UseGuards`.
+    MedidorDeBucket,
   ],
   // **Exporta só a porta.** `STORAGE_CONFIG` carrega `key` e `secret`, e
   // exportá-lo abria uma fronteira pública para o segredo sem nenhum

@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -19,6 +20,7 @@ import {
   type MetadadosDoObjeto,
   type ObjetoParaGravar,
   type StorageProvider,
+  type UsoDoBucket,
 } from './storage-provider.interface';
 
 /**
@@ -150,6 +152,43 @@ export class S3StorageProvider implements StorageProvider {
     } catch (causa) {
       throw new FalhaDeStorage('assinar', key, causa);
     }
+  }
+
+  async medirUso(maximoDePaginas: number): Promise<UsoDoBucket> {
+    let objetos = 0;
+    let bytes = 0;
+    let token: string | undefined;
+    let paginas = 0;
+
+    try {
+      do {
+        const resposta = await this.client.send(
+          new ListObjectsV2Command({
+            Bucket: this.config.bucket,
+            ContinuationToken: token,
+          }),
+        );
+        for (const objeto of resposta.Contents ?? []) {
+          objetos++;
+          bytes += objeto.Size ?? 0;
+        }
+        token = resposta.NextContinuationToken;
+        paginas++;
+      } while (token && paginas < maximoDePaginas);
+    } catch (causa) {
+      // A `key` aqui não é de um objeto: a operação é sobre o bucket. Fica
+      // explícito no lugar dela para o erro não mentir sobre o que falhou.
+      throw new FalhaDeStorage(
+        'metadados',
+        `(bucket ${this.config.bucket})`,
+        causa,
+      );
+    }
+
+    // `completo: false` quando ainda havia página e o teto foi atingido. A
+    // resposta parcial precisa dizer que é parcial — número que finge ser
+    // total é pior que número nenhum.
+    return { objetos, bytes, completo: !token };
   }
 }
 

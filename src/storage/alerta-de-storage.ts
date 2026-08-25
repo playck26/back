@@ -32,6 +32,14 @@ export const ALERTAS = {
   /** AC-016 — item com 5 tentativas falhas. Não some em silêncio. */
   EXCLUSAO_FALHANDO: 'EXCLUSAO_FALHANDO',
   /**
+   * NFR-004/TASK-006 — o bucket passou de 50 GB, **ou a varredura não
+   * conseguiu medir tudo**. Os dois levam à mesma conclusão: alguém precisa
+   * olhar antes que a cota da conta — dividida com o `opinii-media`, porque
+   * a assinatura do Spaces é por conta e não por bucket (ADR-015) — vire
+   * problema de um produto que não tem nada a ver com isto.
+   */
+  BUCKET_GRANDE: 'BUCKET_GRANDE',
+  /**
    * AC-016d — chave quente: reagendada por lock 20 vezes, ou 24 h em fila.
    * **Não é erro** — concorrência normal não é erro. Mas concorrência eterna
    * é estado degradado.
