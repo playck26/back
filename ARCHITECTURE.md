@@ -55,18 +55,42 @@ rota, e naquele instante não há usuário. Quem mexer aqui precisa saber
 disso, porque a versão errada compila, passa no unitário e cai no IP em
 silêncio.
 
+**A primeira mídia do produto entrou em 2026-08-25** (SPEC-018/TASK-003):
+`PUT`/`GET`/`DELETE /api/v1/me/foto`, em `auth/me-foto.controller.ts` +
+`auth/foto-de-perfil.service.ts`. **MOD-001 é o dono**, porque
+`usuarios.foto_key` é tabela dele — e por isso `AuthModule` passou a
+importar `StorageModule`.
+
+**Não há id na URL, e é essa a implementação da AC-004.** "Um usuário só
+sobe a própria foto" não é conferido por comparação: não existe caminho pelo
+qual outro id chegue. Guarda que compara `params.id` com `token.sub` é
+guarda que alguém pode esquecer de escrever na rota seguinte.
+
+**A ordem das escritas é a parte frágil, e está coberta por teste:** storage
+**antes** do banco (na ordem inversa, uma falha deixaria a coluna apontando
+para objeto inexistente — imagem quebrada na tela de quem acabou de subir);
+enfileiramento **dentro** da mesma transação do `UPDATE` (fora dela, existe
+a janela em que a chave antiga fica órfã para sempre); e o 403 da AC-022
+**antes** de validar, hashear ou gravar (depois, viraria 500 vindo de
+constraint).
+
+**O `GET /me/foto` não estava na tabela de contrato da spec**, e a adição é
+deliberada: sem ele a AC-003 não teria por onde acontecer. É endpoint
+próprio, e não um campo em `/auth/me`, **porque a URL expira** — embutida no
+login, ficaria velha numa sessão longa.
+
 **As seis colunas de mídia existem desde 2026-08-25** (SPEC-018:TASK-001),
-e **estão todas nulas**: `usuarios.foto_key`, `professores.foto_key`,
+e **`usuarios.foto_key` já tem escritor**; as outras cinco continuam nulas: `usuarios.foto_key`, `professores.foto_key`,
 `quadras.imagem_key` + `imagem_confirmada_por`/`_em`, `empresas.logo_key`.
 Migration expand puro, sem backfill e **sem consumidor** — nada escreve nelas
 ainda.
 
-**O que NÃO existe, e a lista importa mais que o que existe:** **nenhuma
-rota de upload do produto**, nenhuma tela, nenhuma compressão no navegador, e
-**nenhum `KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e
+**O que NÃO existe, e a lista importa mais que o que existe:** upload de
+**professor, quadra e logo** (TASK-004 a 006) e **nenhum
+`KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e
 não apaga nada. A tabela da fila está criada e **vazia**, porque quem
 enfileira é quem apaga referência, e isso é da SPEC-018:TASK-008. **A
-SPEC-017 está completa**; da SPEC-018 saiu só a TASK-001.
+SPEC-017 está completa**; da SPEC-018 saíram as TASK-001, 002 e 003.
 
 **Ler `storage/` esperando upload funcionando é ler errado**, e ler o worker
 esperando que ele apague alguma coisa hoje também.
@@ -200,8 +224,8 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**50 caminhos, 70 operações HTTP** (conferido em 2026-08-23 contra o
-`openapi.json`, depois da DEF-003, da DEF-004 e da SPEC-016). As duas medidas aparecem porque "rotas" é ambíguo: a
+**54 caminhos, 76 operações HTTP** (conferido em 2026-08-25 contra o
+`openapi.json`, depois da SPEC-018/TASK-003). As duas medidas aparecem porque "rotas" é ambíguo: a
 versão anterior desta planta dizia "41 rotas" contando caminhos, e trocar
 a métrica em silêncio faria o número parecer um salto de escopo.
 
