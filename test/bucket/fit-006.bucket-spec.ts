@@ -102,8 +102,31 @@ describe('FIT-006 — o bucket é real', () => {
       const resposta = await fetch(provider.urlPublica(key));
 
       expect(resposta.status).toBe(200);
-      expect(resposta.headers.get('cache-control')).toBe(CACHE_CONTROL_PUBLICO);
       expect(resposta.headers.get('content-type')).toBe('image/webp');
+
+      // **O CDN NÃO devolve o `Cache-Control` do objeto.** Ele devolve o
+      // seu próprio, derivado do TTL do endpoint — `doctl compute cdn list`
+      // mostra `TTL 3600`, e o que volta é exatamente `max-age=3600`, sem o
+      // token `public`.
+      //
+      // Isto foi medido em 2026-08-25, quando a prova reprovou. Não é
+      // regressão do nosso lado: o teste vizinho ("reenviar mantém o
+      // `Cache-Control` correto") lê o header **pelo S3**, no mesmo objeto,
+      // e vê `public, max-age=3600` intacto.
+      //
+      // A asserção afrouxou de propósito, e afrouxou até onde ainda há
+      // garantia: **o que o CDN promete é a duração**, e ela é conferida
+      // contra a mesma constante que o objeto usa. Exigir `public` seria
+      // exigir do CDN algo que ele não expõe knob para fazer — e um FIT que
+      // cobra o impossível vira FIT desligado, que é pior.
+      const maxAgeEsperado = CACHE_CONTROL_PUBLICO.match(/max-age=\d+/)![0];
+      expect(resposta.headers.get('cache-control')).toContain(maxAgeEsperado);
+      // E continua sendo cacheável em intermediário: `private`/`no-store`
+      // aqui significaria que a foto pública deixou de ser servida pela
+      // borda, que é o ponto inteiro do NFR-002.
+      expect(resposta.headers.get('cache-control')).not.toMatch(
+        /private|no-store/,
+      );
     });
 
     it('e o que voltou é byte a byte o que subiu', async () => {

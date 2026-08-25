@@ -335,14 +335,25 @@ derrubadas, e os 2 que sobrevivem são justamente os dois casos felizes.
 E **`pnpm run test:bucket`** (FIT-006), que fala com o **bucket real**. Exige
 as 6 variáveis `SPACES_*` e só escreve sob um prefixo próprio. É o único
 runner que consegue reprovar ACL por arquivo, CDN, assinatura que expira e
-"1 objeto". A tabela de provas está em
+"1 objeto".
+
+**O que a AC-009 afere do CDN mudou em 2026-08-25, e o motivo importa:** o
+CDN da DigitalOcean **não repassa o `Cache-Control` do objeto** — devolve o
+seu próprio, derivado do TTL do endpoint (`doctl compute cdn list` mostra
+`TTL 3600`, e volta `max-age=3600`, sem o token `public`). O objeto está
+certo: o teste vizinho lê o mesmo header **pelo S3** e vê
+`public, max-age=3600` intacto. A prova passou a exigir a **duração** — a
+mesma constante do objeto — e a ausência de `private`/`no-store`. Exigir
+`public` seria cobrar do CDN algo que ele não expõe knob para fazer, e FIT
+que cobra o impossível vira FIT desligado. A tabela de provas está em
 `specs/changes/017-armazenamento-de-arquivo/FIT-006.md`.
 
 Ele tem **job próprio no CI** (`fit-006`), serializado por `concurrency` — a
 chave é derivada do conteúdo, então dois jobs simultâneos gerariam a mesma
 chave e um apagaria o objeto que o outro lê. **Sem os secrets configurados o
 job avisa em vez de passar em silêncio**: job verde sobre nada é pior que job
-nenhum. A *trava* da suíte tem prova separada
+nenhum. **Os 6 secrets foram cadastrados em 2026-08-25**, então o aviso
+acabou: o job agora barra. A *trava* da suíte tem prova separada
 (`test/bucket/trava-do-bucket.e2e-spec.ts`), que roda no CI sem credencial.
 
 **Throttle: a chave é o USUÁRIO, não o IP** (SPEC-017/TASK-006). O guard
