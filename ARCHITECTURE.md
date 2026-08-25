@@ -1,9 +1,8 @@
 # ARCHITECTURE — `back` (PlayCK)
 
 **Fonte: análise direta do código.** Data: 2026-08-24.
-**Commit de referência:** os commits `SPEC-017/TASK-001`, `TASK-002`,
-`TASK-004`, `TASK-003`, `TASK-002b` e `TASK-005` (2026-08-24), a partir de
-`f75615b`. Por nome e não por hash
+**Commit de referência:** a **SPEC-017 completa** (TASK-001 a 007),
+2026-08-24/25, a partir de `f75615b`. Por nome e não por hash
 porque este arquivo faz parte do próprio commit — um documento não consegue
 citar o hash que ele ajuda a formar.
 
@@ -45,8 +44,9 @@ WebP**, a **gramática da chave**, o **`StorageService`** (que impõe a
 INV-037: nunca assina chave crua), a **fonte única da configuração de
 upload** (`@UploadDeMidia()`, INV-048) e a **tabela** da fila de exclusão.
 
-Existem também, da TASK-005: a **fila**, o **worker**, o advisory lock por
-chave e a porta `KeyReferenceChecker`.
+Existem também: a **fila**, o **worker**, o advisory lock por chave, a porta
+`KeyReferenceChecker` (TASK-005), o **limite de upload por usuário** e o
+**medidor de bucket** (TASK-006).
 
 **O que NÃO existe, e a lista importa mais que o que existe:** **nenhuma
 rota de upload do produto**, nenhuma coluna de mídia, e **nenhum
@@ -153,7 +153,8 @@ src/
   dashboard/       MOD-007 — agregações de leitura
   storage/         MOD-008 — porta, adaptador S3, validador WebP, gramática
                    da chave, StorageService, fonte única do upload, fila,
-                   worker e advisory lock (SPEC-017). **Sem controller**
+                   worker, advisory lock, limite de abuso e medidor de
+                   bucket (SPEC-017). **Sem controller**
   common/          guards, decorators, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
@@ -296,14 +297,26 @@ do statement e só a linha travada é reavaliada (EvalPlanQual) — as demais
 relações do `JOIN` ficam no snapshot de antes da espera. Detalhe em
 `DATA_MODEL.md`, seção "Concorrência".
 
-**Três runners de teste, e a diferença entre eles é o que cada um consegue
+**Quatro runners de teste, e a diferença entre eles é o que cada um consegue
 reprovar:** `pnpm test` (unit, Prisma mockado), `pnpm test:e2e` (Supertest,
-também mockado) e **`pnpm test:banco`** — 3 suítes que exigem Postgres real,
+também mockado), **`pnpm test:banco`** — suítes que exigem Postgres real,
 que o CI sobe como serviço. Mock não tem lock, snapshot nem constraint;
 `test/banco/` existe porque metade das provas da SPEC-014/015 depende
 exatamente disso, e a SPEC-017 acrescentou `fila-exclusao.db-spec.ts`, que é
 o **ensaio de violação** das constraints da fila: cada teste tenta escrever o
 estado proibido e exige que o banco recuse.
+
+E **`pnpm run test:bucket`** (FIT-006), que fala com o **bucket real** e por
+isso **não roda no CI** — é opt-in, exige as 6 variáveis `SPACES_*`, e só
+escreve sob um prefixo próprio. É o único runner que consegue reprovar ACL
+por arquivo, CDN, assinatura que expira e "1 objeto". A tabela de provas está
+em `specs/changes/017-armazenamento-de-arquivo/FIT-006.md`.
+
+**Throttle: a chave é o USUÁRIO, não o IP** (SPEC-017/TASK-006). O guard
+global é o `ThrottlerPorUsuario`; rota pública cai no IP porque lá não há
+quem identificar. IP sozinho era a chave errada para um clube — wi-fi
+compartilhado fazia um gestor bater no teto do colega, e IP rotativo passava
+batido.
 
 ## 11. Patterns observados
 

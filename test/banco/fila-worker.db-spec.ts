@@ -574,6 +574,79 @@ describe('WorkerDeExclusao contra Postgres real', () => {
     });
   });
 
+  describe('INV-042 — a ordem global de locks, provada com deadlock de verdade', () => {
+    it('o worker roda durante um `FOR UPDATE` de `turmas` sem travar', async () => {
+      // A regra que mais protege: **o worker nunca toma lock de linha**. Ele
+      // é assíncrono e roda sozinho, então é o candidato natural a segurar
+      // uma linha esperando outra coisa. Proibi-lo disso o mantém de um lado
+      // só do grafo, e não há ciclo possível.
+      //
+      // Aqui a outra conexão segura a raiz da SPEC-015 (`turmas`, INV-029)
+      // enquanto o worker faz o ciclo inteiro. Se ele tocasse em linha de
+      // domínio, isto ficaria preso até o timeout.
+      registry.registrar({ estaReferenciada: () => Promise.resolve(false) });
+      await enfileirar(chave('deadlock'));
+
+      const empresa = 'e1e1e1e1-1111-4111-8111-e1e1e1e1e1e1';
+      const quadra = 'e2e2e2e2-2222-4222-8222-e2e2e2e2e2e2';
+      const turma = 'e3e3e3e3-3333-4333-8333-e3e3e3e3e3e3';
+      await A.$executeRawUnsafe(
+        `INSERT INTO empresas (id,nome,slug,updated_at)
+         VALUES ($1::uuid,'Deadlock','deadlock-fit',now())
+         ON CONFLICT (id) DO NOTHING`,
+        empresa,
+      );
+      await A.$executeRawUnsafe(
+        `INSERT INTO quadras (id,company_id,nome,esporte,preco_hora)
+         VALUES ($1::uuid,$2::uuid,'Q','tenis',80) ON CONFLICT (id) DO NOTHING`,
+        quadra,
+        empresa,
+      );
+      await A.$executeRawUnsafe(
+        `INSERT INTO turmas (id,company_id,quadra_id,nome,dia_semana,hora_inicio,hora_fim,capacidade)
+         VALUES ($1::uuid,$2::uuid,$3::uuid,'T',1,'08:00','09:00',10)
+         ON CONFLICT (id) DO NOTHING`,
+        turma,
+        empresa,
+        quadra,
+      );
+
+      let liberar!: () => void;
+      const podeSoltar = new Promise<void>((r) => (liberar = r));
+      const segurandoATurma = B.$transaction(async (tx) => {
+        await tx.$queryRawUnsafe(
+          `SELECT id FROM turmas WHERE id = $1::uuid FOR UPDATE`,
+          turma,
+        );
+        await podeSoltar;
+      });
+      await new Promise((r) => setTimeout(r, 200));
+
+      const inicio = Date.now();
+      const r = await worker.executarCiclo();
+      const duracao = Date.now() - inicio;
+
+      expect(r.apagados).toBe(1);
+      expect(duracao).toBeLessThan(5000);
+
+      liberar();
+      await segurandoATurma;
+
+      await A.$executeRawUnsafe(
+        `DELETE FROM turmas WHERE id = $1::uuid`,
+        turma,
+      );
+      await A.$executeRawUnsafe(
+        `DELETE FROM quadras WHERE id = $1::uuid`,
+        quadra,
+      );
+      await A.$executeRawUnsafe(
+        `DELETE FROM empresas WHERE id = $1::uuid`,
+        empresa,
+      );
+    });
+  });
+
   describe('AC-012/016 — falha de exclusão', () => {
     beforeEach(() => {
       registry.registrar({ estaReferenciada: () => Promise.resolve(false) });

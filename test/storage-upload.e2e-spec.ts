@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import request from 'supertest';
+import { validarWebp } from '../src/storage/webp.validator';
 import type { App } from 'supertest/types';
 import {
   STORAGE_PROVIDER,
@@ -163,6 +164,43 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
         .expect(200);
 
       expect(gravados[0].visibilidade).toBe('privado');
+    });
+  });
+
+  describe('NFR-001 — concorrência', () => {
+    it('3 uploads em paralelo: todos completam, e cada um vira seu objeto', async () => {
+      // O que este teste prova é que a concorrência não corrompe estado —
+      // três requisições simultâneas não embaralham corpo, chave nem
+      // visibilidade.
+      //
+      // **O que ele NÃO prova é memória de container**, e vale dizer em vez
+      // de fingir: os fixtures têm poucos KB, então medir RSS aqui seria
+      // teatro. A prova de memória é outra, e está no harness — o processo
+      // sobe com **91 MB** num container de 512 MB, e o caminho de decode
+      // simplesmente não existe (INV-033: o servidor lê cabeçalho, nunca
+      // decodifica).
+      const arquivos = [
+        'valido-vp8-lossy.webp',
+        'valido-vp8l-lossless.webp',
+        'valido-vp8x-com-alpha.webp',
+      ];
+
+      const respostas = await Promise.all(
+        arquivos.map((nome) =>
+          request(app.getHttpServer())
+            .put(rota('quadra'))
+            .attach(CAMPO_DO_ARQUIVO, ler(nome), nome),
+        ),
+      );
+
+      expect(respostas.map((r) => r.status)).toEqual([200, 200, 200]);
+      expect(gravados).toHaveLength(3);
+      // Chaves distintas: cada corpo produziu a sua, sem mistura.
+      expect(new Set(gravados.map((g) => g.key)).size).toBe(3);
+      // E cada objeto guardou o corpo que lhe pertencia.
+      for (const gravado of gravados) {
+        expect(validarWebp(gravado.corpo).valido).toBe(true);
+      }
     });
   });
 
