@@ -89,7 +89,10 @@ class RotaPorIp {
  * Contexto como o Nest entrega: o guard lê a marca do **handler** e da
  * classe. Um contexto ausente é caso próprio, testado à parte.
  */
-function contextoDe(alvo: { new (): { handler(): void } }): ExecutionContext {
+function contextoDe(alvo: {
+  new (): unknown;
+  prototype: { handler: () => void };
+}): ExecutionContext {
   return {
     getHandler: () => alvo.prototype.handler,
     getClass: () => alvo,
