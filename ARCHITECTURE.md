@@ -1,10 +1,10 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: 2026-08-24.
-**Commit de referência:** a **SPEC-017 completa** (TASK-001 a 007),
-2026-08-24/25, a partir de `f75615b`. Por nome e não por hash
-porque este arquivo faz parte do próprio commit — um documento não consegue
-citar o hash que ele ajuda a formar.
+**Fonte: análise direta do código.** Data: 2026-08-25.
+**Commit de referência:** a **SPEC-017 completa** (TASK-001 a 007) mais a
+**SPEC-018:TASK-001** (as seis colunas de mídia), 2026-08-24/25, a partir de
+`f75615b`. Por nome e não por hash porque este arquivo faz parte do próprio
+commit — um documento não consegue citar o hash que ele ajuda a formar.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -55,12 +55,18 @@ rota, e naquele instante não há usuário. Quem mexer aqui precisa saber
 disso, porque a versão errada compila, passa no unitário e cai no IP em
 silêncio.
 
+**As seis colunas de mídia existem desde 2026-08-25** (SPEC-018:TASK-001),
+e **estão todas nulas**: `usuarios.foto_key`, `professores.foto_key`,
+`quadras.imagem_key` + `imagem_confirmada_por`/`_em`, `empresas.logo_key`.
+Migration expand puro, sem backfill e **sem consumidor** — nada escreve nelas
+ainda.
+
 **O que NÃO existe, e a lista importa mais que o que existe:** **nenhuma
-rota de upload do produto**, nenhuma coluna de mídia, e **nenhum
-`KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e não
-apaga nada. A tabela da fila está criada e **vazia**, porque quem enfileira é
-quem apaga referência, e isso é da SPEC-018. **A SPEC-017 está completa**;
-falta a SPEC-018 inteira.
+rota de upload do produto**, nenhuma tela, nenhuma compressão no navegador, e
+**nenhum `KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e
+não apaga nada. A tabela da fila está criada e **vazia**, porque quem
+enfileira é quem apaga referência, e isso é da SPEC-018:TASK-008. **A
+SPEC-017 está completa**; da SPEC-018 saiu só a TASK-001.
 
 **Ler `storage/` esperando upload funcionando é ler errado**, e ler o worker
 esperando que ele apague alguma coisa hoje também.
@@ -109,19 +115,21 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**17 tabelas e 10 enums** no `schema.prisma` (conferido em 2026-08-24, depois da SPEC-017:TASK-004).
+**17 tabelas e 10 enums** no `schema.prisma` (conferido em 2026-08-25, depois da
+SPEC-018:TASK-001 — que **não** criou tabela nem enum: só seis colunas de
+mídia, todas nulas).
 
 | Tabela | Dono | Papel / quirk |
 |---|---|---|
-| `empresas` | MOD-002 | tenant. `slug` único alimenta o link público de cadastro; `permite_auto_cadastro` liga/desliga esse link |
-| `usuarios` | MOD-001 | identidade. E-mail único **global** (INV-004). `senha_temporaria` tranca a conta até a troca (INV-008) |
+| `empresas` | MOD-002 | tenant. `slug` único alimenta o link público de cadastro; `permite_auto_cadastro` liga/desliga esse link. `logo_key` (SPEC-018) é o upload real e **convive** com `logo_url`, que não migra (AC-012) |
+| `usuarios` | MOD-001 | identidade. E-mail único **global** (INV-004). `senha_temporaria` tranca a conta até a troca (INV-008). `foto_key` (SPEC-018) é a foto de quem **tem conta**; CHECK exige empresa, então `super_admin` não tem foto |
 | `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira |
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
 | `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload |
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
-| `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas |
+| `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
 | `niveis` | MOD-003 | único por `(company_id, nome)` |
-| `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor` |
+| `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor`. `imagem_key` é **pública** e vem com `imagem_confirmada_por`/`_em`: as três vivem e morrem juntas por CHECK (SPEC-018, decisão 1) |
 | `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008 |
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
@@ -145,6 +153,10 @@ que são a garantia real):
 | `presencas_chamada_fkey` (`ON DELETE NO ACTION`) | presença sem cabeçalho é impossível — INV-027 imposta pelo banco. `NO ACTION` e não `RESTRICT` porque apagar a ocorrência cascateia para as duas tabelas na mesma instrução; `RESTRICT` é checado na hora e abortaria |
 | `arquivos_pendentes_key_da_empresa_check` | INV-030 no banco: `key LIKE 'empresas/%'` e `split_part(key,'/',2) = company_id::text`. É o que substitui a FK que esta tabela não pode ter |
 | `arquivos_pendentes_erro_com_tentativa_check`, `..._lock_com_conflito_check` | erro sem tentativa é afirmação sem lastro; contador de lock e data do conflito existem ou não existem juntos |
+| `quadras_imagem_confirmada_check` (SPEC-018) | AC-007/008 no banco: `imagem_key`, `imagem_confirmada_por` e `imagem_confirmada_em` são as três nulas ou as três preenchidas. Sem isto, imagem pública sem autor seria gravável por qualquer caminho que esquecesse o campo — e a exigência de confirmação viraria aviso de tela |
+| `quadras_imagem_confirmada_por_fkey` (`ON DELETE RESTRICT`) | a confirmação vale por ter nome de gente: apagar a conta não pode apagar o autor da afirmação. Mesmo regime de `chamadas.registrada_por` |
+| `usuarios_foto_da_empresa_check`, `professores_foto_da_empresa_check`, `quadras_imagem_da_empresa_check`, `empresas_logo_da_empresa_check` (SPEC-018) | INV-030 por coluna de mídia: a chave gravada mora sob a empresa **da própria linha**. Pega chave adulterada no banco, que o prefixo e o escopo por token não pegam — os dois leem o mesmo token. O resto da gramática fica com `chave-de-midia.ts`, fonte única |
+| `usuarios_foto_da_empresa_check`, parte `company_id IS NOT NULL` | consequência declarada: **`super_admin` não tem foto de perfil.** A gramática da chave começa por `empresas/<company_id>/` e não representa foto de quem não tem empresa. Fail-closed, e é **decisão de produto pendente** — o contrato da SPEC-018 diz `PUT /api/v1/me/foto` para "qualquer autenticado" |
 
 ## 4. Estrutura de pastas
 
@@ -315,7 +327,10 @@ que o CI sobe como serviço. Mock não tem lock, snapshot nem constraint;
 `test/banco/` existe porque metade das provas da SPEC-014/015 depende
 exatamente disso, e a SPEC-017 acrescentou `fila-exclusao.db-spec.ts`, que é
 o **ensaio de violação** das constraints da fila: cada teste tenta escrever o
-estado proibido e exige que o banco recuse.
+estado proibido e exige que o banco recuse. A SPEC-018:TASK-001 acrescentou
+`colunas-de-midia.db-spec.ts`, o mesmo ensaio para as seis colunas de mídia —
+**12 dos seus 14 testes ficam vermelhos** quando as constraints são
+derrubadas, e os 2 que sobrevivem são justamente os dois casos felizes.
 
 E **`pnpm run test:bucket`** (FIT-006), que fala com o **bucket real**. Exige
 as 6 variáveis `SPACES_*` e só escreve sob um prefixo próprio. É o único

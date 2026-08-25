@@ -67,7 +67,12 @@ model Empresa {
   // SPEC-009: identifica a empresa no link publico de auto-cadastro
   // (`/cadastro/<slug>`), para nao expor `company_id` cru na URL.
   slug                String        @unique
+  /// SPEC-018/AC-012: continua valida e NAO migra. Empresa que ja tem URL
+  /// externa segue exibindo ela ate alguem subir um logo de verdade.
   logoUrl             String?       @map("logo_url")
+  /// SPEC-018/TASK-001 — chave do logo no storage (SPEC-017). Publica.
+  /// Precedencia na leitura: `logoKey` quando existir, senao `logoUrl`.
+  logoKey             String?       @map("logo_key")
   esportes            String[]
   status              EmpresaStatus @default(ativa)
   // SPEC-009/REQ-006: a empresa decide se aceita auto-cadastro publico.
@@ -109,6 +114,11 @@ model Usuario {
   // fora trocar senha, /auth/me e logout.
   senhaTemporaria         Boolean       @default(false) @map("senha_temporaria")
   senhaTemporariaExpiraEm DateTime?     @map("senha_temporaria_expira_em")
+  /// SPEC-018/TASK-001 — foto de perfil de quem TEM conta (INV-034). Privada.
+  /// CHECK escrito a mao exige que a chave more sob a empresa do usuario, o
+  /// que significa que `super_admin` (sem `companyId`) nao tem foto — ver o
+  /// comentario da migration, e a pergunta aberta da TASK-003.
+  fotoKey                 String?       @map("foto_key")
   createdAt               DateTime      @default(now()) @map("created_at")
   updatedAt               DateTime      @updatedAt @map("updated_at")
 
@@ -119,6 +129,7 @@ model Usuario {
   convitesCriados      ConviteAluno[] @relation("ConviteCriadoPor")
   presencasRegistradas Presenca[]     @relation("PresencaRegistradaPor")
   chamadasRegistradas   Chamada[]      @relation("ChamadaRegistradaPor")
+  imagensDeQuadraConfirmadas Quadra[]  @relation("QuadraImagemConfirmadaPor")
 
   @@index([companyId])
   @@map("usuarios")
@@ -166,6 +177,12 @@ model Professor {
   // acesso continua valido, e a maioria vai ficar assim. `SetNull` no
   // delete: apagar a conta nao apaga a ficha do professor, so o vinculo.
   usuarioId String?       @unique @map("usuario_id") @db.Uuid
+  /// SPEC-018/TASK-001 — foto do professor SEM conta, subida pelo gestor na
+  /// ficha. Privada. Existe porque `usuarioId` e nulavel (decisao 2): sem
+  /// esta coluna, professor sem login nao teria onde guardar foto. Quem tem
+  /// conta manda na propria imagem — `coalesce(usuarios.foto_key,
+  /// professores.foto_key)`, INV-034.
+  fotoKey   String?       @map("foto_key")
   createdAt DateTime      @default(now()) @map("created_at")
 
   empresa Empresa  @relation(fields: [companyId], references: [id])
@@ -216,12 +233,25 @@ model Quadra {
   status    QuadraStatus @default(ativa)
   createdAt DateTime     @default(now()) @map("created_at")
 
-  empresa   Empresa                @relation(fields: [companyId], references: [id])
-  ocupacoes OcupacaoQuadra[]
-  turmas    Turma[]
-  horarios  HorarioFuncionamento[]
+  /// SPEC-018/TASK-001 — imagem PUBLICA da quadra (decisao 1, opcao B).
+  /// As tres colunas abaixo vivem e morrem juntas, garantido por CHECK
+  /// escrito a mao (`quadras_imagem_confirmada_check`): nao existe imagem
+  /// sem alguem tendo afirmado, com nome e data, que ela nao mostra pessoa
+  /// identificavel (AC-007/008). Trocar a imagem regrava as tres.
+  imagemKey           String?   @map("imagem_key")
+  imagemConfirmadaPor String?   @map("imagem_confirmada_por") @db.Uuid
+  imagemConfirmadaEm  DateTime? @map("imagem_confirmada_em")
+
+  empresa     Empresa                @relation(fields: [companyId], references: [id])
+  /// `Restrict`, igual a `chamadas.registrada_por`: a confirmacao vale por
+  /// ter nome de gente, entao apagar a conta nao pode apagar o autor.
+  confirmante Usuario?               @relation("QuadraImagemConfirmadaPor", fields: [imagemConfirmadaPor], references: [id], onDelete: Restrict)
+  ocupacoes   OcupacaoQuadra[]
+  turmas      Turma[]
+  horarios    HorarioFuncionamento[]
 
   @@index([companyId])
+  @@index([imagemConfirmadaPor])
   @@map("quadras")
 }
 
