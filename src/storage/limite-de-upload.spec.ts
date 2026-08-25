@@ -119,6 +119,29 @@ describe('ThrottlerPorUsuario', () => {
       ).resolves.toBe('ip:10.0.0.1');
     });
 
+    it('token com `alg: none` cai para o IP', async () => {
+      // A forma clássica de furar quem só olha o payload. Não é ataque de
+      // confusão de algoritmo (o projeto usa segredo simétrico, então não
+      // há chave pública para usar como HMAC) — é mais simples que isso:
+      // um token sem assinatura nenhuma, dizendo que não precisa de uma.
+      const base64url = (o: unknown): string =>
+        Buffer.from(JSON.stringify(o))
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      const semAssinatura = `${base64url({ alg: 'none', typ: 'JWT' })}.${base64url(
+        { sub: 'vitima' },
+      )}.`;
+
+      await expect(
+        tracker(
+          guard(),
+          req({ authorization: `Bearer ${semAssinatura}`, ip: '10.0.0.1' }),
+        ),
+      ).resolves.toBe('ip:10.0.0.1');
+    });
+
     it('token válido SEM `sub` cai para o IP', async () => {
       await expect(
         tracker(
