@@ -13,6 +13,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PrismaService } from '../prisma/prisma.service';
+import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { UpdateAutoCadastroDto } from './dto/update-auto-cadastro.dto';
 
 /**
@@ -33,16 +34,29 @@ import { UpdateAutoCadastroDto } from './dto/update-auto-cadastro.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('me/company')
 export class MeCompanyController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logos: LogoDaEmpresaService,
+  ) {}
 
   @Get()
-  @Roles('company_admin')
+  // SPEC-018/TASK-006 — `aluno` e `professor` entraram aqui para o app
+  // conseguir desenhar a marca do clube (antes só o gestor lia). O que a
+  // rota devolve já era alcançável por eles de outro jeito: `slug` é o link
+  // público de cadastro, e `nome` e `logoUrl` aparecem na vitrine pública.
+  // "A minha empresa" é uma pergunta que todo mundo com empresa pode fazer.
+  @Roles('company_admin', 'aluno', 'professor')
   async minhaEmpresa(@CurrentUser() user: AccessTokenPayload) {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: user.companyId as string },
       select: {
+        id: true,
         nome: true,
         slug: true,
+        // SPEC-018/TASK-006: as duas colunas saem do banco, e só uma sai na
+        // resposta — `LogoDaEmpresaService.resolver` decide qual, com o
+        // fallback da AC-013.
+        logoKey: true,
         logoUrl: true,
         status: true,
         permiteAutoCadastro: true,
@@ -53,7 +67,19 @@ export class MeCompanyController {
       throw new NotFoundException();
     }
 
-    return empresa;
+    // `id` sai: o painel precisa dele para montar `PUT /companies/:id/logo`,
+    // e ele já viaja no próprio token do gestor — não é informação nova.
+    // **`logoKey` NÃO sai**: chave crua é coisa que nenhum cliente deve usar
+    // para montar URL, porque isso contornaria a conferência do
+    // `StorageService` (INV-037).
+    return {
+      id: empresa.id,
+      nome: empresa.nome,
+      slug: empresa.slug,
+      status: empresa.status,
+      permiteAutoCadastro: empresa.permiteAutoCadastro,
+      logoUrl: this.logos.resolver(empresa).logoUrl,
+    };
   }
 
   /**

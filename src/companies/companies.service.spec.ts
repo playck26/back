@@ -75,6 +75,14 @@ describe('CompaniesService', () => {
     service = new CompaniesService(
       prisma,
       auth as unknown as ConstructorParameters<typeof CompaniesService>[1],
+      // SPEC-018/TASK-006 — o resolvedor de logo. Aqui ele é o caso "sem
+      // upload": devolve a `logo_url` como está, que é o comportamento da
+      // AC-013 e o único que estas suítes exercitam.
+      {
+        resolver: (empresa: { logoUrl: string | null }) => ({
+          logoUrl: empresa.logoUrl,
+        }),
+      } as unknown as ConstructorParameters<typeof CompaniesService>[2],
     );
   });
 

@@ -7,6 +7,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { parseTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { AuthService } from '../auth/auth.service';
 import type { CreateCompanyDto } from './dto/create-company.dto';
 import type { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
@@ -28,6 +29,9 @@ export class CompaniesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
+    // SPEC-018/TASK-006: quem resolve `logo_key` -> URL, com o fallback
+    // para `logo_url` (AC-013), é um lugar só. Ver `LogoDaEmpresaService`.
+    private readonly logos: LogoDaEmpresaService,
   ) {}
 
   async list(query: ListCompaniesQueryDto) {
@@ -43,7 +47,12 @@ export class CompaniesService {
       this.prisma.empresa.count(),
     ]);
 
-    return { data, page, pageSize, total };
+    return {
+      data: data.map((empresa) => this.comLogo(empresa)),
+      page,
+      pageSize,
+      total,
+    };
   }
 
   async create(dto: CreateCompanyDto) {
@@ -117,7 +126,28 @@ export class CompaniesService {
     if (!empresa) {
       throw new NotFoundException();
     }
-    return empresa;
+    return this.comLogo(empresa);
+  }
+
+  /**
+   * SPEC-018/TASK-006 — troca `logo_key` pela URL pronta e **remove a chave
+   * da resposta**.
+   *
+   * A chave não é segredo (o objeto é público), mas expô-la é dizer ao
+   * cliente uma coisa que ele não deve usar: montar URL a partir dela
+   * contornaria o `StorageService`, que é justamente quem confere se a chave
+   * pertence à empresa (INV-037). O que sai daqui é `logoUrl` — a única
+   * forma suportada de desenhar a marca.
+   */
+  private comLogo<
+    T extends { id: string; logoKey: string | null; logoUrl: string | null },
+  >(empresa: T): Omit<T, 'logoKey'> {
+    const resto = { ...empresa } as Record<string, unknown>;
+    delete resto.logoKey;
+    return {
+      ...(resto as Omit<T, 'logoKey'>),
+      logoUrl: this.logos.resolver(empresa).logoUrl,
+    };
   }
 
   /**

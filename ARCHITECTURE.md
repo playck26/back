@@ -79,6 +79,32 @@ deliberada: sem ele a AC-003 não teria por onde acontecer. É endpoint
 próprio, e não um campo em `/auth/me`, **porque a URL expira** — embutida no
 login, ficaria velha numa sessão longa.
 
+**A logo da empresa entrou logo depois** (SPEC-018/TASK-006, feita antes da
+004 e da 005 por decisão do Israel): `PUT`/`DELETE /api/v1/companies/:id/logo`
+em `companies/company-logo.controller.ts` + `logo-da-empresa.service.ts`.
+
+**Aqui o escopo NÃO é estrutural, e é a diferença que importa.** Em
+`/me/foto` não havia id na URL; aqui há, porque o `super_admin` também
+alcança qualquer empresa. O `RolesGuard` decide *quem entra na rota*, o
+serviço decide *qual empresa cada um alcança*, e a recusa é **404, nunca
+403** (AC-014).
+
+**`LogoDaEmpresaService.resolver()` é o único lugar que traduz `logo_key` em
+URL**, com o fallback para a `logo_url` antiga (AC-013). Ele é chamado por
+quatro rotas — `/me/company`, `/public/companies/:slug`, `/companies` e
+`/companies/:id` — e existe justamente para não haver quatro cópias do mesmo
+`??`, que seriam quatro chances de alguém apagar da tela a logo de quem ainda
+usa URL externa. É **fail-soft**: chave corrompida cai para a antiga e vai
+para o log, em vez de derrubar uma listagem inteira.
+
+**A chave crua nunca sai na resposta.** `logo_key` é removida antes de
+serializar: montar URL a partir dela contornaria a conferência do
+`StorageService` (INV-037).
+
+**`/me/company` passou a aceitar `aluno` e `professor`** — o app precisa ler
+a marca do clube. O que a rota devolve já era alcançável por eles: `slug` é o
+link público de cadastro, `nome` e `logoUrl` aparecem na vitrine pública.
+
 **As seis colunas de mídia existem desde 2026-08-25** (SPEC-018:TASK-001),
 e **`usuarios.foto_key` já tem escritor**; as outras cinco continuam nulas: `usuarios.foto_key`, `professores.foto_key`,
 `quadras.imagem_key` + `imagem_confirmada_por`/`_em`, `empresas.logo_key`.
@@ -86,11 +112,11 @@ Migration expand puro, sem backfill e **sem consumidor** — nada escreve nelas
 ainda.
 
 **O que NÃO existe, e a lista importa mais que o que existe:** upload de
-**professor, quadra e logo** (TASK-004 a 006) e **nenhum
-`KeyReferenceChecker` registrado** — sem ele o worker é fail-closed e
+**professor e quadra** (TASK-004 e 005) e **nenhum `KeyReferenceChecker`
+registrado** — sem ele o worker é fail-closed e
 não apaga nada. A tabela da fila está criada e **vazia**, porque quem
 enfileira é quem apaga referência, e isso é da SPEC-018:TASK-008. **A
-SPEC-017 está completa**; da SPEC-018 saíram as TASK-001, 002 e 003.
+SPEC-017 está completa**; da SPEC-018 saíram as TASK-001, 002, 003 e 006.
 
 **Ler `storage/` esperando upload funcionando é ler errado**, e ler o worker
 esperando que ele apague alguma coisa hoje também.
@@ -224,8 +250,8 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**54 caminhos, 76 operações HTTP** (conferido em 2026-08-25 contra o
-`openapi.json`, depois da SPEC-018/TASK-003). As duas medidas aparecem porque "rotas" é ambíguo: a
+**55 caminhos, 78 operações HTTP** (conferido em 2026-08-25 contra o
+`openapi.json`, depois da SPEC-018/TASK-006). As duas medidas aparecem porque "rotas" é ambíguo: a
 versão anterior desta planta dizia "41 rotas" contando caminhos, e trocar
 a métrica em silêncio faria o número parecer um salto de escopo.
 

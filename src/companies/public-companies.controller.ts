@@ -2,6 +2,7 @@ import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { LimitePublico } from '../common/throttle/contagem-por-ip';
 import { PrismaService } from '../prisma/prisma.service';
+import { LogoDaEmpresaService } from './logo-da-empresa.service';
 
 /**
  * SPEC-009/REQ-001 — o que a página pública de auto-cadastro precisa saber
@@ -14,7 +15,10 @@ import { PrismaService } from '../prisma/prisma.service';
 @ApiTags('public')
 @Controller('public/companies')
 export class PublicCompaniesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logos: LogoDaEmpresaService,
+  ) {}
 
   @Get(':slug')
   @LimitePublico()
@@ -22,7 +26,11 @@ export class PublicCompaniesController {
     const empresa = await this.prisma.empresa.findUnique({
       where: { slug },
       select: {
+        id: true,
         nome: true,
+        // SPEC-018/TASK-006 — a vitrine pública é onde a logo mais importa:
+        // é a única tela em que ela aparece para quem ainda NÃO é cliente.
+        logoKey: true,
         logoUrl: true,
         status: true,
         permiteAutoCadastro: true,
@@ -37,6 +45,12 @@ export class PublicCompaniesController {
       throw new NotFoundException();
     }
 
-    return { nome: empresa.nome, logoUrl: empresa.logoUrl };
+    // A resposta continua com dois campos, e `id` e `logoKey` NÃO saem
+    // daqui: esta rota é pública e sem autenticação — quanto menos ela
+    // contar sobre a empresa, melhor.
+    return {
+      nome: empresa.nome,
+      logoUrl: this.logos.resolver(empresa).logoUrl,
+    };
   }
 }
