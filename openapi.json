@@ -1846,6 +1846,226 @@
         ]
       }
     },
+    "/api/v1/court-sports": {
+      "get": {
+        "operationId": "CourtSportsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-sports"
+        ]
+      },
+      "post": {
+        "operationId": "CourtSportsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogoDeQuadraDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-sports"
+        ]
+      }
+    },
+    "/api/v1/court-sports/{id}": {
+      "patch": {
+        "operationId": "CourtSportsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogoDeQuadraDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-sports"
+        ]
+      },
+      "delete": {
+        "operationId": "CourtSportsController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-sports"
+        ]
+      }
+    },
+    "/api/v1/court-categories": {
+      "get": {
+        "operationId": "CourtCategoriesController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-categories"
+        ]
+      },
+      "post": {
+        "operationId": "CourtCategoriesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogoDeQuadraDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-categories"
+        ]
+      }
+    },
+    "/api/v1/court-categories/{id}": {
+      "patch": {
+        "operationId": "CourtCategoriesController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogoDeQuadraDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-categories"
+        ]
+      },
+      "delete": {
+        "operationId": "CourtCategoriesController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "court-categories"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/frequencia": {
       "get": {
         "operationId": "ClassesController_frequencia",
@@ -2892,6 +3112,20 @@
           "quadraId",
           "data"
         ]
+      },
+      "CatalogoDeQuadraDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Saibro"
+          },
+          "ordem": {
+            "type": "number",
+            "example": 0,
+            "description": "Ordena na tela. Default 0."
+          }
+        }
       },
       "CreateClassDto": {
         "type": "object",

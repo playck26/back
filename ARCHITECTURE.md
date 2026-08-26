@@ -185,6 +185,34 @@ escrita pelo gestor, e é ela que alimenta o filtro do app do aluno). O
 catálogo seria a terceira. O backfill semeou a **união** das duas, por
 empresa, deduplicando por `lower(nome)` e preferindo a grafia declarada.
 
+**As rotas dos catálogos entraram na TASK-002:** `/court-sports` e
+`/court-categories`, com `CatalogoDeQuadraService` como base abstrata e dois
+concretos que só dizem três coisas — qual tabela, como se chamam, e o que
+conta como "em uso".
+
+**Base compartilhada, e não dois serviços iguais.** A duplicação do
+`comprimir-imagem.ts` tem a desculpa do poly-repo (ADR-001, sem pacote
+compartilhado, custo declarado); esta seria dentro do mesmo módulo. Se um
+terceiro eixo aparecer, são três linhas e nenhuma regra nova.
+
+**A comparação de nome é case-INSENSITIVE aqui, e o banco não é.** O
+`UNIQUE(company_id, nome)` distingue "Tênis" de "tênis" — e o defeito que a
+SPEC-020 existe para resolver é exatamente esse. Quem impede a segunda grafia
+é o serviço; o banco fica como a rede que pega o caminho que não passar por
+ele. E há `trim` antes de julgar: `" Tênis"` e `"Tênis"` passariam pela
+checagem como nomes diferentes.
+
+**Os controllers herdam os decorators de rota de uma classe base abstrata**, e
+isso é aposta no comportamento do Nest — teste de serviço passaria intacto com
+as rotas não registradas, e o defeito só apareceria como 404 em produção. Por
+isso o primeiro teste de `court-catalogs.e2e-spec.ts` chama-se *"A ROTA
+EXISTE"*.
+
+**Uma sabotagem que passou mudou o teste, não o código.** Trocar o `mode:
+'insensitive'` do serviço não derrubava nada: o dublê do e2e comparava com
+`toLowerCase()` **sempre**, então o comportamento central da task não era
+provado por ninguém. O dublê passou a honrar o `mode`.
+
 **A INV-054 é FK composta**, e é o que impede a quadra do clube A apontar
 para o esporte do clube B — FK simples não sabe de `company_id`. Provada por
 violação em `test/banco/catalogos-de-quadra.db-spec.ts`, junto com a
