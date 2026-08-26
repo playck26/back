@@ -180,6 +180,49 @@ de um objeto só, errado numa listagem, onde uma linha ruim derrubaria a
 página inteira. O `try/catch` de `assinarOuNulo` existe por isso, e o log
 registra **qual dos dois lados** falhou.
 
+**O worker deixou de ser fail-closed em 2026-08-26** (TASK-007):
+`checker-de-referencia.service.ts` implementa o `KeyReferenceChecker` que a
+SPEC-017 declarou como porta, e se registra sozinho no `onModuleInit`.
+
+**Até esse dia o worker não apagava nada.** O `KeyReferenceRegistry`
+respondia `true` a qualquer pergunta (INV-044) — "sem checker, tudo é
+referenciada" — porque uma fundação no ar antes do consumidor não pode
+apagar por não saber quem aponta. Com o registro, ele passa a apagar de fato
+(AC-016). **É a mudança mais perigosa da spec inteira:** antes, um bug aqui
+deixava lixo; agora, apaga arquivo em uso.
+
+Duas defesas contra isso:
+
+1. **Fail-closed também no erro.** Consulta que estoura responde
+   `true` — banco indisponível significa "não sei", nunca "pode apagar". O
+   objeto fica um ciclo a mais no bucket, o que custa centavos.
+2. **A lista de colunas é uma só** (INV-045), em `colunas-de-midia.ts`, e
+   **um teste a confere contra o schema**, não contra outra lista.
+
+**A segunda é o que faz a INV-045 sobreviver.** Invariante de cobertura morre
+em silêncio: alguém acrescenta `quadras.imagem_capa_key` daqui a seis meses,
+esquece do checker, e o worker apaga arquivo em uso — sem erro, sem alerta,
+só a imagem sumindo. `colunas-de-midia.spec.ts` lê o **DMMF do Prisma**
+(gerado de `schema.prisma`) e falha no dia em que aparecer coluna de chave
+que ninguém ensinou ao checker. Exceção é possível, mas exige **motivo
+escrito** no próprio arquivo — hoje há uma:
+`arquivos_pendentes_exclusao.key`, que é a chave **na fila para ser
+apagada**, não uma referência a ela.
+
+**E há prova contra Postgres real** (`test/banco/checker-de-referencia.db-spec.ts`).
+Os testes de banco do worker que já existiam usam checker **falso**
+(`() => Promise.resolve(false)`): provam o worker dada uma resposta, nunca o
+checker de verdade lendo as colunas de verdade. Entre os dois havia um vão, e
+era o vão do erro caro — delegate trocado, coluna esquecida na lista. Tirar
+`quadras.imagem_key` da lista central faz o worker **apagar a imagem de uma
+quadra em uso**, e três testes caem, dois deles de integração.
+
+**O teste tem controle positivo**, e ele já pegou algo: a primeira versão do
+regex de descoberta exigia `Key` maiúsculo e não encontrava o campo `key`
+da fila. Sem a asserção "o schema de fato tem colunas de chave", um regex
+quebrado faria todas as outras passarem por não encontrarem nada — e o teste
+que existe para avisar viraria o que garante silêncio.
+
 **`TeachersService` parou de devolver a linha crua do Prisma.** Enquanto
 `professores.foto_key` era sempre nula isso não custava nada; com a TASK-004
 escrevendo nela, a **chave crua sairia na resposta** (INV-037). Entrou

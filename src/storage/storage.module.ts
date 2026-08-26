@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AgendadorDeExclusao } from './agendador-de-exclusao.service';
 import { AlertaDeStorage, AlertaPorLog } from './alerta-de-storage';
 import { FilaDeExclusao } from './fila-de-exclusao.service';
+import { CheckerDeReferencia } from './checker-de-referencia.service';
 import { KeyReferenceRegistry } from './key-reference-checker';
 import { MedidorDeBucket } from './medidor-de-bucket.service';
 import { S3StorageProvider } from './s3-storage.provider';
@@ -45,6 +46,10 @@ import {
     // e provar isso lendo log seria testar a formatação.
     { provide: AlertaDeStorage, useClass: AlertaPorLog },
     KeyReferenceRegistry,
+    // SPEC-018/TASK-007 — a implementacao do checker, que se registra
+    // sozinha no boot. E o que tira o worker do fail-closed (AC-016):
+    // ate aqui ele nao apagava nada, por nao saber quem aponta.
+    CheckerDeReferencia,
     FilaDeExclusao,
     WorkerDeExclusao,
     AgendadorDeExclusao,
