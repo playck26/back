@@ -142,6 +142,50 @@ chamado de dentro de `CourtsService.toQuadraResponse()` — ou seja, **toda**
 leitura de quadra passa por ele. Fail-soft: chave corrompida vira `null` na
 tela e erro no log.
 
+**A foto de professor fechou a SPEC-018** (TASK-004):
+`PUT`/`DELETE /api/v1/teachers/:id/foto` em
+`people/teacher-photo.controller.ts` + `foto-de-professor.service.ts`.
+`company_admin` só.
+
+**O que ela tem de próprio é a INV-034, e ela é de LEITURA.** A foto exibida
+de um professor é `coalesce(usuarios.foto_key, professores.foto_key)` — duas
+colunas, dois donos:
+
+| Coluna | De quem | Quem sobe | Tipo de mídia |
+|---|---|---|---|
+| `usuarios.foto_key` | a pessoa | ela mesma, em `/me/foto` | `perfil` |
+| `professores.foto_key` | a ficha | o gestor, aqui | `professor` |
+
+**As duas ficam preenchidas ao mesmo tempo no fluxo normal**, e isso não é
+anomalia: o professor entra sem conta (`professores.usuario_id` é nulável),
+o gestor põe a foto, e `POST /teachers/:id/acesso` cria o login depois.
+
+**A rota ACEITA professor que já tem conta**, e era decisão em aberto. O
+`STATUS.md` a formulava dizendo que aceitar "grava um objeto que ninguém
+nunca vai ver" — **falso no caso comum**: só é invisível se a pessoa já tiver
+subido a própria foto, e a maioria não subiu. Recusar criaria a assimetria de
+o mesmo professor aceitar a foto cinco minutos antes de ganhar o acesso e
+recusá-la cinco minutos depois. O que se grava continua sendo a ficha:
+`usuarios.foto_key` é da pessoa, e escrever lá seria o gestor trocando a
+imagem de alguém.
+
+**`FotoDeProfessorService.resolver()` é o único lugar com a precedência**, e
+é chamado de `TeachersService` — toda leitura de professor passa por ele.
+Diferente dos outros dois `resolver()`, este **assina** (a foto de professor
+é privada) e por isso é `async`; a listagem resolve com `Promise.all`.
+
+**E ele é fail-soft por cima de um `urlDeLeitura` que não é.**
+`StorageService.urlDeLeitura` lança 404 em chave inválida — certo numa rota
+de um objeto só, errado numa listagem, onde uma linha ruim derrubaria a
+página inteira. O `try/catch` de `assinarOuNulo` existe por isso, e o log
+registra **qual dos dois lados** falhou.
+
+**`TeachersService` parou de devolver a linha crua do Prisma.** Enquanto
+`professores.foto_key` era sempre nula isso não custava nada; com a TASK-004
+escrevendo nela, a **chave crua sairia na resposta** (INV-037). Entrou
+`comFoto()`, e um `carregarCru()` separado para `update`/`gerarAcesso`,
+que precisam de campos que a resposta não leva.
+
 **`/me/company` passou a aceitar `aluno` e `professor`** — o app precisa ler
 a marca do clube. O que a rota devolve já era alcançável por eles: `slug` é o
 link público de cadastro, `nome` e `logoUrl` aparecem na vitrine pública.
@@ -155,11 +199,12 @@ migration expand pura, sem backfill. **Quatro já têm escritor**, e o que falta
 | `usuarios.foto_key` | `PUT /me/foto` | 003, no ar |
 | `empresas.logo_key` | `PUT /companies/:id/logo` | 006, no ar |
 | `quadras.imagem_key` + `imagem_confirmada_por`/`_em` | `PUT /courts/:id/imagem` | 005 |
-| `professores.foto_key` | — **ninguém ainda** | 004, falta |
+| `professores.foto_key` | `PUT /teachers/:id/foto` | 004 |
 
-**Esta tabela é o lugar onde a planta mais envelhece**, porque cada task nova
-troca uma linha. Ao ler, confira contra o `openapi.json` antes de concluir
-que algo não tem escritor.
+**As seis têm escritor desde 2026-08-26.** A tabela fica porque é o lugar
+onde a planta mais envelhece, e porque diz **qual rota** escreve em cada
+coluna — que é a pergunta real de quem chega. Ao ler, confira contra o
+`openapi.json`.
 
 **O que NÃO existe, e a lista importa mais que o que existe:** upload de
 **professor e quadra** (TASK-004 e 005) e **nenhum `KeyReferenceChecker`

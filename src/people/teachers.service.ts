@@ -10,13 +10,65 @@ import {
   gerarSenhaTemporaria,
   senhaTemporariaExpiraEm,
 } from '../common/utils/senha-temporaria';
+import { FotoDeProfessorService } from './foto-de-professor.service';
 import type { CreateTeacherDto } from './dto/create-teacher.dto';
 import type { PaginationQueryDto } from './dto/pagination-query.dto';
 import type { UpdateTeacherDto } from './dto/update-teacher.dto';
 
+/**
+ * O que toda consulta de professor precisa trazer para a INV-034 poder ser
+ * resolvida: a chave da ficha e a da conta, quando há conta.
+ *
+ * **Declarado uma vez e reusado em toda consulta**, porque uma consulta que
+ * esquecesse o `include` não quebraria — devolveria `fotoDoUsuario: null` e
+ * mostraria a foto da ficha por cima da que a pessoa escolheu. Falha
+ * silenciosa, do tipo que só aparece na tela de alguém.
+ */
+const COM_FOTO_DA_CONTA = {
+  usuario: { select: { fotoKey: true } },
+} as const;
+
+type ProfessorCru = {
+  id: string;
+  companyId: string;
+  usuarioId: string | null;
+  fotoKey: string | null;
+  usuario?: { fotoKey: string | null } | null;
+};
+
 @Injectable()
 export class TeachersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // SPEC-018/TASK-004: única fonte da INV-034. Toda leitura de professor
+    // passa por `resolver()` — a precedência entre a foto da conta e a da
+    // ficha não se repete em lugar nenhum.
+    private readonly fotos: FotoDeProfessorService,
+  ) {}
+
+  /**
+   * **SPEC-018/TASK-004 — e este método existe por causa de um vazamento.**
+   *
+   * Antes dele, `list`/`findOne`/`update` devolviam a linha crua do Prisma.
+   * Enquanto `professores.foto_key` era sempre nula isso não custava nada;
+   * com a TASK-004 escrevendo nela, **a chave crua sairia na resposta** — e
+   * montar URL a partir dela contornaria a conferência do `StorageService`
+   * (INV-037).
+   *
+   * Então a chave sai e entra `fotoUrl`, já assinada e já resolvida pela
+   * INV-034.
+   */
+  private async comFoto<T extends ProfessorCru>(professor: T) {
+    const { fotoKey, usuario, ...resto } = professor;
+    const { fotoUrl } = await this.fotos.resolver({
+      id: professor.id,
+      companyId: professor.companyId,
+      usuarioId: professor.usuarioId,
+      fotoKey: fotoKey ?? null,
+      fotoDoUsuario: usuario?.fotoKey ?? null,
+    });
+    return { ...resto, fotoUrl };
+  }
 
   async list(companyId: string, query: PaginationQueryDto) {
     const page = query.page ?? 1;
@@ -28,27 +80,54 @@ export class TeachersService {
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
+        include: COM_FOTO_DA_CONTA,
       }),
       this.prisma.professor.count({ where: { companyId } }),
     ]);
 
-    return { data, page, pageSize, total };
+    // `Promise.all` e não um `for`: assinar URL é conta local (HMAC), não
+    // ida à rede, mas é assíncrona — em série, uma página de 20 viraria 20
+    // esperas encadeadas por nada.
+    return {
+      data: await Promise.all(data.map((p) => this.comFoto(p))),
+      page,
+      pageSize,
+      total,
+    };
   }
 
-  create(companyId: string, dto: CreateTeacherDto) {
-    return this.prisma.professor.create({
+  async create(companyId: string, dto: CreateTeacherDto) {
+    const professor = await this.prisma.professor.create({
       data: {
         companyId,
         nome: dto.nome,
         telefone: dto.telefone,
         email: dto.email,
       },
+      include: COM_FOTO_DA_CONTA,
     });
+    // Recém-criado nunca tem foto, mas passa pelo mesmo caminho: uma resposta
+    // com formato diferente das outras é o tipo de detalhe que o cliente
+    // descobre em produção.
+    return this.comFoto(professor);
   }
 
   async findOne(companyId: string, id: string) {
+    return this.comFoto(await this.carregarCru(companyId, id));
+  }
+
+  /**
+   * A linha **crua**, para quem precisa dos campos que a resposta não leva.
+   *
+   * `update` e `gerarAcesso` leem `usuarioId`, `email`, `nome` e
+   * `telefone` para decidir o que fazer — e `comFoto` tira a chave e devolve
+   * um objeto de resposta, não a linha. Separar os dois evita o erro de
+   * alguém passar a usar o objeto de resposta como se fosse a linha.
+   */
+  private async carregarCru(companyId: string, id: string) {
     const professor = await this.prisma.professor.findFirst({
       where: { id, companyId },
+      include: COM_FOTO_DA_CONTA,
     });
     if (!professor) {
       throw new NotFoundException();
@@ -57,7 +136,7 @@ export class TeachersService {
   }
 
   async update(companyId: string, id: string, dto: UpdateTeacherDto) {
-    const existente = await this.findOne(companyId, id);
+    const existente = await this.carregarCru(companyId, id);
 
     return this.prisma.$transaction(async (tx) => {
       // SPEC-013/INV-013 — a divida que a TASK-000 deixou anotada aqui.
@@ -81,6 +160,7 @@ export class TeachersService {
 
       return tx.professor.update({
         where: { id },
+        include: COM_FOTO_DA_CONTA,
         data: {
           nome: dto.nome,
           telefone: dto.telefone,
@@ -103,7 +183,7 @@ export class TeachersService {
    * (AC-003). E o caso real: o professor perdeu o papel onde anotou.
    */
   async gerarAcesso(companyId: string, id: string) {
-    const professor = await this.findOne(companyId, id);
+    const professor = await this.carregarCru(companyId, id);
 
     if (!professor.email) {
       throw new BadRequestException({
@@ -137,7 +217,7 @@ export class TeachersService {
         });
       });
 
-      return { ...professor, senhaTemporaria };
+      return { ...(await this.comFoto(professor)), senhaTemporaria };
     }
 
     // AC-004 — o e-mail ja e de outra pessoa. Checado antes da transacao
@@ -171,10 +251,11 @@ export class TeachersService {
 
       return tx.professor.update({
         where: { id },
+        include: COM_FOTO_DA_CONTA,
         data: { usuarioId: usuario.id },
       });
     });
 
-    return { ...atualizado, senhaTemporaria };
+    return { ...(await this.comFoto(atualizado)), senhaTemporaria };
   }
 }

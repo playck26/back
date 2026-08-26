@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import type { FotoDeProfessorService } from './foto-de-professor.service';
 import { TeachersService } from './teachers.service';
 
 interface TxMock {
@@ -36,12 +37,19 @@ describe('TeachersService', () => {
   let prisma: PrismaService;
   let tx: TxMock;
   let service: TeachersService;
+  let fotos: FotoDeProfessorService;
 
   beforeEach(() => {
     const built = buildPrismaMock();
     prisma = built.prisma;
     tx = built.tx;
-    service = new TeachersService(prisma);
+    // SPEC-018/TASK-004: o resolvedor da INV-034 entra como duble. Estes
+    // testes sao de ficha e de acesso, nao de midia — a prova da
+    // precedencia mora em foto-de-professor.service.spec.ts.
+    fotos = {
+      resolver: jest.fn(() => Promise.resolve({ fotoUrl: null })),
+    } as unknown as FotoDeProfessorService;
+    service = new TeachersService(prisma, fotos);
   });
 
   it('lista escopado por company_id', async () => {
@@ -64,6 +72,9 @@ describe('TeachersService', () => {
 
     await service.create('c1', { nome: 'Prof' });
 
+    // O `include` entrou com a SPEC-018/TASK-004 e faz parte do contrato da
+    // consulta, não é ruído: sem ele a resposta não teria como resolver a
+    // INV-034 e mostraria a foto da ficha por cima da que a pessoa escolheu.
     expect(prisma.professor.create).toHaveBeenCalledWith({
       data: {
         companyId: 'c1',
@@ -71,6 +82,7 @@ describe('TeachersService', () => {
         telefone: undefined,
         email: undefined,
       },
+      include: { usuario: { select: { fotoKey: true } } },
     });
   });
 
@@ -127,6 +139,7 @@ describe('TeachersService', () => {
       );
       expect(tx.professor.update).toHaveBeenCalledWith({
         where: { id: 'p1' },
+        include: { usuario: { select: { fotoKey: true } } },
         data: { usuarioId: 'u9' },
       });
     });
