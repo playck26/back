@@ -1695,6 +1695,87 @@
         ]
       }
     },
+    "/api/v1/courts/{id}/imagem": {
+      "put": {
+        "operationId": "CourtImageController_substituir",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "arquivo",
+                  "semPessoasIdentificaveis"
+                ],
+                "properties": {
+                  "arquivo": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "semPessoasIdentificaveis": {
+                    "type": "string",
+                    "enum": [
+                      "true"
+                    ],
+                    "description": "AC-007 — afirmação de que a imagem não mostra pessoas identificáveis. Sem ela, 422 CONFIRMACAO_OBRIGATORIA e nada é gravado."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      },
+      "delete": {
+        "operationId": "CourtImageController_remover",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "courts"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/frequencia": {
       "get": {
         "operationId": "ClassesController_frequencia",

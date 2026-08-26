@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import type { StudentsService } from '../people/students.service';
 import { formatTimeOnly, parseDateOnly, parseTimeOnly } from './date-time.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
+import type { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CourtsService } from './courts.service';
 
@@ -101,6 +102,7 @@ describe('CourtsService', () => {
   let service: CourtsService;
   let studentsService: StudentsService;
   let horarios: HorarioFuncionamentoService;
+  let imagens: ImagemDaQuadraService;
 
   beforeEach(() => {
     prisma = buildPrismaMock();
@@ -111,7 +113,14 @@ describe('CourtsService', () => {
     );
     studentsService = buildStudentsMock();
     horarios = buildHorariosMock();
-    service = new CourtsService(prisma, studentsService, horarios);
+    // SPEC-018/TASK-005: o resolvedor de imagem entra como dublê. Estes
+    // testes são de agenda/reserva, não de mídia — o que eles precisam é
+    // que `toQuadraResponse` consiga responder, e a prova da resolução
+    // mora em `imagem-da-quadra.service.spec.ts`.
+    imagens = {
+      resolver: jest.fn(() => ({ imagemUrl: null })),
+    } as unknown as ImagemDaQuadraService;
+    service = new CourtsService(prisma, studentsService, horarios, imagens);
   });
 
   describe('create/list/update', () => {

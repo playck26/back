@@ -101,15 +101,65 @@ para o log, em vez de derrubar uma listagem inteira.
 serializar: montar URL a partir dela contornaria a conferência do
 `StorageService` (INV-037).
 
+**A imagem de quadra veio em seguida** (SPEC-018/TASK-005):
+`PUT`/`DELETE /api/v1/courts/:id/imagem` em
+`courts/court-image.controller.ts` + `imagem-da-quadra.service.ts`.
+
+**O que a separa da logo é a confirmação, e ela tem três camadas.** A logo é
+material corporativo e sobe sem pergunta; a imagem de quadra é pública,
+permanente e pode mostrar aluno — que pode ser menor de idade. A decisão 1 da
+spec (opção B, Israel, 2026-08-23) manteve a imagem pública e exigiu
+afirmação explícita:
+
+1. **o servidor exige o campo `semPessoasIdentificaveis`** (AC-007). É
+   conferido **antes de tudo** — antes de validar o WebP, antes do sha256,
+   antes do bucket — porque a AC-007 diz "nada gravado", e nada gravado
+   inclui objeto órfão;
+2. **o autor e a data são gravados** (AC-008), e vêm do **token**, nunca do
+   formulário. Trocar a imagem **regrava** os dois: a confirmação vale para
+   aquela imagem, não é licença permanente para a quadra;
+3. **o banco não confia em nenhuma das duas.** A constraint
+   `quadras_imagem_confirmada_check` exige as três colunas juntas ou
+   nenhuma. Código que esquecesse o autor não escreveria linha torta — não
+   escreveria. Provado por violação: imagem sem confirmação e confirmação sem
+   imagem são recusadas pelo Postgres.
+
+**A armadilha desta rota é o multipart, e ela é de tipo, não de regra.** O
+campo chega junto do arquivo, e **multipart não transporta boolean** — `true`
+vira a string `"true"`. O jeito ingênuo (`Boolean(valor)`) aceitaria
+`"false"`, porque toda string não vazia é verdadeira em JavaScript: uma tela
+com a caixa **desmarcada** passaria pelo gate que existe para barrá-la, e a
+linha gravada diria que alguém confirmou. Por isso `confirmouSemPessoas()`
+tem lista fechada — `true` e `"true"`, mais nada.
+
+**`super_admin` não alcança esta rota**, ao contrário da logo, e é
+estrutural: ele não tem empresa, a chave começa por
+`empresas/<company_id>/` (LIM-005), e quem confirma responde por um clube.
+
+**`ImagemDaQuadraService.resolver()` é o único lugar que traduz
+`imagem_key` em URL**, pela mesma razão do `resolver()` da logo, e é
+chamado de dentro de `CourtsService.toQuadraResponse()` — ou seja, **toda**
+leitura de quadra passa por ele. Fail-soft: chave corrompida vira `null` na
+tela e erro no log.
+
 **`/me/company` passou a aceitar `aluno` e `professor`** — o app precisa ler
 a marca do clube. O que a rota devolve já era alcançável por eles: `slug` é o
 link público de cadastro, `nome` e `logoUrl` aparecem na vitrine pública.
 
-**As seis colunas de mídia existem desde 2026-08-25** (SPEC-018:TASK-001),
-e **`usuarios.foto_key` já tem escritor**; as outras cinco continuam nulas: `usuarios.foto_key`, `professores.foto_key`,
-`quadras.imagem_key` + `imagem_confirmada_por`/`_em`, `empresas.logo_key`.
-Migration expand puro, sem backfill e **sem consumidor** — nada escreve nelas
-ainda.
+**As seis colunas de mídia existem desde 2026-08-25** (SPEC-018/TASK-001),
+migration expand pura, sem backfill. **Quatro já têm escritor**, e o que falta
+é uma só:
+
+| Coluna | Escritor | Task |
+|---|---|---|
+| `usuarios.foto_key` | `PUT /me/foto` | 003, no ar |
+| `empresas.logo_key` | `PUT /companies/:id/logo` | 006, no ar |
+| `quadras.imagem_key` + `imagem_confirmada_por`/`_em` | `PUT /courts/:id/imagem` | 005 |
+| `professores.foto_key` | — **ninguém ainda** | 004, falta |
+
+**Esta tabela é o lugar onde a planta mais envelhece**, porque cada task nova
+troca uma linha. Ao ler, confira contra o `openapi.json` antes de concluir
+que algo não tem escritor.
 
 **O que NÃO existe, e a lista importa mais que o que existe:** upload de
 **professor e quadra** (TASK-004 e 005) e **nenhum `KeyReferenceChecker`

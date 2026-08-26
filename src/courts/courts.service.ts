@@ -10,6 +10,7 @@ import { StudentsService } from '../people/students.service';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -50,6 +51,10 @@ export class CourtsService {
     private readonly studentsService: StudentsService,
     // SPEC-010: única fonte de verdade sobre "estar aberto".
     private readonly horarios: HorarioFuncionamentoService,
+    // SPEC-018/TASK-005: única fonte que traduz `imagem_key` em URL. Quatro
+    // caminhos de leitura chamam o mesmo `resolver()` em vez de repetirem a
+    // conferência da chave — repetida, uma delas ficaria para trás.
+    private readonly imagens: ImagemDaQuadraService,
   ) {}
 
   async list(companyId: string, page = 1, pageSize = 20) {
@@ -716,6 +721,17 @@ export class CourtsService {
     return { ocupacaoId: ocupacao.id, origemTipo: ocupacao.origemTipo };
   }
 
+  /**
+   * **AC-002 — o `GET` da quadra devolve URL de CDN, sem assinatura.** Ela
+   * sai por `imagemUrl`, e a chave crua **não sai**: montá-la no cliente
+   * contornaria a conferência do `StorageService` (INV-037), e a resposta
+   * de uma quadra é lida também pelo app do aluno.
+   *
+   * `imagemKey` é opcional no tipo porque este mapper é chamado de caminhos
+   * que já existiam antes da SPEC-018 e que criam a quadra na hora (`create`
+   * devolve a linha recém-inserida, e ali a imagem é sempre nula). Ausente,
+   * o resultado é `imagemUrl: null` — que é o mesmo que a coluna nula diria.
+   */
   private toQuadraResponse(quadra: {
     id: string;
     companyId: string;
@@ -724,6 +740,7 @@ export class CourtsService {
     precoHora: Prisma.Decimal;
     status: string;
     createdAt: Date;
+    imagemKey?: string | null;
   }) {
     return {
       id: quadra.id,
@@ -733,6 +750,11 @@ export class CourtsService {
       precoHora: quadra.precoHora.toNumber(),
       status: quadra.status,
       createdAt: quadra.createdAt,
+      imagemUrl: this.imagens.resolver({
+        id: quadra.id,
+        companyId: quadra.companyId,
+        imagemKey: quadra.imagemKey ?? null,
+      }).imagemUrl,
     };
   }
 
