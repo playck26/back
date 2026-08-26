@@ -180,6 +180,24 @@ de um objeto só, errado numa listagem, onde uma linha ruim derrubaria a
 página inteira. O `try/catch` de `assinarOuNulo` existe por isso, e o log
 registra **qual dos dois lados** falhou.
 
+**E há uma exclusão que este projeto NÃO faz** (achado da TASK-008,
+2026-08-26): o produto **não apaga recurso nenhum**. Não existe `@Delete`
+nem `.delete()` de Prisma para aluno, professor, quadra ou empresa — as
+únicas exclusões do sistema são `turma_aluno`, `horario_funcionamento` e
+`nivel`, nenhuma com coluna de mídia. Empresa se **inativa**.
+
+Por isso a cascata (AC-011) e o lote (AC-019..021) da SPEC-018 **não têm o
+que disparar**, e não foram implementados. Quando a exclusão entrar, a lista
+para coletar as chaves já existe: `storage/colunas-de-midia.ts`, a mesma do
+checker.
+
+**`INV-041` — inativar preserva a mídia** — tem prova própria e transversal
+em `storage/inv-041-inativar-nao-apaga.spec.ts`. Ela estava sendo cumprida
+**por ausência** (nenhum serviço de status conhece a fila), que é a forma
+mais frágil de cumprir: um teste de "a fila não foi chamada" passaria mesmo
+com o código todo apagado. O que o teste afirma é o que um violador teria de
+escrever — a coluna de mídia no `data` do `update`.
+
 **O worker deixou de ser fail-closed em 2026-08-26** (TASK-007):
 `checker-de-referencia.service.ts` implementa o `KeyReferenceChecker` que a
 SPEC-017 declarou como porta, e se registra sozinho no `onModuleInit`.
