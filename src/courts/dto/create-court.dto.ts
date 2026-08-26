@@ -1,5 +1,12 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  IsUUID,
+  MinLength,
+} from 'class-validator';
 
 export class CreateCourtDto {
   @ApiProperty()
@@ -7,10 +14,23 @@ export class CreateCourtDto {
   @MinLength(1)
   nome!: string;
 
-  @ApiProperty()
-  @IsString()
-  @MinLength(1)
-  esporte!: string;
+  /**
+   * SPEC-020/TASK-003 — **era `esporte: string`.** Virou referência ao
+   * catálogo do clube, e é o que tira a barra de filtro do app do aluno das
+   * mãos de quem digita.
+   */
+  @ApiProperty({ format: 'uuid', description: 'Opção de /court-sports.' })
+  @IsUUID()
+  esporteId!: string;
+
+  /** Opcional: nem todo clube classifica piso (decisão 3 da SPEC-020). */
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Opção de `/court-categories`.',
+  })
+  @IsOptional()
+  @IsUUID()
+  categoriaId?: string;
 
   @ApiProperty()
   @IsNumber()

@@ -2986,8 +2986,15 @@
           "nome": {
             "type": "string"
           },
-          "esporte": {
-            "type": "string"
+          "esporteId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Opção de /court-sports."
+          },
+          "categoriaId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Opção de `/court-categories`."
           },
           "precoHora": {
             "type": "number"
@@ -2995,7 +3002,7 @@
         },
         "required": [
           "nome",
-          "esporte",
+          "esporteId",
           "precoHora"
         ]
       },
@@ -3005,8 +3012,14 @@
           "nome": {
             "type": "string"
           },
-          "esporte": {
-            "type": "string"
+          "esporteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "categoriaId": {
+            "type": "object",
+            "format": "uuid",
+            "nullable": true
           },
           "precoHora": {
             "type": "number"

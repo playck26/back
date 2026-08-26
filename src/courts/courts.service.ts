@@ -57,6 +57,58 @@ export class CourtsService {
     private readonly imagens: ImagemDaQuadraService,
   ) {}
 
+  /**
+   * SPEC-020/TASK-003 — o que toda leitura de quadra precisa trazer.
+   *
+   * **Declarado uma vez e reusado**, pelo mesmo motivo do
+   * `COM_FOTO_DA_CONTA` de professores: consulta que esqueça o `include`
+   * não quebra — devolve `esporte: null` numa quadra que tem esporte, e o
+   * filtro do aluno perde a quadra sem ninguém errar nada.
+   */
+  private static readonly COM_CATALOGOS = {
+    esporteRef: { select: { id: true, nome: true } },
+    categoriaRef: { select: { id: true, nome: true } },
+  } as const;
+
+  /**
+   * Resolve uma opção de catálogo **da própria empresa**.
+   *
+   * **422 e não 404**, ao contrário de `GET /court-sports/:id`. A diferença
+   * é o que a pessoa está fazendo: ler uma opção que não é dela é "não
+   * existe" (e o 404 esconde a existência); mandar essa opção no corpo de
+   * uma quadra é payload inválido, e dizer isso ajuda quem integra.
+   *
+   * O banco também recusa, pela FK composta (INV-054). Esta checagem existe
+   * para a mensagem — o erro do banco diria "violates foreign key
+   * constraint" e nada sobre qual campo.
+   */
+  private async resolverOpcao(
+    tipo: 'esporte' | 'categoria',
+    companyId: string,
+    id: string,
+  ): Promise<{ id: string; nome: string }> {
+    // Os dois `findFirst` gerados pelo Prisma têm assinaturas genéricas
+    // diferentes, e a UNIÃO delas não é chamável. Ramificar a chamada
+    // custa três linhas e mantém o typecheck de pé — um `as never` para
+    // unificar tiraria exatamente a checagem que interessa aqui.
+    const where = { id, companyId };
+    const select = { id: true, nome: true };
+    const opcao =
+      tipo === 'esporte'
+        ? await this.prisma.esporteDeQuadra.findFirst({ where, select })
+        : await this.prisma.categoriaDeQuadra.findFirst({ where, select });
+
+    if (opcao === null) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: `${tipo.toUpperCase()}_INVALIDO`,
+        message: `A opção de ${tipo} informada não existe nesta empresa.`,
+        campo: tipo === 'esporte' ? 'esporteId' : 'categoriaId',
+      });
+    }
+    return opcao;
+  }
+
   async list(companyId: string, page = 1, pageSize = 20) {
     const [data, total] = await Promise.all([
       this.prisma.quadra.findMany({
@@ -64,6 +116,7 @@ export class CourtsService {
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
+        include: CourtsService.COM_CATALOGOS,
       }),
       this.prisma.quadra.count({ where: { companyId } }),
     ]);
@@ -77,13 +130,30 @@ export class CourtsService {
   }
 
   async create(companyId: string, dto: CreateCourtDto) {
+    const esporte = await this.resolverOpcao(
+      'esporte',
+      companyId,
+      dto.esporteId,
+    );
+    if (dto.categoriaId !== undefined) {
+      await this.resolverOpcao('categoria', companyId, dto.categoriaId);
+    }
+
     const quadra = await this.prisma.quadra.create({
       data: {
         companyId,
         nome: dto.nome,
-        esporte: dto.esporte,
+        // **Escrita dupla, e é temporária.** `quadras.esporte` ainda é
+        // `NOT NULL` — a coluna só sai na TASK-004 (contract). Deixá-la
+        // desatualizada durante a transição seria criar a mesma
+        // divergência que esta spec veio desfazer, só que dentro da
+        // própria linha.
+        esporte: esporte.nome,
+        esporteId: esporte.id,
+        categoriaId: dto.categoriaId ?? null,
         precoHora: dto.precoHora,
       },
+      include: CourtsService.COM_CATALOGOS,
     });
     return this.toQuadraResponse(quadra);
   }
@@ -91,6 +161,7 @@ export class CourtsService {
   async findOne(companyId: string, id: string) {
     const quadra = await this.prisma.quadra.findFirst({
       where: { id, companyId },
+      include: CourtsService.COM_CATALOGOS,
     });
     if (!quadra) {
       throw new NotFoundException();
@@ -101,14 +172,32 @@ export class CourtsService {
   async update(companyId: string, id: string, dto: UpdateCourtDto) {
     await this.assertQuadraDaEmpresa(companyId, id);
 
+    const esporte =
+      dto.esporteId === undefined
+        ? undefined
+        : await this.resolverOpcao('esporte', companyId, dto.esporteId);
+
+    if (dto.categoriaId !== undefined && dto.categoriaId !== null) {
+      await this.resolverOpcao('categoria', companyId, dto.categoriaId);
+    }
+
     const quadra = await this.prisma.quadra.update({
       where: { id },
       data: {
         nome: dto.nome,
-        esporte: dto.esporte,
+        // Escrita dupla enquanto a coluna de texto existir — ver `create`.
+        ...(esporte === undefined
+          ? {}
+          : { esporte: esporte.nome, esporteId: esporte.id }),
+        // `null` explícito LIMPA; ausente não mexe. São coisas diferentes,
+        // e é o que permite desclassificar uma quadra.
+        ...(dto.categoriaId === undefined
+          ? {}
+          : { categoriaId: dto.categoriaId }),
         precoHora: dto.precoHora,
         status: dto.status,
       },
+      include: CourtsService.COM_CATALOGOS,
     });
     return this.toQuadraResponse(quadra);
   }
@@ -741,12 +830,22 @@ export class CourtsService {
     status: string;
     createdAt: Date;
     imagemKey?: string | null;
+    esporteRef?: { id: string; nome: string } | null;
+    categoriaRef?: { id: string; nome: string } | null;
   }) {
     return {
       id: quadra.id,
       companyId: quadra.companyId,
       nome: quadra.nome,
-      esporte: quadra.esporte,
+      // **SPEC-020/TASK-003 — era `esporte: string`.** Quebra de contrato
+      // assumida: os três clientes são nossos e sobem juntos (ADR-001).
+      // Devolver a string ao lado do objeto deixaria duas fontes para a
+      // mesma pergunta, que é o que esta spec veio desfazer.
+      //
+      // `null` só acontece com quadra de `esporte` em branco, que o
+      // backfill não teve como catalogar — a TASK-004 vai cobrar.
+      esporte: quadra.esporteRef ?? null,
+      categoria: quadra.categoriaRef ?? null,
       precoHora: quadra.precoHora.toNumber(),
       status: quadra.status,
       createdAt: quadra.createdAt,

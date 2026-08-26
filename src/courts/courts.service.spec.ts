@@ -28,6 +28,10 @@ function buildPrismaMock() {
     aluno: {
       findFirst: jest.fn(),
     },
+    // SPEC-020/TASK-003: a quadra passou a referenciar o catálogo, e o
+    // serviço confere a opção antes de gravar.
+    esporteDeQuadra: { findFirst: jest.fn() },
+    categoriaDeQuadra: { findFirst: jest.fn() },
     ocupacaoQuadra: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -125,23 +129,143 @@ describe('CourtsService', () => {
 
   describe('create/list/update', () => {
     it('cria quadra escopada à empresa', async () => {
+      const ESPORTE = '11111111-1111-4111-8111-111000200099';
+      (prisma.esporteDeQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: ESPORTE,
+        nome: 'tenis',
+      });
       (prisma.quadra.create as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
 
       const result = await service.create('c1', {
         nome: 'Quadra 1',
-        esporte: 'tenis',
+        esporteId: ESPORTE,
         precoHora: 100,
       });
 
-      expect(prisma.quadra.create).toHaveBeenCalledWith({
-        data: {
-          companyId: 'c1',
-          nome: 'Quadra 1',
-          esporte: 'tenis',
-          precoHora: 100,
-        },
+      const chamadas = (prisma.quadra.create as jest.Mock).mock.calls as [
+        { data: Record<string, unknown> },
+      ][];
+      const chamada = chamadas[0][0];
+
+      expect(chamada.data).toMatchObject({
+        companyId: 'c1',
+        nome: 'Quadra 1',
+        esporteId: ESPORTE,
+        precoHora: 100,
       });
+      // **Escrita dupla, e é o que este teste guarda.** `quadras.esporte`
+      // ainda é NOT NULL até a TASK-004; parar de escrevê-la agora quebra a
+      // criação de quadra na primeira requisição.
+      expect(chamada.data.esporte).toBe('tenis');
       expect(result.precoHora).toBe(100);
+    });
+
+    it('a RESPOSTA traz esporte e categoria como OBJETO, não texto', async () => {
+      // **Este teste nasceu de uma sabotagem que passou.** Trocar
+      // `quadra.esporteRef ?? null` por `quadra.esporte` — ou seja, voltar
+      // a devolver o texto cru — deixava os 43 testes verdes. Nada olhava
+      // para a forma da resposta, que é justamente o que esta task muda e
+      // o que os três clientes vão consumir.
+      const ESPORTE = '11111111-1111-4111-8111-111000200099';
+      (prisma.esporteDeQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: ESPORTE,
+        nome: 'tenis',
+      });
+      (prisma.quadra.create as jest.Mock).mockResolvedValue({
+        ...QUADRA_ATIVA,
+        esporteRef: { id: ESPORTE, nome: 'tenis' },
+        categoriaRef: { id: 'cat-1', nome: 'Saibro' },
+      });
+
+      const r = await service.create('c1', {
+        nome: 'Q',
+        esporteId: ESPORTE,
+        precoHora: 100,
+      });
+
+      expect(r.esporte).toEqual({ id: ESPORTE, nome: 'tenis' });
+      expect(r.categoria).toEqual({ id: 'cat-1', nome: 'Saibro' });
+      // E o texto cru NÃO sai: montar filtro a partir dele é o defeito que
+      // a SPEC-020 veio desfazer.
+      expect(typeof r.esporte).not.toBe('string');
+    });
+
+    it('quadra sem categoria devolve `null`, não o campo ausente', async () => {
+      // `null` é o estado normal — nem todo clube classifica piso. Campo
+      // ausente obrigaria cada cliente a decidir o que fazer com
+      // `undefined`.
+      const ESPORTE = '11111111-1111-4111-8111-111000200099';
+      (prisma.esporteDeQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: ESPORTE,
+        nome: 'tenis',
+      });
+      (prisma.quadra.create as jest.Mock).mockResolvedValue({
+        ...QUADRA_ATIVA,
+        esporteRef: { id: ESPORTE, nome: 'tenis' },
+        categoriaRef: null,
+      });
+
+      const r = await service.create('c1', {
+        nome: 'Q',
+        esporteId: ESPORTE,
+        precoHora: 100,
+      });
+
+      expect(r.categoria).toBeNull();
+    });
+
+    it('a LISTAGEM pede os catálogos — sem o `include`, a quadra perde o esporte', async () => {
+      // Outra sabotagem que passava: tirar o `include` do `findMany` fazia
+      // `esporteRef` chegar `undefined` e a resposta virar
+      // `esporte: null` — a quadra some do filtro do aluno sem erro nenhum.
+      (prisma.quadra.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.quadra.count as jest.Mock).mockResolvedValue(0);
+
+      await service.list('c1');
+
+      const chamadas = (prisma.quadra.findMany as jest.Mock).mock.calls as [
+        Record<string, unknown>,
+      ][];
+      expect(chamadas[0][0]).toHaveProperty('include');
+    });
+
+    it('a busca da opção é ESCOPADA à empresa', async () => {
+      // A terceira sabotagem que passava: tirar `companyId` do `where`
+      // deixava o clube A usar o esporte do clube B. O banco recusaria pela
+      // FK composta (INV-054), mas com "violates foreign key constraint" —
+      // e a checagem existe justamente para a mensagem ser útil.
+      const ESPORTE = '11111111-1111-4111-8111-111000200099';
+      (prisma.esporteDeQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: ESPORTE,
+        nome: 'tenis',
+      });
+      (prisma.quadra.create as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+
+      await service.create('c1', {
+        nome: 'Q',
+        esporteId: ESPORTE,
+        precoHora: 100,
+      });
+
+      const chamadas = (prisma.esporteDeQuadra.findFirst as jest.Mock).mock
+        .calls as [{ where: Record<string, unknown> }][];
+      expect(chamadas[0][0].where).toEqual({ id: ESPORTE, companyId: 'c1' });
+    });
+
+    it('422 com esporte de OUTRA empresa, e nada é gravado', async () => {
+      // O banco também recusa (FK composta, INV-054). Este 422 existe para
+      // a mensagem dizer qual campo está errado.
+      (prisma.esporteDeQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.create('c1', {
+          nome: 'Q',
+          esporteId: '99999999-9999-4999-8999-999000200099',
+          precoHora: 100,
+        }),
+      ).rejects.toMatchObject({ response: { code: 'ESPORTE_INVALIDO' } });
+
+      expect(prisma.quadra.create).not.toHaveBeenCalled();
     });
 
     it('update propaga 404 cross-tenant', async () => {
