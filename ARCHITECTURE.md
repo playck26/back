@@ -174,6 +174,27 @@ imagem de alguém.
 Diferente dos outros dois `resolver()`, este **assina** (a foto de professor
 é privada) e por isso é `async`; a listagem resolve com `Promise.all`.
 
+**Os catálogos de quadra entraram em 2026-08-26** (SPEC-020/TASK-001):
+`esportes_de_quadra` e `categorias_de_quadra`, no molde de `niveis`.
+**Só a migration** — nenhuma rota ainda.
+
+**O achado que mudou a task:** já existiam **duas** listas de esporte em
+texto livre que nunca se falavam — `empresas.esportes` (`text[]`, escrita
+pelo `super_admin`, lida pela lista do SAdmin) e `quadras.esporte` (`text`,
+escrita pelo gestor, e é ela que alimenta o filtro do app do aluno). O
+catálogo seria a terceira. O backfill semeou a **união** das duas, por
+empresa, deduplicando por `lower(nome)` e preferindo a grafia declarada.
+
+**A INV-054 é FK composta**, e é o que impede a quadra do clube A apontar
+para o esporte do clube B — FK simples não sabe de `company_id`. Provada por
+violação em `test/banco/catalogos-de-quadra.db-spec.ts`, junto com a
+unicidade por empresa e a recusa de apagar opção em uso.
+
+**A própria migration carrega a prova da AC-010:** um bloco `DO` que
+**aborta** se alguma quadra com esporte preenchido ficar sem `esporte_id`.
+Migration que deixa a afirmação para um teste rodar depois já aplicou o dano
+quando alguém descobre.
+
 **FIT-007 prova os portões nas ROTAS REAIS** (`test/fit-007.e2e-spec.ts`,
 AC-018). O FIT-006 exercita um **controller de fixture** da SPEC-017: prova
 que a configuração de upload funciona, **não** que as rotas do produto a

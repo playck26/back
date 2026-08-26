@@ -87,6 +87,8 @@ model Empresa {
   horarios        HorarioFuncionamento[]
   pedidosReserva  PedidoReserva[]
   niveis          Nivel[]
+  esportesQuadra  EsporteDeQuadra[]
+  categoriasQuadra CategoriaDeQuadra[]
   professores     Professor[]
   alunos          Aluno[]
   quadras         Quadra[]
@@ -224,10 +226,59 @@ enum QuadraStatus {
   @@map("quadra_status")
 }
 
+/// SPEC-020 — o catalogo de esportes do clube.
+///
+/// Molde de `Nivel`: `(company_id, nome, ordem)`, unico por empresa. Cada
+/// clube define o seu porque "saibro" e "terra batida" sao a mesma coisa com
+/// nomes diferentes por regiao, e um clube de beach tennis nao tem nada a ver
+/// com a lista de um clube de tenis (decisao 2).
+///
+/// O `@@unique([companyId, id])` e redundante como chave — `id` ja e PK — e
+/// existe para ser o alvo da FK COMPOSTA de `quadras` (INV-054). E o mesmo
+/// truque de `ocupacoes_quadra.@@unique([id, origemTipo])`, que ja sustenta
+/// a INV-016.
+model EsporteDeQuadra {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  nome      String
+  ordem     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  empresa Empresa  @relation(fields: [companyId], references: [id])
+  quadras Quadra[]
+
+  @@unique([companyId, nome])
+  @@unique([companyId, id], map: "esportes_de_quadra_company_id_id_key")
+  @@index([companyId])
+  @@map("esportes_de_quadra")
+}
+
+/// SPEC-020 — o catalogo de categorias (piso) do clube: terra, sintetica,
+/// rapida. Mesma forma do de esportes, e opcional na quadra: nem todo clube
+/// classifica piso, e obrigar criaria uma categoria "Outros" em todo clube
+/// que nao classifica (decisao 3).
+model CategoriaDeQuadra {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  nome      String
+  ordem     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  empresa Empresa  @relation(fields: [companyId], references: [id])
+  quadras Quadra[]
+
+  @@unique([companyId, nome])
+  @@unique([companyId, id], map: "categorias_de_quadra_company_id_id_key")
+  @@index([companyId])
+  @@map("categorias_de_quadra")
+}
+
 model Quadra {
   id        String       @id @default(uuid()) @db.Uuid
   companyId String       @map("company_id") @db.Uuid
   nome      String
+  /// SPEC-020/TASK-004 — sai quando o codigo passar a escrever `esporteId`.
+  /// Ate la as duas convivem, e a de texto continua sendo a fonte.
   esporte   String
   precoHora Decimal      @map("preco_hora") @db.Decimal(10, 2)
   status    QuadraStatus @default(ativa)
@@ -242,7 +293,22 @@ model Quadra {
   imagemConfirmadaPor String?   @map("imagem_confirmada_por") @db.Uuid
   imagemConfirmadaEm  DateTime? @map("imagem_confirmada_em")
 
+  /// SPEC-020 — nulaveis na fase EXPAND. `esporte_id` vira obrigatoria
+  /// so na contract (TASK-004), depois que o codigo escrever nela: torna-la
+  /// NOT NULL agora quebraria a criacao de quadra, que ainda manda texto.
+  esporteId   String? @map("esporte_id") @db.Uuid
+  categoriaId String? @map("categoria_id") @db.Uuid
+
   empresa     Empresa                @relation(fields: [companyId], references: [id])
+  /// INV-054 — **FK COMPOSTA**, e e ela que impede apontar para o esporte de
+  /// outra empresa. FK simples nao saberia de `company_id`; aqui, como a
+  /// coluna de escopo da quadra E a mesma da FK, o banco so fecha o vinculo
+  /// dentro da propria empresa. Sem trigger, sem codigo.
+  ///
+  /// Com `esporte_id` nulo a FK nao dispara (MATCH SIMPLE), que e o que
+  /// permite a fase expand conviver com as quadras antigas.
+  esporteRef   EsporteDeQuadra?   @relation(fields: [companyId, esporteId], references: [companyId, id], map: "quadras_esporte_fkey")
+  categoriaRef CategoriaDeQuadra? @relation(fields: [companyId, categoriaId], references: [companyId, id], map: "quadras_categoria_fkey")
   /// `Restrict`, igual a `chamadas.registrada_por`: a confirmacao vale por
   /// ter nome de gente, entao apagar a conta nao pode apagar o autor.
   confirmante Usuario?               @relation("QuadraImagemConfirmadaPor", fields: [imagemConfirmadaPor], references: [id], onDelete: Restrict)

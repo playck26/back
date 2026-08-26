@@ -19,6 +19,19 @@
  * A ordem abaixo é a das dependências, filho antes de pai. Ela existe porque
  * quase toda FK para `empresas` é `RESTRICT`: apagar a empresa antes dos
  * filhos não é "ineficiente", é impossível.
+ *
+ * ## A lista incompleta já custou caro duas vezes
+ *
+ * A primeira foi o incidente acima. **A segunda foi em 2026-08-26**, quando a
+ * SPEC-020 criou `esportes_de_quadra` e `categorias_de_quadra` e ninguém as
+ * acrescentou aqui — e a `matriz-raiz`, a rede de regressão da raiz de lock,
+ * ficou vermelha inteira com um erro de FK que não tinha nada a ver com lock.
+ *
+ * O sintoma foi barulhento e o mecanismo é silencioso: **nada obriga esta
+ * lista a acompanhar o schema.** Por isso existe `limpar-empresa.db-spec.ts`,
+ * que a confere contra o `information_schema` e quebra no dia em que aparecer
+ * tabela nova com `company_id` — do mesmo jeito que a AC-017 da SPEC-018 faz
+ * com as colunas de mídia.
  */
 export interface ClienteSql {
   $executeRawUnsafe(sql: string, ...valores: unknown[]): Promise<number>;
@@ -29,7 +42,7 @@ export interface ClienteSql {
  * `turma_alunos` não aparece: não tem `company_id` e cai por cascata de
  * `turmas`.
  */
-const TABELAS_DA_EMPRESA = [
+export const TABELAS_DA_EMPRESA = [
   'presencas',
   'chamadas',
   'ocupacoes_quadra',
@@ -39,6 +52,9 @@ const TABELAS_DA_EMPRESA = [
   'professores',
   'horarios_funcionamento',
   'quadras',
+  // SPEC-020: DEPOIS de `quadras`, que aponta para os dois por FK composta.
+  'esportes_de_quadra',
+  'categorias_de_quadra',
   'niveis',
   'convites_aluno',
   'config_pagamento_empresa',
