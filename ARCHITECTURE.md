@@ -489,6 +489,52 @@ A fonte é o `openapi.json` **gerado do código**, com gate de CI
 verificado funcionando: o arquivo commitado estava em dia. `API_CONTRACTS.md` (raiz) descreve as regras
 de negócio por contrato; este documento não as duplica.
 
+### Resposta tipada: 10 de 90, e por que a conta começou em zero
+
+**Até 2026-08-26 nenhuma resposta desta API declarava schema.** Contado, não
+estimado: 0 com schema, 90 sem. O Nest só emite schema a partir do DTO de
+**corpo de requisição**; resposta exige `@ApiResponse`/`@ApiOkResponse`
+explícito, e o projeto não usava nenhum — `grep` por `@Api*Response` no
+`src/` inteiro devolvia zero.
+
+**A consequência custou um apagão em produção (DEF-012).** Os três frontends
+escreviam à mão *toda* resposta, porque não havia o que gerar. Quando a
+SPEC-020/TASK-003 trocou `quadra.esporte` de string para objeto, o tipo
+escrito à mão do Cliente continuou dizendo `string`, o typecheck ficou verde
+e três telas foram a branco.
+
+Note a assimetria que isso explica: **no mesmo dia**, o Admin pegou um erro de
+`UpdateCourtDto` — porque é **requisição**, e requisição tinha schema.
+
+A SPEC-020/TASK-007 tipou a superfície de quadra: **10 das 90**
+(`/courts` × 4, `/court-sports` e `/court-categories` × 3 cada). As outras
+80 seguem sem schema, e a planta prefere dizer isso a dar a impressão de que
+o problema está resolvido.
+
+### O que faz um DTO de resposta valer alguma coisa
+
+**Um DTO de resposta escrito à mão é a mesma mentira do tipo escrito à mão no
+frontend**, a menos que algo o amarre ao código que produz a resposta. Há duas
+amarras, e as duas foram provadas por sabotagem:
+
+| Amarra | Onde | Prova |
+|---|---|---|
+| `toQuadraResponse(): QuadraResponseDto` | `courts.service.ts` | reintroduzir o DEF-012 no serviço quebra o `tsc`: *Type 'string' is not assignable to type 'OpcaoDeCatalogoResponseDto'* |
+| `ConfereContraOContrato<EsporteDeQuadra>` | `catalogos-de-quadra.ts` | acrescentar um campo ao contrato que o Prisma não tem quebra o `tsc` nomeando o campo |
+
+A segunda existe por um motivo específico: o delegate do catálogo usa
+`as unknown as DelegateDeCatalogo`, e **duplo cast apaga a checagem**. Sem
+essa asserção, renomear `ordem` numa migration continuaria compilando, e o
+contrato publicado passaria a mentir. As duas linhas não geram código — são
+uma pergunta feita ao compilador.
+
+### `type:` explícito em todo `@ApiProperty`
+
+Não é estilo. Neste mesmo ciclo, um `@ApiPropertyOptional({ format: 'uuid',
+nullable: true })` **sem `type`** emitiu schema sem tipo, e o
+`openapi-typescript` traduziu para `Record<string, never>` — objeto vazio no
+lugar de um uuid. Foi achado pelo typecheck do **Admin**, não por nada aqui.
+
 Convenções observadas: prefixo global `api/v1`; datas como `YYYY-MM-DD` e
 horas como `HH:mm` em texto (colunas `@db.Date`/`@db.Time`, base 1970 para
 hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,

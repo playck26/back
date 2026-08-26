@@ -1306,7 +1306,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuadraPaginadaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1332,8 +1339,15 @@
           }
         },
         "responses": {
-          "201": {
-            "description": ""
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1361,7 +1375,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1397,7 +1418,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1852,7 +1880,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogoDeQuadraResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1878,8 +1916,15 @@
           }
         },
         "responses": {
-          "201": {
-            "description": ""
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogoDeQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1917,7 +1962,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogoDeQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1962,7 +2014,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogoDeQuadraResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1988,8 +2050,15 @@
           }
         },
         "responses": {
-          "201": {
-            "description": ""
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogoDeQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2027,7 +2096,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogoDeQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2980,6 +3056,117 @@
           "permiteAutoCadastro"
         ]
       },
+      "OpcaoDeCatalogoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Saibro"
+          }
+        },
+        "required": [
+          "id",
+          "nome"
+        ]
+      },
+      "QuadraResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "esporte": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpcaoDeCatalogoResponseDto"
+              }
+            ]
+          },
+          "categoria": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpcaoDeCatalogoResponseDto"
+              }
+            ]
+          },
+          "precoHora": {
+            "type": "number",
+            "example": 120
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "imagemUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "esporte",
+          "categoria",
+          "precoHora",
+          "status",
+          "createdAt",
+          "imagemUrl"
+        ]
+      },
+      "QuadraPaginadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuadraResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 3
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
       "CreateCourtDto": {
         "type": "object",
         "properties": {
@@ -3124,6 +3311,38 @@
         "required": [
           "quadraId",
           "data"
+        ]
+      },
+      "CatalogoDeQuadraResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Saibro"
+          },
+          "ordem": {
+            "type": "number",
+            "example": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "ordem",
+          "createdAt"
         ]
       },
       "CatalogoDeQuadraDto": {

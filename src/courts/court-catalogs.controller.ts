@@ -11,7 +11,8 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { CatalogoDeQuadraResponseDto } from './dto/quadra-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -46,12 +47,14 @@ abstract class CatalogoController {
 
   @Get()
   @Roles('company_admin', 'aluno', 'professor')
+  @ApiOkResponse({ type: [CatalogoDeQuadraResponseDto] })
   list(@CurrentUser() user: AccessTokenPayload) {
     return this.servico.list(user.companyId as string);
   }
 
   @Post()
   @Roles('company_admin')
+  @ApiOkResponse({ type: CatalogoDeQuadraResponseDto })
   create(
     @CurrentUser() user: AccessTokenPayload,
     @Body() dto: CatalogoDeQuadraDto,
@@ -61,6 +64,7 @@ abstract class CatalogoController {
 
   @Patch(':id')
   @Roles('company_admin')
+  @ApiOkResponse({ type: CatalogoDeQuadraResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,

@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import type { CatalogoDeQuadraResponseDto } from './dto/quadra-response.dto';
 
 /**
  * SPEC-020/TASK-002 — a regra dos catálogos de quadra, escrita **uma vez**.
@@ -34,14 +35,19 @@ import { PrismaService } from '../prisma/prisma.service';
  * garantia.
  */
 
-/** O que uma opção de catálogo é, dos dois lados. */
-export interface OpcaoDeCatalogo {
-  id: string;
-  companyId: string;
-  nome: string;
-  ordem: number;
-  createdAt: Date;
-}
+/**
+ * O que uma opção de catálogo é, dos dois lados.
+ *
+ * **SPEC-020/TASK-007 — era uma interface local, e virou apelido do DTO
+ * publicado.** Enquanto era local, a forma da resposta de `/court-sports` não
+ * existia no `openapi.json`, e o Admin escrevia a própria versão dela à mão —
+ * com campos a mais do que a API devolve, e o typecheck concordando.
+ *
+ * Agora o retorno destes métodos **é** o contrato: mudar a forma quebra o
+ * typecheck aqui, o `openapi.json` muda junto, e o frontend que regenerar
+ * pega a diferença.
+ */
+export type OpcaoDeCatalogo = CatalogoDeQuadraResponseDto;
 
 /**
  * O recorte do delegate do Prisma que esta base usa.

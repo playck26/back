@@ -21,6 +21,7 @@ import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { CreateCourtDto } from './dto/create-court.dto';
 import type { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import type { UpdateCourtDto } from './dto/update-court.dto';
+import type { QuadraResponseDto } from './dto/quadra-response.dto';
 
 interface ConflitoDetectado {
   ocupacaoId: string;
@@ -832,7 +833,12 @@ export class CourtsService {
     imagemKey?: string | null;
     esporteRef?: { id: string; nome: string } | null;
     categoriaRef?: { id: string; nome: string } | null;
-  }) {
+    // SPEC-020/TASK-007 — o retorno anotado é o que amarra este método ao
+    // contrato publicado. Sem a anotação, `QuadraResponseDto` seria só mais
+    // um tipo escrito à mão, e envelheceria calado como o do Cliente
+    // envelheceu (DEF-012). Com ela, mudar a forma da resposta quebra o
+    // typecheck AQUI, antes de qualquer frontend.
+  }): QuadraResponseDto {
     return {
       id: quadra.id,
       companyId: quadra.companyId,

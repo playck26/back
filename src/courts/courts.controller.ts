@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -24,6 +24,10 @@ import { AvailabilityQueryDto } from './dto/availability-query.dto';
 import { DefinirHorariosDto } from './dto/definir-horarios.dto';
 import { CreateCourtDto } from './dto/create-court.dto';
 import { UpdateCourtDto } from './dto/update-court.dto';
+import {
+  QuadraPaginadaResponseDto,
+  QuadraResponseDto,
+} from './dto/quadra-response.dto';
 
 // CON-005.1/005.3: leitura (list/findOne/availability) é aberta a
 // `company_admin` e `aluno` (SPEC-005, app do aluno navega a mesma
@@ -40,6 +44,7 @@ export class CourtsController {
 
   @Get()
   @Roles('company_admin', 'aluno')
+  @ApiOkResponse({ type: QuadraPaginadaResponseDto })
   list(
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: PaginationQueryDto,
@@ -53,12 +58,14 @@ export class CourtsController {
 
   @Post()
   @Roles('company_admin')
+  @ApiOkResponse({ type: QuadraResponseDto })
   create(@CurrentUser() user: AccessTokenPayload, @Body() dto: CreateCourtDto) {
     return this.courtsService.create(user.companyId as string, dto);
   }
 
   @Get(':id')
   @Roles('company_admin', 'aluno')
+  @ApiOkResponse({ type: QuadraResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -68,6 +75,7 @@ export class CourtsController {
 
   @Patch(':id')
   @Roles('company_admin')
+  @ApiOkResponse({ type: QuadraResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
