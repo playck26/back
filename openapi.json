@@ -3017,7 +3017,7 @@
             "format": "uuid"
           },
           "categoriaId": {
-            "type": "object",
+            "type": "string",
             "format": "uuid",
             "nullable": true
           },

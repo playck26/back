@@ -29,7 +29,10 @@ export class UpdateCourtDto {
    *
    * Ausente (`undefined`) é "não mexe", que é diferente.
    */
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  // `type: String` explicito: sem ele o Swagger emite um schema SEM tipo,
+  // e o gerador de tipos do cliente traduz para `Record<string, never>` --
+  // um objeto vazio no lugar de um uuid. O typecheck do Admin pegou.
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
   @IsOptional()
   @ValidateIf((_, valor) => valor !== null)
   @IsUUID()
