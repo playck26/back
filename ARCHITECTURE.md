@@ -174,6 +174,30 @@ imagem de alguém.
 Diferente dos outros dois `resolver()`, este **assina** (a foto de professor
 é privada) e por isso é `async`; a listagem resolve com `Promise.all`.
 
+**FIT-007 prova os portões nas ROTAS REAIS** (`test/fit-007.e2e-spec.ts`,
+AC-018). O FIT-006 exercita um **controller de fixture** da SPEC-017: prova
+que a configuração de upload funciona, **não** que as rotas do produto a
+usam.
+
+A INV-048 fez da configuração um decorator — `@UploadDeMidia()` — porque
+*"limite que a rota pode esquecer de pedir é limite que uma rota nova não vai
+ter"*. O FIT-007 é essa frase virada em teste: monta os **quatro** controllers
+de upload no mesmo módulo e roda a **mesma tabela de portões** contra os
+quatro — 413, campo `arquivo`, WebP-only, chunk de metadado, e "nada gravado
+em recusa".
+
+**Cada rota tem um controle positivo** (um WebP válido que passa) antes dos
+quatro portões. Sem ele, um 500 em qualquer caso daria "não é 200" e os
+portões pareceriam funcionar.
+
+**Conferido por sabotagem:** remover `@UploadDeMidia()` da rota de quadra
+derruba 4 dos 5 testes **daquela rota**, e só dela — as outras três seguem
+verdes. É exatamente o cenário "rota nova esqueceu o decorator".
+
+E há um teste da própria tabela: ele lê o `openapi.json` — que é **gerado do
+código**, não uma segunda lista à mão — e exige que toda rota `PUT` com
+`multipart/form-data` esteja declarada em `ROTAS`.
+
 **E ele é fail-soft por cima de um `urlDeLeitura` que não é.**
 `StorageService.urlDeLeitura` lança 404 em chave inválida — certo numa rota
 de um objeto só, errado numa listagem, onde uma linha ruim derrubaria a
