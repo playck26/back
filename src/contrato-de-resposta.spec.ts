@@ -33,6 +33,20 @@ import { join } from 'node:path';
  * `openapi.json` prova **o que o cliente recebe** — que é a única coisa que o
  * DEF-012 teria detectado.
  *
+ * ## E não, ele não fica cego com um arquivo desatualizado
+ *
+ * No `ci.yml`, `pnpm test` roda **antes** de `openapi:export` — então este
+ * teste lê o arquivo **commitado**, não um recém-gerado. A pergunta óbvia é
+ * se dá para escapar dele esquecendo de regenerar. Não dá, e o par é o que
+ * fecha:
+ *
+ * | Cenário | Quem fica vermelho |
+ * |---|---|
+ * | rota nova sem schema, `openapi.json` regenerado | **este teste** |
+ * | rota nova sem schema, `openapi.json` esquecido | o `git diff --exit-code` do passo `openapi:export` |
+ *
+ * Nenhum dos dois sozinho cobre os dois casos. Juntos, cobrem.
+ *
  * ## `204` não entra na conta
  *
  * Resposta sem corpo não tem schema a declarar, e exigir um seria pedir para
