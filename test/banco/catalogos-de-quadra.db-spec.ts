@@ -207,4 +207,65 @@ describe('SPEC-020 — os catálogos contra Postgres real', () => {
       ).resolves.toBeTruthy();
     });
   });
+
+  /**
+   * SPEC-020/TASK-007 — **LIM-002: renomear muda o nome em todo lugar, e não
+   * há como renomear só numa quadra.**
+   *
+   * É limite declarado, não defeito: o nome vive numa linha só e a quadra
+   * guarda a referência. Mas é limite que **só se enxerga provado** — quem
+   * lê a spec pode imaginar que a quadra guardou uma cópia do nome no
+   * momento do cadastro, e a diferença entre as duas leituras muda o que a
+   * pessoa espera ao renomear.
+   *
+   * O teste prova pelo caminho da leitura real (`include` do catálogo), que é
+   * o mesmo que `CourtsService.COM_CATALOGOS` usa: se alguém um dia copiar o
+   * nome para dentro de `quadras`, este teste fica vermelho no ato.
+   */
+  describe('LIM-002 — renomear a opção muda todas as quadras que a usam', () => {
+    it('as duas quadras passam a ler o nome novo', async () => {
+      const esporte = await criarEsporte(EMPRESA_A, 'Tênis');
+      const SEGUNDA = 'a2a2a2a2-0000-4000-8000-000000020012';
+      await criarQuadra({ esporteId: esporte.id });
+      await prisma.quadra.create({
+        data: {
+          id: SEGUNDA,
+          companyId: EMPRESA_A,
+          nome: 'Q2',
+          precoHora: 100,
+          esporteId: esporte.id,
+        },
+      });
+
+      await prisma.esporteDeQuadra.update({
+        where: { id: esporte.id },
+        data: { nome: 'Beach Tennis' },
+      });
+
+      const quadras = await prisma.quadra.findMany({
+        where: { companyId: EMPRESA_A },
+        include: { esporteRef: { select: { nome: true } } },
+        orderBy: { nome: 'asc' },
+      });
+      expect(quadras.map((q) => q.esporteRef?.nome)).toEqual([
+        'Beach Tennis',
+        'Beach Tennis',
+      ]);
+    });
+
+    it('e o id da quadra não muda — renomear não é trocar de opção', async () => {
+      const esporte = await criarEsporte(EMPRESA_A, 'Tênis');
+      await criarQuadra({ esporteId: esporte.id });
+
+      await prisma.esporteDeQuadra.update({
+        where: { id: esporte.id },
+        data: { nome: 'Padel' },
+      });
+
+      const quadra = await prisma.quadra.findUniqueOrThrow({
+        where: { id: QUADRA_A },
+      });
+      expect(quadra.esporteId).toBe(esporte.id);
+    });
+  });
 });
