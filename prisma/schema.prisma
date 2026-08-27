@@ -423,10 +423,62 @@ model Turma {
   quadra    Quadra           @relation(fields: [quadraId], references: [id])
   alunos    TurmaAluno[]
   ocupacoes OcupacaoQuadra[]
+  encontros TurmaEncontro[]
 
   @@index([companyId])
   @@index([quadraId])
   @@map("turmas")
+}
+
+/// SPEC-019/TASK-001 — os encontros semanais da turma, um por dia.
+///
+/// **Fase EXPAND.** As tres colunas de `turmas` (`dia_semana`, `hora_inicio`,
+/// `hora_fim`) continuam existindo e sao a fonte ate a TASK-002 passar a
+/// escrever aqui. Elas so saem na TASK-003 (contract), e la a migration
+/// aborta antes de qualquer `DROP` se o backfill nao tiver fechado.
+///
+/// ## Por que tabela filha, e nao um array de dias
+///
+/// **O horario pode variar por dia** (decisao do Israel, 2026-08-26). Um
+/// `Int[]` de dias forcaria o mesmo horario em todos, e a primeira turma que
+/// treina 18h na terca e 7h no sabado quebraria o modelo.
+///
+/// ## A exclusao se declara AQUI, nao depois
+///
+/// `onDelete: Cascade` e **sem `company_id`** — o mesmo padrao de
+/// `TurmaAluno`. O `limpar-empresa.ts` documenta por que `turma_alunos` nao
+/// aparece em `TABELAS_DA_EMPRESA`: nao tem `company_id` e cai por cascata de
+/// `turmas`.
+///
+/// **Isto esta escrito porque ja quebrou tres vezes na SPEC-020:** tabela
+/// nova por empresa com FK `RESTRICT` derruba toda limpeza escrita a mao, e o
+/// sintoma chega como uma suite inteira vermelha com erro de constraint que
+/// nao tem nada a ver com o teste.
+///
+/// ## O que o banco garante, e o que ele nao garante
+///
+/// - **`hora_fim > hora_inicio`**: CHECK escrito a mao na migration.
+/// - **Um encontro por dia na mesma turma**: `@@unique([turmaId, diaSemana])`.
+///   Duas aulas no MESMO dia da mesma turma sao um caso que a AC-007 aceita,
+///   entao esta UNIQUE **nao** existe — ver a migration.
+/// - **Turma com >= 1 encontro (INV-051)**: **o banco NAO garante.** Postgres
+///   nao expressa "pai com pelo menos um filho" sem trigger, e este projeto
+///   tem zero. Fica com a API e a transacao, declarado em vez de prometido —
+///   ver a 1a rodada de duvida da SPEC-019.
+model TurmaEncontro {
+  id         String   @id @default(uuid()) @db.Uuid
+  turmaId    String   @map("turma_id") @db.Uuid
+  /// 0 = domingo, 6 = sabado — mesma convencao de `turmas.dia_semana` e de
+  /// `horarios_funcionamento`.
+  diaSemana  Int      @map("dia_semana")
+  horaInicio DateTime @map("hora_inicio") @db.Time
+  horaFim    DateTime @map("hora_fim") @db.Time
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  turma Turma @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+
+  @@index([turmaId])
+  @@map("turma_encontros")
 }
 
 // Alocação many-to-many aluno<->turma (DATA_MODEL.md). Contagem por
