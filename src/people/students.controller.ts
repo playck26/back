@@ -28,6 +28,7 @@ import {
   AlunoPaginadoResponseDto,
   AlunoResponseDto,
 } from './dto/people-response.dto';
+import { FrequenciaDoAlunoResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
@@ -58,6 +59,7 @@ export class StudentsController {
    * está fora de escopo de propósito.
    */
   @Get(':id/frequencia')
+  @ApiOkResponse({ type: FrequenciaDoAlunoResponseDto })
   frequencia(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,

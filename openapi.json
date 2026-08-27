@@ -7,7 +7,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -221,7 +228,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConviteCriadoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -249,7 +263,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConvitePublicoResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -363,7 +384,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrequenciaDoAlunoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -874,7 +902,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FotoDeProfessorResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -900,7 +935,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FotoDeProfessorResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1062,7 +1104,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmokeDeTenantResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1373,7 +1422,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmpresaPublicaResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -1472,7 +1528,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoDaEmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1498,7 +1561,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoDaEmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2485,7 +2555,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrequenciaDaTurmaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2521,7 +2598,17 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OcorrenciaNoHistoricoResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2714,7 +2801,14 @@
         ],
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatriculaEmTurmaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2993,7 +3087,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvasaoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3049,7 +3150,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfiguracaoDePagamentoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3076,7 +3184,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfiguracaoDePagamentoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3095,7 +3210,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagamentoPublicoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3387,6 +3509,56 @@
           }
         }
       },
+      "ConviteCriadoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "token": {
+            "type": "string"
+          },
+          "expiraEm": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "token",
+          "expiraEm"
+        ]
+      },
+      "EmpresaDoConviteResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          }
+        },
+        "required": [
+          "nome"
+        ]
+      },
+      "ConvitePublicoResponseDto": {
+        "type": "object",
+        "properties": {
+          "empresa": {
+            "$ref": "#/components/schemas/EmpresaDoConviteResponseDto"
+          },
+          "nome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Ana Souza"
+          }
+        },
+        "required": [
+          "empresa",
+          "nome"
+        ]
+      },
       "FotoDePerfilResponseDto": {
         "type": "object",
         "properties": {
@@ -3397,6 +3569,277 @@
         },
         "required": [
           "url"
+        ]
+      },
+      "FaltasSeguidasComposicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "ausente": {
+            "type": "number",
+            "example": 2
+          },
+          "justificado": {
+            "type": "number",
+            "example": 1
+          }
+        },
+        "required": [
+          "ausente",
+          "justificado"
+        ]
+      },
+      "AgregadoDeFrequenciaResponseDto": {
+        "type": "object",
+        "properties": {
+          "frequenciaPct": {
+            "type": "number",
+            "nullable": true,
+            "example": 83
+          },
+          "confianca": {
+            "type": "string",
+            "enum": [
+              "alta",
+              "baixa"
+            ]
+          },
+          "base": {
+            "type": "number",
+            "example": 12
+          },
+          "presente": {
+            "type": "number",
+            "example": 10
+          },
+          "ausente": {
+            "type": "number",
+            "example": 1
+          },
+          "justificado": {
+            "type": "number",
+            "example": 1
+          },
+          "faltasSeguidas": {
+            "type": "number",
+            "example": 3
+          },
+          "faltasSeguidasComposicao": {
+            "$ref": "#/components/schemas/FaltasSeguidasComposicaoResponseDto"
+          }
+        },
+        "required": [
+          "frequenciaPct",
+          "confianca",
+          "base",
+          "presente",
+          "ausente",
+          "justificado",
+          "faltasSeguidas",
+          "faltasSeguidasComposicao"
+        ]
+      },
+      "CoberturaResponseDto": {
+        "type": "object",
+        "properties": {
+          "aconteceram": {
+            "type": "number",
+            "example": 12
+          },
+          "lancadas": {
+            "type": "number",
+            "example": 9
+          },
+          "completas": {
+            "type": "number",
+            "example": 7
+          },
+          "pctCompletas": {
+            "type": "number",
+            "nullable": true,
+            "example": 58
+          },
+          "confianca": {
+            "type": "string",
+            "enum": [
+              "alta",
+              "baixa"
+            ]
+          },
+          "aviso": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "aconteceram",
+          "lancadas",
+          "completas",
+          "pctCompletas",
+          "confianca",
+          "aviso"
+        ]
+      },
+      "FrequenciaPorTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "frequenciaPct": {
+            "type": "number",
+            "nullable": true,
+            "example": 83
+          },
+          "confianca": {
+            "type": "string",
+            "enum": [
+              "alta",
+              "baixa"
+            ]
+          },
+          "base": {
+            "type": "number",
+            "example": 12
+          },
+          "presente": {
+            "type": "number",
+            "example": 10
+          },
+          "ausente": {
+            "type": "number",
+            "example": 1
+          },
+          "justificado": {
+            "type": "number",
+            "example": 1
+          },
+          "faltasSeguidas": {
+            "type": "number",
+            "example": 3
+          },
+          "faltasSeguidasComposicao": {
+            "$ref": "#/components/schemas/FaltasSeguidasComposicaoResponseDto"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Turma A"
+          },
+          "naTurmaHoje": {
+            "type": "boolean"
+          },
+          "cobertura": {
+            "$ref": "#/components/schemas/CoberturaResponseDto"
+          }
+        },
+        "required": [
+          "frequenciaPct",
+          "confianca",
+          "base",
+          "presente",
+          "ausente",
+          "justificado",
+          "faltasSeguidas",
+          "faltasSeguidasComposicao",
+          "turmaId",
+          "turmaNome",
+          "naTurmaHoje",
+          "cobertura"
+        ]
+      },
+      "OcorrenciaDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Turma A"
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "cancelada": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "presente",
+              "ausente",
+              "justificado"
+            ]
+          }
+        },
+        "required": [
+          "turmaId",
+          "turmaNome",
+          "ocupacaoId",
+          "data",
+          "cancelada",
+          "status"
+        ]
+      },
+      "FrequenciaDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "alunoAtivo": {
+            "type": "boolean"
+          },
+          "vinculo": {
+            "type": "string",
+            "enum": [
+              "pendente",
+              "aprovado",
+              "recusado"
+            ]
+          },
+          "janelaDias": {
+            "type": "number",
+            "example": 30
+          },
+          "agregado": {
+            "$ref": "#/components/schemas/AgregadoDeFrequenciaResponseDto"
+          },
+          "porTurma": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FrequenciaPorTurmaResponseDto"
+            }
+          },
+          "ocorrencias": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OcorrenciaDoAlunoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "alunoAtivo",
+          "vinculo",
+          "janelaDias",
+          "agregado",
+          "porTurma",
+          "ocorrencias"
         ]
       },
       "AlunoResponseDto": {
@@ -3745,6 +4188,18 @@
           }
         }
       },
+      "FotoDeProfessorResponseDto": {
+        "type": "object",
+        "properties": {
+          "fotoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "fotoUrl"
+        ]
+      },
       "NivelResponseDto": {
         "type": "object",
         "properties": {
@@ -3802,6 +4257,23 @@
             "type": "number"
           }
         }
+      },
+      "SmokeDeTenantResponseDto": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": true
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "ok",
+          "companyId"
+        ]
       },
       "EmpresaResponseDto": {
         "type": "object",
@@ -4101,6 +4573,23 @@
           "status"
         ]
       },
+      "EmpresaPublicaResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          },
+          "logoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "nome",
+          "logoUrl"
+        ]
+      },
       "MinhaEmpresaResponseDto": {
         "type": "object",
         "properties": {
@@ -4150,6 +4639,18 @@
         },
         "required": [
           "permiteAutoCadastro"
+        ]
+      },
+      "LogoDaEmpresaResponseDto": {
+        "type": "object",
+        "properties": {
+          "logoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "logoUrl"
         ]
       },
       "OpcaoDeCatalogoResponseDto": {
@@ -4819,6 +5320,198 @@
           }
         }
       },
+      "AlunoNaFrequenciaDaTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "frequenciaPct": {
+            "type": "number",
+            "nullable": true,
+            "example": 83
+          },
+          "confianca": {
+            "type": "string",
+            "enum": [
+              "alta",
+              "baixa"
+            ]
+          },
+          "base": {
+            "type": "number",
+            "example": 12
+          },
+          "presente": {
+            "type": "number",
+            "example": 10
+          },
+          "ausente": {
+            "type": "number",
+            "example": 1
+          },
+          "justificado": {
+            "type": "number",
+            "example": 1
+          },
+          "faltasSeguidas": {
+            "type": "number",
+            "example": 3
+          },
+          "faltasSeguidasComposicao": {
+            "$ref": "#/components/schemas/FaltasSeguidasComposicaoResponseDto"
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "naTurmaHoje": {
+            "type": "boolean"
+          },
+          "alunoAtivo": {
+            "type": "boolean"
+          },
+          "vinculo": {
+            "type": "string",
+            "enum": [
+              "pendente",
+              "aprovado",
+              "recusado"
+            ]
+          }
+        },
+        "required": [
+          "frequenciaPct",
+          "confianca",
+          "base",
+          "presente",
+          "ausente",
+          "justificado",
+          "faltasSeguidas",
+          "faltasSeguidasComposicao",
+          "alunoId",
+          "nome",
+          "naTurmaHoje",
+          "alunoAtivo",
+          "vinculo"
+        ]
+      },
+      "FrequenciaDaTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "example": "Turma A"
+          },
+          "janelaDias": {
+            "type": "number",
+            "example": 30
+          },
+          "cobertura": {
+            "$ref": "#/components/schemas/CoberturaResponseDto"
+          },
+          "alunos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoNaFrequenciaDaTurmaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "turmaId",
+          "turmaNome",
+          "janelaDias",
+          "cobertura",
+          "alunos"
+        ]
+      },
+      "AlunoNoHistoricoResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "presente",
+              "ausente",
+              "justificado"
+            ]
+          },
+          "naTurmaHoje": {
+            "type": "boolean"
+          },
+          "alunoAtivo": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "status",
+          "naTurmaHoje",
+          "alunoAtivo"
+        ]
+      },
+      "OcorrenciaNoHistoricoResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "cancelada": {
+            "type": "boolean"
+          },
+          "chamadaFeita": {
+            "type": "boolean"
+          },
+          "registradoPor": {
+            "type": "string",
+            "nullable": true,
+            "example": "Carlos Lima"
+          },
+          "alunos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoNoHistoricoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "cancelada",
+          "chamadaFeita",
+          "registradoPor",
+          "alunos"
+        ]
+      },
       "TurmaEncontroResponseDto": {
         "type": "object",
         "properties": {
@@ -5115,6 +5808,33 @@
             ]
           }
         }
+      },
+      "MatriculaEmTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "turmaId",
+          "alunoId",
+          "createdAt"
+        ]
       },
       "AulaDoAlunoResponseDto": {
         "type": "object",
@@ -5467,6 +6187,94 @@
           "total"
         ]
       },
+      "AlunoEmEvasaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Turma A"
+          },
+          "motivo": {
+            "type": "string",
+            "enum": [
+              "faltas_seguidas",
+              "frequencia_baixa"
+            ]
+          },
+          "frequenciaPct": {
+            "type": "number",
+            "nullable": true,
+            "example": 42
+          },
+          "base": {
+            "type": "number",
+            "example": 12
+          },
+          "faltasSeguidas": {
+            "type": "number",
+            "example": 3
+          },
+          "faltasSeguidasComposicao": {
+            "$ref": "#/components/schemas/FaltasSeguidasComposicaoResponseDto"
+          },
+          "confianca": {
+            "type": "string",
+            "enum": [
+              "alta",
+              "baixa"
+            ]
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "turmaId",
+          "turmaNome",
+          "motivo",
+          "frequenciaPct",
+          "base",
+          "faltasSeguidas",
+          "faltasSeguidasComposicao",
+          "confianca"
+        ]
+      },
+      "EvasaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "example": 4
+          },
+          "janelaDias": {
+            "type": "number",
+            "example": 30
+          },
+          "alunos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoEmEvasaoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "janelaDias",
+          "alunos"
+        ]
+      },
       "DashboardResumoResponseDto": {
         "type": "object",
         "properties": {
@@ -5489,6 +6297,30 @@
           "ocupacaoQuadrasPct"
         ]
       },
+      "ConfiguracaoDePagamentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true,
+            "example": "https://pag.example/clube"
+          },
+          "whatsappNumero": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511999999999"
+          }
+        },
+        "required": [
+          "companyId",
+          "linkPagamentoUrl",
+          "whatsappNumero"
+        ]
+      },
       "UpdatePaymentConfigDto": {
         "type": "object",
         "properties": {
@@ -5500,6 +6332,23 @@
             "example": "+5511999999999"
           }
         }
+      },
+      "PagamentoPublicoResponseDto": {
+        "type": "object",
+        "properties": {
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "whatsappNumero": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "linkPagamentoUrl",
+          "whatsappNumero"
+        ]
       },
       "UpdatePaymentStatusDto": {
         "type": "object",

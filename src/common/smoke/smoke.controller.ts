@@ -1,5 +1,6 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { SmokeDeTenantResponseDto } from '../../companies/dto/empresa-publica-response.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { TenantGuard } from '../guards/tenant.guard';
 
@@ -15,7 +16,8 @@ import { TenantGuard } from '../guards/tenant.guard';
 @UseGuards(JwtAuthGuard, TenantGuard)
 export class SmokeController {
   @Get('tenant-check/:companyId')
-  tenantCheck(@Param('companyId') companyId: string) {
+  @ApiOkResponse({ type: SmokeDeTenantResponseDto })
+  tenantCheck(@Param('companyId') companyId: string): SmokeDeTenantResponseDto {
     return { ok: true, companyId };
   }
 }

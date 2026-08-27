@@ -12,6 +12,7 @@ import {
   ChamadaSalvaResponseDto,
   OcorrenciaDaTurmaResponseDto,
 } from './dto/me-response.dto';
+import { OcorrenciaNoHistoricoResponseDto } from './dto/presenca-historico-response.dto';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -601,7 +602,11 @@ export class PresencaService {
    * professor sair do clube, uma chamada errada dele não tem quem conserte.
    * Preferi isso a expor um contrato de escrita sem tela que o use.
    */
-  async historicoDaTurma(companyId: string, turmaId: string, dias: number) {
+  async historicoDaTurma(
+    companyId: string,
+    turmaId: string,
+    dias: number,
+  ): Promise<OcorrenciaNoHistoricoResponseDto[]> {
     const turma = await this.prisma.turma.findFirst({
       where: { id: turmaId, companyId },
       select: { id: true },

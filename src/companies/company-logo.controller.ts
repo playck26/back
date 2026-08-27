@@ -7,8 +7,15 @@ import {
   UploadedFile,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { LogoDaEmpresaResponseDto } from '../storage/dto/midia-response.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -41,6 +48,7 @@ export class CompanyLogoController {
   constructor(private readonly logos: LogoDaEmpresaService) {}
 
   @Put()
+  @ApiOkResponse({ type: LogoDaEmpresaResponseDto })
   @Roles('company_admin', 'super_admin')
   @UploadDeMidia()
   @ApiConsumes('multipart/form-data')
@@ -66,6 +74,7 @@ export class CompanyLogoController {
    * empresa tinha `logo_url` externa, ela volta a valer (AC-013).
    */
   @Delete()
+  @ApiOkResponse({ type: LogoDaEmpresaResponseDto })
   @Roles('company_admin', 'super_admin')
   remover(
     @Param('id', ParseUUIDPipe) id: string,

@@ -64,31 +64,17 @@ import { join } from 'node:path';
  * Ao dar schema a uma delas, **apague a linha**. O teste abaixo falha se você
  * esquecer, e a mensagem diz exatamente qual apagar.
  */
-const SEM_SCHEMA_DE_RESPOSTA = new Set([
-  // Rotas internas: raiz da API e smoke test de tenant. Sem cliente.
-  'GET /api/v1',
-  'GET /api/v1/_smoke/tenant-check/{companyId}',
-  // Frequência e presença — formas grandes e aninhadas.
-  'GET /api/v1/classes/{id}/frequencia',
-  'GET /api/v1/classes/{id}/presencas',
-  'GET /api/v1/students/{id}/frequencia',
-  'GET /api/v1/dashboard/evasao',
-  // Matrícula em turma.
-  'POST /api/v1/classes/{id}/students/{alunoId}',
-  // Mídia: logo da empresa e foto do professor.
-  'PUT /api/v1/companies/{id}/logo',
-  'DELETE /api/v1/companies/{id}/logo',
-  'PUT /api/v1/teachers/{id}/foto',
-  'DELETE /api/v1/teachers/{id}/foto',
-  // Convites.
-  'POST /api/v1/invites',
-  'GET /api/v1/public/invites/{token}',
-  // Configuração de pagamento.
-  'GET /api/v1/payment-config',
-  'PUT /api/v1/payment-config',
-  'GET /api/v1/payment-config/public',
-  // Página pública da empresa.
-  'GET /api/v1/public/companies/{slug}',
+const SEM_SCHEMA_DE_RESPOSTA = new Set<string>([
+  // **Vazia desde 2026-08-27, e chegar a zero foi o trabalho da TASK-005.**
+  //
+  // Nasceu com 17 linhas, no mesmo dia, e encolheu até aqui. Deixar a
+  // constante em vez de apagá-la é deliberado: é onde a próxima exceção
+  // teria de ser escrita, com nome e data, em vez de acontecer em silêncio.
+  //
+  // Se você veio parar aqui porque um teste abaixo ficou vermelho, a
+  // pergunta certa não é "como calo isto" — é por que a rota nova não
+  // declara `@ApiOkResponse`. O DEF-012 custou três telas em branco em
+  // produção, e a causa foi exatamente esta lista, implícita e com 90 linhas.
 ]);
 
 const VERBOS = ['get', 'post', 'put', 'patch', 'delete'] as const;

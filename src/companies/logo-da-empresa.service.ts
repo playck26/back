@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { LogoDaEmpresaResponseDto } from '../storage/dto/midia-response.dto';
 import { conferirChave, montarChave } from '../storage/chave-de-midia';
 import { FilaDeExclusao } from '../storage/fila-de-exclusao.service';
 import {
@@ -42,10 +43,8 @@ export const MOTIVO_TROCA_LOGO = 'logo_trocada';
 export const MOTIVO_REMOCAO_LOGO = 'logo_removida';
 
 /** O que toda tela precisa saber para desenhar a marca da empresa. */
-export interface LogoResolvida {
-  /** URL pronta para `<img src>`, ou `null` quando não há logo nenhuma. */
-  readonly logoUrl: string | null;
-}
+/** SPEC-021/TASK-005 — a forma canonica vive no DTO. */
+export type LogoResolvida = LogoDaEmpresaResponseDto;
 
 export interface EmpresaComLogo {
   readonly id: string;

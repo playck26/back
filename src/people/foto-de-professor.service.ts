@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { FotoDeProfessorResponseDto } from '../storage/dto/midia-response.dto';
 import { montarChave } from '../storage/chave-de-midia';
 import { FilaDeExclusao } from '../storage/fila-de-exclusao.service';
 import {
@@ -72,10 +73,8 @@ export const MOTIVO_TROCA_FOTO = 'foto_de_professor_trocada';
 export const MOTIVO_REMOCAO_FOTO = 'foto_de_professor_removida';
 
 /** O que a ficha e a lista precisam para desenhar o professor. */
-export interface FotoDeProfessor {
-  /** URL assinada, ou `null` quando não há foto por nenhum dos dois lados. */
-  readonly fotoUrl: string | null;
-}
+/** SPEC-021/TASK-005 — a forma canonica vive no DTO. */
+export type FotoDeProfessor = FotoDeProfessorResponseDto;
 
 export interface ProfessorComFoto {
   readonly id: string;

@@ -7,8 +7,15 @@ import {
   UploadedFile,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { FotoDeProfessorResponseDto } from '../storage/dto/midia-response.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -43,6 +50,7 @@ export class TeacherPhotoController {
   constructor(private readonly fotos: FotoDeProfessorService) {}
 
   @Put()
+  @ApiOkResponse({ type: FotoDeProfessorResponseDto })
   @Roles('company_admin')
   @UploadDeMidia()
   @ApiConsumes('multipart/form-data')
@@ -69,6 +77,7 @@ export class TeacherPhotoController {
    * saber o que a tela vai mostrar agora.
    */
   @Delete()
+  @ApiOkResponse({ type: FotoDeProfessorResponseDto })
   @Roles('company_admin')
   remover(
     @Param('id', ParseUUIDPipe) id: string,

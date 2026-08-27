@@ -1,4 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  EvasaoResponseDto,
+  FrequenciaDaTurmaResponseDto,
+  FrequenciaDoAlunoResponseDto,
+} from './dto/frequencia-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -258,7 +263,11 @@ export class FrequenciaService {
   // ================================================================
   // TASK-001 — relatório da turma
   // ================================================================
-  async daTurma(companyId: string, turmaId: string, dias: number) {
+  async daTurma(
+    companyId: string,
+    turmaId: string,
+    dias: number,
+  ): Promise<FrequenciaDaTurmaResponseDto> {
     const { hoje, desde } = this.janela(dias);
 
     // Query 1: a turma (que é o escopo de empresa, AC-009), as ocorrências
@@ -393,7 +402,11 @@ export class FrequenciaService {
    * turmas esconde o caso que interessa: o aluno que vai bem numa turma e
    * sumiu da outra aparece "mediano" e ninguém olha.
    */
-  async doAluno(companyId: string, alunoId: string, dias: number) {
+  async doAluno(
+    companyId: string,
+    alunoId: string,
+    dias: number,
+  ): Promise<FrequenciaDoAlunoResponseDto> {
     const { hoje, desde } = this.janela(dias);
 
     // Query 1: o aluno (escopo de empresa, AC-009) e as turmas de hoje.
@@ -542,7 +555,7 @@ export class FrequenciaService {
    * A rota mais cara e a mais aberta da spec. AC-015 vale aqui como nas
    * outras: **2 queries para a empresa inteira**, e nenhuma por aluno.
    */
-  async evasao(companyId: string, dias: number) {
+  async evasao(companyId: string, dias: number): Promise<EvasaoResponseDto> {
     const { hoje, desde } = this.janela(dias);
 
     // Query 1: todas as ocorrências de turma da empresa na janela.

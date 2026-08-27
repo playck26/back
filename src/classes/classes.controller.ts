@@ -14,7 +14,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import {
   TurmaDetalheResponseDto,
   TurmaPaginadaResponseDto,
@@ -32,6 +38,11 @@ import {
   JANELA_MAXIMA_DIAS,
   JANELA_PADRAO_DIAS,
 } from '../frequencia/frequencia.service';
+import {
+  MatriculaEmTurmaResponseDto,
+  OcorrenciaNoHistoricoResponseDto,
+} from './dto/presenca-historico-response.dto';
+import { FrequenciaDaTurmaResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 
@@ -65,6 +76,7 @@ export class ClassesController {
    * chamada, quem lê o agregado é o gestor.
    */
   @Get(':id/frequencia')
+  @ApiOkResponse({ type: FrequenciaDaTurmaResponseDto })
   frequencia(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -79,6 +91,7 @@ export class ClassesController {
   }
 
   @Get(':id/presencas')
+  @ApiOkResponse({ type: [OcorrenciaNoHistoricoResponseDto] })
   historicoDePresenca(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -126,6 +139,7 @@ export class ClassesController {
   }
 
   @Post(':id/students/:alunoId')
+  @ApiCreatedResponse({ type: MatriculaEmTurmaResponseDto })
   allocateStudent(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -139,6 +153,7 @@ export class ClassesController {
   }
 
   @Delete(':id/students/:alunoId')
+  @ApiNoContentResponse()
   @HttpCode(HttpStatus.NO_CONTENT)
   removeStudent(
     @CurrentUser() user: AccessTokenPayload,

@@ -1,6 +1,7 @@
 import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { LimitePublico } from '../common/throttle/contagem-por-ip';
+import { EmpresaPublicaResponseDto } from './dto/empresa-publica-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 
@@ -21,6 +22,7 @@ export class PublicCompaniesController {
   ) {}
 
   @Get(':slug')
+  @ApiOkResponse({ type: EmpresaPublicaResponseDto })
   @LimitePublico()
   async porSlug(@Param('slug') slug: string) {
     const empresa = await this.prisma.empresa.findUnique({

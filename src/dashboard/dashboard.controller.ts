@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { DashboardService } from './dashboard.service';
 import { DashboardResumoResponseDto } from '../courts/dto/booking-response.dto';
+import { EvasaoResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { DashboardQueryDto } from './dto/dashboard-query.dto';
 
 @ApiTags('dashboard')
@@ -40,6 +41,7 @@ export class DashboardController {
    * cartão, e um 404 aqui viraria erro na tela por ausência de problema.
    */
   @Get('evasao')
+  @ApiOkResponse({ type: EvasaoResponseDto })
   evasao(
     @CurrentUser() user: AccessTokenPayload,
     @Query('dias', new DefaultValuePipe(JANELA_PADRAO_DIAS), ParseIntPipe)
