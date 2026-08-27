@@ -77,9 +77,15 @@ function buildHorariosMock() {
   return {
     resolver: jest.fn().mockResolvedValue(abertoPadrao),
     resolverParaData: jest.fn().mockResolvedValue(abertoPadrao),
-    // Geração de slots e checagem de borda são puras: usa-se a
+    // DEF-013: `registerClassOccupancy` deixou de perguntar por ocorrência e
+    // passou a carregar as linhas uma vez. Sem linha nenhuma, a rede de
+    // segurança de `resolverDeLinhas` devolve 06:00–22:00 — o mesmo
+    // `abertoPadrao` de antes, agora pela regra real em vez de por um dublê.
+    carregarLinhas: jest.fn().mockResolvedValue([]),
+    // Geração de slots, herança e checagem de borda são puras: usa-se a
     // implementação real, senão o teste provaria o mock, não o código.
     gerarSlots: real.gerarSlots.bind(real),
+    resolverDeLinhas: real.resolverDeLinhas.bind(real),
     dentroDoExpediente: real.dentroDoExpediente.bind(real),
   } as unknown as HorarioFuncionamentoService;
 }
@@ -436,10 +442,24 @@ describe('CourtsService', () => {
     // propósito. Uma implementação que confere só a primeira passaria por
     // este teste se ele colocasse a inválida na frente, e gravaria as
     // demais fora do expediente sem ninguém notar.
+    //
+    // DEF-013 mudou os dados deste teste, não o que ele prova. Antes as três
+    // ocorrências eram três segundas-feiras e o dublê de `resolverParaData`
+    // fechava a segunda **por posição** — impossível na vida real, porque o
+    // expediente só depende do dia da semana. Agora a lista é a da SPEC-019:
+    // uma turma de segunda e sábado, com o sábado fechado. É o caso que o
+    // produto passou a permitir, e a ocorrência inválida continua no meio.
     it('AC-018: recusa quando UMA ocorrência do meio cai fora do expediente', async () => {
+      const SEGUNDA = new Date('2026-08-24T00:00:00.000Z');
+      const SABADO = new Date('2026-08-29T00:00:00.000Z');
       const tres = [
         {
-          data: new Date('2026-08-24T00:00:00.000Z'),
+          data: SEGUNDA,
+          horaInicio: parseTimeOnly('09:00'),
+          horaFim: parseTimeOnly('10:00'),
+        },
+        {
+          data: SABADO,
           horaInicio: parseTimeOnly('09:00'),
           horaFim: parseTimeOnly('10:00'),
         },
@@ -448,24 +468,24 @@ describe('CourtsService', () => {
           horaInicio: parseTimeOnly('09:00'),
           horaFim: parseTimeOnly('10:00'),
         },
-        {
-          data: new Date('2026-09-07T00:00:00.000Z'),
-          horaInicio: parseTimeOnly('09:00'),
-          horaFim: parseTimeOnly('10:00'),
-        },
       ];
-      (horarios.resolverParaData as jest.Mock)
-        .mockResolvedValueOnce({
-          estado: 'aberto',
+      expect([SEGUNDA.getUTCDay(), SABADO.getUTCDay()]).toEqual([1, 6]);
+      (horarios.carregarLinhas as jest.Mock).mockResolvedValue([
+        {
+          quadraId: null,
+          diaSemana: 1,
+          fechado: false,
           horaInicio: parseTimeOnly('06:00'),
           horaFim: parseTimeOnly('22:00'),
-        })
-        .mockResolvedValueOnce({ estado: 'fechado' })
-        .mockResolvedValueOnce({
-          estado: 'aberto',
-          horaInicio: parseTimeOnly('06:00'),
-          horaFim: parseTimeOnly('22:00'),
-        });
+        },
+        {
+          quadraId: null,
+          diaSemana: 6,
+          fechado: true,
+          horaInicio: null,
+          horaFim: null,
+        },
+      ]);
 
       await expect(
         service.registerClassOccupancy(
@@ -499,7 +519,7 @@ describe('CourtsService', () => {
     ];
 
     it('gera as ocupações via createMany numa única chamada quando não há conflito (NFR-002)', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
       (prisma.ocupacaoQuadra.createMany as jest.Mock).mockResolvedValue({
         count: 2,
       });
@@ -526,10 +546,44 @@ describe('CourtsService', () => {
       });
     });
 
+    /**
+     * DEF-013 — **a busca de conflito virou uma consulta só**, e por isso a
+     * prova de "qualquer ocorrência, não só a primeira" mudou de lugar:
+     * antes ela armava a segunda chamada do `findFirst`, agora ela confere
+     * que o `OR` enviado ao banco cobre **todas** as ocorrências. Sem esta
+     * asserção, uma implementação que consultasse só a primeira data
+     * passaria — que é exatamente o erro que a AC-001 existe para barrar.
+     */
+    it('julga todas as ocorrências numa consulta só (AC-001)', async () => {
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockResolvedValue({
+        count: 2,
+      });
+
+      await service.registerClassOccupancy(
+        prisma,
+        'c1',
+        'q1',
+        't1',
+        ocorrencias,
+      );
+
+      expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledTimes(1);
+      const [args] = (prisma.ocupacaoQuadra.findMany as jest.Mock).mock
+        .calls[0] as [Prisma.OcupacaoQuadraFindManyArgs];
+      expect(args.where?.OR).toEqual(
+        ocorrencias.map((ocorrencia) => ({
+          data: ocorrencia.data,
+          horaInicio: { lt: ocorrencia.horaFim },
+          horaFim: { gt: ocorrencia.horaInicio },
+        })),
+      );
+    });
+
     it('rejeita com 409 e não insere nada se qualquer ocorrência colide (AC-001)', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock)
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ id: 'o-existente', origemTipo: 'AVULSO' });
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        { id: 'o-existente', origemTipo: 'AVULSO' },
+      ]);
 
       await expect(
         service.registerClassOccupancy(
@@ -544,7 +598,7 @@ describe('CourtsService', () => {
     });
 
     it('corrida perdida na constraint EXCLUDE durante createMany vira 409 (INV-001)', async () => {
-      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
       (prisma.ocupacaoQuadra.createMany as jest.Mock).mockRejectedValue(
         new Prisma.PrismaClientUnknownRequestError(
           'conflicting key value violates exclusion constraint "no_overlap_por_quadra"',
@@ -561,6 +615,36 @@ describe('CourtsService', () => {
           ocorrencias,
         ),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    /**
+     * DEF-013 — **o outro lado da tradução acima.** Transação expirada não é
+     * corrida perdida: sair daqui como 409 diz ao gestor que a quadra está
+     * ocupada quando ela está livre, e ele desiste de uma turma que só
+     * precisava de menos idas ao banco. Tem de continuar sendo 500.
+     */
+    it('P2028 durante createMany NÃO vira 409 (DEF-013)', async () => {
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(
+          'Transaction already closed: A query cannot be executed on an expired transaction.',
+          {
+            code: 'P2028',
+            clientVersion: '6.19.3',
+            meta: { modelName: 'OcupacaoQuadra' },
+          },
+        ),
+      );
+
+      await expect(
+        service.registerClassOccupancy(
+          prisma as unknown as Prisma.TransactionClient,
+          'c1',
+          'q1',
+          't1',
+          ocorrencias,
+        ),
+      ).rejects.toMatchObject({ code: 'P2028' });
     });
   });
 

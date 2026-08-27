@@ -28,6 +28,43 @@ interface ConflitoDetectado {
   origemTipo: string;
 }
 
+/**
+ * Códigos do Prisma que falam da **vida da transação ou da conexão**, não do
+ * dado que se tentou gravar.
+ *
+ * Ver `ehCorridaPerdida`. A lista é curta de propósito: o que não estiver
+ * aqui continua tratado como corrida, que é o comportamento conservador
+ * (recusar a escrita) e o que a INV-001 exige.
+ */
+const CODIGOS_DE_INFRA_NAO_SAO_CONFLITO = new Set([
+  'P1001', // servidor inalcançável
+  'P1002', // timeout ao abrir conexão
+  'P1008', // timeout de operação
+  'P1017', // o servidor encerrou a conexão
+  'P2024', // esgotou o pool esperando conexão
+  'P2028', // transação expirada ou já fechada
+]);
+
+/**
+ * DEF-013 — **nem todo erro do Prisma é corrida perdida.**
+ *
+ * A violação da constraint `EXCLUDE` (INV-001) não tem P-código dedicado:
+ * o `23P01` do Postgres chega como erro genérico do Prisma. Por isso os dois
+ * caminhos de escrita de ocupação traduziam *qualquer* erro do Prisma em 409
+ * — e enquanto a transação cabia no tempo, isso descrevia a realidade.
+ *
+ * Não cabe mais. Em 2026-08-27 o `P2028` (transação expirada) começou a cair
+ * dentro dessa tradução, e o gestor passou a ler **"conflito de horário com
+ * ocupação existente"** numa quadra vazia. É pior que o 500 que o defeito
+ * causava do outro lado: 500 manda investigar, esse 409 manda desistir.
+ */
+function ehCorridaPerdida(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return !CODIGOS_DE_INFRA_NAO_SAO_CONFLITO.has(error.code);
+  }
+  return error instanceof Prisma.PrismaClientUnknownRequestError;
+}
+
 /** Forma mínima de uma ocupação para virar resposta de API. */
 interface OcupacaoParaResposta {
   id: string;
@@ -385,10 +422,10 @@ export class CourtsService {
       // Prisma dedicado — a violação de EXCLUDE (23P01) chega como
       // PrismaClientUnknownRequestError. Depois dos pré-checks acima, só
       // pode ser corrida: outra requisição ganhou o slot ou a mesma chave.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError ||
-        error instanceof Prisma.PrismaClientUnknownRequestError
-      ) {
+      // **Só pode** — desde que o erro seja de dado. Transação expirada e
+      // conexão caída não são corrida, e virar 409 aqui faria a reserva do
+      // aluno mentir do mesmo jeito que a da turma (DEF-013).
+      if (ehCorridaPerdida(error)) {
         if (clientRequestId) {
           const jaFeito = await this.pedidoJaAtendido(
             companyId,
@@ -535,13 +572,25 @@ export class CourtsService {
     // conferir só a primeira daria o mesmo resultado — mas este método é
     // público e reutilizável, e uma implementação que confere só a
     // primeira grava as demais fora do expediente sem ninguém notar.
+    //
+    // DEF-013: **carregado uma vez, resolvido em memória.** Uma chamada a
+    // `resolverParaData` por ocorrência é uma ida ao banco por ocorrência, e
+    // desde a SPEC-019 são `8 × N`, dentro de uma transação aberta — foi o
+    // que estourou o timeout de 5000 ms do Prisma em produção. O horário só
+    // depende do dia da semana, então há no máximo 7 respostas a carregar.
+    const linhasDeHorario = await this.horarios.carregarLinhas(
+      companyId,
+      quadraId,
+      ocorrencias.map((ocorrencia) => ocorrencia.data.getUTCDay()),
+      tx,
+    );
+
     const foraDoExpediente: { data: Date; horaInicio: Date }[] = [];
     for (const ocorrencia of ocorrencias) {
-      const horarioDoDia = await this.horarios.resolverParaData(
-        companyId,
+      const horarioDoDia = this.horarios.resolverDeLinhas(
+        linhasDeHorario,
         quadraId,
-        ocorrencia.data,
-        tx,
+        ocorrencia.data.getUTCDay(),
       );
       if (
         !this.horarios.dentroDoExpediente(
@@ -569,22 +618,38 @@ export class CourtsService {
       });
     }
 
-    const conflitos: ConflitoDetectado[] = [];
-    for (const ocorrencia of ocorrencias) {
-      const conflito = await tx.ocupacaoQuadra.findFirst({
-        where: {
-          companyId,
-          quadraId,
-          data: ocorrencia.data,
-          statusPagamento: { not: 'cancelado' },
-          horaInicio: { lt: ocorrencia.horaFim },
-          horaFim: { gt: ocorrencia.horaInicio },
-        },
-      });
-      if (conflito) {
-        conflitos.push(this.toConflictWith(conflito));
-      }
-    }
+    // DEF-013: **uma consulta para todas as ocorrências.** O `OR` repete,
+    // por ocorrência, exatamente a mesma condição de sobreposição
+    // semiaberta que o laço anterior fazia uma a uma — o que muda é o
+    // número de idas ao banco, não a regra.
+    //
+    // Efeito colateral desejado: o `findFirst` de antes trazia **uma**
+    // ocupação por ocorrência, então uma data com duas colisões só mostrava
+    // a primeira. `findMany` traz todas, e o gestor vê o estrago inteiro de
+    // uma vez em vez de descobrir a segunda depois de resolver a primeira.
+    //
+    // `orderBy` porque a ordem física do Postgres muda sem nada mudar, e
+    // uma lista de conflitos que troca de ordem entre duas tentativas
+    // parece bug de tela — a mesma lição da ordem dos encontros.
+    const conflitantes =
+      ocorrencias.length === 0
+        ? []
+        : await tx.ocupacaoQuadra.findMany({
+            where: {
+              companyId,
+              quadraId,
+              statusPagamento: { not: 'cancelado' },
+              OR: ocorrencias.map((ocorrencia) => ({
+                data: ocorrencia.data,
+                horaInicio: { lt: ocorrencia.horaFim },
+                horaFim: { gt: ocorrencia.horaInicio },
+              })),
+            },
+            orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+          });
+    const conflitos: ConflitoDetectado[] = conflitantes.map((conflito) =>
+      this.toConflictWith(conflito),
+    );
     if (conflitos.length > 0) {
       throw new ConflictException({
         message:
@@ -607,11 +672,10 @@ export class CourtsService {
       });
     } catch (error) {
       // Mesma corrida perdida de createBooking (INV-001): a violação da
-      // EXCLUDE constraint não tem P-código dedicado no Prisma.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError ||
-        error instanceof Prisma.PrismaClientUnknownRequestError
-      ) {
+      // EXCLUDE constraint não tem P-código dedicado no Prisma. O que **não**
+      // é corrida — transação expirada, conexão caída — passa direto e
+      // continua sendo 500, ver `ehCorridaPerdida` (DEF-013).
+      if (ehCorridaPerdida(error)) {
         throw new ConflictException({
           message:
             'Conflito de horário com ocupação existente na quadra (INV-001)',

@@ -90,13 +90,60 @@ export class HorarioFuncionamentoService {
   }
 
   /**
+   * DEF-013 — as linhas de uma quadra para **vários dias da semana**, numa
+   * consulta só, para quem depois resolve em memória com `resolverDeLinhas`.
+   *
+   * `resolver` é a forma certa para **uma** pergunta. Quem tem muitas —
+   * `registerClassOccupancy` resolve o horário de cada ocorrência da turma —
+   * paga uma ida ao banco por pergunta, e desde a SPEC-019 são `8 × N`
+   * ocorrências dentro de uma transação aberta. Foi assim que a criação de
+   * turma com dois encontros passou a estourar o timeout de 5000 ms do
+   * Prisma em produção.
+   *
+   * O horário **só depende do dia da semana**: as `8 × N` perguntas têm no
+   * máximo 7 respostas distintas. Este método carrega essas 7 de uma vez.
+   *
+   * É o mesmo N+1 que a validação cruzada da SPEC-010 baniu no KPI do
+   * dashboard e a da SPEC-012 pegou voltando na agenda. **Da terceira vez
+   * ele entrou pelo caminho de escrita**, onde ninguém procurava — e por
+   * isso a saída deixou de ser um cuidado de quem escreve a leitura e virou
+   * método público aqui.
+   */
+  async carregarLinhas(
+    companyId: string,
+    quadraId: string,
+    diasSemana: number[],
+    tx: PrismaLike | Prisma.TransactionClient = this.prisma,
+  ): Promise<LinhaHorario[]> {
+    const dias = [...new Set(diasSemana)];
+    if (dias.length === 0) {
+      return [];
+    }
+    return (tx as PrismaLike).horarioFuncionamento.findMany({
+      where: {
+        companyId,
+        diaSemana: { in: dias },
+        OR: [{ quadraId }, { quadraId: null }],
+      },
+      select: {
+        quadraId: true,
+        diaSemana: true,
+        fechado: true,
+        horaInicio: true,
+        horaFim: true,
+      },
+    });
+  }
+
+  /**
    * A mesma herança, sobre linhas **já carregadas**.
    *
    * Existe porque quem precisa resolver muitas combinações de quadra e dia
-   * — o KPI do dashboard (SPEC-010/REQ-009) e o resumo mensal da agenda
-   * (SPEC-012) — não pode consultar o banco por combinação: seriam
-   * centenas de consultas para produzir uma tela. Carregam tudo uma vez e
-   * chamam isto.
+   * — o KPI do dashboard (SPEC-010/REQ-009), o resumo mensal da agenda
+   * (SPEC-012) e o registro de ocupações de turma (DEF-013) — não pode
+   * consultar o banco por combinação: seriam centenas de consultas para
+   * produzir uma tela, ou para gravar uma turma. Carregam tudo uma vez
+   * (`carregarLinhas`) e chamam isto.
    *
    * É a mesma regra de `resolver`, num lugar só. Três cópias da herança
    * divergiriam no primeiro ajuste, e o sintoma seria a agenda dizer que a

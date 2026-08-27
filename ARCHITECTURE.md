@@ -612,6 +612,8 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 | Controller não contém regra de negócio — valida, resolve identidade e delega | revisão + `*.service.spec.ts` cobre a regra, não o controller |
 | Só o módulo dono escreve na sua tabela; os outros chamam método público dele | testes provam a delegação (ex.: MOD-001 não chama `tx.aluno.create`) |
 | Invariante crítica é constraint de banco, não `if` de aplicação | ensaio de migration tenta violar cada constraint antes de aplicar |
+| **Nada dentro de `$transaction` custa uma ida ao banco por item de uma lista.** O laço que consulta por ocorrência cabe no timeout enquanto a lista é pequena, e estoura quando o produto deixa a lista crescer — foi o DEF-013 | `def-013-orcamento-da-transacao.spec.ts` monta `ClassesService`, `CourtsService` e `HorarioFuncionamentoService` de verdade e conta as idas: o teto não pode crescer com o número de encontros |
+| **Erro do Prisma só vira 409 se for de dado.** Transação expirada e conexão caída não são corrida perdida — traduzi-las em "conflito de horário" faz o produto mentir sobre uma quadra vazia | `ehCorridaPerdida()` em `courts.service.ts`, com teste de P2028 nos dois caminhos de escrita |
 | Rota autenticada nova nasce coberta por INV-008 | está no `JwtAuthGuard`; sair da trava exige `@PermiteSenhaTemporaria()` explícito |
 | `openapi.json` nunca fica stale | CI regenera e falha em `git diff --exit-code` |
 | Schema e banco não divergem | `prisma migrate diff` deve devolver "empty migration" |
@@ -752,6 +754,9 @@ neste código, com onde vê-los:
 - **Método público em vez de escrita cruzada**: MOD-004 e MOD-006 chamam
   MOD-005; MOD-001 chama MOD-003;
 - **Fonte única de resolução**: `HorarioFuncionamentoService` responde
-  "está aberto?" para disponibilidade, criação, agenda e dashboard.
+  "está aberto?" para disponibilidade, criação, agenda e dashboard. Quem
+  pergunta muitas vezes usa `carregarLinhas()` + `resolverDeLinhas()` —
+  carrega uma vez, resolve em memória. A herança fica num lugar só e o custo
+  não vira função do dado (DEF-013).
 
 `PATTERN_MAP.md` ainda não existe (ver `DOCUMENTATION_INDEX.md`).
