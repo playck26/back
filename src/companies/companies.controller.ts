@@ -11,10 +11,22 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../common/guards/super-admin.guard';
 import { CompaniesService } from './companies.service';
+import {
+  AdminDaEmpresaResponseDto,
+  EmpresaCriadaResponseDto,
+  EmpresaPaginadaResponseDto,
+  EmpresaResponseDto,
+  SenhaDeAdminResponseDto,
+} from './dto/company-response.dto';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
@@ -28,22 +40,26 @@ export class CompaniesController {
   constructor(private readonly companiesService: CompaniesService) {}
 
   @Get()
+  @ApiOkResponse({ type: EmpresaPaginadaResponseDto })
   list(@Query() query: ListCompaniesQueryDto) {
     return this.companiesService.list(query);
   }
 
   @Post()
+  @ApiCreatedResponse({ type: EmpresaCriadaResponseDto })
   create(@Body() dto: CreateCompanyDto) {
     return this.companiesService.create(dto);
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: EmpresaResponseDto })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.companiesService.findOne(id);
   }
 
   /** SPEC-016/AC-001 — os gestores da empresa. */
   @Get(':id/admins')
+  @ApiOkResponse({ type: [AdminDaEmpresaResponseDto] })
   listAdmins(@Param('id', ParseUUIDPipe) id: string) {
     return this.companiesService.listAdmins(id);
   }
@@ -58,6 +74,7 @@ export class CompaniesController {
    */
   @Post(':id/admins/:usuarioId/senha-temporaria')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: SenhaDeAdminResponseDto })
   gerarSenhaDeAdmin(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('usuarioId', ParseUUIDPipe) usuarioId: string,
@@ -66,6 +83,7 @@ export class CompaniesController {
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: EmpresaResponseDto })
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCompanyDto,
@@ -74,6 +92,7 @@ export class CompaniesController {
   }
 
   @Patch(':id/status')
+  @ApiOkResponse({ type: EmpresaResponseDto })
   updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCompanyStatusDto,

@@ -1086,7 +1086,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmpresaPaginadaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1113,7 +1120,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmpresaCriadaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1141,7 +1155,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1177,7 +1198,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1205,7 +1233,17 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminDaEmpresaResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1241,7 +1279,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SenhaDeAdminResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1279,7 +1324,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3573,6 +3625,95 @@
           }
         }
       },
+      "EmpresaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          },
+          "slug": {
+            "type": "string",
+            "example": "smart-tennis"
+          },
+          "esportes": {
+            "example": [
+              "Tênis",
+              "Padel"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "logoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "permiteAutoCadastro": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "slug",
+          "esportes",
+          "logoUrl",
+          "status",
+          "permiteAutoCadastro",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "EmpresaPaginadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmpresaResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 7
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
       "AdminInicialDto": {
         "type": "object",
         "properties": {
@@ -3618,6 +3759,136 @@
           "nome",
           "esportes",
           "adminInicial"
+        ]
+      },
+      "AdminInicialResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "company_admin"
+            ]
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "email",
+          "role",
+          "companyId"
+        ]
+      },
+      "EmpresaCriadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "empresa": {
+            "$ref": "#/components/schemas/EmpresaResponseDto"
+          },
+          "adminUsuario": {
+            "$ref": "#/components/schemas/AdminInicialResponseDto"
+          }
+        },
+        "required": [
+          "empresa",
+          "adminUsuario"
+        ]
+      },
+      "AdminDaEmpresaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativo",
+              "inativo"
+            ]
+          },
+          "senhaTemporaria": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "email",
+          "status",
+          "senhaTemporaria"
+        ]
+      },
+      "ContaDeAdminResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "email"
+        ]
+      },
+      "SenhaDeAdminResponseDto": {
+        "type": "object",
+        "properties": {
+          "usuario": {
+            "$ref": "#/components/schemas/ContaDeAdminResponseDto"
+          },
+          "senhaTemporaria": {
+            "type": "string",
+            "example": "pck-Xk4p-9Qm2"
+          },
+          "expiraEm": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "empresaInativa": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "usuario",
+          "senhaTemporaria",
+          "expiraEm",
+          "empresaInativa"
         ]
       },
       "UpdateCompanyDto": {

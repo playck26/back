@@ -154,11 +154,17 @@ describe('Companies (e2e) - TEST-002', () => {
       const accessToken = await loginSuperAdmin(app, prisma);
       prisma.empresa.findUnique.mockResolvedValue(null);
       prisma.usuario.findUnique.mockResolvedValue(null);
+      // DEF-015 (SPEC-021/TASK-005) — **este dublê estava desatualizado
+      // desde a SPEC-020/TASK-004.** Ele devolvia `esportes`, a coluna
+      // derrubada em 2026-08-26; a consulta real devolve a relação
+      // `esportesQuadra`, e `comEsportes` a projeta. Enquanto a criação
+      // devolvia a linha crua, ninguém reparou — o dublê descrevia um banco
+      // que não existe mais e o teste passava.
       prisma.tx.empresa.create.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         nome: dto.nome,
-        esportes: dto.esportes,
         status: 'ativa',
+        esportesQuadra: dto.esportes.map((nome) => ({ nome })),
       });
       prisma.tx.usuario.create.mockResolvedValue({
         id: 'ca2',

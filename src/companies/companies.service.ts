@@ -9,6 +9,13 @@ import { parseTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { AuthService } from '../auth/auth.service';
+import {
+  AdminDaEmpresaResponseDto,
+  EmpresaCriadaResponseDto,
+  EmpresaPaginadaResponseDto,
+  EmpresaResponseDto,
+  SenhaDeAdminResponseDto,
+} from './dto/company-response.dto';
 import type { CreateCompanyDto } from './dto/create-company.dto';
 import type { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import type { UpdateCompanyDto } from './dto/update-company.dto';
@@ -74,7 +81,9 @@ export class CompaniesService {
     private readonly logos: LogoDaEmpresaService,
   ) {}
 
-  async list(query: ListCompaniesQueryDto) {
+  async list(
+    query: ListCompaniesQueryDto,
+  ): Promise<EmpresaPaginadaResponseDto> {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
@@ -112,7 +121,7 @@ export class CompaniesService {
     return { ...resto, esportes: esportesQuadra.map((e) => e.nome) };
   }
 
-  async create(dto: CreateCompanyDto) {
+  async create(dto: CreateCompanyDto): Promise<EmpresaCriadaResponseDto> {
     const nomeExistente = await this.prisma.empresa.findUnique({
       where: { nome: dto.nome },
     });
@@ -136,6 +145,13 @@ export class CompaniesService {
     const { empresa, adminUsuario } = await this.prisma.$transaction(
       async (tx) => {
         const empresaCriada = await tx.empresa.create({
+          // DEF-015 (SPEC-021/TASK-005) — **o catálogo vem junto na
+          // criação.** Sem este `include`, a resposta saía sem `esportes`, e
+          // o tipo do SAdmin declara `esportes: string[]` e a lista faz
+          // `.join(", ")`. Não quebrou porque o formulário descarta o
+          // resultado; no dia em que alguém mostrar a empresa recém criada,
+          // é `undefined.join()` — a forma exata do DEF-012.
+          include: COM_CATALOGO,
           data: {
             nome: dto.nome,
             slug: await gerarSlugUnico(tx, dto.nome),
@@ -190,10 +206,16 @@ export class CompaniesService {
       },
     );
 
-    return { empresa, adminUsuario: this.toPublicAdminUsuario(adminUsuario) };
+    // DEF-015 — a empresa criada sai pelo MESMO caminho de toda leitura:
+    // `comLogo` tira a `logoKey` (INV-037) e `comEsportes` projeta o
+    // catálogo. Era o único retorno de empresa que escapava dos dois.
+    return {
+      empresa: this.comLogo(this.comEsportes(empresa)),
+      adminUsuario: this.toPublicAdminUsuario(adminUsuario),
+    };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string): Promise<EmpresaResponseDto> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id },
       include: COM_CATALOGO,
@@ -230,7 +252,7 @@ export class CompaniesService {
    * quem devolver acesso. Sem esta lista, a rota de senha exigiria que ele
    * descobrisse o `usuarioId` de outro jeito, e não há nenhum.
    */
-  async listAdmins(companyId: string) {
+  async listAdmins(companyId: string): Promise<AdminDaEmpresaResponseDto[]> {
     await this.findOne(companyId);
 
     return this.prisma.usuario.findMany({
@@ -256,7 +278,10 @@ export class CompaniesService {
    * fronteira que a SPEC-009/REQ-007 fez quando `auth` parou de escrever
    * direto em `alunos`.
    */
-  async gerarSenhaTemporariaDeAdmin(companyId: string, usuarioId: string) {
+  async gerarSenhaTemporariaDeAdmin(
+    companyId: string,
+    usuarioId: string,
+  ): Promise<SenhaDeAdminResponseDto> {
     const empresa = await this.findOne(companyId);
 
     // 404 e não 403 para usuário de outra empresa ou que não é gestor:
@@ -287,7 +312,7 @@ export class CompaniesService {
     };
   }
 
-  async update(id: string, dto: UpdateCompanyDto) {
+  async update(id: string, dto: UpdateCompanyDto): Promise<EmpresaResponseDto> {
     await this.findOne(id);
 
     if (dto.nome) {
@@ -383,7 +408,10 @@ export class CompaniesService {
     }
   }
 
-  async updateStatus(id: string, dto: UpdateCompanyStatusDto) {
+  async updateStatus(
+    id: string,
+    dto: UpdateCompanyStatusDto,
+  ): Promise<EmpresaResponseDto> {
     await this.findOne(id);
 
     const empresa = await this.prisma.empresa.update({

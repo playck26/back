@@ -223,10 +223,16 @@ describe('CompaniesService', () => {
     it('cria empresa + admin numa transação e não expõe senhaHash (REQ-002, NFR-002)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
       (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      // DEF-015 — o dublê passou a trazer a relação porque a consulta real
+      // passou a trazê-la. `comEsportes` **não tolera a relação ausente** de
+      // propósito (ver o topo deste arquivo): tolerar esconderia o `include`
+      // esquecido, e o sintoma em produção seria `esportes: []` — lista
+      // vazia parece dado, não erro.
       tx.empresa.create.mockResolvedValue({
         id: 'e1',
         nome: dto.nome,
         status: 'ativa',
+        ...SEM_CATALOGO,
       });
       tx.usuario.create.mockResolvedValue({
         id: 'u1',
@@ -245,6 +251,9 @@ describe('CompaniesService', () => {
         id: 'e1',
         nome: dto.nome,
         status: 'ativa',
+        esportes: [],
+        // `comLogo` sempre acrescenta `logoUrl`, mesmo quando não há logo.
+        logoUrl: undefined,
       });
       expect(result.adminUsuario).toEqual({
         id: 'u1',
@@ -372,6 +381,57 @@ describe('CompaniesService', () => {
    * **ausente**, não pelo presente.
    */
   describe('INV-037 — logoKey não sai na resposta', () => {
+    /**
+     * **DEF-015 (SPEC-021/TASK-005) — `create` era o caminho que faltava.**
+     *
+     * Este bloco cobria `update` e `updateStatus` e não cobria a criação, que
+     * devolvia `empresaCriada` cru: com `logoKey` **e sem `esportes`**.
+     *
+     * O `esportes` é o mais interessante dos dois, porque é a forma exata do
+     * DEF-012 esperando alguém: o tipo do SAdmin declara
+     * `esportes: string[]` e a lista faz `empresa.esportes.join(", ")`. Não
+     * quebrou até hoje só porque `create-company-form.tsx` **descarta o
+     * resultado** e navega. No dia em que alguém mostrar a empresa recém
+     * criada, `undefined.join()` é tela branca.
+     *
+     * Achado pela amarra desta spec, não por uma pessoa: anotar o retorno com
+     * `EmpresaCriadaResponseDto` fez o `tsc` dizer *"Property 'esportes' is
+     * missing"*. É o segundo vazamento que o contrato encontra no mesmo
+     * ciclo — o outro foi o DEF-014, em `teachers.update`.
+     */
+    it('DEF-015: create não devolve logoKey e DEVOLVE esportes', async () => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      tx.empresa.create.mockResolvedValue({
+        id: 'e1',
+        nome: 'Clube',
+        slug: 'clube',
+        logoKey: 'e1/empresa/logo.webp',
+        logoUrl: null,
+        status: 'ativa',
+        permiteAutoCadastro: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        esportesQuadra: [{ nome: 'Tênis' }, { nome: 'Padel' }],
+      });
+      tx.usuario.create.mockResolvedValue({ id: 'u1' });
+
+      const result = await service.create({
+        nome: 'Clube',
+        esportes: ['Tênis', 'Padel'],
+        adminInicial: {
+          nome: 'Admin',
+          email: 'admin@clube.demo',
+          senha: 'senha-forte',
+        },
+      });
+
+      expect(result.empresa).not.toHaveProperty('logoKey');
+      // A relação também não sai: ela é detalhe de como a lista foi obtida.
+      expect(result.empresa).not.toHaveProperty('esportesQuadra');
+      expect(result.empresa.esportes).toEqual(['Tênis', 'Padel']);
+    });
+
     it('update não devolve logoKey', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
         id: 'e1',
