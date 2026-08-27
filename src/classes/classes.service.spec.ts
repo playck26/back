@@ -238,6 +238,118 @@ describe('ClassesService', () => {
     });
   });
 
+  /**
+   * SPEC-019/FIT-008 — a aritmética de ocupações com N encontros.
+   *
+   * **É o núcleo do que esta spec faz**, e não tinha prova nenhuma até a
+   * TASK-006: os testes existentes cobriam turma de UM encontro, que é o caso
+   * que já funcionava antes da spec.
+   */
+  describe('as ocorrências de N encontros (FIT-008)', () => {
+    function prontoParaCriar() {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      tx.turma.create.mockResolvedValue({
+        id: 't1',
+        companyId: 'c1',
+        nome: 'T',
+        nivelId: null,
+        professorId: null,
+        quadraId: 'q1',
+        capacidade: 4,
+        status: 'ativa',
+        encontros: [],
+      });
+    }
+
+    function ocorrenciasRegistradas(): {
+      data: Date;
+      horaInicio: Date;
+      horaFim: Date;
+    }[] {
+      const chamada = courtsServiceMock.registerClassOccupancy.mock
+        .calls[0] as unknown[];
+      return chamada[4] as { data: Date; horaInicio: Date; horaFim: Date }[];
+    }
+
+    it('três encontros geram TRÊS janelas — 24 ocupações, não 8', async () => {
+      // A NFR-002 dizia "o triplo de hoje" em abstrato; a 1ª rodada de dúvida
+      // trocou por número. A janela é de 8 semanas, então 3 × 8 = 24.
+      prontoParaCriar();
+
+      await service.create('c1', {
+        ...dto,
+        encontros: [
+          { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+          { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+          { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
+        ],
+      });
+
+      expect(ocorrenciasRegistradas()).toHaveLength(24);
+    });
+
+    it('AC-004 — cada ocorrência leva a hora DO SEU encontro', async () => {
+      // O defeito que este teste pega: gerar as datas dos três dias e aplicar
+      // a hora do primeiro em todas. Passaria na contagem e estaria errado.
+      prontoParaCriar();
+
+      await service.create('c1', {
+        ...dto,
+        encontros: [
+          { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+          { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+        ],
+      });
+
+      const porDia = new Map<number, Set<string>>();
+      for (const o of ocorrenciasRegistradas()) {
+        const dia = o.data.getUTCDay();
+        const faixa = `${o.horaInicio.toISOString()}–${o.horaFim.toISOString()}`;
+        if (!porDia.has(dia)) porDia.set(dia, new Set());
+        porDia.get(dia)!.add(faixa);
+      }
+
+      // Segunda só tem a faixa da segunda; quarta só a da quarta.
+      expect(porDia.get(1)?.size).toBe(1);
+      expect(porDia.get(3)?.size).toBe(1);
+      expect([...porDia.get(1)!][0]).not.toBe([...porDia.get(3)!][0]);
+    });
+
+    it('e todas vão na MESMA chamada — uma transação, não três', async () => {
+      // INV-001/AC-002: conflito em qualquer encontro aborta tudo. Três
+      // chamadas separadas permitiriam a primeira gravar e a segunda falhar,
+      // deixando a turma com metade da recorrência no ar.
+      prontoParaCriar();
+
+      await service.create('c1', {
+        ...dto,
+        encontros: [
+          { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+          { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+        ],
+      });
+
+      expect(courtsServiceMock.registerClassOccupancy).toHaveBeenCalledTimes(1);
+    });
+
+    it('conflito em UM dos encontros derruba a criação inteira (INV-001)', async () => {
+      prontoParaCriar();
+      courtsServiceMock.registerClassOccupancy.mockRejectedValueOnce(
+        new ConflictException('conflito'),
+      );
+
+      await expect(
+        service.create('c1', {
+          ...dto,
+          encontros: [
+            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+          ],
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
   describe('update', () => {
     const existente = {
       id: 't1',
@@ -254,6 +366,124 @@ describe('ClassesService', () => {
       await expect(
         service.update('c1', 't1', { nome: 'Nova' }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    /**
+     * SPEC-019/FIT-008 — AC-008/AC-009 nas três formas de mexer na
+     * recorrência: **acrescentar, remover e trocar**.
+     *
+     * A validação cruzada apontou que a tabela de provas original só cobria
+     * "2 para 3" — nunca a remoção nem a troca. São caminhos diferentes no
+     * código, e o de remoção é o único que pode chegar a zero.
+     */
+    describe('editar a recorrência (AC-008, AC-009)', () => {
+      function prontoParaEditar(
+        encontrosAtuais: {
+          diaSemana: number;
+          horaInicio: Date;
+          horaFim: Date;
+        }[],
+      ) {
+        (prisma.turma.findFirst as jest.Mock)
+          .mockResolvedValueOnce(existente)
+          .mockResolvedValueOnce({
+            ...existente,
+            nome: 'T',
+            nivelId: null,
+            professorId: null,
+            capacidade: 4,
+            status: 'ativa',
+            alunos: [],
+            encontros: encontrosAtuais,
+            _count: { alunos: 0 },
+          });
+        (prisma.turmaEncontro.findMany as jest.Mock).mockResolvedValue(
+          encontrosAtuais,
+        );
+        // `mudouHorario` sempre confere a quadra — inclusive quando so os
+        // encontros mudaram, porque a nova recorrencia vai para a mesma.
+        (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+        tx.turma.update.mockResolvedValue({ id: 't1' });
+      }
+
+      function ocorrenciasGeradas(): { data: Date }[] {
+        const chamada = courtsServiceMock.registerClassOccupancy.mock
+          .calls[0] as unknown[];
+        return chamada[4] as { data: Date }[];
+      }
+
+      const DOIS = [
+        {
+          diaSemana: 1,
+          horaInicio: new Date('1970-01-01T07:00:00.000Z'),
+          horaFim: new Date('1970-01-01T08:00:00.000Z'),
+        },
+        {
+          diaSemana: 3,
+          horaInicio: new Date('1970-01-01T18:00:00.000Z'),
+          horaFim: new Date('1970-01-01T19:00:00.000Z'),
+        },
+      ];
+
+      it('de 2 para 3: cancela as futuras e gera 24', async () => {
+        prontoParaEditar(DOIS);
+
+        await service.update('c1', 't1', {
+          encontros: [
+            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:00' },
+            { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
+          ],
+        });
+
+        expect(
+          courtsServiceMock.cancelFutureClassOccupancies,
+        ).toHaveBeenCalledTimes(1);
+        expect(ocorrenciasGeradas()).toHaveLength(24);
+      });
+
+      it('REMOVENDO 1 de 2: sobra a janela do que ficou, e só ela', async () => {
+        prontoParaEditar(DOIS);
+
+        await service.update('c1', 't1', {
+          encontros: [{ diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' }],
+        });
+
+        const dias = new Set(
+          ocorrenciasGeradas().map((o) => o.data.getUTCDay()),
+        );
+        expect(ocorrenciasGeradas()).toHaveLength(8);
+        expect([...dias]).toEqual([1]);
+      });
+
+      it('TROCANDO o dia: as novas caem no dia novo, nenhuma no antigo', async () => {
+        // O defeito que este teste pega: regerar a partir da recorrência
+        // ANTIGA em vez da nova. O cancelamento aconteceria, as novas
+        // ocupações voltariam para o mesmo dia, e a edição não teria efeito
+        // nenhum — sem erro em lugar nenhum.
+        prontoParaEditar(DOIS);
+
+        await service.update('c1', 't1', {
+          encontros: [{ diaSemana: 5, horaInicio: '20:00', horaFim: '21:00' }],
+        });
+
+        const dias = new Set(
+          ocorrenciasGeradas().map((o) => o.data.getUTCDay()),
+        );
+        expect([...dias]).toEqual([5]);
+      });
+
+      it('e passar SÓ a quadra regera a partir do que está gravado', async () => {
+        // Trocar de quadra sem mexer nos encontros também precisa regerar —
+        // as ocupações antigas apontam para a quadra antiga. A recorrência
+        // vem do banco, e é por isso que ela é validada mesmo assim.
+        prontoParaEditar(DOIS);
+
+        await service.update('c1', 't1', { quadraId: 'q2' });
+
+        expect(prisma.turmaEncontro.findMany).toHaveBeenCalled();
+        expect(ocorrenciasGeradas()).toHaveLength(16);
+      });
     });
 
     it('atualização sem mudança de horário não regenera ocupações', async () => {

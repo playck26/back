@@ -500,7 +500,31 @@ A fonte é o `openapi.json` **gerado do código**, com gate de CI
 verificado funcionando: o arquivo commitado estava em dia. `API_CONTRACTS.md` (raiz) descreve as regras
 de negócio por contrato; este documento não as duplica.
 
-### Resposta tipada: 10 de 90, e por que a conta começou em zero
+### A recorrência da turma é uma tabela filha (SPEC-019)
+
+`turma_encontros` guarda 1..N encontros semanais por turma. As três colunas
+que viviam em `turmas` saíram na contract.
+
+**A validação vive fora do serviço** (`encontros.ts`), porque criar e editar
+precisam da mesma regra e duas cópias divergiriam. Ela garante a **forma** da
+recorrência — pelo menos um, fim depois do início, nenhum par sobreposto — e
+**não** garante que caiba na agenda: quem faz isso é o `EXCLUDE`
+`no_overlap_por_quadra`, que continua sendo a autoridade final, inclusive
+sobre encontros da mesma turma (ele não sabe de qual turma vem cada ocupação).
+
+**A INV-051 ("turma tem ≥1 encontro") NÃO é garantida pelo banco.** Postgres
+não expressa "pai com pelo menos um filho" sem trigger, e este projeto tem
+zero. Fica com a API e a transação, **declarado em vez de prometido** — a 1ª
+rodada de dúvida da SPEC-019 derrubou a versão que prometia o contrário.
+
+**As duas migrations têm preflight que ABORTA**, e o da contract faz três
+perguntas: turma sem encontro, encontro com hora inválida, e horário antigo
+sem encontro correspondente (backfill parcial). A terceira foi exigida pela
+validação cruzada. **A primeira disparou de verdade** contra o harness,
+nomeando as turmas — que é a diferença entre "2 turmas sem encontro" e algo
+consertável.
+
+### Resposta tipada: 16 de 90, e por que a conta começou em zero
 
 **Até 2026-08-26 nenhuma resposta desta API declarava schema.** Contado, não
 estimado: 0 com schema, 90 sem. O Nest só emite schema a partir do DTO de
@@ -517,10 +541,17 @@ e três telas foram a branco.
 Note a assimetria que isso explica: **no mesmo dia**, o Admin pegou um erro de
 `UpdateCourtDto` — porque é **requisição**, e requisição tinha schema.
 
-A SPEC-020/TASK-007 tipou a superfície de quadra: **10 das 90**
-(`/courts` × 4, `/court-sports` e `/court-categories` × 3 cada). As outras
-80 seguem sem schema, e a planta prefere dizer isso a dar a impressão de que
-o problema está resolvido.
+A SPEC-020/TASK-007 tipou a superfície de quadra (**10**: `/courts` × 4,
+`/court-sports` e `/court-categories` × 3 cada). A SPEC-019/REQ-006
+acrescentou a de turma (**6**), porque foi ela quem quebrou aquelas respostas.
+
+São **16 das 90**. As outras 74 seguem sem schema, e a planta prefere dizer
+isso a dar a impressão de que o problema está resolvido.
+
+**A regra que saiu daí, e vale além das duas specs:** quem quebra a forma de
+uma resposta paga a proteção **daquela** resposta — nem menos, nem mais.
+Publicar as 74 restantes é a SPEC-021/TASK-005; virar mutirão dentro de uma
+spec de produto é o erro que originou a SPEC-021 retroativa.
 
 ### O que faz um DTO de resposta valer alguma coisa
 
