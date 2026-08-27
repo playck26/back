@@ -89,6 +89,22 @@ const DOIS_ENCONTROS: EncontroDaTurma[] = [
   { diaSemana: 6, horaInicio: '07:00', horaFim: '08:00' },
 ];
 
+/**
+ * **A primeira turma criada em produção depois do conserto**, em 2026-08-27:
+ * segunda, quarta e sexta, 16:00–18:00. Está aqui porque um teste que só
+ * cobre o caso relatado no defeito para de crescer junto com o produto — e
+ * este caso é o pior dos três: 3 × 8 semanas = **24 ocorrências**, que antes
+ * do conserto custariam ~50 idas ao banco dentro da transação.
+ *
+ * Com a correção o custo é o mesmo de um encontro só, e é isso que o teto
+ * abaixo afirma: constante, não proporcional.
+ */
+const TRES_ENCONTROS: EncontroDaTurma[] = [
+  { diaSemana: 1, horaInicio: '16:00', horaFim: '18:00' },
+  { diaSemana: 3, horaInicio: '16:00', horaFim: '18:00' },
+  { diaSemana: 5, horaInicio: '16:00', horaFim: '18:00' },
+];
+
 interface TxContado {
   tx: Prisma.TransactionClient;
   idas: string[];
@@ -314,6 +330,29 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       await service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS });
 
       expect(idas.length).toBeLessThanOrEqual(tetoDaCriacao(DOIS_ENCONTROS));
+    });
+
+    /**
+     * **O caso real de produção**, e a afirmação mais forte deste arquivo:
+     * não é só que 3 encontros cabem no teto — é que custam **o mesmo** que
+     * um. Um teto que crescesse com N passaria com uma implementação que
+     * ainda pergunta por dia da semana, e é justamente essa que volta.
+     */
+    it('criar turma de 3 encontros custa o MESMO que de 1', async () => {
+      const um = buildTxContado();
+      await buildClassesService(um.tx).create('c1', {
+        ...DTO_BASE,
+        encontros: UM_ENCONTRO,
+      });
+
+      const tres = buildTxContado();
+      await buildClassesService(tres.tx).create('c1', {
+        ...DTO_BASE,
+        encontros: TRES_ENCONTROS,
+      });
+
+      expect(tres.idas).toEqual(um.idas);
+      expect(tres.idas.length).toBeLessThanOrEqual(tetoDaCriacao(UM_ENCONTRO));
     });
 
     /**
