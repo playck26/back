@@ -11,12 +11,13 @@ import {
   JANELA_MAXIMA_DIAS,
   JANELA_PADRAO_DIAS,
 } from '../frequencia/frequencia.service';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { DashboardService } from './dashboard.service';
+import { DashboardResumoResponseDto } from '../courts/dto/booking-response.dto';
 import { DashboardQueryDto } from './dto/dashboard-query.dto';
 
 @ApiTags('dashboard')
@@ -51,6 +52,7 @@ export class DashboardController {
   }
 
   @Get('summary')
+  @ApiOkResponse({ type: DashboardResumoResponseDto })
   summary(
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: DashboardQueryDto,

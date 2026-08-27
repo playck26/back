@@ -12,13 +12,23 @@ import {
   UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { CourtsService } from './courts.service';
+import {
+  OcupacaoPaginadaResponseDto,
+  ReservasCriadasResponseDto,
+} from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 
@@ -35,6 +45,7 @@ export class BookingsController {
   constructor(private readonly courtsService: CourtsService) {}
 
   @Post()
+  @ApiCreatedResponse({ type: ReservasCriadasResponseDto })
   @Roles('company_admin', 'aluno')
   async create(
     @CurrentUser() user: AccessTokenPayload,
@@ -50,6 +61,7 @@ export class BookingsController {
   }
 
   @Get()
+  @ApiOkResponse({ type: OcupacaoPaginadaResponseDto })
   @Roles('company_admin', 'aluno')
   async list(
     @CurrentUser() user: AccessTokenPayload,
@@ -72,6 +84,7 @@ export class BookingsController {
   }
 
   @Post(':id/cancel')
+  @ApiNoContentResponse()
   @Roles('company_admin', 'aluno')
   @HttpCode(HttpStatus.NO_CONTENT)
   async cancel(

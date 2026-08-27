@@ -1848,7 +1848,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservasCriadasResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1906,7 +1913,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcupacaoPaginadaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2024,7 +2038,17 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DiaDaAgendaResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2052,7 +2076,17 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ItemDaAgendaResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2989,7 +3023,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResumoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3092,7 +3133,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcupacaoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4523,6 +4571,196 @@
           "data"
         ]
       },
+      "OcupacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "origemTipo": {
+            "type": "string",
+            "enum": [
+              "AVULSO",
+              "TURMA"
+            ]
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "statusPagamento": {
+            "type": "string",
+            "enum": [
+              "pendente",
+              "pago",
+              "cancelado"
+            ]
+          },
+          "valor": {
+            "type": "number",
+            "nullable": true,
+            "example": 120
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "quadraId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "origemTipo",
+          "alunoId",
+          "statusPagamento",
+          "valor"
+        ]
+      },
+      "ReservasCriadasResponseDto": {
+        "type": "object",
+        "properties": {
+          "reservas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OcupacaoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "reservas"
+        ]
+      },
+      "OcupacaoPaginadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OcupacaoResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 240
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
+      "DiaDaAgendaResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "total": {
+            "type": "number",
+            "example": 12
+          },
+          "pendentes": {
+            "type": "number",
+            "example": 3
+          },
+          "fechado": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "total",
+          "pendentes",
+          "fechado"
+        ]
+      },
+      "ItemDaAgendaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "origemTipo": {
+            "type": "string",
+            "enum": [
+              "AVULSO",
+              "TURMA"
+            ]
+          },
+          "responsavel": {
+            "type": "string",
+            "nullable": true
+          },
+          "statusPagamento": {
+            "type": "string",
+            "enum": [
+              "pendente",
+              "pago",
+              "cancelado"
+            ]
+          },
+          "valor": {
+            "type": "number",
+            "nullable": true,
+            "example": 120
+          }
+        },
+        "required": [
+          "id",
+          "quadraNome",
+          "horaInicio",
+          "horaFim",
+          "origemTipo",
+          "responsavel",
+          "statusPagamento",
+          "valor"
+        ]
+      },
       "ImagemDaQuadraResponseDto": {
         "type": "object",
         "properties": {
@@ -5227,6 +5465,28 @@
           "ocupacaoId",
           "versao",
           "total"
+        ]
+      },
+      "DashboardResumoResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunosAtivos": {
+            "type": "number",
+            "example": 87
+          },
+          "ocupacaoTurmasPct": {
+            "type": "number",
+            "example": 72
+          },
+          "ocupacaoQuadrasPct": {
+            "type": "number",
+            "example": 45
+          }
+        },
+        "required": [
+          "alunosAtivos",
+          "ocupacaoTurmasPct",
+          "ocupacaoQuadrasPct"
         ]
       },
       "UpdatePaymentConfigDto": {

@@ -4,6 +4,7 @@ import {
   EXPEDIENTE_INICIO_HORA,
 } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { DashboardResumoResponseDto } from '../courts/dto/booking-response.dto';
 import type { DashboardQueryDto } from './dto/dashboard-query.dto';
 
 const HORAS_EXPEDIENTE_POR_DIA = EXPEDIENTE_FIM_HORA - EXPEDIENTE_INICIO_HORA;
@@ -23,7 +24,10 @@ export class DashboardService {
   // (TARGET_ARCHITECTURE.md seção 5), então lê Prisma direto (ao contrário
   // do caminho de escrita de MOD-004→MOD-005, que passa por método
   // público — aqui não há escrita nenhuma).
-  async summary(companyId: string, query: DashboardQueryDto) {
+  async summary(
+    companyId: string,
+    query: DashboardQueryDto,
+  ): Promise<DashboardResumoResponseDto> {
     const periodo = this.resolvePeriodo(query.periodo);
 
     const [

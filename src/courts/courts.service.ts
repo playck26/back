@@ -17,6 +17,10 @@ import {
   parseDateOnly,
   parseTimeOnly,
 } from './date-time.util';
+import {
+  OcupacaoPaginadaResponseDto,
+  OcupacaoResponseDto,
+} from './dto/booking-response.dto';
 import { DisponibilidadeResponseDto } from './dto/horarios-response.dto';
 import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { CreateCourtDto } from './dto/create-court.dto';
@@ -528,7 +532,7 @@ export class CourtsService {
     companyId: string,
     query: ListBookingsQueryDto,
     alunoIdScope?: string,
-  ) {
+  ): Promise<OcupacaoPaginadaResponseDto> {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
@@ -929,7 +933,9 @@ export class CourtsService {
     };
   }
 
-  private toOcupacaoResponse(ocupacao: OcupacaoParaResposta) {
+  private toOcupacaoResponse(
+    ocupacao: OcupacaoParaResposta,
+  ): OcupacaoResponseDto {
     return {
       id: ocupacao.id,
       companyId: ocupacao.companyId,

@@ -1,4 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import {
+  DiaDaAgendaResponseDto,
+  ItemDaAgendaResponseDto,
+} from './dto/booking-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   formatDateOnly,
@@ -10,25 +14,11 @@ import {
   type LinhaHorario,
 } from './horario-funcionamento.service';
 
-export interface DiaDaAgenda {
-  data: string;
-  total: number;
-  pendentes: number;
-  /** SPEC-012/AC-008: dia sem nada reservado **e** com tudo fechado. */
-  fechado: boolean;
-}
+/** SPEC-021/TASK-005 — a forma canonica vive no DTO. Ver `booking-response.dto.ts`. */
+export type DiaDaAgenda = DiaDaAgendaResponseDto;
 
-export interface ItemDoDia {
-  id: string;
-  quadraNome: string;
-  horaInicio: string;
-  horaFim: string;
-  origemTipo: 'AVULSO' | 'TURMA';
-  responsavel: string | null;
-  statusPagamento: string;
-  /** SPEC-011: quanto foi cobrado. Nulo em ocupação de turma. */
-  valor: number | null;
-}
+/** SPEC-021/TASK-005 — idem. */
+export type ItemDoDia = ItemDaAgendaResponseDto;
 
 /**
  * SPEC-012 (MOD-005) — agenda do gestor.

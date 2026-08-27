@@ -1,10 +1,14 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { AgendaService } from './agenda.service';
+import {
+  DiaDaAgendaResponseDto,
+  ItemDaAgendaResponseDto,
+} from './dto/booking-response.dto';
 import { AgendaQueryDto } from './dto/agenda-query.dto';
 
 /**
@@ -23,6 +27,7 @@ export class AgendaController {
   constructor(private readonly agenda: AgendaService) {}
 
   @Get()
+  @ApiOkResponse({ type: [DiaDaAgendaResponseDto] })
   resumo(
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: AgendaQueryDto,
@@ -35,6 +40,7 @@ export class AgendaController {
   }
 
   @Get(':data')
+  @ApiOkResponse({ type: [ItemDaAgendaResponseDto] })
   dia(@CurrentUser() user: AccessTokenPayload, @Param('data') data: string) {
     return this.agenda.detalheDoDia(user.companyId as string, data);
   }
