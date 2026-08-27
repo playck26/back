@@ -4,6 +4,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { FotoDePerfilResponseDto } from '../classes/dto/me-response.dto';
 import { montarChave } from '../storage/chave-de-midia';
 import { FilaDeExclusao } from '../storage/fila-de-exclusao.service';
 import {
@@ -41,10 +42,12 @@ export const TIPO_DE_MIDIA_DESCONHECIDO = {
 export const MOTIVO_TROCA = 'foto_de_perfil_trocada';
 export const MOTIVO_REMOCAO = 'foto_de_perfil_removida';
 
-export interface FotoDePerfil {
-  /** `null` quando não há foto — não é erro, é o estado normal. */
-  readonly url: string | null;
-}
+/**
+ * SPEC-021/TASK-005 — era `interface` daqui e virou apelido do DTO, pelo
+ * mesmo motivo de `PublicUsuario`: duas declarações da mesma forma divergem
+ * no primeiro ajuste, e o contrato publicado passa a mentir calado.
+ */
+export type FotoDePerfil = FotoDePerfilResponseDto;
 
 @Injectable()
 export class FotoDePerfilService {

@@ -20,6 +20,11 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { CourtsService } from './courts.service';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
+import {
+  DisponibilidadeResponseDto,
+  HorariosDaQuadraResponseDto,
+  ResultadoDeHorariosResponseDto,
+} from './dto/horarios-response.dto';
 import { AvailabilityQueryDto } from './dto/availability-query.dto';
 import { DefinirHorariosDto } from './dto/definir-horarios.dto';
 import { CreateCourtDto } from './dto/create-court.dto';
@@ -85,6 +90,7 @@ export class CourtsController {
   }
 
   @Get(':id/availability')
+  @ApiOkResponse({ type: DisponibilidadeResponseDto })
   @Roles('company_admin', 'aluno')
   availability(
     @CurrentUser() user: AccessTokenPayload,
@@ -102,6 +108,7 @@ export class CourtsController {
   // `company_admin`; a leitura entra junto porque a tela de configuração
   // precisa mostrar o que está valendo hoje.
   @Get(':id/horarios')
+  @ApiOkResponse({ type: HorariosDaQuadraResponseDto })
   @Roles('company_admin')
   horarios(
     @CurrentUser() user: AccessTokenPayload,
@@ -111,6 +118,7 @@ export class CourtsController {
   }
 
   @Put(':id/horarios')
+  @ApiOkResponse({ type: ResultadoDeHorariosResponseDto })
   @Roles('company_admin')
   definirHorarios(
     @CurrentUser() user: AccessTokenPayload,
@@ -126,6 +134,7 @@ export class CourtsController {
 
   // AC-004: some o horário próprio e a quadra **volta a herdar** o padrão.
   @Delete(':id/horarios')
+  @ApiOkResponse({ type: ResultadoDeHorariosResponseDto })
   @Roles('company_admin')
   removerHorarios(
     @CurrentUser() user: AccessTokenPayload,

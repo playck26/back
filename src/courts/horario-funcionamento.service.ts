@@ -12,20 +12,20 @@ import {
   formatTimeOnly,
   parseTimeOnly,
 } from './date-time.util';
+import {
+  HorariosDaQuadraResponseDto,
+  OcupacaoAfetadaResponseDto,
+} from './dto/horarios-response.dto';
 import type { DefinirHorariosDto } from './dto/definir-horarios.dto';
 
 /** Teto da amostra do relatório de impacto (SPEC-010/AC-011). */
 const AMOSTRA_MAXIMA = 20;
 
-export interface OcupacaoAfetada {
-  origemTipo: 'AVULSO' | 'TURMA';
-  quadraNome: string;
-  data: string;
-  horaInicio: string;
-  horaFim: string;
-  /** Quem "dono" da ocupação: o aluno (avulso) ou a turma. */
-  responsavel: string | null;
-}
+/**
+ * SPEC-021/TASK-005 — a forma canonica vive no DTO; isto aqui e o apelido
+ * que o resto do modulo ja usava. Duas declaracoes divergiriam.
+ */
+export type OcupacaoAfetada = OcupacaoAfetadaResponseDto;
 
 export interface ResultadoDefinicao {
   afetadasCount: number;
@@ -338,7 +338,10 @@ export class HorarioFuncionamentoService {
    * editando a quadra ou vendo o reflexo da configuração da empresa — e
    * mudar o padrão depois pareceria não ter efeito.
    */
-  async listarDaQuadra(companyId: string, quadraId: string) {
+  async listarDaQuadra(
+    companyId: string,
+    quadraId: string,
+  ): Promise<HorariosDaQuadraResponseDto> {
     await this.assertQuadraDaEmpresa(companyId, quadraId);
 
     const linhas = await this.prisma.horarioFuncionamento.findMany({

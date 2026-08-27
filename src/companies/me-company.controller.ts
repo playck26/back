@@ -6,7 +6,8 @@ import {
   Patch,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { MinhaEmpresaResponseDto } from '../classes/dto/me-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -40,13 +41,16 @@ export class MeCompanyController {
   ) {}
 
   @Get()
+  @ApiOkResponse({ type: MinhaEmpresaResponseDto })
   // SPEC-018/TASK-006 — `aluno` e `professor` entraram aqui para o app
   // conseguir desenhar a marca do clube (antes só o gestor lia). O que a
   // rota devolve já era alcançável por eles de outro jeito: `slug` é o link
   // público de cadastro, e `nome` e `logoUrl` aparecem na vitrine pública.
   // "A minha empresa" é uma pergunta que todo mundo com empresa pode fazer.
   @Roles('company_admin', 'aluno', 'professor')
-  async minhaEmpresa(@CurrentUser() user: AccessTokenPayload) {
+  async minhaEmpresa(
+    @CurrentUser() user: AccessTokenPayload,
+  ): Promise<MinhaEmpresaResponseDto> {
     const empresa = await this.prisma.empresa.findUnique({
       where: { id: user.companyId as string },
       select: {
@@ -97,10 +101,11 @@ export class MeCompanyController {
    */
   @Patch()
   @Roles('company_admin')
+  @ApiOkResponse({ type: MinhaEmpresaResponseDto })
   async definirAutoCadastro(
     @CurrentUser() user: AccessTokenPayload,
     @Body() dto: UpdateAutoCadastroDto,
-  ) {
+  ): Promise<MinhaEmpresaResponseDto> {
     // `updateMany` com o `company_id` do token, e não `update` por id: se a
     // empresa não for a do usuário, o resultado é zero linhas em vez de uma
     // escrita em tenant alheio.

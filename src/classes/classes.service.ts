@@ -13,6 +13,7 @@ import {
 import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
 import type { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import type { UpdateClassDto } from './dto/update-class.dto';
@@ -398,7 +399,10 @@ export class ClassesService {
   // (não tem aluno_id próprio), então remarcar/cancelar uma ocorrência
   // individual não é suportado nesta rodada (GAP-008,
   // TARGET_ARCHITECTURE.md) — CON-004.6/004.7 ficam para depois do MVP.
-  async myUpcomingClasses(companyId: string, usuarioId: string) {
+  async myUpcomingClasses(
+    companyId: string,
+    usuarioId: string,
+  ): Promise<AulaDoAlunoResponseDto[]> {
     const aluno = await this.prisma.aluno.findFirst({
       where: { usuarioId, companyId },
     });

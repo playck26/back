@@ -1,5 +1,6 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -17,6 +18,7 @@ export class MeClassesController {
   constructor(private readonly classesService: ClassesService) {}
 
   @Get()
+  @ApiOkResponse({ type: [AulaDoAlunoResponseDto] })
   @Roles('aluno')
   myUpcomingClasses(@CurrentUser() user: AccessTokenPayload) {
     return this.classesService.myUpcomingClasses(

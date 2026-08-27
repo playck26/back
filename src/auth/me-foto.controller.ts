@@ -8,7 +8,15 @@ import {
   UploadedFile,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { FotoDePerfilResponseDto } from '../classes/dto/me-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
@@ -53,11 +61,13 @@ export class MeFotoController {
    * recuperar. Endpoint próprio é o que dá ao frontend como pedir de novo.
    */
   @Get()
+  @ApiOkResponse({ type: FotoDePerfilResponseDto })
   ler(@CurrentUser() user: AccessTokenPayload) {
     return this.fotos.ler(user.sub);
   }
 
   @Put()
+  @ApiOkResponse({ type: FotoDePerfilResponseDto })
   @UploadDeMidia()
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -77,6 +87,7 @@ export class MeFotoController {
 
   @Delete()
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse()
   remover(@CurrentUser() user: AccessTokenPayload) {
     return this.fotos.remover(user.sub);
   }

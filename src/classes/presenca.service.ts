@@ -7,6 +7,11 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { OcupacaoQuadra, StatusPresenca } from '@prisma/client';
+import {
+  ChamadaResponseDto,
+  ChamadaSalvaResponseDto,
+  OcorrenciaDaTurmaResponseDto,
+} from './dto/me-response.dto';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -147,7 +152,7 @@ export class PresencaService {
     usuarioId: string,
     turmaId: string,
     janelaDias: number,
-  ) {
+  ): Promise<OcorrenciaDaTurmaResponseDto[]> {
     const professor = await this.professorDoUsuario(companyId, usuarioId);
 
     const turma = await this.prisma.turma.findFirst({
@@ -191,7 +196,11 @@ export class PresencaService {
     }));
   }
 
-  async chamada(companyId: string, usuarioId: string, ocupacaoId: string) {
+  async chamada(
+    companyId: string,
+    usuarioId: string,
+    ocupacaoId: string,
+  ): Promise<ChamadaResponseDto> {
     const professor = await this.professorDoUsuario(companyId, usuarioId);
     const ocupacao = await this.ocorrenciaDoProfessor(
       companyId,
@@ -279,7 +288,7 @@ export class PresencaService {
     ocupacaoId: string,
     versao: string,
     itens: ItemChamada[],
-  ) {
+  ): Promise<ChamadaSalvaResponseDto> {
     // SPEC-015/AC-000i (v10, BLOQUEADOR da 8ª rodada) — só isto fica fora
     // da transação, e fica porque é de OUTRO agregado: "este usuário é
     // professor desta empresa?" se resolve em `professores`, que o lock da

@@ -10,12 +10,17 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import {
+  ChamadaResponseDto,
+  ChamadaSalvaResponseDto,
+  OcorrenciaDaTurmaResponseDto,
+} from './dto/me-response.dto';
 import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
 import { PresencaService } from './presenca.service';
 
@@ -34,6 +39,7 @@ export class MeTeacherAttendanceController {
   constructor(private readonly presencas: PresencaService) {}
 
   @Get('classes/:id/ocorrencias')
+  @ApiOkResponse({ type: [OcorrenciaDaTurmaResponseDto] })
   @Roles('professor')
   ocorrencias(
     @CurrentUser() user: AccessTokenPayload,
@@ -51,6 +57,7 @@ export class MeTeacherAttendanceController {
   }
 
   @Get('attendance/:ocupacaoId')
+  @ApiOkResponse({ type: ChamadaResponseDto })
   @Roles('professor')
   chamada(
     @CurrentUser() user: AccessTokenPayload,
@@ -64,6 +71,7 @@ export class MeTeacherAttendanceController {
   }
 
   @Put('attendance/:ocupacaoId')
+  @ApiOkResponse({ type: ChamadaSalvaResponseDto })
   @Roles('professor')
   salvar(
     @CurrentUser() user: AccessTokenPayload,

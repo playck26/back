@@ -11,7 +11,12 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CatalogoDeQuadraResponseDto } from './dto/quadra-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -74,6 +79,7 @@ abstract class CatalogoController {
   }
 
   @Delete(':id')
+  @ApiNoContentResponse()
   @Roles('company_admin')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(

@@ -8,7 +8,13 @@ import {
   UploadedFile,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -19,6 +25,7 @@ import {
   exigirArquivo,
   UploadDeMidia,
 } from '../storage/upload-de-midia';
+import { ImagemDaQuadraResponseDto } from './dto/horarios-response.dto';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 
 /** CON-018 — o campo da afirmação, no formulário e não na query string. */
@@ -56,6 +63,7 @@ export class CourtImageController {
    * mandar a string `"false"` (ver o serviço).
    */
   @Put()
+  @ApiOkResponse({ type: ImagemDaQuadraResponseDto })
   @Roles('company_admin')
   @UploadDeMidia()
   @ApiConsumes('multipart/form-data')
@@ -94,6 +102,7 @@ export class CourtImageController {
    * saber o que a tela vai mostrar agora.
    */
   @Delete()
+  @ApiOkResponse({ type: ImagemDaQuadraResponseDto })
   @Roles('company_admin')
   remover(
     @Param('id', ParseUUIDPipe) id: string,

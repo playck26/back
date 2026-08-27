@@ -263,7 +263,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FotoDePerfilResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -296,7 +303,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FotoDePerfilResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1373,7 +1387,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinhaEmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1400,7 +1421,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinhaEmpresaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1664,7 +1692,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisponibilidadeResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1692,7 +1727,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HorariosDaQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1728,7 +1770,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultadoDeHorariosResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1754,7 +1803,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultadoDeHorariosResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1897,7 +1953,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HorariosDaQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1924,7 +1987,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultadoDeHorariosResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2037,7 +2107,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImagemDaQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2063,7 +2140,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImagemDaQuadraResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2649,7 +2733,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AulaDoAlunoResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2749,7 +2843,17 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OcorrenciaDaTurmaResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2777,7 +2881,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChamadaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2813,7 +2924,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChamadaSalvaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3220,6 +3338,18 @@
             "type": "string"
           }
         }
+      },
+      "FotoDePerfilResponseDto": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "url"
+        ]
       },
       "AlunoResponseDto": {
         "type": "object",
@@ -3923,6 +4053,45 @@
           "status"
         ]
       },
+      "MinhaEmpresaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          },
+          "slug": {
+            "type": "string",
+            "example": "smart-tennis"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "permiteAutoCadastro": {
+            "type": "boolean"
+          },
+          "logoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "slug",
+          "status",
+          "permiteAutoCadastro",
+          "logoUrl"
+        ]
+      },
       "UpdateAutoCadastroDto": {
         "type": "object",
         "properties": {
@@ -4099,6 +4268,109 @@
           }
         }
       },
+      "SlotDeDisponibilidadeResponseDto": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "type": "string",
+            "example": "18:00-19:00"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "livre",
+              "ocupado_turma",
+              "ocupado_avulso"
+            ]
+          }
+        },
+        "required": [
+          "slot",
+          "status"
+        ]
+      },
+      "DisponibilidadeResponseDto": {
+        "type": "object",
+        "properties": {
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "aberto",
+              "fechado"
+            ]
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlotDeDisponibilidadeResponseDto"
+            }
+          }
+        },
+        "required": [
+          "quadraId",
+          "data",
+          "estado",
+          "slots"
+        ]
+      },
+      "DiaDeHorarioResponseDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "example": 1
+          },
+          "fechado": {
+            "type": "boolean"
+          },
+          "horaInicio": {
+            "type": "string",
+            "nullable": true,
+            "example": "06:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "nullable": true,
+            "example": "22:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "fechado",
+          "horaInicio",
+          "horaFim"
+        ]
+      },
+      "HorariosDaQuadraResponseDto": {
+        "type": "object",
+        "properties": {
+          "origem": {
+            "type": "string",
+            "enum": [
+              "proprio",
+              "herdado"
+            ]
+          },
+          "dias": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiaDeHorarioResponseDto"
+            }
+          }
+        },
+        "required": [
+          "origem",
+          "dias"
+        ]
+      },
       "DiaHorarioDto": {
         "type": "object",
         "properties": {
@@ -4138,6 +4410,65 @@
         },
         "required": [
           "dias"
+        ]
+      },
+      "OcupacaoAfetadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "origemTipo": {
+            "type": "string",
+            "enum": [
+              "AVULSO",
+              "TURMA"
+            ]
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "responsavel": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "origemTipo",
+          "quadraNome",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "responsavel"
+        ]
+      },
+      "ResultadoDeHorariosResponseDto": {
+        "type": "object",
+        "properties": {
+          "afetadasCount": {
+            "type": "number",
+            "example": 12
+          },
+          "amostra": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OcupacaoAfetadaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "afetadasCount",
+          "amostra"
         ]
       },
       "SlotDto": {
@@ -4190,6 +4521,18 @@
         "required": [
           "quadraId",
           "data"
+        ]
+      },
+      "ImagemDaQuadraResponseDto": {
+        "type": "object",
+        "properties": {
+          "imagemUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "imagemUrl"
         ]
       },
       "CatalogoDeQuadraResponseDto": {
@@ -4535,6 +4878,55 @@
           }
         }
       },
+      "AulaDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Turma A"
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "turmaId",
+          "turmaNome",
+          "quadraId",
+          "quadraNome",
+          "data",
+          "horaInicio",
+          "horaFim"
+        ]
+      },
       "TurmaDoProfessorResponseDto": {
         "type": "object",
         "properties": {
@@ -4639,6 +5031,143 @@
           "alunos"
         ]
       },
+      "OcorrenciaDaTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "cancelada": {
+            "type": "boolean"
+          },
+          "chamadaFeita": {
+            "type": "boolean"
+          },
+          "marcados": {
+            "type": "number",
+            "example": 4
+          },
+          "totalAlunos": {
+            "type": "number",
+            "example": 8
+          },
+          "podeLancar": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "cancelada",
+          "chamadaFeita",
+          "marcados",
+          "totalAlunos",
+          "podeLancar"
+        ]
+      },
+      "LinhaDaChamadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "presente",
+              "ausente",
+              "justificado"
+            ],
+            "nullable": true
+          },
+          "naTurmaHoje": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "status",
+          "naTurmaHoje"
+        ]
+      },
+      "ChamadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "cancelada": {
+            "type": "boolean"
+          },
+          "completude": {
+            "type": "string",
+            "enum": [
+              "completa",
+              "desconhecida"
+            ],
+            "nullable": true
+          },
+          "versao": {
+            "type": "string"
+          },
+          "alunos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinhaDaChamadaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "turmaId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "cancelada",
+          "completude",
+          "versao",
+          "alunos"
+        ]
+      },
       "ItemChamadaDto": {
         "type": "object",
         "properties": {
@@ -4677,6 +5206,27 @@
         "required": [
           "versao",
           "itens"
+        ]
+      },
+      "ChamadaSalvaResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "versao": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number",
+            "example": 8
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "versao",
+          "total"
         ]
       },
       "UpdatePaymentConfigDto": {

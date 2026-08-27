@@ -17,6 +17,7 @@ import {
   parseDateOnly,
   parseTimeOnly,
 } from './date-time.util';
+import { DisponibilidadeResponseDto } from './dto/horarios-response.dto';
 import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { CreateCourtDto } from './dto/create-court.dto';
 import type { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
@@ -238,7 +239,11 @@ export class CourtsService {
     return this.toQuadraResponse(quadra);
   }
 
-  async availability(companyId: string, quadraId: string, data: string) {
+  async availability(
+    companyId: string,
+    quadraId: string,
+    data: string,
+  ): Promise<DisponibilidadeResponseDto> {
     await this.assertQuadraDaEmpresa(companyId, quadraId);
 
     const dataDate = parseDateOnly(data);

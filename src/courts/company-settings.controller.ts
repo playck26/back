@@ -1,9 +1,13 @@
 import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import {
+  HorariosDaQuadraResponseDto,
+  ResultadoDeHorariosResponseDto,
+} from './dto/horarios-response.dto';
 import { DefinirHorariosDto } from './dto/definir-horarios.dto';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 
@@ -24,11 +28,13 @@ export class CompanySettingsController {
   constructor(private readonly horarios: HorarioFuncionamentoService) {}
 
   @Get('horarios')
+  @ApiOkResponse({ type: HorariosDaQuadraResponseDto })
   listar(@CurrentUser() user: AccessTokenPayload) {
     return this.horarios.listarConfiguracao(user.companyId as string);
   }
 
   @Put('horarios')
+  @ApiOkResponse({ type: ResultadoDeHorariosResponseDto })
   definir(
     @CurrentUser() user: AccessTokenPayload,
     @Body() dto: DefinirHorariosDto,
