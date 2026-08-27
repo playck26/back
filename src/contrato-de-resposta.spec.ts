@@ -89,6 +89,20 @@ interface OpenApi {
   paths: Record<string, Record<string, Operacao>>;
 }
 
+interface OpenApiCompleto {
+  components?: {
+    schemas?: Record<
+      string,
+      { properties?: Record<string, { enum?: string[] }> }
+    >;
+  };
+}
+
+function lerOpenApiCompleto(): OpenApiCompleto {
+  const caminho = join(__dirname, '..', 'openapi.json');
+  return JSON.parse(readFileSync(caminho, 'utf8')) as OpenApiCompleto;
+}
+
 function lerOpenApi(): OpenApi {
   const caminho = join(__dirname, '..', 'openapi.json');
   return JSON.parse(readFileSync(caminho, 'utf8')) as OpenApi;
@@ -172,5 +186,118 @@ describe('INV-058/INV-060 — contrato de resposta publicado (SPEC-021)', () => 
     );
 
     expect(fantasmas).toEqual([]);
+  });
+});
+
+/**
+ * **DEF-016 — os valores de um `enum` publicado não eram conferidos por nada.**
+ *
+ * Em 2026-08-27 o `statusPagamento` foi publicado como `'pendente'`. O valor
+ * não existe: o enum do banco é `pendente_pagamento`. O `openapi.json` chegou
+ * a **se contradizer no mesmo documento** — o filtro de `GET /bookings`
+ * publicava um valor e a resposta publicava outro.
+ *
+ * Nada pegou, e por três motivos que se somaram:
+ *
+ * | Guarda | Por que não pegou |
+ * |---|---|
+ * | a amarra de retorno (INV-058) | o campo era `string` no DTO e `string` na origem — nada a comparar |
+ * | o gate acima | pergunta "tem schema?", não "o schema está **certo**?" |
+ * | os testes | nenhum afirma um valor de `statusPagamento` vindo do banco |
+ *
+ * O conserto de raiz foi tipar o campo com o enum do Prisma na origem e com a
+ * união no DTO — aí o `tsc` compara. Este teste é a rede embaixo disso: ele
+ * pega o caso em que alguém declara um `enum:` novo **sem** amarrá-lo, que é
+ * exatamente o que aconteceu.
+ *
+ * ## A regra
+ *
+ * Todo `enum` publicado numa resposta é **ou** cópia exata de um enum do
+ * Prisma, **ou** está declarado abaixo como enum de código. Não há terceira
+ * opção — e é a ausência dela que impede uma transcrição errada de passar.
+ */
+const ENUMS_DE_CODIGO = new Map<string, string[]>([
+  // SPEC-015 — confiança do cálculo de frequência. Vem de `agrega()`.
+  ['confianca', ['alta', 'baixa']],
+  // SPEC-010 — estado do expediente resolvido, não coluna.
+  ['estado', ['aberto', 'fechado']],
+  // SPEC-015 — por que o aluno entrou na lista de evasão.
+  ['motivo', ['faltas_seguidas', 'frequencia_baixa']],
+  // SPEC-010 — a quadra tem linha própria, ou herda o padrão da empresa.
+  ['origem', ['proprio', 'herdado']],
+  // SPEC-011 — os três estados de um slot na grade de disponibilidade.
+  ['status', ['livre', 'ocupado_turma', 'ocupado_avulso']],
+  // O papel do admin inicial, na criação da empresa: sempre este.
+  ['role', ['company_admin']],
+]);
+
+function enumsPublicadosEmRespostas(): {
+  schema: string;
+  campo: string;
+  valores: string[];
+}[] {
+  const doc = lerOpenApiCompleto();
+  const saida: { schema: string; campo: string; valores: string[] }[] = [];
+  for (const [nome, corpo] of Object.entries(doc.components?.schemas ?? {})) {
+    if (!nome.endsWith('ResponseDto')) continue;
+    for (const [campo, prop] of Object.entries(corpo.properties ?? {})) {
+      if (Array.isArray(prop.enum)) {
+        saida.push({ schema: nome, campo, valores: prop.enum });
+      }
+    }
+  }
+  return saida;
+}
+
+/** Os enums do `schema.prisma`, lidos do arquivo — não de uma cópia. */
+function enumsDoPrisma(): Map<string, string[]> {
+  const sql = readFileSync(
+    join(__dirname, '..', 'prisma', 'schema.prisma'),
+    'utf8',
+  );
+  const mapa = new Map<string, string[]>();
+  const re = /^enum (\w+) \{([\s\S]*?)^\}/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    const valores = m[2]
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('//') && !l.startsWith('@@'));
+    mapa.set(m[1], valores);
+  }
+  return mapa;
+}
+
+describe('DEF-016 — todo enum publicado tem origem conferível', () => {
+  // **Comparação por CONJUNTO, não por ordem.** No `schema.prisma` a ordem é
+  // semântica — a SPEC-013 acrescentou `professor` no fim de propósito,
+  // porque `ALTER TYPE ADD VALUE` sem `BEFORE`/`AFTER` anexa ao final e
+  // declarar noutra posição criaria drift permanente entre schema e banco.
+  // No contrato publicado a ordem não significa nada: é o conjunto de
+  // valores aceitos. Comparar por ordem reprovaria `[AVULSO, TURMA]` contra
+  // `[TURMA, AVULSO]` — rigor no lugar errado, que treina quem lê a ignorar
+  // o teste.
+  const comoConjunto = (v: string[]) => [...v].sort().join('|');
+  const publicados = enumsPublicadosEmRespostas();
+  const doPrisma = [...enumsDoPrisma().values()].map(comoConjunto);
+
+  it('o schema.prisma foi lido — senão o teste abaixo passa por vacuidade', () => {
+    expect(doPrisma.length).toBeGreaterThan(5);
+    expect(publicados.length).toBeGreaterThan(5);
+  });
+
+  it('nenhum enum de resposta é inventado', () => {
+    const orfaos = publicados.filter(({ campo, valores }) => {
+      const chave = comoConjunto(valores);
+      if (doPrisma.includes(chave)) return false;
+      const deCodigo = ENUMS_DE_CODIGO.get(campo);
+      return !deCodigo || comoConjunto(deCodigo) !== chave;
+    });
+
+    // A mensagem precisa dizer QUAL, senão o próximo a ver isto vermelho
+    // gasta a primeira meia hora descobrindo onde olhar.
+    expect(
+      orfaos.map((o) => `${o.schema}.${o.campo} = [${o.valores.join(', ')}]`),
+    ).toEqual([]);
   });
 });

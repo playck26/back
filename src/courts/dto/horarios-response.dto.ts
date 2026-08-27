@@ -35,6 +35,14 @@ export class DiaDeHorarioResponseDto {
   horaFim!: string | null;
 }
 
+export class QuadraComHorarioProprioResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  quadraId!: string;
+
+  @ApiProperty({ type: [DiaDeHorarioResponseDto] })
+  dias!: DiaDeHorarioResponseDto[];
+}
+
 export class HorariosDaQuadraResponseDto {
   /**
    * **`herdado` significa que a quadra não tem linha própria** e segue o
@@ -146,4 +154,35 @@ export class ImagemDaQuadraResponseDto {
   /** URL de CDN, sem assinatura (AC-002), ou `null` quando não há imagem. */
   @ApiProperty({ type: String, nullable: true })
   imagemUrl!: string | null;
+}
+
+/**
+ * **DEF-017 — este DTO existe porque eu anotei a rota errada com o DTO de
+ * outra.**
+ *
+ * `GET /company-settings/horarios` foi anotada com `HorariosDaQuadraResponseDto`
+ * (`{ origem, dias }`) em 2026-08-27. Ela devolve outra coisa:
+ * `listarConfiguracao()` monta `{ padrao, quadrasComHorarioProprio }`.
+ *
+ * **A amarra de retorno não pegou, e o motivo é estrutural:** ela confere a
+ * forma que o *serviço anotado* devolve. Eu pus o `@ApiOkResponse` no
+ * controller sem conferir **qual método** ele chama — e o controller chama
+ * `listarConfiguracao`, não `listarDaQuadra`. O gate de contrato também não
+ * pegou: ele pergunta "tem schema?", não "tem o schema **certo**?".
+ *
+ * O tipo escrito à mão do Admin (`HorariosEmpresa`) estava certo o tempo
+ * todo. De novo: o contrato publicado é que mentia.
+ */
+export class ConfiguracaoDeHorariosResponseDto {
+  /** Os sete dias da empresa — o padrão que toda quadra herda por ausência. */
+  @ApiProperty({ type: [DiaDeHorarioResponseDto] })
+  padrao!: DiaDeHorarioResponseDto[];
+
+  /**
+   * **Só as quadras que TÊM horário próprio.** As demais herdam, e herança é
+   * ausência de registro — listar todas com o padrão copiado daria a
+   * impressão errada de que foram configuradas uma a uma.
+   */
+  @ApiProperty({ type: [QuadraComHorarioProprioResponseDto] })
+  quadrasComHorarioProprio!: QuadraComHorarioProprioResponseDto[];
 }

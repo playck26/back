@@ -13,6 +13,7 @@ import {
   parseTimeOnly,
 } from './date-time.util';
 import {
+  ConfiguracaoDeHorariosResponseDto,
   HorariosDaQuadraResponseDto,
   OcupacaoAfetadaResponseDto,
 } from './dto/horarios-response.dto';
@@ -298,7 +299,9 @@ export class HorarioFuncionamentoService {
   }
 
   /** Configuração atual: o padrão da empresa e os overrides por quadra. */
-  async listarConfiguracao(companyId: string) {
+  async listarConfiguracao(
+    companyId: string,
+  ): Promise<ConfiguracaoDeHorariosResponseDto> {
     const linhas = await this.prisma.horarioFuncionamento.findMany({
       where: { companyId },
       orderBy: [{ quadraId: 'asc' }, { diaSemana: 'asc' }],

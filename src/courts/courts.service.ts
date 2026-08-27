@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type OrigemTipo, type StatusPagamento } from '@prisma/client';
 import { StudentsService } from '../people/students.service';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
@@ -78,9 +78,15 @@ interface OcupacaoParaResposta {
   data: Date;
   horaInicio: Date;
   horaFim: Date;
-  origemTipo: string;
+  // DEF-016 — **os dois campos passaram a carregar o enum do Prisma, e nao
+  // `string`.** Com `string`, o `tsc` nao tinha como comparar o valor que o
+  // banco devolve com o que o contrato promete, e foi por essa folga que o
+  // `statusPagamento` publicado saiu como `'pendente'` — valor que nao
+  // existe. Agora o DTO so compila se a uniao dele bater com o enum do
+  // banco: o contrato publicado fica **amarrado ao schema**, nao a memoria.
+  origemTipo: OrigemTipo;
   alunoId: string | null;
-  statusPagamento: string;
+  statusPagamento: StatusPagamento;
   /** SPEC-011: quanto foi cobrado, congelado na criação. Nulo em turma. */
   valor?: Prisma.Decimal | null;
 }

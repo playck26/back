@@ -5,7 +5,7 @@ import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import {
-  HorariosDaQuadraResponseDto,
+  ConfiguracaoDeHorariosResponseDto,
   ResultadoDeHorariosResponseDto,
 } from './dto/horarios-response.dto';
 import { DefinirHorariosDto } from './dto/definir-horarios.dto';
@@ -28,7 +28,8 @@ export class CompanySettingsController {
   constructor(private readonly horarios: HorarioFuncionamentoService) {}
 
   @Get('horarios')
-  @ApiOkResponse({ type: HorariosDaQuadraResponseDto })
+  // DEF-017 — era `HorariosDaQuadraResponseDto`, o DTO de OUTRA rota.
+  @ApiOkResponse({ type: ConfiguracaoDeHorariosResponseDto })
   listar(@CurrentUser() user: AccessTokenPayload) {
     return this.horarios.listarConfiguracao(user.companyId as string);
   }

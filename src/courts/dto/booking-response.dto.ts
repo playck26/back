@@ -31,18 +31,36 @@ export class OcupacaoResponseDto {
   @ApiProperty({ type: String, example: '19:00' })
   horaFim!: string;
 
+  /** Ver `statusPagamento`: união no tipo TS, para o `tsc` conferir o valor. */
   @ApiProperty({ type: String, enum: ['AVULSO', 'TURMA'] })
-  origemTipo!: string;
+  origemTipo!: 'AVULSO' | 'TURMA';
 
   /** `null` em ocupação de turma: o dono ali é a turma, não uma pessoa. */
   @ApiProperty({ type: String, format: 'uuid', nullable: true })
   alunoId!: string | null;
 
+  /**
+   * **DEF-016 — este campo dizia `'pendente'`, e o valor não existe.**
+   *
+   * O enum do banco é `pendente_pagamento` (`schema.prisma`, `StatusPagamento`),
+   * e o próprio `back` compara com ele em `agenda.service.ts`. Publiquei
+   * `'pendente'` de memória em 2026-08-27, e o `openapi.json` chegou a **se
+   * contradizer no mesmo documento**: o filtro de `GET /bookings` publicava
+   * `pendente_pagamento` e a resposta publicava `pendente`.
+   *
+   * O tipo escrito à mão do Admin estava **certo** o tempo todo. O contrato
+   * publicado é que mentia — que é o pior caso possível, e o que esta spec
+   * inteira existe para impedir.
+   *
+   * O tipo TS é a união, não `string`: com `string` o `tsc` não tem como
+   * comparar o valor que o Prisma devolve com o que o decorator promete, e
+   * foi essa folga que deixou o erro passar.
+   */
   @ApiProperty({
     type: String,
-    enum: ['pendente', 'pago', 'cancelado'],
+    enum: ['pendente_pagamento', 'pago', 'cancelado'],
   })
-  statusPagamento!: string;
+  statusPagamento!: 'pendente_pagamento' | 'pago' | 'cancelado';
 
   /**
    * SPEC-011 — **o valor congelado no momento da reserva**, e `null` em
@@ -128,8 +146,12 @@ export class ItemDaAgendaResponseDto {
   @ApiProperty({ type: String, nullable: true })
   responsavel!: string | null;
 
-  @ApiProperty({ type: String, enum: ['pendente', 'pago', 'cancelado'] })
-  statusPagamento!: string;
+  /** Ver `OcupacaoResponseDto.statusPagamento` — DEF-016, mesmo erro. */
+  @ApiProperty({
+    type: String,
+    enum: ['pendente_pagamento', 'pago', 'cancelado'],
+  })
+  statusPagamento!: 'pendente_pagamento' | 'pago' | 'cancelado';
 
   @ApiProperty({ type: Number, nullable: true, example: 120 })
   valor!: number | null;

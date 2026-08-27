@@ -2041,7 +2041,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HorariosDaQuadraResponseDto"
+                  "$ref": "#/components/schemas/ConfiguracaoDeHorariosResponseDto"
                 }
               }
             }
@@ -5114,7 +5114,7 @@
           "statusPagamento": {
             "type": "string",
             "enum": [
-              "pendente",
+              "pendente_pagamento",
               "pago",
               "cancelado"
             ]
@@ -5181,6 +5181,46 @@
           "total"
         ]
       },
+      "QuadraComHorarioProprioResponseDto": {
+        "type": "object",
+        "properties": {
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dias": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiaDeHorarioResponseDto"
+            }
+          }
+        },
+        "required": [
+          "quadraId",
+          "dias"
+        ]
+      },
+      "ConfiguracaoDeHorariosResponseDto": {
+        "type": "object",
+        "properties": {
+          "padrao": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiaDeHorarioResponseDto"
+            }
+          },
+          "quadrasComHorarioProprio": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuadraComHorarioProprioResponseDto"
+            }
+          }
+        },
+        "required": [
+          "padrao",
+          "quadrasComHorarioProprio"
+        ]
+      },
       "DiaDaAgendaResponseDto": {
         "type": "object",
         "properties": {
@@ -5240,7 +5280,7 @@
           "statusPagamento": {
             "type": "string",
             "enum": [
-              "pendente",
+              "pendente_pagamento",
               "pago",
               "cancelado"
             ]
