@@ -14,7 +14,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  TurmaDetalheResponseDto,
+  TurmaPaginadaResponseDto,
+  TurmaResponseDto,
+} from './dto/turma-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -87,6 +92,7 @@ export class ClassesController {
   }
 
   @Get()
+  @ApiOkResponse({ type: TurmaPaginadaResponseDto })
   list(
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: PaginationQueryDto,
@@ -95,11 +101,13 @@ export class ClassesController {
   }
 
   @Post()
+  @ApiOkResponse({ type: TurmaResponseDto })
   create(@CurrentUser() user: AccessTokenPayload, @Body() dto: CreateClassDto) {
     return this.classesService.create(user.companyId as string, dto);
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: TurmaDetalheResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -108,6 +116,7 @@ export class ClassesController {
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: TurmaDetalheResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,

@@ -1,17 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsInt,
   IsOptional,
   IsPositive,
   IsString,
   IsUUID,
-  Matches,
-  Max,
-  Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
-
-const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+import { EncontroDto } from './encontro.dto';
 
 export class CreateClassDto {
   @ApiProperty()
@@ -33,19 +32,19 @@ export class CreateClassDto {
   @IsUUID()
   quadraId!: string;
 
-  @ApiProperty({ minimum: 0, maximum: 6, description: '0=domingo..6=sábado' })
-  @IsInt()
-  @Min(0)
-  @Max(6)
-  diaSemana!: number;
-
-  @ApiProperty({ example: '14:00' })
-  @Matches(HORA_REGEX, { message: 'horaInicio deve estar no formato HH:mm' })
-  horaInicio!: string;
-
-  @ApiProperty({ example: '15:00' })
-  @Matches(HORA_REGEX, { message: 'horaFim deve estar no formato HH:mm' })
-  horaFim!: string;
+  /**
+   * SPEC-019/TASK-002 — **substituiu `diaSemana`/`horaInicio`/`horaFim`.**
+   *
+   * A quantidade mínima é cobrada pelo serviço (`TURMA_SEM_ENCONTRO`), e não
+   * por `@ArrayMinSize`: a INV-051 tem código de erro próprio, e o
+   * `ValidationPipe` devolveria `400` genérico onde a spec pede `422` com
+   * código. Mesma razão do `nome` no `CatalogoDeQuadraDto` da SPEC-020.
+   */
+  @ApiProperty({ type: [EncontroDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EncontroDto)
+  encontros!: EncontroDto[];
 
   @ApiProperty()
   @IsInt()

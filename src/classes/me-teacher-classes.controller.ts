@@ -5,7 +5,11 @@ import {
   ParseUUIDPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  TurmaDoProfessorDetalheResponseDto,
+  TurmaDoProfessorResponseDto,
+} from './dto/turma-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -30,6 +34,7 @@ export class MeTeacherClassesController {
   constructor(private readonly classesService: ClassesService) {}
 
   @Get()
+  @ApiOkResponse({ type: [TurmaDoProfessorResponseDto] })
   @Roles('professor')
   minhasTurmas(@CurrentUser() user: AccessTokenPayload) {
     return this.classesService.myTeachingClasses(
@@ -39,6 +44,8 @@ export class MeTeacherClassesController {
   }
 
   @Get(':id')
+  // SPEC-019 — a rota que a 1a versao da spec esqueceu (BLOQUEADOR 1).
+  @ApiOkResponse({ type: TurmaDoProfessorDetalheResponseDto })
   @Roles('professor')
   detalhe(
     @CurrentUser() user: AccessTokenPayload,

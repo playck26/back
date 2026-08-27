@@ -2239,7 +2239,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaPaginadaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2265,8 +2272,15 @@
           }
         },
         "responses": {
-          "201": {
-            "description": ""
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2294,7 +2308,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaDetalheResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2330,7 +2351,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaDetalheResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2438,7 +2466,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TurmaDoProfessorResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2466,7 +2504,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaDoProfessorDetalheResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3359,6 +3404,147 @@
           }
         }
       },
+      "TurmaEncontroResponseDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6,
+            "example": 2
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "horaInicio",
+          "horaFim"
+        ]
+      },
+      "TurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Turma Iniciante"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "professorId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "capacidade": {
+            "type": "number",
+            "example": 10
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "alunosAlocados": {
+            "type": "number",
+            "example": 4
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "nivelId",
+          "professorId",
+          "quadraId",
+          "encontros",
+          "capacidade",
+          "status",
+          "alunosAlocados"
+        ]
+      },
+      "TurmaPaginadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 3
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
+      "EncontroDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "0=domingo..6=sábado"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "horaInicio",
+          "horaFim"
+        ]
+      },
       "CreateClassDto": {
         "type": "object",
         "properties": {
@@ -3374,19 +3560,11 @@
           "quadraId": {
             "type": "string"
           },
-          "diaSemana": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 6,
-            "description": "0=domingo..6=sábado"
-          },
-          "horaInicio": {
-            "type": "string",
-            "example": "14:00"
-          },
-          "horaFim": {
-            "type": "string",
-            "example": "15:00"
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EncontroDto"
+            }
           },
           "capacidade": {
             "type": "number"
@@ -3395,10 +3573,99 @@
         "required": [
           "nome",
           "quadraId",
-          "diaSemana",
-          "horaInicio",
-          "horaFim",
+          "encontros",
           "capacidade"
+        ]
+      },
+      "AlunoDaTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "email"
+        ]
+      },
+      "TurmaDetalheResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Turma Iniciante"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "professorId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "capacidade": {
+            "type": "number",
+            "example": 10
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "alunosAlocados": {
+            "type": "number",
+            "example": 4
+          },
+          "alunos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoDaTurmaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "nivelId",
+          "professorId",
+          "quadraId",
+          "encontros",
+          "capacidade",
+          "status",
+          "alunosAlocados",
+          "alunos"
         ]
       },
       "UpdateClassDto": {
@@ -3416,18 +3683,11 @@
           "quadraId": {
             "type": "string"
           },
-          "diaSemana": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 6
-          },
-          "horaInicio": {
-            "type": "string",
-            "example": "14:00"
-          },
-          "horaFim": {
-            "type": "string",
-            "example": "15:00"
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EncontroDto"
+            }
           },
           "capacidade": {
             "type": "number"
@@ -3440,6 +3700,110 @@
             ]
           }
         }
+      },
+      "TurmaDoProfessorResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "quadraNome": {
+            "type": "string"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "capacidade": {
+            "type": "number"
+          },
+          "totalAlunos": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "encontros",
+          "quadraNome",
+          "nivelNome",
+          "capacidade",
+          "totalAlunos"
+        ]
+      },
+      "AlunoDoProfessorResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "nivelNome"
+        ]
+      },
+      "TurmaDoProfessorDetalheResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "quadraNome": {
+            "type": "string"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "capacidade": {
+            "type": "number"
+          },
+          "alunos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoDoProfessorResponseDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "encontros",
+          "quadraNome",
+          "nivelNome",
+          "capacidade",
+          "alunos"
+        ]
       },
       "ItemChamadaDto": {
         "type": "object",

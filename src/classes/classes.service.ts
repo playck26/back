@@ -3,7 +3,6 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   formatDateOnly,
@@ -17,6 +16,43 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { CreateClassDto } from './dto/create-class.dto';
 import type { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import type { UpdateClassDto } from './dto/update-class.dto';
+import { validarEncontros, type EncontroDaTurma } from './encontros';
+import type {
+  TurmaDoProfessorDetalheResponseDto,
+  TurmaDoProfessorResponseDto,
+  TurmaResponseDto,
+} from './dto/turma-response.dto';
+
+/**
+ * SPEC-019/TASK-002 — a forma de um encontro na resposta, num lugar só.
+ *
+ * As telas do gestor, do professor e do aluno mostram a mesma coisa, e três
+ * cópias divergiriam no primeiro ajuste — como divergiram a leitura do logo e
+ * a do `logo_url` antes do `resolver()`.
+ */
+function paraEncontrosDaResposta(
+  encontros: { diaSemana: number; horaInicio: Date; horaFim: Date }[],
+) {
+  return encontros.map((encontro) => ({
+    diaSemana: encontro.diaSemana,
+    horaInicio: formatTimeOnly(encontro.horaInicio),
+    horaFim: formatTimeOnly(encontro.horaFim),
+  }));
+}
+
+/**
+ * SPEC-019/TASK-002 — a ordem dos encontros na resposta, num lugar só.
+ *
+ * **Ordem estável importa mais do que parece.** Sem `orderBy`, o Postgres
+ * devolve na ordem física, que muda quando a recorrência é reescrita — a tela
+ * mostraria "sábado, terça" hoje e "terça, sábado" amanhã, sem nada ter
+ * mudado. Parece bug de tela, e o rastro leva a lugar nenhum.
+ */
+const ORDEM_DOS_ENCONTROS = {
+  // `as const` no objeto inteiro produziria tupla readonly, que o Prisma
+  // recusa. O `as const` fica só nos literais.
+  orderBy: [{ diaSemana: 'asc' as const }, { horaInicio: 'asc' as const }],
+};
 
 @Injectable()
 export class ClassesService {
@@ -38,7 +74,10 @@ export class ClassesService {
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
-        include: { _count: { select: { alunos: true } } },
+        include: {
+          encontros: ORDEM_DOS_ENCONTROS,
+          _count: { select: { alunos: true } },
+        },
       }),
       this.prisma.turma.count({ where: { companyId } }),
     ]);
@@ -51,12 +90,33 @@ export class ClassesService {
     };
   }
 
+  /**
+   * SPEC-019/TASK-002 — as ocorrências de **todos** os encontros, achatadas.
+   *
+   * `registerClassOccupancy` já aceita lista heterogênea e valida todas antes
+   * de escrever — a SPEC-010 a escreveu assim de propósito, e a validação
+   * cruzada da SPEC-019 confirmou no código. **O gate de concorrência não
+   * muda; muda de onde vem a lista.**
+   *
+   * A ordem é por encontro e depois por data, e não importa: o `EXCLUDE` de
+   * `ocupacoes_quadra` decide conflito por intervalo, não por posição.
+   */
+  private ocorrenciasDosEncontros(encontros: EncontroDaTurma[]) {
+    return encontros.flatMap((encontro) => {
+      const horaInicio = parseTimeOnly(encontro.horaInicio);
+      const horaFim = parseTimeOnly(encontro.horaFim);
+      return gerarDatasSemanaisFuturas(encontro.diaSemana).map((data) => ({
+        data,
+        horaInicio,
+        horaFim,
+      }));
+    });
+  }
+
   async create(companyId: string, dto: CreateClassDto) {
-    if (dto.horaFim <= dto.horaInicio) {
-      throw new UnprocessableEntityException(
-        'horaFim precisa ser depois de horaInicio',
-      );
-    }
+    // AC-003/005/006 — a lista inteira é julgada antes de qualquer escrita, e
+    // a recusa é sempre da turma inteira. Ver `encontros.ts`.
+    validarEncontros(dto.encontros);
     await this.assertQuadraDaEmpresa(companyId, dto.quadraId);
     if (dto.nivelId) {
       await this.assertNivelDaEmpresa(companyId, dto.nivelId);
@@ -65,11 +125,8 @@ export class ClassesService {
       await this.assertProfessorDaEmpresa(companyId, dto.professorId);
     }
 
-    const horaInicioDate = parseTimeOnly(dto.horaInicio);
-    const horaFimDate = parseTimeOnly(dto.horaFim);
-    const ocorrencias = gerarDatasSemanaisFuturas(dto.diaSemana).map(
-      (data) => ({ data, horaInicio: horaInicioDate, horaFim: horaFimDate }),
-    );
+    const ocorrencias = this.ocorrenciasDosEncontros(dto.encontros);
+    const primeiro = dto.encontros[0];
 
     // NFR-001: turma + geração de ocupações futuras é all-or-nothing —
     // qualquer conflito (AC-001) ou falha aborta a transação inteira, a
@@ -82,11 +139,24 @@ export class ClassesService {
           nivelId: dto.nivelId,
           professorId: dto.professorId,
           quadraId: dto.quadraId,
-          diaSemana: dto.diaSemana,
-          horaInicio: horaInicioDate,
-          horaFim: horaFimDate,
+          // **Escrita dupla, e é temporária** (fase EXPAND). As três colunas
+          // ainda são `NOT NULL`; elas só saem na TASK-003. O PRIMEIRO
+          // encontro vai para elas — não porque ele seja especial, mas
+          // porque a coluna cabe um só, e deixá-la desatualizada durante a
+          // transição criaria a divergência que esta spec veio desfazer.
+          diaSemana: primeiro.diaSemana,
+          horaInicio: parseTimeOnly(primeiro.horaInicio),
+          horaFim: parseTimeOnly(primeiro.horaFim),
           capacidade: dto.capacidade,
+          encontros: {
+            create: dto.encontros.map((encontro) => ({
+              diaSemana: encontro.diaSemana,
+              horaInicio: parseTimeOnly(encontro.horaInicio),
+              horaFim: parseTimeOnly(encontro.horaFim),
+            })),
+          },
         },
+        include: { encontros: ORDEM_DOS_ENCONTROS },
       });
 
       await this.courtsService.registerClassOccupancy(
@@ -110,6 +180,7 @@ export class ClassesService {
         alunos: {
           include: { aluno: { include: { usuario: true } } },
         },
+        encontros: ORDEM_DOS_ENCONTROS,
         _count: { select: { alunos: true } },
       },
     });
@@ -134,24 +205,39 @@ export class ClassesService {
       throw new NotFoundException();
     }
 
+    // **`encontros` ausente NÃO mexe na recorrência.** Renomear a turma ou
+    // mudar a capacidade não pode cancelar e regerar oito ocupações — e,
+    // pior, apagar as que já têm chamada marcada.
     const mudouHorario =
-      dto.quadraId !== undefined ||
-      dto.diaSemana !== undefined ||
-      dto.horaInicio !== undefined ||
-      dto.horaFim !== undefined;
+      dto.quadraId !== undefined || dto.encontros !== undefined;
 
     const quadraId = dto.quadraId ?? existente.quadraId;
-    const diaSemana = dto.diaSemana ?? existente.diaSemana;
-    const horaInicioStr =
-      dto.horaInicio ?? formatTimeOnly(existente.horaInicio);
-    const horaFimStr = dto.horaFim ?? formatTimeOnly(existente.horaFim);
+
+    // `null` enquanto a recorrência não for necessária. **A consulta só
+    // acontece dentro do `if`**: renomear a turma não pode custar uma ida ao
+    // banco para ler encontros que ninguém vai usar.
+    let encontros: EncontroDaTurma[] | null = null;
 
     if (mudouHorario) {
-      if (horaFimStr <= horaInicioStr) {
-        throw new UnprocessableEntityException(
-          'horaFim precisa ser depois de horaInicio',
-        );
-      }
+      // Só trocar de quadra, sem mexer nos encontros, também regera — as
+      // ocupações apontam para a quadra antiga. Aí a recorrência vem do que
+      // já está gravado.
+      encontros =
+        dto.encontros ??
+        (
+          await this.prisma.turmaEncontro.findMany({
+            where: { turmaId: id },
+            ...ORDEM_DOS_ENCONTROS,
+          })
+        ).map((encontro) => ({
+          diaSemana: encontro.diaSemana,
+          horaInicio: formatTimeOnly(encontro.horaInicio),
+          horaFim: formatTimeOnly(encontro.horaFim),
+        }));
+
+      // AC-003/005/006 — inclusive quando a lista veio do banco: se ela
+      // estivesse inválida, trocar de quadra propagaria o estado inválido.
+      validarEncontros(encontros);
       await this.assertQuadraDaEmpresa(companyId, quadraId);
     }
     if (dto.nivelId) {
@@ -161,13 +247,13 @@ export class ClassesService {
       await this.assertProfessorDaEmpresa(companyId, dto.professorId);
     }
 
-    const horaInicioDate = parseTimeOnly(horaInicioStr);
-    const horaFimDate = parseTimeOnly(horaFimStr);
-
     // NFR-001: mesma garantia all-or-nothing da criação — se o horário
     // muda, cancelar as ocupações futuras antigas e gerar as novas
     // acontece na mesma transação da atualização da turma.
     const turma = await this.prisma.$transaction(async (tx) => {
+      // `dto.encontros` definido implica `mudouHorario`, que implica
+      // `encontros` carregado e já validado (>= 1 item).
+      const primeiro = dto.encontros?.[0];
       const atualizada = await tx.turma.update({
         where: { id },
         data: {
@@ -175,11 +261,26 @@ export class ClassesService {
           nivelId: dto.nivelId,
           professorId: dto.professorId,
           quadraId: dto.quadraId,
-          diaSemana: dto.diaSemana,
-          horaInicio: dto.horaInicio ? horaInicioDate : undefined,
-          horaFim: dto.horaFim ? horaFimDate : undefined,
           capacidade: dto.capacidade,
           status: dto.status,
+          // Escrita dupla temporária (fase EXPAND) — ver `create`.
+          ...(dto.encontros === undefined || primeiro === undefined
+            ? {}
+            : {
+                diaSemana: primeiro.diaSemana,
+                horaInicio: parseTimeOnly(primeiro.horaInicio),
+                horaFim: parseTimeOnly(primeiro.horaFim),
+                // **Substitui a lista inteira**, na mesma transação. Não há
+                // edição parcial de recorrência: ver `UpdateClassDto`.
+                encontros: {
+                  deleteMany: {},
+                  create: dto.encontros.map((encontro) => ({
+                    diaSemana: encontro.diaSemana,
+                    horaInicio: parseTimeOnly(encontro.horaInicio),
+                    horaFim: parseTimeOnly(encontro.horaFim),
+                  })),
+                },
+              }),
         },
       });
 
@@ -198,19 +299,12 @@ export class ClassesService {
           hojeUTC,
         );
 
-        const ocorrencias = gerarDatasSemanaisFuturas(diaSemana).map(
-          (data) => ({
-            data,
-            horaInicio: horaInicioDate,
-            horaFim: horaFimDate,
-          }),
-        );
         await this.courtsService.registerClassOccupancy(
           tx,
           companyId,
           quadraId,
           id,
-          ocorrencias,
+          this.ocorrenciasDosEncontros(encontros ?? []),
         );
       }
 
@@ -414,6 +508,13 @@ export class ClassesService {
     }
   }
 
+  /**
+   * SPEC-019/REQ-006 — **o retorno anotado é o que amarra este método ao
+   * contrato publicado.** Sem a anotação, `TurmaResponseDto` seria só mais um
+   * tipo escrito à mão, e envelheceria calado como o `Court` do Cliente
+   * envelheceu (DEF-012). Com ela, mudar a forma da resposta quebra o
+   * typecheck AQUI, antes de qualquer frontend.
+   */
   private toResponse(turma: {
     id: string;
     companyId: string;
@@ -421,13 +522,11 @@ export class ClassesService {
     nivelId: string | null;
     professorId: string | null;
     quadraId: string;
-    diaSemana: number;
-    horaInicio: Date;
-    horaFim: Date;
     capacidade: number;
     status: string;
+    encontros: { diaSemana: number; horaInicio: Date; horaFim: Date }[];
     _count: { alunos: number };
-  }) {
+  }): TurmaResponseDto {
     return {
       id: turma.id,
       companyId: turma.companyId,
@@ -435,9 +534,15 @@ export class ClassesService {
       nivelId: turma.nivelId,
       professorId: turma.professorId,
       quadraId: turma.quadraId,
-      diaSemana: turma.diaSemana,
-      horaInicio: formatTimeOnly(turma.horaInicio),
-      horaFim: formatTimeOnly(turma.horaFim),
+      // SPEC-019 — `diaSemana`/`horaInicio`/`horaFim` SAÍRAM da resposta.
+      // Quebra assumida: os três clientes são nossos e sobem juntos
+      // (ADR-001). Mantê-los como alias do primeiro encontro faria uma turma
+      // de três dias mentir sobre si mesma para quem não atualizou.
+      encontros: turma.encontros.map((encontro) => ({
+        diaSemana: encontro.diaSemana,
+        horaInicio: formatTimeOnly(encontro.horaInicio),
+        horaFim: formatTimeOnly(encontro.horaFim),
+      })),
       capacidade: turma.capacidade,
       status: turma.status,
       alunosAlocados: turma._count.alunos,
@@ -464,7 +569,12 @@ export class ClassesService {
     return professor;
   }
 
-  async myTeachingClasses(companyId: string, usuarioId: string) {
+  // SPEC-019/AC-014 — o retorno anotado amarra estas rotas ao contrato
+  // publicado, igual ao `toResponse`. Sem isso o DTO seria decoracao.
+  async myTeachingClasses(
+    companyId: string,
+    usuarioId: string,
+  ): Promise<TurmaDoProfessorResponseDto[]> {
     const professor = await this.professorDoUsuario(companyId, usuarioId);
 
     const turmas = await this.prisma.turma.findMany({
@@ -472,17 +582,21 @@ export class ClassesService {
       include: {
         quadra: { select: { nome: true } },
         nivel: { select: { nome: true } },
+        encontros: ORDEM_DOS_ENCONTROS,
         _count: { select: { alunos: true } },
       },
+      // A ordenação da LISTA continua pelas colunas antigas até a TASK-003:
+      // ordenar por coluna de tabela filha exigiria join, e a fase expand
+      // mantém as duas em sincronia. Na contract isto vira ordenação por
+      // nome, que é o que sobra e é estável.
       orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }],
     });
 
     return turmas.map((turma) => ({
       id: turma.id,
       nome: turma.nome,
-      diaSemana: turma.diaSemana,
-      horaInicio: formatTimeOnly(turma.horaInicio),
-      horaFim: formatTimeOnly(turma.horaFim),
+      // SPEC-019 — os três campos soltos saíram; o professor vê os N dias.
+      encontros: paraEncontrosDaResposta(turma.encontros),
       quadraNome: turma.quadra.nome,
       nivelNome: turma.nivel?.nome ?? null,
       capacidade: turma.capacidade,
@@ -494,7 +608,7 @@ export class ClassesService {
     companyId: string,
     usuarioId: string,
     turmaId: string,
-  ) {
+  ): Promise<TurmaDoProfessorDetalheResponseDto> {
     const professor = await this.professorDoUsuario(companyId, usuarioId);
 
     // `professorId` no WHERE, e nao conferido depois de buscar: turma de
@@ -504,6 +618,7 @@ export class ClassesService {
       include: {
         quadra: { select: { nome: true } },
         nivel: { select: { nome: true } },
+        encontros: ORDEM_DOS_ENCONTROS,
         alunos: {
           include: {
             aluno: {
@@ -523,9 +638,12 @@ export class ClassesService {
     return {
       id: turma.id,
       nome: turma.nome,
-      diaSemana: turma.diaSemana,
-      horaInicio: formatTimeOnly(turma.horaInicio),
-      horaFim: formatTimeOnly(turma.horaFim),
+      // **SPEC-019 — esta rota foi o BLOQUEADOR 1 da validação cruzada.**
+      // A 1ª versão da spec listava só `GET /me/teacher/classes` no
+      // contrato e esquecia o detalhe. A lista seria atualizada e esta tela
+      // continuaria esperando campos removidos — tela branca no app do
+      // professor, exatamente o DEF-012.
+      encontros: paraEncontrosDaResposta(turma.encontros),
       quadraNome: turma.quadra.nome,
       nivelNome: turma.nivel?.nome ?? null,
       capacidade: turma.capacidade,

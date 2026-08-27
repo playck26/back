@@ -1,18 +1,17 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsIn,
   IsInt,
   IsOptional,
   IsPositive,
   IsString,
   IsUUID,
-  Matches,
-  Max,
-  Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
-
-const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+import { EncontroDto } from './encontro.dto';
 
 export class UpdateClassDto {
   @ApiPropertyOptional()
@@ -36,22 +35,24 @@ export class UpdateClassDto {
   @IsUUID()
   quadraId?: string;
 
-  @ApiPropertyOptional({ minimum: 0, maximum: 6 })
+  /**
+   * SPEC-019/TASK-002 — **substituiu `diaSemana`/`horaInicio`/`horaFim`.**
+   *
+   * Ausente: a recorrência não muda, e nenhuma ocupação é regerada. Presente:
+   * **substitui a lista inteira** — não há "acrescentar um encontro" nem
+   * "editar o de terça". Uma edição parcial de recorrência exigiria id de
+   * encontro no corpo, e aí o cliente teria de saber que encontro é uma
+   * entidade — quando ele é a recorrência da turma.
+   *
+   * Lista vazia é recusada com `TURMA_SEM_ENCONTRO`, e **é o caminho real de
+   * chegar a zero**: remover o último encontro pela tela.
+   */
+  @ApiPropertyOptional({ type: [EncontroDto] })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(6)
-  diaSemana?: number;
-
-  @ApiPropertyOptional({ example: '14:00' })
-  @IsOptional()
-  @Matches(HORA_REGEX, { message: 'horaInicio deve estar no formato HH:mm' })
-  horaInicio?: string;
-
-  @ApiPropertyOptional({ example: '15:00' })
-  @IsOptional()
-  @Matches(HORA_REGEX, { message: 'horaFim deve estar no formato HH:mm' })
-  horaFim?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EncontroDto)
+  encontros?: EncontroDto[];
 
   @ApiPropertyOptional()
   @IsOptional()

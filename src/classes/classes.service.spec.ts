@@ -48,6 +48,17 @@ function buildMocks() {
       count: jest.fn(),
       findFirst: jest.fn(),
     },
+    // SPEC-019/TASK-002 — a recorrencia vem daqui quando o dto nao a manda
+    // (ex.: trocar so de quadra). O padrao e UM encontro, igual ao dto base.
+    turmaEncontro: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          diaSemana: 2,
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+        },
+      ]),
+    },
     quadra: { findFirst: jest.fn() },
     nivel: { findFirst: jest.fn() },
     professor: { findFirst: jest.fn() },
@@ -106,12 +117,11 @@ describe('ClassesService', () => {
   let service: ClassesService;
   let studentsService: StudentsService;
 
+  // SPEC-019/TASK-002 — os três campos soltos viraram `encontros[]`.
   const dto = {
     nome: 'Turma A',
     quadraId: 'q1',
-    diaSemana: 2,
-    horaInicio: '14:00',
-    horaFim: '15:00',
+    encontros: [{ diaSemana: 2, horaInicio: '14:00', horaFim: '15:00' }],
     capacidade: 4,
   };
 
@@ -126,9 +136,35 @@ describe('ClassesService', () => {
   });
 
   describe('create', () => {
-    it('rejeita horaFim <= horaInicio com 422', async () => {
+    it('rejeita horaFim <= horaInicio com 422 (AC-005)', async () => {
       await expect(
-        service.create('c1', { ...dto, horaInicio: '15:00', horaFim: '14:00' }),
+        service.create('c1', {
+          ...dto,
+          encontros: [{ diaSemana: 2, horaInicio: '15:00', horaFim: '14:00' }],
+        }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('AC-003 — lista de encontros VAZIA é recusada, e nada é aberto', async () => {
+      // INV-051. A transação nem começa: julgar a recorrência depois de abrir
+      // transação seria abrir transação para descobrir que não havia o que
+      // gravar.
+      await expect(
+        service.create('c1', { ...dto, encontros: [] }),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('AC-006 — encontros sobrepostos entre si são recusados antes de tocar o banco', async () => {
+      await expect(
+        service.create('c1', {
+          ...dto,
+          encontros: [
+            { diaSemana: 2, horaInicio: '18:00', horaFim: '19:00' },
+            { diaSemana: 2, horaInicio: '18:30', horaFim: '19:30' },
+          ],
+        }),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -155,17 +191,24 @@ describe('ClassesService', () => {
         horaFim: new Date('1970-01-01T15:00:00.000Z'),
         capacidade: 4,
         status: 'ativa',
+        encontros: [
+          {
+            diaSemana: 2,
+            horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+            horaFim: new Date('1970-01-01T15:00:00.000Z'),
+          },
+        ],
       });
 
       const result = await service.create('c1', dto);
 
-      const ocorrenciasEsperadas = gerarDatasSemanaisFuturas(dto.diaSemana).map(
-        (data) => ({
-          data,
-          horaInicio: parseTimeOnly(dto.horaInicio),
-          horaFim: parseTimeOnly(dto.horaFim),
-        }),
-      );
+      const ocorrenciasEsperadas = gerarDatasSemanaisFuturas(
+        dto.encontros[0].diaSemana,
+      ).map((data) => ({
+        data,
+        horaInicio: parseTimeOnly(dto.encontros[0].horaInicio),
+        horaFim: parseTimeOnly(dto.encontros[0].horaFim),
+      }));
       expect(ocorrenciasEsperadas).toHaveLength(8);
       expect(courtsServiceMock.registerClassOccupancy).toHaveBeenCalledWith(
         tx,
@@ -225,6 +268,10 @@ describe('ClassesService', () => {
           capacidade: 4,
           status: 'ativa',
           alunos: [],
+          // SPEC-019 — a resposta deriva `encontros[]`, e o servico NAO tolera
+          // a relacao ausente de proposito: tolerar esconderia um include
+          // esquecido, e o sintoma seria uma turma sem dia nenhum na tela.
+          encontros: [],
           _count: { alunos: 0 },
         });
       tx.turma.update.mockResolvedValue({ id: 't1' });
@@ -248,14 +295,17 @@ describe('ClassesService', () => {
           capacidade: 4,
           status: 'ativa',
           alunos: [],
+          // SPEC-019 — a resposta deriva `encontros[]`, e o servico NAO tolera
+          // a relacao ausente de proposito: tolerar esconderia um include
+          // esquecido, e o sintoma seria uma turma sem dia nenhum na tela.
+          encontros: [],
           _count: { alunos: 0 },
         });
       tx.turma.update.mockResolvedValue({ id: 't1' });
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
 
       await service.update('c1', 't1', {
-        horaInicio: '16:00',
-        horaFim: '17:00',
+        encontros: [{ diaSemana: 2, horaInicio: '16:00', horaFim: '17:00' }],
       });
 
       expect(
@@ -516,6 +566,13 @@ describe('ClassesService — visao do professor (SPEC-013)', () => {
       horaInicio: parseTimeOnly('09:00'),
       horaFim: parseTimeOnly('10:00'),
       capacidade: 6,
+      encontros: [
+        {
+          diaSemana: 2,
+          horaInicio: parseTimeOnly('09:00'),
+          horaFim: parseTimeOnly('10:00'),
+        },
+      ],
       quadra: { nome: 'Quadra 1' },
       nivel: { nome: 'Iniciante' },
       alunos: [
