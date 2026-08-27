@@ -19,6 +19,11 @@ import type {
   AccessTokenPayload,
   RefreshTokenPayload,
 } from '../common/types/jwt-payload.type';
+import {
+  LoginResponseDto,
+  RegistroDeAlunoResponseDto,
+  UsuarioPublicoResponseDto,
+} from './dto/auth-response.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterAlunoDto } from './dto/register-aluno.dto';
 import type { TrocarSenhaDto } from './dto/trocar-senha.dto';
@@ -35,16 +40,15 @@ interface IssuedTokens {
   refreshTokenExpiresAt: Date;
 }
 
-export interface PublicUsuario {
-  // SPEC-009/AC-008: o frontend precisa saber que a conta está em primeiro
-  // acesso para redirecionar; a trava em si é do servidor (INV-008).
-  senhaTemporaria?: boolean;
-  id: string;
-  nome: string;
-  email: string;
-  role: AccessTokenPayload['role'];
-  companyId: string | null;
-}
+/**
+ * SPEC-021/TASK-005 — **era uma `interface` daqui, e virou apelido do DTO.**
+ *
+ * Enquanto fossem duas declarações da mesma forma, elas divergiriam no
+ * primeiro ajuste e o contrato publicado passaria a mentir sem nada
+ * reclamar — que é o defeito que esta spec veio desfazer, um nível acima.
+ * Uma definição só, e é a que vai para o `openapi.json`.
+ */
+export type PublicUsuario = UsuarioPublicoResponseDto;
 
 @Injectable()
 export class AuthService {
@@ -56,11 +60,7 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {}
 
-  async login(dto: LoginDto): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    usuario: PublicUsuario;
-  }> {
+  async login(dto: LoginDto): Promise<LoginResponseDto> {
     const usuario = await this.prisma.usuario.findUnique({
       where: { email: dto.email },
     });
@@ -274,7 +274,7 @@ export class AuthService {
 
   async registerAluno(
     dto: RegisterAlunoDto,
-  ): Promise<{ usuario: PublicUsuario }> {
+  ): Promise<RegistroDeAlunoResponseDto> {
     // SPEC-009/REQ-011 (AC-021) — os quatro modos de falha deste endpoint
     // público devolvem **a mesma** resposta: slug inexistente, empresa
     // inativa, auto-cadastro desligado e e-mail já cadastrado.
@@ -329,7 +329,7 @@ export class AuthService {
     return { usuario: this.toPublicUsuario(usuario) };
   }
 
-  async me(usuarioId: string): Promise<PublicUsuario> {
+  async me(usuarioId: string): Promise<UsuarioPublicoResponseDto> {
     const usuario = await this.prisma.usuario.findUniqueOrThrow({
       where: { id: usuarioId },
     });

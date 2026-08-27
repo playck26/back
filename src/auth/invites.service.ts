@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../people/students.service';
+import { ConviteAceitoResponseDto } from './dto/auth-response.dto';
 import type { AceitarConviteDto } from './dto/aceitar-convite.dto';
 import type { CriarConviteDto } from './dto/criar-convite.dto';
 
@@ -118,7 +119,7 @@ export class InvitesService {
    * volta atrás e o convite fica utilizável de novo — que é o desejado:
    * ninguém perde um convite por causa de um e-mail digitado errado.
    */
-  async aceitar(dto: AceitarConviteDto) {
+  async aceitar(dto: AceitarConviteDto): Promise<ConviteAceitoResponseDto> {
     const tokenHash = this.hash(dto.token);
 
     return this.prisma.$transaction(async (tx) => {

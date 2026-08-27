@@ -31,7 +31,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -45,7 +52,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessTokenResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -83,7 +97,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessTokenResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -112,7 +133,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConviteAceitoResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -136,7 +164,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistroDeAlunoResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -150,7 +185,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsuarioPublicoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -358,7 +400,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoPaginadoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -385,7 +434,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoComSenhaTemporariaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -413,7 +469,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoComSenhaTemporariaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -441,7 +504,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -469,7 +539,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -497,7 +574,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -533,7 +617,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -571,7 +662,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfessorPaginadoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -598,7 +696,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfessorResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -626,7 +731,14 @@
         ],
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfessorComSenhaTemporariaResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -654,7 +766,14 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfessorResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -690,7 +809,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfessorResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -779,7 +905,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NivelResponseDto"
+                  }
+                }
+              }
+            }
           }
         },
         "security": [
@@ -806,7 +942,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NivelResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -844,7 +987,14 @@
         },
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NivelResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2818,6 +2968,77 @@
           "senha"
         ]
       },
+      "UsuarioPublicoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "super_admin",
+              "company_admin",
+              "aluno",
+              "professor"
+            ]
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "senhaTemporaria": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "email",
+          "role",
+          "companyId"
+        ]
+      },
+      "LoginResponseDto": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "refreshToken": {
+            "type": "string"
+          },
+          "usuario": {
+            "$ref": "#/components/schemas/UsuarioPublicoResponseDto"
+          }
+        },
+        "required": [
+          "accessToken",
+          "refreshToken",
+          "usuario"
+        ]
+      },
+      "AccessTokenResponseDto": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accessToken"
+        ]
+      },
       "TrocarSenhaDto": {
         "type": "object",
         "properties": {
@@ -2860,6 +3081,39 @@
           "senha"
         ]
       },
+      "ContaDeConviteResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "nome"
+        ]
+      },
+      "ConviteAceitoResponseDto": {
+        "type": "object",
+        "properties": {
+          "usuario": {
+            "$ref": "#/components/schemas/ContaDeConviteResponseDto"
+          }
+        },
+        "required": [
+          "usuario"
+        ]
+      },
       "RegisterAlunoDto": {
         "type": "object",
         "properties": {
@@ -2887,6 +3141,17 @@
           "empresaSlug"
         ]
       },
+      "RegistroDeAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "usuario": {
+            "$ref": "#/components/schemas/UsuarioPublicoResponseDto"
+          }
+        },
+        "required": [
+          "usuario"
+        ]
+      },
       "CriarConviteDto": {
         "type": "object",
         "properties": {
@@ -2903,6 +3168,124 @@
             "type": "string"
           }
         }
+      },
+      "AlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "telefone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511999999999"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativo",
+              "inativo"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "email",
+          "telefone",
+          "nivelId",
+          "status"
+        ]
+      },
+      "AlunoPaginadoResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 137
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
+      "AlunoComSenhaTemporariaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "telefone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511999999999"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativo",
+              "inativo"
+            ]
+          },
+          "senhaTemporaria": {
+            "type": "string",
+            "example": "Xk4p-9Qm2"
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "email",
+          "telefone",
+          "nivelId",
+          "status",
+          "senhaTemporaria"
+        ]
       },
       "CreateStudentDto": {
         "type": "object",
@@ -2946,6 +3329,92 @@
           }
         }
       },
+      "ProfessorResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Carlos Lima"
+          },
+          "telefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativo",
+              "inativo"
+            ]
+          },
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "fotoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "telefone",
+          "email",
+          "status",
+          "usuarioId",
+          "fotoUrl",
+          "createdAt"
+        ]
+      },
+      "ProfessorPaginadoResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfessorResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 12
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
       "CreateTeacherDto": {
         "type": "object",
         "properties": {
@@ -2961,6 +3430,68 @@
         },
         "required": [
           "nome"
+        ]
+      },
+      "ProfessorComSenhaTemporariaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Carlos Lima"
+          },
+          "telefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativo",
+              "inativo"
+            ]
+          },
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "fotoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "senhaTemporaria": {
+            "type": "string",
+            "example": "Xk4p-9Qm2"
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "telefone",
+          "email",
+          "status",
+          "usuarioId",
+          "fotoUrl",
+          "createdAt",
+          "senhaTemporaria"
         ]
       },
       "UpdateTeacherDto": {
@@ -2983,6 +3514,38 @@
             ]
           }
         }
+      },
+      "NivelResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Iniciante"
+          },
+          "ordem": {
+            "type": "number",
+            "example": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "ordem",
+          "createdAt"
+        ]
       },
       "CreateLevelDto": {
         "type": "object",

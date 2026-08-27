@@ -9,11 +9,21 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import {
+  ProfessorComSenhaTemporariaResponseDto,
+  ProfessorPaginadoResponseDto,
+  ProfessorResponseDto,
+} from './dto/people-response.dto';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
@@ -27,6 +37,7 @@ export class TeachersController {
   constructor(private readonly teachersService: TeachersService) {}
 
   @Get()
+  @ApiOkResponse({ type: ProfessorPaginadoResponseDto })
   list(
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: PaginationQueryDto,
@@ -35,6 +46,7 @@ export class TeachersController {
   }
 
   @Post()
+  @ApiCreatedResponse({ type: ProfessorResponseDto })
   create(
     @CurrentUser() user: AccessTokenPayload,
     @Body() dto: CreateTeacherDto,
@@ -49,6 +61,7 @@ export class TeachersController {
    * de valer), e o verbo precisa avisar isso.
    */
   @Post(':id/acesso')
+  @ApiCreatedResponse({ type: ProfessorComSenhaTemporariaResponseDto })
   gerarAcesso(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -57,6 +70,7 @@ export class TeachersController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: ProfessorResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -65,6 +79,7 @@ export class TeachersController {
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: ProfessorResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,

@@ -11,6 +11,11 @@ import {
   senhaTemporariaExpiraEm,
 } from '../common/utils/senha-temporaria';
 import { FotoDeProfessorService } from './foto-de-professor.service';
+import {
+  ProfessorComSenhaTemporariaResponseDto,
+  ProfessorPaginadoResponseDto,
+  ProfessorResponseDto,
+} from './dto/people-response.dto';
 import type { CreateTeacherDto } from './dto/create-teacher.dto';
 import type { PaginationQueryDto } from './dto/pagination-query.dto';
 import type { UpdateTeacherDto } from './dto/update-teacher.dto';
@@ -70,7 +75,10 @@ export class TeachersService {
     return { ...resto, fotoUrl };
   }
 
-  async list(companyId: string, query: PaginationQueryDto) {
+  async list(
+    companyId: string,
+    query: PaginationQueryDto,
+  ): Promise<ProfessorPaginadoResponseDto> {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
@@ -96,7 +104,10 @@ export class TeachersService {
     };
   }
 
-  async create(companyId: string, dto: CreateTeacherDto) {
+  async create(
+    companyId: string,
+    dto: CreateTeacherDto,
+  ): Promise<ProfessorResponseDto> {
     const professor = await this.prisma.professor.create({
       data: {
         companyId,
@@ -112,7 +123,7 @@ export class TeachersService {
     return this.comFoto(professor);
   }
 
-  async findOne(companyId: string, id: string) {
+  async findOne(companyId: string, id: string): Promise<ProfessorResponseDto> {
     return this.comFoto(await this.carregarCru(companyId, id));
   }
 
@@ -135,7 +146,11 @@ export class TeachersService {
     return professor;
   }
 
-  async update(companyId: string, id: string, dto: UpdateTeacherDto) {
+  async update(
+    companyId: string,
+    id: string,
+    dto: UpdateTeacherDto,
+  ): Promise<ProfessorResponseDto> {
     const existente = await this.carregarCru(companyId, id);
 
     return this.prisma.$transaction(async (tx) => {
@@ -158,7 +173,12 @@ export class TeachersService {
         }
       }
 
-      return tx.professor.update({
+      // DEF-014 (SPEC-021/TASK-005) — **`comFoto` também aqui.** Este
+      // `return` devolvia a linha crua, com `fotoKey` e o `usuario`
+      // aninhado que o `include` carrega. A SPEC-018/TASK-004 trocou
+      // `list` e `findOne` por `comFoto` e passou reto por este; achou a
+      // amarra de retorno desta spec, não uma pessoa.
+      const atualizado = await tx.professor.update({
         where: { id },
         include: COM_FOTO_DA_CONTA,
         data: {
@@ -168,6 +188,7 @@ export class TeachersService {
           status: dto.status,
         },
       });
+      return this.comFoto(atualizado);
     });
   }
 
@@ -182,7 +203,10 @@ export class TeachersService {
    * Chamar duas vezes **rotaciona** a senha em vez de criar outra conta
    * (AC-003). E o caso real: o professor perdeu o papel onde anotou.
    */
-  async gerarAcesso(companyId: string, id: string) {
+  async gerarAcesso(
+    companyId: string,
+    id: string,
+  ): Promise<ProfessorComSenhaTemporariaResponseDto> {
     const professor = await this.carregarCru(companyId, id);
 
     if (!professor.email) {

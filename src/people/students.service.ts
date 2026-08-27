@@ -11,6 +11,11 @@ import {
 import * as bcrypt from 'bcrypt';
 import type { Prisma, VinculoAluno } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  AlunoComSenhaTemporariaResponseDto,
+  AlunoPaginadoResponseDto,
+  AlunoResponseDto,
+} from './dto/people-response.dto';
 import type { CreateStudentDto } from './dto/create-student.dto';
 import type { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import type { UpdateStudentDto } from './dto/update-student.dto';
@@ -70,7 +75,10 @@ export class StudentsService {
     });
   }
 
-  async list(companyId: string, query: ListStudentsQueryDto) {
+  async list(
+    companyId: string,
+    query: ListStudentsQueryDto,
+  ): Promise<AlunoPaginadoResponseDto> {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     // SPEC-009/AC-015: `?vinculo=pendente` é a fila de aprovação do admin.
@@ -98,7 +106,10 @@ export class StudentsService {
     };
   }
 
-  async create(companyId: string, dto: CreateStudentDto) {
+  async create(
+    companyId: string,
+    dto: CreateStudentDto,
+  ): Promise<AlunoComSenhaTemporariaResponseDto> {
     const emailExistente = await this.prisma.usuario.findUnique({
       where: { email: dto.email },
     });
@@ -160,7 +171,10 @@ export class StudentsService {
    * chegou a quem não devia, deixar as sessões antigas vivas anularia o
    * gesto.
    */
-  async regenerarSenhaTemporaria(companyId: string, id: string) {
+  async regenerarSenhaTemporaria(
+    companyId: string,
+    id: string,
+  ): Promise<AlunoComSenhaTemporariaResponseDto> {
     const aluno = await this.prisma.aluno.findFirst({
       where: { id, companyId },
       include: { usuario: true },
@@ -296,7 +310,7 @@ export class StudentsService {
     return this.toResponse(atualizado);
   }
 
-  async findOne(companyId: string, id: string) {
+  async findOne(companyId: string, id: string): Promise<AlunoResponseDto> {
     const aluno = await this.prisma.aluno.findFirst({
       where: { id, companyId },
       include: { usuario: true },
@@ -307,7 +321,11 @@ export class StudentsService {
     return this.toResponse(aluno);
   }
 
-  async update(companyId: string, id: string, dto: UpdateStudentDto) {
+  async update(
+    companyId: string,
+    id: string,
+    dto: UpdateStudentDto,
+  ): Promise<AlunoResponseDto> {
     const existente = await this.prisma.aluno.findFirst({
       where: { id, companyId },
     });
@@ -376,7 +394,7 @@ export class StudentsService {
     nivelId: string | null;
     status: string;
     usuario: { nome: string; email: string; telefone: string | null };
-  }) {
+  }): AlunoResponseDto {
     return {
       id: aluno.id,
       nome: aluno.usuario.nome,

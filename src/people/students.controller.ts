@@ -13,11 +13,21 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import {
+  AlunoComSenhaTemporariaResponseDto,
+  AlunoPaginadoResponseDto,
+  AlunoResponseDto,
+} from './dto/people-response.dto';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
@@ -63,6 +73,7 @@ export class StudentsController {
 
   // `?vinculo=pendente` é a fila de aprovação do admin (SPEC-009/AC-015).
   @Get()
+  @ApiOkResponse({ type: AlunoPaginadoResponseDto })
   list(
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: ListStudentsQueryDto,
@@ -77,6 +88,7 @@ export class StudentsController {
   // não houver e-mail transacional (GAP-004, ADR-013).
   @Post(':id/senha-temporaria')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: AlunoComSenhaTemporariaResponseDto })
   regenerarSenhaTemporaria(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -89,6 +101,7 @@ export class StudentsController {
 
   @Post(':id/aprovar')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: AlunoResponseDto })
   aprovar(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -102,6 +115,7 @@ export class StudentsController {
 
   @Post(':id/recusar')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: AlunoResponseDto })
   recusar(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -114,6 +128,7 @@ export class StudentsController {
   }
 
   @Post()
+  @ApiCreatedResponse({ type: AlunoComSenhaTemporariaResponseDto })
   create(
     @CurrentUser() user: AccessTokenPayload,
     @Body() dto: CreateStudentDto,
@@ -122,6 +137,7 @@ export class StudentsController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: AlunoResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,
@@ -130,6 +146,7 @@ export class StudentsController {
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: AlunoResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,

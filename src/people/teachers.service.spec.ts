@@ -229,4 +229,51 @@ describe('TeachersService', () => {
       expect(tx.refreshToken.updateMany).not.toHaveBeenCalled();
     });
   });
+
+  /**
+   * **DEF-014 (SPEC-021/TASK-005) — `update` devolvia a linha crua.**
+   *
+   * `comFoto()` existe, e o comentário dele diz por quê: antes da SPEC-018
+   * `list`, `findOne` e `update` devolviam a linha do Prisma, e com a
+   * TASK-004 escrevendo em `professores.foto_key` a **chave crua passaria a
+   * sair na resposta** — montar URL a partir dela contorna a conferência do
+   * `StorageService` (INV-037).
+   *
+   * A TASK-004 consertou `list` e `findOne` e **passou reto por `update`**.
+   * Ficou assim de 2026-08-25 até 2026-08-27, e nenhum teste reclamou:
+   * os dois testes acima provam a propagação de status (INV-013) e não olham
+   * o que volta.
+   *
+   * Quem achou foi a amarra desta spec — anotar o retorno com
+   * `ProfessorResponseDto` fez o `tsc` nomear o campo: *"Property 'fotoUrl'
+   * is missing... "*. **O contrato encontrou o vazamento antes de qualquer
+   * pessoa**, que é literalmente para isso que a SPEC-021 existe.
+   */
+  describe('DEF-014 — update não vaza a chave de storage', () => {
+    const cru = {
+      id: 'p1',
+      companyId: 'c1',
+      nome: 'Professor Um',
+      telefone: null,
+      email: 'prof@escola.demo',
+      status: 'ativo',
+      usuarioId: 'u9',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      fotoKey: 'empresas/c1/professores/p1/foto.jpg',
+      usuario: { fotoKey: 'usuarios/u9/foto.jpg' },
+    };
+
+    it('a resposta traz fotoUrl e NÃO traz fotoKey', async () => {
+      (prisma.professor.findFirst as jest.Mock).mockResolvedValue(cru);
+      tx.professor.update.mockResolvedValue(cru);
+
+      const res = await service.update('c1', 'p1', { nome: 'Outro' });
+
+      expect(res).not.toHaveProperty('fotoKey');
+      // O `usuario` aninhado também some: ele só entra no `include` para
+      // alimentar a INV-034, e carrega a chave da conta junto.
+      expect(res).not.toHaveProperty('usuario');
+      expect(res).toHaveProperty('fotoUrl');
+    });
+  });
 });

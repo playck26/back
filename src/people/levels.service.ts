@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NivelResponseDto } from './dto/people-response.dto';
 import type { CreateLevelDto } from './dto/create-level.dto';
 import type { UpdateLevelDto } from './dto/update-level.dto';
 
@@ -19,7 +20,10 @@ export class LevelsService {
     });
   }
 
-  async create(companyId: string, dto: CreateLevelDto) {
+  async create(
+    companyId: string,
+    dto: CreateLevelDto,
+  ): Promise<NivelResponseDto> {
     const existente = await this.prisma.nivel.findUnique({
       where: { companyId_nome: { companyId, nome: dto.nome } },
     });
@@ -32,7 +36,7 @@ export class LevelsService {
     });
   }
 
-  async findOne(companyId: string, id: string) {
+  async findOne(companyId: string, id: string): Promise<NivelResponseDto> {
     const nivel = await this.prisma.nivel.findFirst({
       where: { id, companyId },
     });
@@ -42,7 +46,11 @@ export class LevelsService {
     return nivel;
   }
 
-  async update(companyId: string, id: string, dto: UpdateLevelDto) {
+  async update(
+    companyId: string,
+    id: string,
+    dto: UpdateLevelDto,
+  ): Promise<NivelResponseDto> {
     await this.findOne(companyId, id);
 
     if (dto.nome) {

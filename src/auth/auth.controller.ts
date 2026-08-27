@@ -11,7 +11,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -21,6 +27,13 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { LimiteDeLogin } from '../common/throttle/contagem-por-ip';
 import { AuthService } from './auth.service';
 import { InvitesService } from './invites.service';
+import {
+  AccessTokenResponseDto,
+  ConviteAceitoResponseDto,
+  LoginResponseDto,
+  RegistroDeAlunoResponseDto,
+  UsuarioPublicoResponseDto,
+} from './dto/auth-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { AceitarConviteDto } from './dto/aceitar-convite.dto';
 import { RegisterAlunoDto } from './dto/register-aluno.dto';
@@ -41,6 +54,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @LimiteDeLogin()
+  @ApiOkResponse({ type: LoginResponseDto })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -52,6 +66,7 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: AccessTokenResponseDto })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -71,6 +86,7 @@ export class AuthController {
   // Bearer como alternativa quando ele existir.
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse()
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.authService.logout({
       refreshTokenRaw: this.readRefreshCookie(req),
@@ -86,6 +102,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @PermiteSenhaTemporaria()
   @ApiBearerAuth()
+  @ApiOkResponse({ type: AccessTokenResponseDto })
   async trocarSenha(
     @CurrentUser() user: AccessTokenPayload,
     @Body() dto: TrocarSenhaDto,
@@ -101,12 +118,14 @@ export class AuthController {
   @Post('aceitar-convite')
   @HttpCode(HttpStatus.CREATED)
   @LimiteDeLogin()
+  @ApiCreatedResponse({ type: ConviteAceitoResponseDto })
   aceitarConvite(@Body() dto: AceitarConviteDto) {
     return this.invites.aceitar(dto);
   }
 
   @Post('register-aluno')
   @LimiteDeLogin()
+  @ApiCreatedResponse({ type: RegistroDeAlunoResponseDto })
   registerAluno(@Body() dto: RegisterAlunoDto) {
     return this.authService.registerAluno(dto);
   }
@@ -117,6 +136,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @PermiteSenhaTemporaria()
   @ApiBearerAuth()
+  @ApiOkResponse({ type: UsuarioPublicoResponseDto })
   me(@CurrentUser() user: AccessTokenPayload) {
     return this.authService.me(user.sub);
   }
