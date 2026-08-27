@@ -410,9 +410,12 @@ model Turma {
   nivelId     String?     @map("nivel_id") @db.Uuid
   professorId String?     @map("professor_id") @db.Uuid
   quadraId    String      @map("quadra_id") @db.Uuid
-  diaSemana   Int         @map("dia_semana")
-  horaInicio  DateTime    @map("hora_inicio") @db.Time
-  horaFim     DateTime    @map("hora_fim") @db.Time
+  /// SPEC-019/TASK-003 — `dia_semana`, `hora_inicio` e `hora_fim` SAIRAM
+  /// daqui. A recorrencia da turma e `encontros`, e ela cabe 1..N dias.
+  ///
+  /// Elas nao ficaram como "o primeiro encontro": duas fontes para a mesma
+  /// pergunta e o que a SPEC-020 passou um dia inteiro desfazendo, e uma
+  /// turma de tres dias que expusesse so o primeiro mentiria sobre si mesma.
   capacidade  Int
   status      TurmaStatus @default(ativa)
   createdAt   DateTime    @default(now()) @map("created_at")

@@ -122,7 +122,10 @@ beforeAll(async () => {
     [OUTRA_TURMA, 'Outra Turma'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,dia_semana,hora_inicio,hora_fim,capacidade) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',1,TIME '08:00',TIME '09:00',20)`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20)`,
+    );
+    await q(
+      `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at) VALUES (gen_random_uuid(),'${id}',1,TIME '08:00',TIME '09:00',now())`,
     );
   }
   // 10 alunos, nomes em ordem alfabética estável (Aluno 00..09).

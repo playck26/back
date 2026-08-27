@@ -126,7 +126,6 @@ export class ClassesService {
     }
 
     const ocorrencias = this.ocorrenciasDosEncontros(dto.encontros);
-    const primeiro = dto.encontros[0];
 
     // NFR-001: turma + geração de ocupações futuras é all-or-nothing —
     // qualquer conflito (AC-001) ou falha aborta a transação inteira, a
@@ -139,14 +138,9 @@ export class ClassesService {
           nivelId: dto.nivelId,
           professorId: dto.professorId,
           quadraId: dto.quadraId,
-          // **Escrita dupla, e é temporária** (fase EXPAND). As três colunas
-          // ainda são `NOT NULL`; elas só saem na TASK-003. O PRIMEIRO
-          // encontro vai para elas — não porque ele seja especial, mas
-          // porque a coluna cabe um só, e deixá-la desatualizada durante a
-          // transição criaria a divergência que esta spec veio desfazer.
-          diaSemana: primeiro.diaSemana,
-          horaInicio: parseTimeOnly(primeiro.horaInicio),
-          horaFim: parseTimeOnly(primeiro.horaFim),
+          // A escrita dupla viveu entre a TASK-002 e a TASK-003, e acabou:
+          // `dia_semana`, `hora_inicio` e `hora_fim` não existem mais em
+          // `turmas`. A recorrência é `encontros`, e ela cabe 1..N dias.
           capacidade: dto.capacidade,
           encontros: {
             create: dto.encontros.map((encontro) => ({
@@ -251,9 +245,6 @@ export class ClassesService {
     // muda, cancelar as ocupações futuras antigas e gerar as novas
     // acontece na mesma transação da atualização da turma.
     const turma = await this.prisma.$transaction(async (tx) => {
-      // `dto.encontros` definido implica `mudouHorario`, que implica
-      // `encontros` carregado e já validado (>= 1 item).
-      const primeiro = dto.encontros?.[0];
       const atualizada = await tx.turma.update({
         where: { id },
         data: {
@@ -263,13 +254,9 @@ export class ClassesService {
           quadraId: dto.quadraId,
           capacidade: dto.capacidade,
           status: dto.status,
-          // Escrita dupla temporária (fase EXPAND) — ver `create`.
-          ...(dto.encontros === undefined || primeiro === undefined
+          ...(dto.encontros === undefined
             ? {}
             : {
-                diaSemana: primeiro.diaSemana,
-                horaInicio: parseTimeOnly(primeiro.horaInicio),
-                horaFim: parseTimeOnly(primeiro.horaFim),
                 // **Substitui a lista inteira**, na mesma transação. Não há
                 // edição parcial de recorrência: ver `UpdateClassDto`.
                 encontros: {
@@ -585,11 +572,14 @@ export class ClassesService {
         encontros: ORDEM_DOS_ENCONTROS,
         _count: { select: { alunos: true } },
       },
-      // A ordenação da LISTA continua pelas colunas antigas até a TASK-003:
-      // ordenar por coluna de tabela filha exigiria join, e a fase expand
-      // mantém as duas em sincronia. Na contract isto vira ordenação por
-      // nome, que é o que sobra e é estável.
-      orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }],
+      // **SPEC-019/TASK-003 — ordena por NOME.** As colunas pelas quais esta
+      // lista ordenava não existem mais.
+      //
+      // Ordenar por "o primeiro encontro" exigiria join com a filha e
+      // escolheria um critério que a turma não tem: uma turma de terça e
+      // sábado não é "uma turma de terça". Nome é estável, previsível, e é o
+      // que o professor usa para achar a turma.
+      orderBy: { nome: 'asc' },
     });
 
     return turmas.map((turma) => ({

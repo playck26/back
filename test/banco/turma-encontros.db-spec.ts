@@ -71,11 +71,10 @@ async function semear(): Promise<void> {
       companyId: EMPRESA,
       nome: 'T',
       quadraId: QUADRA,
-      // Fase EXPAND: as três colunas antigas ainda existem e são obrigatórias.
-      // Elas só saem na TASK-003.
-      diaSemana: 2,
-      horaInicio: hora('18:00'),
-      horaFim: hora('19:00'),
+      // SPEC-019/TASK-003 — as três colunas antigas saíram. A turma nasce
+      // aqui **sem encontro nenhum**, de propósito: cada teste cria os que
+      // precisa, e "turma sem encontro" é exatamente o estado que a INV-051
+      // proíbe e que o banco NÃO impede — ver o cabeçalho deste arquivo.
       capacidade: 10,
     },
   });
@@ -211,55 +210,38 @@ describe('SPEC-019/TASK-001 — `turma_encontros` contra Postgres real', () => {
     });
   });
 
-  describe('o backfill da migration', () => {
-    it('toda turma que já existia ganhou exatamente UM encontro, igual ao horário antigo', async () => {
-      // A turma semeada aqui nasce DEPOIS da migration, então ela não tem
-      // encontro — o backfill não a alcança. O que este teste prova é o
-      // formato do que o backfill produz, contra uma turma criada do mesmo
-      // jeito que as antigas: um encontro, com os três valores copiados.
-      const turma = await prisma.turma.findUniqueOrThrow({
-        where: { id: TURMA },
-      });
-
-      await prisma.$executeRaw`
-        INSERT INTO turma_encontros (id, turma_id, dia_semana, hora_inicio, hora_fim, created_at)
-        SELECT gen_random_uuid(), t.id, t.dia_semana, t.hora_inicio, t.hora_fim, now()
-        FROM turmas t
-        WHERE t.id = ${TURMA}::uuid
-          AND NOT EXISTS (SELECT 1 FROM turma_encontros e WHERE e.turma_id = t.id)
-      `;
-
-      const encontros = await prisma.turmaEncontro.findMany({
-        where: { turmaId: TURMA },
-      });
-
-      expect(encontros).toHaveLength(1);
-      expect(encontros[0].diaSemana).toBe(turma.diaSemana);
-      expect(encontros[0].horaInicio.getTime()).toBe(
-        turma.horaInicio.getTime(),
+  /**
+   * **Os dois testes de backfill que viviam aqui saíram na TASK-003, e não
+   * por descuido.**
+   *
+   * Eles liam as três colunas antigas de `turmas` para conferir a cópia —
+   * colunas que a contract derrubou. Reescrevê-los sem elas seria escrever
+   * um teste que não testa o backfill.
+   *
+   * **A prova não sumiu: mudou de lugar, e para um lugar melhor.** A própria
+   * migration de expand termina com um bloco `DO $$` que ABORTA se alguma
+   * turma ficar sem encontro, e ele roda em TODO `migrate deploy` sobre banco
+   * novo — incluindo o do CI. Um teste depois provaria o mesmo, um passo mais
+   * tarde e com menos consequência.
+   */
+  describe(`a contract, e o que ela deixou para trás`, () => {
+    it(`as três colunas antigas não existem mais em turmas`, async () => {
+      const linhas = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'turmas'
+           AND column_name IN ('dia_semana', 'hora_inicio', 'hora_fim')`,
       );
-      expect(encontros[0].horaFim.getTime()).toBe(turma.horaFim.getTime());
+
+      expect(linhas).toHaveLength(0);
     });
 
-    it('e rodar o backfill duas vezes NÃO duplica', async () => {
-      // O `WHERE NOT EXISTS` da migration existe por isto. Backfill que
-      // duplica em silêncio é pior que backfill que não roda: a turma
-      // passaria a ter dois encontros idênticos e geraria o dobro de
-      // ocupações na primeira edição.
-      const backfill = () => prisma.$executeRaw`
-        INSERT INTO turma_encontros (id, turma_id, dia_semana, hora_inicio, hora_fim, created_at)
-        SELECT gen_random_uuid(), t.id, t.dia_semana, t.hora_inicio, t.hora_fim, now()
-        FROM turmas t
-        WHERE t.id = ${TURMA}::uuid
-          AND NOT EXISTS (SELECT 1 FROM turma_encontros e WHERE e.turma_id = t.id)
-      `;
-
-      await backfill();
-      await backfill();
+    it(`a recorrência agora é a filha, com N linhas por turma`, async () => {
+      await encontro({ diaSemana: 2, inicio: '18:00', fim: '19:00' });
+      await encontro({ diaSemana: 6, inicio: '07:00', fim: '08:30' });
 
       expect(
         await prisma.turmaEncontro.count({ where: { turmaId: TURMA } }),
-      ).toBe(1);
+      ).toBe(2);
     });
   });
 });

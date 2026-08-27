@@ -100,7 +100,10 @@ async function seed(): Promise<void> {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${ids.quadra}','${ids.empresa}','Q1',(SELECT id FROM esportes_de_quadra WHERE company_id='${ids.empresa}' AND nome='Tenis'),100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,dia_semana,hora_inicio,hora_fim,capacidade) VALUES ('${ids.turma}','${ids.empresa}','T1','${ids.quadra}','${ids.prof1}',1,TIME '08:00',TIME '09:00',10)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade) VALUES ('${ids.turma}','${ids.empresa}','T1','${ids.quadra}','${ids.prof1}',10)`,
+  );
+  await q(
+    `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at) VALUES (gen_random_uuid(),'${ids.turma}',1,TIME '08:00',TIME '09:00',now())`,
   );
   for (const [n, a, u] of [
     ['1', ids.a1, ids.u1],

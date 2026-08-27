@@ -83,7 +83,10 @@ async function seedEtapa1() {
     },
   });
 
-  const superAdminSenhaHash = await bcrypt.hash(senhaObrigatoria('SEED_SUPER_ADMIN_SENHA'), 12);
+  const superAdminSenhaHash = await bcrypt.hash(
+    senhaObrigatoria('SEED_SUPER_ADMIN_SENHA'),
+    12,
+  );
   await prisma.usuario.upsert({
     where: { email: SUPER_ADMIN_EMAIL },
     update: {},
@@ -97,7 +100,9 @@ async function seedEtapa1() {
     },
   });
 
-  console.log(`[seed] etapa 1 ok — empresa "${empresa.nome}" (${empresa.id}), admin ${ADMIN_DEMO_EMAIL}, super admin ${SUPER_ADMIN_EMAIL}`);
+  console.log(
+    `[seed] etapa 1 ok — empresa "${empresa.nome}" (${empresa.id}), admin ${ADMIN_DEMO_EMAIL}, super admin ${SUPER_ADMIN_EMAIL}`,
+  );
 
   return empresa;
 }
@@ -132,7 +137,9 @@ async function seedEtapa2(companyId: string) {
     }
   }
 
-  console.log(`[seed] etapa 2 ok — ${quadrasDemo.length} quadras para a empresa demo`);
+  console.log(
+    `[seed] etapa 2 ok — ${quadrasDemo.length} quadras para a empresa demo`,
+  );
 }
 
 // Etapa 3 (SPEC-003, fatia de turmas): 2 niveis, 1 professor, 3
@@ -241,10 +248,26 @@ async function seedEtapa3(companyId: string) {
         nivelId: niveisIds[0],
         professorId: professor.id,
         quadraId: quadra.id,
-        diaSemana: 2,
-        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
-        horaFim: new Date('1970-01-01T15:00:00.000Z'),
         capacidade: 6,
+        // SPEC-019/TASK-003 — a recorrência saiu de `turmas` e virou
+        // `encontros`. **A turma demo nasce com DOIS dias**, de propósito:
+        // uma turma de um dia só exercitaria o caso que já funcionava antes
+        // desta spec, e o dado de demonstração deve mostrar o que o produto
+        // faz de novo.
+        encontros: {
+          create: [
+            {
+              diaSemana: 2,
+              horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+              horaFim: new Date('1970-01-01T15:00:00.000Z'),
+            },
+            {
+              diaSemana: 5,
+              horaInicio: new Date('1970-01-01T19:00:00.000Z'),
+              horaFim: new Date('1970-01-01T20:00:00.000Z'),
+            },
+          ],
+        },
       },
     });
   }

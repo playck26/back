@@ -614,13 +614,23 @@ describe('WorkerDeExclusao contra Postgres real', () => {
         quadra,
         empresa,
       );
+      // SPEC-019/TASK-003 — `dia_semana`/`hora_inicio`/`hora_fim` saíram de
+      // `turmas`. A recorrência é `turma_encontros`, e ela vem junto: turma
+      // sem encontro é o estado que a INV-051 proíbe, e a migration de
+      // contract **aborta** se achar uma.
       await A.$executeRawUnsafe(
-        `INSERT INTO turmas (id,company_id,quadra_id,nome,dia_semana,hora_inicio,hora_fim,capacidade)
-         VALUES ($1::uuid,$2::uuid,$3::uuid,'T',1,'08:00','09:00',10)
+        `INSERT INTO turmas (id,company_id,quadra_id,nome,capacidade)
+         VALUES ($1::uuid,$2::uuid,$3::uuid,'T',10)
          ON CONFLICT (id) DO NOTHING`,
         turma,
         empresa,
         quadra,
+      );
+      await A.$executeRawUnsafe(
+        `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at)
+         SELECT gen_random_uuid(),$1::uuid,1,TIME '08:00',TIME '09:00',now()
+         WHERE NOT EXISTS (SELECT 1 FROM turma_encontros WHERE turma_id = $1::uuid)`,
+        turma,
       );
 
       let liberar!: () => void;
