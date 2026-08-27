@@ -597,8 +597,20 @@ describe('WorkerDeExclusao contra Postgres real', () => {
         empresa,
       );
       await A.$executeRawUnsafe(
-        `INSERT INTO quadras (id,company_id,nome,esporte,preco_hora)
-         VALUES ($1::uuid,$2::uuid,'Q','tenis',80) ON CONFLICT (id) DO NOTHING`,
+        `-- SPEC-020/TASK-004 — quadra sem esporte deixou de existir. A opcao vem
+     -- antes, e precisa ser da MESMA empresa (a FK e composta).
+         INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at)
+         SELECT gen_random_uuid(), $1::uuid, 'Tenis', 0, now()
+         WHERE NOT EXISTS (
+           SELECT 1 FROM esportes_de_quadra WHERE company_id = $1::uuid AND nome = 'Tenis'
+         )`,
+        empresa,
+      );
+      await A.$executeRawUnsafe(
+        `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora)
+         VALUES ($1::uuid,$2::uuid,'Q',
+                 (SELECT id FROM esportes_de_quadra WHERE company_id = $2::uuid AND nome = 'Tenis'),
+                 80) ON CONFLICT (id) DO NOTHING`,
         quadra,
         empresa,
       );
@@ -639,6 +651,14 @@ describe('WorkerDeExclusao contra Postgres real', () => {
       await A.$executeRawUnsafe(
         `DELETE FROM quadras WHERE id = $1::uuid`,
         quadra,
+      );
+      // SPEC-020/TASK-004 — a opção de catálogo tem FK `RESTRICT` para a
+      // empresa, então ela precisa sair ANTES. É a mesma armadilha que
+      // derrubou a `matriz-raiz` na TASK-001: tabela nova por empresa
+      // bloqueia o `DELETE FROM empresas` de qualquer limpeza escrita à mão.
+      await A.$executeRawUnsafe(
+        `DELETE FROM esportes_de_quadra WHERE company_id = $1::uuid`,
+        empresa,
       );
       await A.$executeRawUnsafe(
         `DELETE FROM empresas WHERE id = $1::uuid`,

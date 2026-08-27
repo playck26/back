@@ -51,6 +51,12 @@ const linhaFalsa = () => ({
   email: 'a@b.c',
   telefone: null,
   esporte: 'tenis',
+  // SPEC-020/TASK-008 — a resposta de empresa deriva `esportes` do catálogo,
+  // e o serviço não tolera a relação ausente de propósito (tolerar esconderia
+  // um `include` esquecido). Aqui ela é ruído necessário: a INV-041 não fala
+  // de esporte nenhum, mas sem isto o teste cai por motivo alheio a ela — que
+  // é exatamente o que o comentário acima deste objeto adverte.
+  esportesQuadra: [] as { nome: string }[],
   slug: 'alguem',
   status: 'inativo',
   nivelId: null,

@@ -73,7 +73,10 @@ model Empresa {
   /// SPEC-018/TASK-001 — chave do logo no storage (SPEC-017). Publica.
   /// Precedencia na leitura: `logoKey` quando existir, senao `logoUrl`.
   logoKey             String?       @map("logo_key")
-  esportes            String[]
+  /// SPEC-020/TASK-004 — `esportes String[]` saiu daqui. A INV-057 pede UMA
+  /// lista de esportes por empresa, e ela e `esportesQuadra` (o catalogo).
+  /// Duas listas que nao se falam era o estado que esta spec veio desfazer:
+  /// o clube nascia com a coluna preenchida e o catalogo vazio.
   status              EmpresaStatus @default(ativa)
   // SPEC-009/REQ-006: a empresa decide se aceita auto-cadastro publico.
   // Ligado por padrao (ADR-013); seguro porque quem se auto-cadastra
@@ -82,19 +85,19 @@ model Empresa {
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
-  usuarios        Usuario[]
-  convites        ConviteAluno[]
-  horarios        HorarioFuncionamento[]
-  pedidosReserva  PedidoReserva[]
-  niveis          Nivel[]
-  esportesQuadra  EsporteDeQuadra[]
+  usuarios         Usuario[]
+  convites         ConviteAluno[]
+  horarios         HorarioFuncionamento[]
+  pedidosReserva   PedidoReserva[]
+  niveis           Nivel[]
+  esportesQuadra   EsporteDeQuadra[]
   categoriasQuadra CategoriaDeQuadra[]
-  professores     Professor[]
-  alunos          Aluno[]
-  quadras         Quadra[]
-  ocupacoes       OcupacaoQuadra[]
-  turmas          Turma[]
-  configPagamento ConfigPagamentoEmpresa?
+  professores      Professor[]
+  alunos           Aluno[]
+  quadras          Quadra[]
+  ocupacoes        OcupacaoQuadra[]
+  turmas           Turma[]
+  configPagamento  ConfigPagamentoEmpresa?
 
   presencas Presenca[]
   chamadas  Chamada[]
@@ -124,14 +127,14 @@ model Usuario {
   createdAt               DateTime      @default(now()) @map("created_at")
   updatedAt               DateTime      @updatedAt @map("updated_at")
 
-  empresa              Empresa?       @relation(fields: [companyId], references: [id])
-  refreshTokens        RefreshToken[]
-  aluno                Aluno?
-  professor            Professor?
-  convitesCriados      ConviteAluno[] @relation("ConviteCriadoPor")
-  presencasRegistradas Presenca[]     @relation("PresencaRegistradaPor")
-  chamadasRegistradas   Chamada[]      @relation("ChamadaRegistradaPor")
-  imagensDeQuadraConfirmadas Quadra[]  @relation("QuadraImagemConfirmadaPor")
+  empresa                    Empresa?       @relation(fields: [companyId], references: [id])
+  refreshTokens              RefreshToken[]
+  aluno                      Aluno?
+  professor                  Professor?
+  convitesCriados            ConviteAluno[] @relation("ConviteCriadoPor")
+  presencasRegistradas       Presenca[]     @relation("PresencaRegistradaPor")
+  chamadasRegistradas        Chamada[]      @relation("ChamadaRegistradaPor")
+  imagensDeQuadraConfirmadas Quadra[]       @relation("QuadraImagemConfirmadaPor")
 
   @@index([companyId])
   @@map("usuarios")
@@ -277,9 +280,6 @@ model Quadra {
   id        String       @id @default(uuid()) @db.Uuid
   companyId String       @map("company_id") @db.Uuid
   nome      String
-  /// SPEC-020/TASK-004 — sai quando o codigo passar a escrever `esporteId`.
-  /// Ate la as duas convivem, e a de texto continua sendo a fonte.
-  esporte   String
   precoHora Decimal      @map("preco_hora") @db.Decimal(10, 2)
   status    QuadraStatus @default(ativa)
   createdAt DateTime     @default(now()) @map("created_at")
@@ -293,28 +293,32 @@ model Quadra {
   imagemConfirmadaPor String?   @map("imagem_confirmada_por") @db.Uuid
   imagemConfirmadaEm  DateTime? @map("imagem_confirmada_em")
 
-  /// SPEC-020 — nulaveis na fase EXPAND. `esporte_id` vira obrigatoria
-  /// so na contract (TASK-004), depois que o codigo escrever nela: torna-la
-  /// NOT NULL agora quebraria a criacao de quadra, que ainda manda texto.
-  esporteId   String? @map("esporte_id") @db.Uuid
+  /// SPEC-020/TASK-004 — a fase CONTRACT fechou: `esporte_id` e obrigatoria
+  /// e a coluna de texto nao existe mais. Toda quadra aponta para o catalogo
+  /// da propria empresa, garantido pela FK composta abaixo.
+  esporteId   String  @map("esporte_id") @db.Uuid
+  /// Opcional por decisao de produto (AC-006): nem todo clube classifica
+  /// piso, e obrigar criaria uma categoria "Outros" em todo clube que nao
+  /// classifica — "Outros" como filtro e ruido.
   categoriaId String? @map("categoria_id") @db.Uuid
 
-  empresa     Empresa                @relation(fields: [companyId], references: [id])
+  empresa      Empresa                @relation(fields: [companyId], references: [id])
   /// INV-054 — **FK COMPOSTA**, e e ela que impede apontar para o esporte de
   /// outra empresa. FK simples nao saberia de `company_id`; aqui, como a
   /// coluna de escopo da quadra E a mesma da FK, o banco so fecha o vinculo
   /// dentro da propria empresa. Sem trigger, sem codigo.
   ///
-  /// Com `esporte_id` nulo a FK nao dispara (MATCH SIMPLE), que e o que
-  /// permite a fase expand conviver com as quadras antigas.
-  esporteRef   EsporteDeQuadra?   @relation(fields: [companyId, esporteId], references: [companyId, id], map: "quadras_esporte_fkey")
-  categoriaRef CategoriaDeQuadra? @relation(fields: [companyId, categoriaId], references: [companyId, id], map: "quadras_categoria_fkey")
+  /// Depois da TASK-004 `esporte_id` e NOT NULL, entao a FK sempre dispara.
+  /// `categoria_id` continua nulavel, e ali o MATCH SIMPLE segue valendo:
+  /// quadra sem categoria nao tem vinculo a conferir.
+  esporteRef   EsporteDeQuadra        @relation(fields: [companyId, esporteId], references: [companyId, id], map: "quadras_esporte_fkey")
+  categoriaRef CategoriaDeQuadra?     @relation(fields: [companyId, categoriaId], references: [companyId, id], map: "quadras_categoria_fkey")
   /// `Restrict`, igual a `chamadas.registrada_por`: a confirmacao vale por
   /// ter nome de gente, entao apagar a conta nao pode apagar o autor.
-  confirmante Usuario?               @relation("QuadraImagemConfirmadaPor", fields: [imagemConfirmadaPor], references: [id], onDelete: Restrict)
-  ocupacoes   OcupacaoQuadra[]
-  turmas      Turma[]
-  horarios    HorarioFuncionamento[]
+  confirmante  Usuario?               @relation("QuadraImagemConfirmadaPor", fields: [imagemConfirmadaPor], references: [id], onDelete: Restrict)
+  ocupacoes    OcupacaoQuadra[]
+  turmas       Turma[]
+  horarios     HorarioFuncionamento[]
 
   @@index([companyId])
   @@index([imagemConfirmadaPor])

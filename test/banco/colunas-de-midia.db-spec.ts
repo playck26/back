@@ -43,8 +43,10 @@ async function semear(): Promise<void> {
   ];
   for (const [id, nome, slug] of empresas) {
     await sql(
-      `INSERT INTO empresas (id, nome, slug, esportes, status, updated_at)
-       VALUES ($1::uuid, $2, $3, ARRAY['tenis'], 'ativa', now())`,
+      // SPEC-020/TASK-004 — `empresas.esportes` não existe mais. A lista de
+      // esportes da empresa é o catálogo (INV-057).
+      `INSERT INTO empresas (id, nome, slug, status, updated_at)
+       VALUES ($1::uuid, $2, $3, 'ativa', now())`,
       id,
       nome,
       slug,
@@ -69,8 +71,21 @@ async function semear(): Promise<void> {
   );
 
   await sql(
-    `INSERT INTO quadras (id, company_id, nome, esporte, preco_hora, status)
-     VALUES ($1::uuid, $2::uuid, 'Quadra 018', 'tenis', 100.00, 'ativa')`,
+    `-- SPEC-020/TASK-004 — quadra sem esporte deixou de existir. A opcao vem
+     -- antes, e precisa ser da MESMA empresa (a FK e composta).
+     INSERT INTO esportes_de_quadra (id, company_id, nome, ordem, created_at)
+     SELECT gen_random_uuid(), $1::uuid, 'Tenis', 0, now()
+     WHERE NOT EXISTS (
+       SELECT 1 FROM esportes_de_quadra WHERE company_id = $1::uuid AND nome = 'Tenis'
+     )`,
+    EMPRESA_A,
+  );
+
+  await sql(
+    `INSERT INTO quadras (id, company_id, nome, esporte_id, preco_hora, status)
+     VALUES ($1::uuid, $2::uuid, 'Quadra 018',
+             (SELECT id FROM esportes_de_quadra WHERE company_id = $2::uuid AND nome = 'Tenis'),
+             100.00, 'ativa')`,
     QUADRA_A,
     EMPRESA_A,
   );

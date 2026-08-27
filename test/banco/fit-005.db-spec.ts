@@ -109,8 +109,13 @@ beforeAll(async () => {
   await q(
     `INSERT INTO professores (id,company_id,nome,usuario_id) VALUES ('${PROF}','${EMPRESA}','Prof','${UPROF}')`,
   );
+  // SPEC-020/TASK-004 — quadra sem esporte deixou de existir. A opcao vem
+  // antes, e precisa ser da MESMA empresa (a FK e composta).
   await q(
-    `INSERT INTO quadras (id,company_id,nome,esporte,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Q1','tenis',100)`,
+    `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
+  );
+  await q(
+    `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Q1',(SELECT id FROM esportes_de_quadra WHERE company_id='${EMPRESA}' AND nome='Tenis'),100)`,
   );
   for (const [id, nome] of [
     [TURMA, 'Turma FIT'],

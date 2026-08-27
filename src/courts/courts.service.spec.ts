@@ -153,10 +153,12 @@ describe('CourtsService', () => {
         esporteId: ESPORTE,
         precoHora: 100,
       });
-      // **Escrita dupla, e é o que este teste guarda.** `quadras.esporte`
-      // ainda é NOT NULL até a TASK-004; parar de escrevê-la agora quebra a
-      // criação de quadra na primeira requisição.
-      expect(chamada.data.esporte).toBe('tenis');
+      // **Este teste inverteu na TASK-004.** Ele guardava a escrita dupla:
+      // `quadras.esporte` era NOT NULL, e parar de escrevê-la quebraria a
+      // criação na primeira requisição. A contract derrubou a coluna, e
+      // agora escrever nela é que quebraria — o Prisma recusa argumento
+      // desconhecido.
+      expect(chamada.data).not.toHaveProperty('esporte');
       expect(result.precoHora).toBe(100);
     });
 

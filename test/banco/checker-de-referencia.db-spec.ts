@@ -88,12 +88,17 @@ async function semearTudo(): Promise<void> {
       fotoKey: KEY_PROFESSOR,
     },
   });
+  // SPEC-020/TASK-004 — quadra sem esporte deixou de existir: `esporte_id` é
+  // `NOT NULL` e a FK composta exige que o esporte seja da própria empresa.
+  const esporte = await prisma.esporteDeQuadra.create({
+    data: { companyId: EMPRESA, nome: 'Tênis', ordem: 0 },
+  });
   await prisma.quadra.create({
     data: {
       id: QUADRA,
       companyId: EMPRESA,
       nome: 'Quadra',
-      esporte: 'tenis',
+      esporteId: esporte.id,
       precoHora: 100,
       status: 'ativa',
       imagemKey: KEY_QUADRA,

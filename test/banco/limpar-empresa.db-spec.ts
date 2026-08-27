@@ -36,9 +36,18 @@ async function montarEmpresa(id: string, nome: string): Promise<void> {
     `gestor@${nome}.local`,
     id,
   );
+  // SPEC-020/TASK-004 — quadra sem esporte deixou de existir. A opcao vem
+  // antes, e precisa ser da MESMA empresa (a FK e composta).
   await q(
-    `INSERT INTO quadras (id,company_id,nome,esporte,preco_hora)
-     VALUES (gen_random_uuid(),$1::uuid,'Quadra 1','tenis',80)`,
+    `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at)
+     VALUES (gen_random_uuid(),$1::uuid,'Tenis',0,now())`,
+    id,
+  );
+  await q(
+    `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora)
+     VALUES (gen_random_uuid(),$1::uuid,'Quadra 1',
+             (SELECT id FROM esportes_de_quadra WHERE company_id=$1::uuid AND nome='Tenis'),
+             80)`,
     id,
   );
   await q(

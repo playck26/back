@@ -59,7 +59,9 @@ async function seedEtapa1() {
     create: {
       nome: EMPRESA_QA_NOME,
       slug: EMPRESA_QA_SLUG,
-      esportes: ['tenis'],
+      // SPEC-020/TASK-004 — `esportes: ['tenis']` saiu: a coluna não existe
+      // mais. O catálogo é a lista, e ele nasce junto (INV-057).
+      esportesQuadra: { create: [{ nome: 'Tênis', ordem: 0 }] },
       status: 'ativa',
       // Empresa de QA não expõe link público de auto-cadastro: dado de
       // teste não deve ser alcançável por quem não conhece o ambiente.
@@ -105,9 +107,18 @@ async function seedEtapa1() {
 // find-then-create (não dá pra usar prisma.quadra.upsert sem uma chave
 // única de verdade).
 async function seedEtapa2(companyId: string) {
+  // SPEC-020/TASK-004 — quadra sem esporte deixou de existir: `esporte_id` é
+  // `NOT NULL` e aponta para o catálogo da própria empresa (FK composta).
+  // O seed precisa da opção antes da quadra, e não de um texto.
+  const esporte = await prisma.esporteDeQuadra.upsert({
+    where: { companyId_nome: { companyId, nome: 'Tênis' } },
+    update: {},
+    create: { companyId, nome: 'Tênis', ordem: 0 },
+  });
+
   const quadrasDemo = [
-    { nome: 'Quadra 1', esporte: 'tenis', precoHora: 80 },
-    { nome: 'Quadra 2', esporte: 'tenis', precoHora: 80 },
+    { nome: 'Quadra 1', precoHora: 80 },
+    { nome: 'Quadra 2', precoHora: 80 },
   ];
 
   for (const dadosQuadra of quadrasDemo) {
@@ -115,7 +126,9 @@ async function seedEtapa2(companyId: string) {
       where: { companyId, nome: dadosQuadra.nome },
     });
     if (!existente) {
-      await prisma.quadra.create({ data: { companyId, ...dadosQuadra } });
+      await prisma.quadra.create({
+        data: { companyId, esporteId: esporte.id, ...dadosQuadra },
+      });
     }
   }
 

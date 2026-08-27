@@ -144,12 +144,10 @@ export class CourtsService {
       data: {
         companyId,
         nome: dto.nome,
-        // **Escrita dupla, e é temporária.** `quadras.esporte` ainda é
-        // `NOT NULL` — a coluna só sai na TASK-004 (contract). Deixá-la
-        // desatualizada durante a transição seria criar a mesma
-        // divergência que esta spec veio desfazer, só que dentro da
-        // própria linha.
-        esporte: esporte.nome,
+        // A escrita dupla em `quadras.esporte` acabou na TASK-004: a coluna
+        // de texto não existe mais. **Ela era a origem de toda esta spec** —
+        // texto livre digitado no Admin, e a barra de filtro do app do aluno
+        // montada com os valores distintos dela.
         esporteId: esporte.id,
         categoriaId: dto.categoriaId ?? null,
         precoHora: dto.precoHora,
@@ -186,10 +184,10 @@ export class CourtsService {
       where: { id },
       data: {
         nome: dto.nome,
-        // Escrita dupla enquanto a coluna de texto existir — ver `create`.
-        ...(esporte === undefined
-          ? {}
-          : { esporte: esporte.nome, esporteId: esporte.id }),
+        // `undefined` significa "não mexe no esporte". Não existe caminho
+        // para LIMPAR o esporte, e é por desenho: desde a TASK-004 a coluna
+        // é `NOT NULL` no banco.
+        ...(esporte === undefined ? {} : { esporteId: esporte.id }),
         // `null` explícito LIMPA; ausente não mexe. São coisas diferentes,
         // e é o que permite desclassificar uma quadra.
         ...(dto.categoriaId === undefined
@@ -826,7 +824,6 @@ export class CourtsService {
     id: string;
     companyId: string;
     nome: string;
-    esporte: string;
     precoHora: Prisma.Decimal;
     status: string;
     createdAt: Date;

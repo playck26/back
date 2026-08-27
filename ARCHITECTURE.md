@@ -220,6 +220,17 @@ unicidade por empresa e a recusa de apagar opção em uso.
 
 **A própria migration carrega a prova da AC-010:** um bloco `DO` que
 **aborta** se alguma quadra com esporte preenchido ficar sem `esporte_id`.
+
+**A contract (TASK-004) fechou em 2026-08-26**, e a assertiva dela é mais
+dura: aborta se **qualquer** quadra ficar sem `esporte_id`, incluindo as de
+texto em branco que a expand tolerava. **Ela abortou de verdade** ao rodar
+contra o harness, nomeando a quadra — que é a diferença entre "3 quadras sem
+esporte" (manda procurar) e o nome (manda consertar).
+
+As duas colunas de texto saíram: `quadras.esporte` e `empresas.esportes`.
+E **o `openapi.json` não mudou nem um byte** — a TASK-008 já tinha trocado a
+fonte de `esportes` na resposta de empresa mantendo a forma `string[]`, o
+que é exatamente o que permitiu derrubar a coluna sem tocar no SAdmin.
 Migration que deixa a afirmação para um teste rodar depois já aplicou o dano
 quando alguém descobre.
 

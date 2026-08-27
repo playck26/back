@@ -19,10 +19,19 @@ export interface TxMock {
   conviteAluno: { updateMany: jest.Mock; findUniqueOrThrow: jest.Mock };
   // `findUnique` entrou em SPEC-009:TASK-000: `CompaniesService.create`
   // gera `slug` único e checa colisão dentro da própria transação.
-  empresa: { create: jest.Mock; findUnique: jest.Mock };
+  empresa: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
   // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias, na mesma
   // transação da criação.
   horarioFuncionamento: { createMany: jest.Mock };
+  // SPEC-020/TASK-008: editar a empresa sincroniza o catálogo de esportes
+  // DENTRO da transação — sincronizar e gravar acontecem juntos ou não
+  // acontecem.
+  esporteDeQuadra: {
+    findMany: jest.Mock;
+    create: jest.Mock;
+    deleteMany: jest.Mock;
+  };
+  quadra: { findMany: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -84,7 +93,18 @@ export function buildPrismaMock(): PrismaMock {
       create: jest.fn(),
       // Padrão: nenhum slug colidindo.
       findUnique: jest.fn().mockResolvedValue(null),
+      // SPEC-020/TASK-008 — a resposta de empresa deriva `esportes` da
+      // relação, e o serviço não tolera a relação ausente de propósito.
+      update: jest.fn().mockResolvedValue({ esportesQuadra: [] }),
     },
+    // Padrão: catálogo vazio e nenhuma quadra usando nada. Quem testa
+    // remoção ou uso sobrescreve.
+    esporteDeQuadra: {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    quadra: { findMany: jest.fn().mockResolvedValue([]) },
   };
 
   const mock: PrismaMock = {

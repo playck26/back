@@ -118,7 +118,13 @@ describe('Companies (e2e) - TEST-002', () => {
     it('super_admin lista empresas paginado', async () => {
       const accessToken = await loginSuperAdmin(app, prisma);
       prisma.empresa.findMany.mockResolvedValue([
-        { id: OUTRA_COMPANY_ID, nome: 'Empresa X', status: 'ativa' },
+        {
+          id: OUTRA_COMPANY_ID,
+          nome: 'Empresa X',
+          status: 'ativa',
+          // SPEC-020/TASK-008 — a resposta deriva `esportes` da relação.
+          esportesQuadra: [{ nome: 'Tênis' }],
+        },
       ]);
       prisma.empresa.count.mockResolvedValue(1);
 
@@ -222,10 +228,15 @@ describe('Companies (e2e) - TEST-002', () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         nome: 'Nome Antigo',
+        // SPEC-020/TASK-008 — a resposta deriva `esportes` da relação.
+        esportesQuadra: [],
       });
-      prisma.empresa.update.mockResolvedValue({
+      // A escrita passou para dentro da transação (o catálogo e a coluna
+      // mudam juntos ou não mudam).
+      prisma.tx.empresa.update.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         nome: 'Nome Novo',
+        esportesQuadra: [],
       });
 
       const res = await request(app.getHttpServer())
@@ -265,10 +276,13 @@ describe('Companies (e2e) - TEST-002', () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         status: 'ativa',
+        // SPEC-020/TASK-008 — a resposta deriva `esportes` da relação.
+        esportesQuadra: [],
       });
       prisma.empresa.update.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         status: 'inativa',
+        esportesQuadra: [],
       });
 
       const res = await request(app.getHttpServer())
@@ -389,7 +403,12 @@ describe('Companies (e2e) - TEST-002', () => {
   describe('SPEC-016 — senha temporária de gestor', () => {
     it('super_admin lista os gestores da empresa', async () => {
       const accessToken = await loginSuperAdmin(app, prisma);
-      prisma.empresa.findUnique.mockResolvedValue({ id: OUTRA_COMPANY_ID });
+      // `listAdmins` confere a empresa por `findOne`, e a resposta de empresa
+      // deriva `esportes` da relação (SPEC-020/TASK-008).
+      prisma.empresa.findUnique.mockResolvedValue({
+        id: OUTRA_COMPANY_ID,
+        esportesQuadra: [],
+      });
       prisma.usuario.findMany.mockResolvedValue([
         {
           id: 'u1',
@@ -413,6 +432,7 @@ describe('Companies (e2e) - TEST-002', () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         status: 'ativa',
+        esportesQuadra: [],
       });
       prisma.usuario.findFirst.mockResolvedValue({
         id: 'u1',
@@ -461,6 +481,7 @@ describe('Companies (e2e) - TEST-002', () => {
       prisma.empresa.findUnique.mockResolvedValue({
         id: OUTRA_COMPANY_ID,
         status: 'ativa',
+        esportesQuadra: [],
       });
       prisma.usuario.findFirst.mockResolvedValue(null);
 

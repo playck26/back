@@ -16,6 +16,46 @@ import type { UpdateCompanyStatusDto } from './dto/update-company-status.dto';
 
 const BCRYPT_COST = 12;
 
+/**
+ * SPEC-020/TASK-008 — **a resposta continua `esportes: string[]`, e a fonte
+ * dela deixa de ser a coluna.**
+ *
+ * Manter a forma da resposta não é preguiça, é o que permite a TASK-004
+ * derrubar `empresas.esportes` **sem quebrar o SAdmin**. O SAdmin faz
+ * `empresa.esportes.join(", ")`; se aqui saísse um array de objetos, ele
+ * quebraria exatamente como o app do aluno quebrou hoje (DEF-012) — e desta
+ * vez com o defeito conhecido de antemão.
+ *
+ * A INV-057 pede **uma** lista de esportes por empresa. Ela passa a ser o
+ * catálogo; a coluna vira cópia condenada.
+ */
+const COM_CATALOGO = {
+  esportesQuadra: { select: { nome: true }, orderBy: { ordem: 'asc' } },
+} as const;
+
+/**
+ * A lista que o SAdmin manda, pronta para virar catálogo: sem espaço nas
+ * pontas, sem vazio, e **sem repetido sem distinguir maiúscula**.
+ *
+ * O dedup não é zelo: o catálogo tem `UNIQUE(company_id, lower(nome))`, e
+ * "Tenis, tenis" digitado no campo de texto derrubaria a criação da empresa
+ * inteira com erro de constraint — a transação leva junto o admin inicial e
+ * os 7 horários. Vence a primeira grafia digitada.
+ */
+function nomesDeCatalogo(nomes: string[]): string[] {
+  const vistos = new Set<string>();
+  const saida: string[] = [];
+  for (const bruto of nomes) {
+    const nome = bruto.trim();
+    if (nome === '') continue;
+    const chave = nome.toLowerCase();
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    saida.push(nome);
+  }
+  return saida;
+}
+
 export interface PublicAdminUsuario {
   id: string;
   nome: string;
@@ -43,16 +83,33 @@ export class CompaniesService {
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
+        include: COM_CATALOGO,
       }),
       this.prisma.empresa.count(),
     ]);
 
     return {
-      data: data.map((empresa) => this.comLogo(empresa)),
+      data: data.map((empresa) => this.comLogo(this.comEsportes(empresa))),
       page,
       pageSize,
       total,
     };
+  }
+
+  /**
+   * Troca a coluna `esportes` pelo catálogo, **mantendo o nome e o formato do
+   * campo**. Quem consome não percebe a troca; é essa invisibilidade que
+   * libera a TASK-004 para derrubar a coluna.
+   *
+   * A relação sai da resposta: ela é detalhe de como a lista foi obtida, e
+   * mandá-la junto criaria duas fontes para a mesma pergunta — o defeito que
+   * esta spec inteira veio desfazer.
+   */
+  private comEsportes<T extends { esportesQuadra: { nome: string }[] }>(
+    empresa: T,
+  ): Omit<T, 'esportesQuadra'> & { esportes: string[] } {
+    const { esportesQuadra, ...resto } = empresa;
+    return { ...resto, esportes: esportesQuadra.map((e) => e.nome) };
   }
 
   async create(dto: CreateCompanyDto) {
@@ -83,7 +140,22 @@ export class CompaniesService {
             nome: dto.nome,
             slug: await gerarSlugUnico(tx, dto.nome),
             logoUrl: dto.logoUrl,
-            esportes: dto.esportes,
+            // A escrita dupla em `empresas.esportes` viveu entre a TASK-008 e
+            // a TASK-004, e acabou: a coluna não existe mais. O campo do
+            // SAdmin continua chegando aqui como `dto.esportes` — o que mudou
+            // é para onde ele vai.
+            //
+            // SPEC-020/TASK-008 — o campo do SAdmin passa a SEMEAR o
+            // catálogo. Antes, um clube nascia com a lista de esportes numa
+            // coluna que nenhuma quadra consultava, e o gestor tinha de
+            // cadastrar tudo de novo em `/quadras/catalogos`. Duas listas que
+            // não se falam era o estado que a INV-057 condena.
+            esportesQuadra: {
+              create: nomesDeCatalogo(dto.esportes).map((nome, ordem) => ({
+                nome,
+                ordem,
+              })),
+            },
           },
         });
 
@@ -122,11 +194,14 @@ export class CompaniesService {
   }
 
   async findOne(id: string) {
-    const empresa = await this.prisma.empresa.findUnique({ where: { id } });
+    const empresa = await this.prisma.empresa.findUnique({
+      where: { id },
+      include: COM_CATALOGO,
+    });
     if (!empresa) {
       throw new NotFoundException();
     }
-    return this.comLogo(empresa);
+    return this.comLogo(this.comEsportes(empresa));
   }
 
   /**
@@ -224,23 +299,100 @@ export class CompaniesService {
       }
     }
 
-    return this.prisma.empresa.update({
-      where: { id },
-      data: {
-        nome: dto.nome,
-        logoUrl: dto.logoUrl,
-        esportes: dto.esportes,
-      },
+    const empresa = await this.prisma.$transaction(async (tx) => {
+      if (dto.esportes !== undefined) {
+        await this.sincronizarCatalogo(tx, id, dto.esportes);
+      }
+
+      return tx.empresa.update({
+        where: { id },
+        data: {
+          nome: dto.nome,
+          logoUrl: dto.logoUrl,
+          // `dto.esportes` não aparece aqui: desde a TASK-004 ele não tem
+          // coluna para ir. Quem o consome é `sincronizarCatalogo`, acima.
+        },
+        include: COM_CATALOGO,
+      });
     });
+
+    // **`comLogo` faltava aqui, e era um vazamento.** `list` e `findOne`
+    // removiam `logoKey` da resposta (INV-037) e este método devolvia a linha
+    // crua. Invariante cumprida em dois lugares e esquecida no terceiro é a
+    // forma mais comum de ela morrer.
+    return this.comLogo(this.comEsportes(empresa));
+  }
+
+  /**
+   * SPEC-020/TASK-008 — o campo do SAdmin substitui a lista, e **substituir
+   * não pode furar a INV-055**.
+   *
+   * A rota `DELETE /court-sports/:id` recusa apagar opção em uso. Se editar a
+   * empresa apagasse em silêncio, existiriam dois caminhos para a mesma ação
+   * com regras diferentes — e o mais fácil de alcançar seria o sem guarda: a
+   * quadra ficaria apontando para o nada, ou a FK derrubaria a edição inteira
+   * com uma mensagem sobre constraint que ninguém liga ao campo de texto.
+   *
+   * Então: acrescenta o que falta, apaga o que sobra **se não estiver em
+   * uso**, e recusa com `422` nomeando os esportes que impedem.
+   */
+  private async sincronizarCatalogo(
+    tx: Pick<PrismaService, 'esporteDeQuadra' | 'quadra'>,
+    companyId: string,
+    pedidos: string[],
+  ): Promise<void> {
+    const desejados = nomesDeCatalogo(pedidos);
+    const atuais = await tx.esporteDeQuadra.findMany({
+      where: { companyId },
+      select: { id: true, nome: true },
+    });
+
+    const chave = (nome: string) => nome.toLowerCase();
+    const desejadosPorChave = new Set(desejados.map(chave));
+    const atuaisPorChave = new Set(atuais.map((e) => chave(e.nome)));
+
+    const remover = atuais.filter((e) => !desejadosPorChave.has(chave(e.nome)));
+    if (remover.length > 0) {
+      const emUso = await tx.quadra.findMany({
+        where: { esporteId: { in: remover.map((e) => e.id) } },
+        select: { esporteId: true },
+        distinct: ['esporteId'],
+      });
+      if (emUso.length > 0) {
+        const idsEmUso = new Set(emUso.map((q) => q.esporteId));
+        throw new UnprocessableEntityException({
+          code: 'ESPORTE_EM_USO',
+          message:
+            'Não é possível remover esporte que já está em uso por alguma quadra.',
+          esportes: remover
+            .filter((e) => idsEmUso.has(e.id))
+            .map((e) => e.nome),
+        });
+      }
+      await tx.esporteDeQuadra.deleteMany({
+        where: { id: { in: remover.map((e) => e.id) } },
+      });
+    }
+
+    // A `ordem` acompanha a posição digitada — é ela que ordena a barra de
+    // filtro do aluno, e o super admin espera que a ordem que ele escreveu
+    // seja a que aparece.
+    for (const [ordem, nome] of desejados.entries()) {
+      if (atuaisPorChave.has(chave(nome))) continue;
+      await tx.esporteDeQuadra.create({ data: { companyId, nome, ordem } });
+    }
   }
 
   async updateStatus(id: string, dto: UpdateCompanyStatusDto) {
     await this.findOne(id);
 
-    return this.prisma.empresa.update({
+    const empresa = await this.prisma.empresa.update({
       where: { id },
       data: { status: dto.status },
+      include: COM_CATALOGO,
     });
+    // Mesmo vazamento de `logoKey` que o `update` tinha. Ver ali.
+    return this.comLogo(this.comEsportes(empresa));
   }
 
   private toPublicAdminUsuario(usuario: {

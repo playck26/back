@@ -60,8 +60,9 @@ describe('SPEC-020 — os catálogos contra Postgres real', () => {
     await limpar();
     await prisma.empresa.createMany({
       data: [
-        { id: EMPRESA_A, nome: 'A 020', slug: 'a-020', esportes: [] },
-        { id: EMPRESA_B, nome: 'B 020', slug: 'b-020', esportes: [] },
+        // SPEC-020/TASK-004 — `esportes: []` saiu: a coluna nao existe mais.
+        { id: EMPRESA_A, nome: 'A 020', slug: 'a-020' },
+        { id: EMPRESA_B, nome: 'B 020', slug: 'b-020' },
       ],
     });
   });
@@ -75,7 +76,7 @@ describe('SPEC-020 — os catálogos contra Postgres real', () => {
     prisma.esporteDeQuadra.create({ data: { companyId, nome, ordem: 0 } });
 
   const criarQuadra = (dados: {
-    esporteId?: string | null;
+    esporteId: string;
     categoriaId?: string | null;
     companyId?: string;
   }) =>
@@ -84,12 +85,27 @@ describe('SPEC-020 — os catálogos contra Postgres real', () => {
         id: QUADRA_A,
         companyId: dados.companyId ?? EMPRESA_A,
         nome: 'Q',
-        esporte: 'tenis',
+        // SPEC-020/TASK-004 — `esporte: 'tenis'` saiu (coluna derrubada), e
+        // `esporteId` deixou de aceitar `null`: e `NOT NULL` no banco.
         precoHora: 100,
-        esporteId: dados.esporteId ?? null,
+        esporteId: dados.esporteId,
         categoriaId: dados.categoriaId ?? null,
       },
     });
+
+  /**
+   * SPEC-020/TASK-004 — inserir SEM esporte, por fora do Prisma.
+   *
+   * Precisa ser SQL cru: o cliente tipado nem deixa expressar isto depois da
+   * contract, e e exatamente por isso que a prova tem valor — ela mostra que
+   * quem recusa e o BANCO, nao o TypeScript. Um teste que so provasse o
+   * typecheck provaria a nossa disciplina, nao a garantia.
+   */
+  const inserirQuadraSemEsporte = () =>
+    prisma.$executeRawUnsafe(
+      `INSERT INTO quadras (id, company_id, nome, preco_hora, status, created_at)
+       VALUES ('${QUADRA_A}', '${EMPRESA_A}', 'Sem esporte', 100, 'ativa', now())`,
+    );
 
   describe('INV-054 — a quadra só usa esporte da PRÓPRIA empresa', () => {
     it('aceita o esporte da própria empresa', async () => {
@@ -109,15 +125,45 @@ describe('SPEC-020 — os catálogos contra Postgres real', () => {
       const alheia = await prisma.categoriaDeQuadra.create({
         data: { companyId: EMPRESA_B, nome: 'Saibro', ordem: 0 },
       });
+      // O esporte é da PRÓPRIA empresa de propósito: assim a única razão
+      // possível para a recusa é a categoria alheia. Antes da TASK-004 este
+      // teste ia sem esporte nenhum, e uma recusa por outro motivo teria
+      // passado por prova.
+      const meu = await criarEsporte(EMPRESA_A, 'Tênis');
 
-      await expect(criarQuadra({ categoriaId: alheia.id })).rejects.toThrow();
+      await expect(
+        criarQuadra({ esporteId: meu.id, categoriaId: alheia.id }),
+      ).rejects.toThrow();
     });
 
-    it('a fase EXPAND convive: `esporte_id` nulo não dispara a FK', async () => {
-      // MATCH SIMPLE — com qualquer coluna do par nula, o banco não cobra o
-      // vínculo. É o que deixa as quadras antigas existirem entre a expand e
-      // a contract, e por isso a coluna é nulável até a TASK-004.
-      await expect(criarQuadra({ esporteId: null })).resolves.toBeTruthy();
+    // **Este teste trocou de lado na TASK-004.** Enquanto a expand estava
+    // no ar ele afirmava o contrário: que `esporte_id` nulo era ACEITO, e
+    // que era isso que permitia as quadras antigas conviverem. A contract
+    // fechou essa porta, e o teste passou a provar o fechamento.
+    it('INV-054/AC-010 — o BANCO recusa quadra sem esporte (prova por violação)', async () => {
+      await expect(inserirQuadraSemEsporte()).rejects.toThrow();
+    });
+
+    it('e a recusa é por NOT NULL, não por acaso', async () => {
+      // Sem conferir a causa, o teste acima passaria também se o INSERT
+      // falhasse por erro de sintaxe — provando nada.
+      //
+      // **O discriminador é o SQLSTATE, não a mensagem.** `23502` é
+      // `not_null_violation` no padrão SQL. A primeira versão deste teste
+      // procurava o texto `null value in column "esporte_id"`, e falhou: o
+      // Prisma repassa o código e a linha ofensora, não a frase do Postgres.
+      // Mensagem muda com versão e locale; código não.
+      await expect(inserirQuadraSemEsporte()).rejects.toThrow(/23502/);
+    });
+
+    it('categoria continua nulável: quadra sem categoria é aceita', async () => {
+      // O par não é simétrico, e é decisão de produto (AC-006): nem todo
+      // clube classifica piso. Se alguém tornar `categoria_id` obrigatória
+      // "por simetria", este teste cai.
+      const meu = await criarEsporte(EMPRESA_A, 'Tênis');
+      await expect(
+        criarQuadra({ esporteId: meu.id, categoriaId: null }),
+      ).resolves.toBeTruthy();
     });
   });
 
