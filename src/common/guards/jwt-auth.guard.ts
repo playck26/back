@@ -6,8 +6,10 @@ import {
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PERMITE_ACEITE_PENDENTE } from '../decorators/permite-aceite-pendente.decorator';
 import { PERMITE_SENHA_TEMPORARIA } from '../decorators/permite-senha-temporaria.decorator';
 import type { AccessTokenPayload } from '../types/jwt-payload.type';
+import { TERMO_VERSAO_VIGENTE } from '../../aceites/termo-vigente';
 
 /**
  * Autenticação por access token + as travas de INV-008 (SPEC-009, senha
@@ -64,9 +66,20 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
       return true;
     }
 
+    // SPEC-024 — as colunas de aceite entram NESTE select, e a versao
+    // vigente do contrato vem por join da empresa. O guard continua fazendo
+    // **uma** leitura por requisicao: o portao do aceite nao pode custar uma
+    // segunda ida ao banco em toda rota autenticada do sistema.
     const usuario = await this.prisma.usuario.findUnique({
       where: { id: usuarioId },
-      select: { senhaTemporaria: true, status: true },
+      select: {
+        senhaTemporaria: true,
+        status: true,
+        role: true,
+        termoVersaoAceita: true,
+        contratoVersaoAceita: true,
+        empresa: { select: { contratoVersaoVigente: true } },
+      },
     });
 
     // INV-013 (SPEC-013/DEF-001) — vale para toda rota autenticada, marcada
@@ -97,6 +110,62 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
       });
     }
 
+    // SPEC-024/INV-024b — o portao do aceite, DEPOIS do de senha temporaria.
+    //
+    // A ordem importa e nao e arbitraria: quem ainda nao definiu senha
+    // propria precisa resolver isso primeiro. Empilhar as duas pendencias na
+    // mesma tela seria pedir que a pessoa aceite um contrato antes de ter
+    // uma conta de verdade.
+    if (usuario && this.precisaAceitar(usuario)) {
+      const permiteAceite = this.reflector.getAllAndOverride<
+        boolean | undefined
+      >(PERMITE_ACEITE_PENDENTE, [context.getHandler(), context.getClass()]);
+      if (!permiteAceite) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          code: 'ACEITE_PENDENTE',
+          message: 'Há termos pendentes de aceite (GET /me/aceites/pendentes).',
+        });
+      }
+    }
+
     return true;
+  }
+
+  /**
+   * **Gestor e super admin ficam de fora, e isso e decisao, nao esquecimento**
+   * (SPEC-024, duvida 1 / LIM-024b).
+   *
+   * O bloqueio seria circular: o gestor de um clube que publicou contrato
+   * precisaria aceitar o proprio contrato para entrar no Admin — e, se o
+   * termo da plataforma mudasse, **ninguem conseguiria publicar contrato
+   * ate aceitar**, inclusive quem precisa publicar. Um portao que tranca a
+   * saida nao e portao, e armadilha.
+   *
+   * `super_admin` nao tem empresa, entao contrato nao se aplica a ele de
+   * qualquer forma.
+   */
+  private precisaAceitar(usuario: {
+    role: string;
+    termoVersaoAceita: number | null;
+    contratoVersaoAceita: number | null;
+    empresa: { contratoVersaoVigente: number | null } | null;
+  }): boolean {
+    if (usuario.role !== 'aluno' && usuario.role !== 'professor') {
+      return false;
+    }
+
+    if (usuario.termoVersaoAceita !== TERMO_VERSAO_VIGENTE) {
+      return true;
+    }
+
+    const vigente = usuario.empresa?.contratoVersaoVigente ?? null;
+    // REQ-005: clube que nao publicou contrato nao trava ninguem. E o estado
+    // de toda empresa existente no dia da migration.
+    if (vigente === null) {
+      return false;
+    }
+
+    return usuario.contratoVersaoAceita !== vigente;
   }
 }

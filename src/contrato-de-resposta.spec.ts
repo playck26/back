@@ -216,6 +216,24 @@ describe('INV-058/INV-060 — contrato de resposta publicado (SPEC-021)', () => 
  * Prisma, **ou** está declarado abaixo como enum de código. Não há terceira
  * opção — e é a ausência dela que impede uma transcrição errada de passar.
  */
+/**
+ * ## A chave, e por que ela mudou de forma (SPEC-023/SPEC-024)
+ *
+ * Esta tabela era indexada **só pelo nome do campo**, e isso funcionou
+ * enquanto cada nome aparecia uma vez. A SPEC-023 quebrou a premissa: ela
+ * publicou um `motivo` (por que o aluno não pode entrar na turma) que nada
+ * tem a ver com o `motivo` da SPEC-015 (por que o aluno entrou na lista de
+ * evasão). Dois campos com o mesmo nome e conjuntos diferentes — e a tabela
+ * não tinha como dizer isso.
+ *
+ * A SPEC-024 ia repetir o problema com `code`: `ErroDeMatriculaResponseDto`
+ * e `ErroDeAceiteResponseDto` publicam códigos diferentes no mesmo nome.
+ *
+ * **Agora aceita as duas formas**, e a mais específica ganha:
+ * `"Schema.campo"` quando o nome se repete, `"campo"` quando é único. As
+ * entradas antigas ficam como estavam — a mudança acrescenta precisão sem
+ * pedir reescrita de quem já estava certo.
+ */
 const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // SPEC-015 — confiança do cálculo de frequência. Vem de `agrega()`.
   ['confianca', ['alta', 'baixa']],
@@ -229,6 +247,31 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   ['status', ['livre', 'ocupado_turma', 'ocupado_avulso']],
   // O papel do admin inicial, na criação da empresa: sempre este.
   ['role', ['company_admin']],
+
+  // SPEC-023 — por que o aluno não pode entrar nesta turma. Chave
+  // qualificada porque `motivo` já existe acima com outro significado.
+  // A ordem aqui é a ordem das checagens no serviço, e ela É a mensagem:
+  // quem não foi aprovado ouve isso antes de qualquer coisa sobre vaga.
+  [
+    'TurmaDisponivelResponseDto.motivo',
+    ['ALUNO_NAO_APROVADO', 'TURMA_INATIVA', 'LIMITE_DE_TURMAS', 'TURMA_CHEIA'],
+  ],
+  // SPEC-023 — os mesmos quatro, mais o da saída. Vêm de
+  // `MatriculaDoAlunoService`; são os primeiros corpos de erro com schema
+  // publicado no projeto (LIM-004 saiu de `{2xx: 90, 4xx: 0}`).
+  [
+    'ErroDeMatriculaResponseDto.code',
+    [
+      'ALUNO_NAO_APROVADO',
+      'TURMA_INATIVA',
+      'LIMITE_DE_TURMAS',
+      'TURMA_CHEIA',
+      'AULA_HOJE',
+    ],
+  ],
+  // SPEC-024 — o portão do aceite. `ACEITE_PENDENTE` vem do `JwtAuthGuard`;
+  // `VERSAO_DESATUALIZADA`, do `AceitesService`.
+  ['ErroDeAceiteResponseDto.code', ['ACEITE_PENDENTE', 'VERSAO_DESATUALIZADA']],
 ]);
 
 function enumsPublicadosEmRespostas(): {
@@ -287,10 +330,13 @@ describe('DEF-016 — todo enum publicado tem origem conferível', () => {
   });
 
   it('nenhum enum de resposta é inventado', () => {
-    const orfaos = publicados.filter(({ campo, valores }) => {
+    const orfaos = publicados.filter(({ schema, campo, valores }) => {
       const chave = comoConjunto(valores);
       if (doPrisma.includes(chave)) return false;
-      const deCodigo = ENUMS_DE_CODIGO.get(campo);
+      // A qualificada ganha da simples: quando o nome do campo se repete
+      // com significados diferentes, só ela distingue.
+      const deCodigo =
+        ENUMS_DE_CODIGO.get(`${schema}.${campo}`) ?? ENUMS_DE_CODIGO.get(campo);
       return !deCodigo || comoConjunto(deCodigo) !== chave;
     });
 

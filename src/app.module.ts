@@ -5,6 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AceitesModule } from './aceites/aceites.module';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
 import { ClassesModule } from './classes/classes.module';
@@ -29,6 +30,7 @@ import { StorageModule } from './storage/storage.module';
     PrismaModule,
     AuthModule,
     CommonModule,
+    AceitesModule,
     CompaniesModule,
     PeopleModule,
     CourtsModule,

@@ -126,3 +126,159 @@ describe('JwtAuthGuard — conta inativa (SPEC-013/INV-013)', () => {
     );
   });
 });
+
+/**
+ * SPEC-024/INV-024b — o portão do aceite.
+ *
+ * A prova que mais importa aqui não é a que bloqueia: é a **9**, que garante
+ * que o `company_admin` NÃO é bloqueado. Sem ela o portão trancaria a
+ * própria saída — o gestor precisaria aceitar o contrato para entrar no
+ * Admin, e um termo novo da plataforma impediria qualquer um de publicar o
+ * contrato que destravaria os alunos. Portão que tranca a saída não é
+ * portão, é armadilha.
+ */
+describe('JwtAuthGuard — portão do aceite (SPEC-024)', () => {
+  const reflector = (permiteAceite: boolean) =>
+    ({
+      // O guard consulta duas chaves; a de senha temporária responde false
+      // (rota comum) e a do aceite responde o que o teste pedir.
+      getAllAndOverride: jest.fn((chave: string) =>
+        chave === 'permiteAceitePendente' ? permiteAceite : false,
+      ),
+    }) as unknown as Reflector;
+
+  const prisma = (usuario: Record<string, unknown>) => ({
+    usuario: {
+      findUnique: jest.fn().mockResolvedValue({
+        senhaTemporaria: false,
+        status: 'ativo',
+        termoVersaoAceita: 1,
+        contratoVersaoAceita: null,
+        empresa: { contratoVersaoVigente: null },
+        ...usuario,
+      }),
+    },
+  });
+
+  const codigo = async (p: Promise<unknown>) => {
+    try {
+      await p;
+      return 'NAO_LANCOU';
+    } catch (e) {
+      const r = (e as { getResponse?: () => unknown }).getResponse?.();
+      return (r as { code?: string })?.code ?? 'SEM_CODIGO';
+    }
+  };
+
+  it('prova 1 — aluno sem aceitar o termo é bloqueado', async () => {
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({ role: 'aluno', termoVersaoAceita: null }),
+    );
+
+    await expect(codigo(guard.canActivate(buildContext('u1')))).resolves.toBe(
+      'ACEITE_PENDENTE',
+    );
+  });
+
+  it('prova 2 — mas a rota marcada continua aberta, senão ele fica preso', async () => {
+    // Bloqueado por não ter aceitado, e sem como ler o que precisa aceitar:
+    // seria uma porta trancada por dentro.
+    const guard = new JwtAuthGuard(
+      reflector(true),
+      prisma({ role: 'aluno', termoVersaoAceita: null }),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).resolves.toBe(true);
+  });
+
+  it('prova 3 — contrato novo devolve o aluno à pendência', async () => {
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({
+        role: 'aluno',
+        contratoVersaoAceita: 1,
+        empresa: { contratoVersaoVigente: 2 },
+      }),
+    );
+
+    await expect(codigo(guard.canActivate(buildContext('u1')))).resolves.toBe(
+      'ACEITE_PENDENTE',
+    );
+  });
+
+  it('prova 4 — clube sem contrato não trava ninguém', async () => {
+    // É o estado de TODA empresa existente no dia da migration.
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({ role: 'aluno', empresa: { contratoVersaoVigente: null } }),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).resolves.toBe(true);
+  });
+
+  it('prova 9 — company_admin NÃO é travado (o bloqueio circular)', async () => {
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({
+        role: 'company_admin',
+        termoVersaoAceita: null,
+        empresa: { contratoVersaoVigente: 3 },
+      }),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).resolves.toBe(true);
+  });
+
+  it('super_admin também não, e ele nem tem empresa', async () => {
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({ role: 'super_admin', termoVersaoAceita: null, empresa: null }),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).resolves.toBe(true);
+  });
+
+  it('professor é tratado como aluno aqui: usa o app, então aceita', async () => {
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({ role: 'professor', termoVersaoAceita: null }),
+    );
+
+    await expect(codigo(guard.canActivate(buildContext('u1')))).resolves.toBe(
+      'ACEITE_PENDENTE',
+    );
+  });
+
+  it('em dia com os dois textos, passa', async () => {
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({
+        role: 'aluno',
+        termoVersaoAceita: 1,
+        contratoVersaoAceita: 4,
+        empresa: { contratoVersaoVigente: 4 },
+      }),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).resolves.toBe(true);
+  });
+
+  it('senha temporária vem ANTES do aceite, e a ordem não é arbitrária', async () => {
+    // Quem ainda não definiu senha própria resolve isso primeiro. Empilhar as
+    // duas pendências seria pedir que a pessoa aceite um contrato antes de
+    // ter uma conta de verdade.
+    const guard = new JwtAuthGuard(
+      reflector(false),
+      prisma({
+        role: 'aluno',
+        senhaTemporaria: true,
+        termoVersaoAceita: null,
+      }),
+    );
+
+    await expect(codigo(guard.canActivate(buildContext('u1')))).resolves.toBe(
+      'SENHA_TEMPORARIA',
+    );
+  });
+});

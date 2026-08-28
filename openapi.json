@@ -1124,6 +1124,169 @@
         ]
       }
     },
+    "/api/v1/me/aceites/pendentes": {
+      "get": {
+        "operationId": "MeAceitesController_pendentes",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AceitesPendentesResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/aceites": {
+      "post": {
+        "operationId": "MeAceitesController_aceitar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrarAceiteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Aceite registrado. Idempotente: aceitar de novo não cria segunda linha.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AceiteRegistradoResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroDeAceiteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/company/contrato": {
+      "get": {
+        "operationId": "ContratoDaEmpresaController_vigente",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContratoDaEmpresaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "put": {
+        "operationId": "ContratoDaEmpresaController_publicar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicarContratoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContratoDaEmpresaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/company/contrato/alcance": {
+      "get": {
+        "operationId": "ContratoDaEmpresaController_alcance",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pessoas": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/companies": {
       "get": {
         "operationId": "CompaniesController_list",
@@ -4399,6 +4562,154 @@
         "required": [
           "ok",
           "companyId"
+        ]
+      },
+      "TextoParaAceiteDto": {
+        "type": "object",
+        "properties": {
+          "versao": {
+            "type": "number",
+            "example": 1
+          },
+          "texto": {
+            "type": "string",
+            "description": "Texto puro, com quebras de linha preservadas. Markdown e HTML ficam fora de propósito: HTML vindo do gestor seria XSS na tela do aluno."
+          }
+        },
+        "required": [
+          "versao",
+          "texto"
+        ]
+      },
+      "AceitesPendentesResponseDto": {
+        "type": "object",
+        "properties": {
+          "termo": {
+            "nullable": true,
+            "description": "null quando o termo vigente já foi aceito.",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextoParaAceiteDto"
+              }
+            ]
+          },
+          "contrato": {
+            "nullable": true,
+            "description": "null quando já aceito — ou quando o clube não publicou contrato nenhum (REQ-005).",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextoParaAceiteDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "termo",
+          "contrato"
+        ]
+      },
+      "RegistrarAceiteDto": {
+        "type": "object",
+        "properties": {
+          "termo": {
+            "type": "number",
+            "example": 1,
+            "description": "A versão do termo que a pessoa LEU. Exigida para que ninguém aceite \"o que estiver valendo\" — seria concordar com um texto que não viu."
+          },
+          "contrato": {
+            "type": "number",
+            "example": 3,
+            "description": "A versão do contrato do clube que a pessoa LEU."
+          }
+        }
+      },
+      "AceiteRegistradoResponseDto": {
+        "type": "object",
+        "properties": {
+          "termoVersaoAceita": {
+            "type": "number",
+            "nullable": true,
+            "example": 1
+          },
+          "contratoVersaoAceita": {
+            "type": "number",
+            "nullable": true,
+            "example": 3
+          },
+          "aindaPendente": {
+            "type": "boolean",
+            "example": false,
+            "description": "true quando ainda falta aceitar alguma coisa."
+          }
+        },
+        "required": [
+          "termoVersaoAceita",
+          "contratoVersaoAceita",
+          "aindaPendente"
+        ]
+      },
+      "ErroDeAceiteResponseDto": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 403
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "ACEITE_PENDENTE",
+              "VERSAO_DESATUALIZADA"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "example": "Há termos pendentes de aceite (GET /me/aceites/pendentes)."
+          }
+        },
+        "required": [
+          "statusCode",
+          "code",
+          "message"
+        ]
+      },
+      "ContratoDaEmpresaResponseDto": {
+        "type": "object",
+        "properties": {
+          "versao": {
+            "type": "number",
+            "nullable": true,
+            "example": 3
+          },
+          "texto": {
+            "type": "string",
+            "nullable": true
+          },
+          "publicadoEm": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "versao",
+          "texto",
+          "publicadoEm"
+        ]
+      },
+      "PublicarContratoDto": {
+        "type": "object",
+        "properties": {
+          "texto": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          }
+        },
+        "required": [
+          "texto"
         ]
       },
       "EmpresaResponseDto": {

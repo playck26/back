@@ -91,6 +91,12 @@ model Empresa {
   /// **Vale para ENTRAR, nunca para expulsar** (INV-023a): baixar o limite
   /// nao tira ninguem de turma em que ja esta.
   limiteTurmasPorAluno Int?         @map("limite_turmas_por_aluno")
+
+  /// SPEC-024 — a versao do contrato do clube que esta valendo.
+  /// `NULL` = o clube nao publicou contrato, e nesse caso so o termo da
+  /// plataforma e exigido (REQ-005). E o estado de toda empresa existente
+  /// no dia da migration.
+  contratoVersaoVigente Int?        @map("contrato_versao_vigente")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
@@ -107,6 +113,7 @@ model Empresa {
   ocupacoes        OcupacaoQuadra[]
   turmas           Turma[]
   configPagamento  ConfigPagamentoEmpresa?
+  contratos        ContratoDaEmpresa[]
 
   presencas Presenca[]
   chamadas  Chamada[]
@@ -133,6 +140,12 @@ model Usuario {
   /// que significa que `super_admin` (sem `companyId`) nao tem foto — ver o
   /// comentario da migration, e a pergunta aberta da TASK-003.
   fotoKey                 String?       @map("foto_key")
+  /// SPEC-024 — as duas colunas que o PORTAO le, a cada requisicao
+  /// autenticada. O historico completo mora em `aceites`; estas respondem
+  /// "esta em dia?" sem um ORDER BY por requisicao. As duas verdades nao
+  /// divergem porque sao escritas na mesma transacao.
+  termoVersaoAceita       Int?          @map("termo_versao_aceita")
+  contratoVersaoAceita    Int?          @map("contrato_versao_aceita")
   createdAt               DateTime      @default(now()) @map("created_at")
   updatedAt               DateTime      @updatedAt @map("updated_at")
 
@@ -144,6 +157,7 @@ model Usuario {
   presencasRegistradas       Presenca[]     @relation("PresencaRegistradaPor")
   chamadasRegistradas        Chamada[]      @relation("ChamadaRegistradaPor")
   imagensDeQuadraConfirmadas Quadra[]       @relation("QuadraImagemConfirmadaPor")
+  aceites                    Aceite[]
 
   @@index([companyId])
   @@map("usuarios")
@@ -778,4 +792,62 @@ model ArquivoPendenteExclusao {
   @@index([criadoEm])
   @@index([companyId])
   @@map("arquivos_pendentes_exclusao")
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-024 — termo da plataforma e contrato da empresa
+// ---------------------------------------------------------------------------
+
+/// O termo de uso da PLATAFORMA. E nosso, igual para todo mundo, e vai no
+/// deploy — por isso a versao e um numero, nao um hash do texto: hash mudaria
+/// com uma virgula corrigida e obrigaria a base inteira a reaceitar por causa
+/// de um typo. Publicar versao nova e ato deliberado.
+model TermoDaPlataforma {
+  versao      Int      @id
+  texto       String
+  publicadoEm DateTime @default(now()) @map("publicado_em")
+
+  @@map("termos_da_plataforma")
+}
+
+/// O contrato da EMPRESA, escrito pelo gestor. Uma linha por versao
+/// publicada — INV-024c: versao publicada nunca e editada.
+model ContratoDaEmpresa {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  versao      Int
+  texto       String
+  publicadoEm DateTime @default(now()) @map("publicado_em")
+
+  empresa Empresa @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, versao], map: "contratos_da_empresa_company_versao_key")
+  @@map("contratos_da_empresa")
+}
+
+enum TipoDeAceite {
+  termo
+  contrato
+
+  @@map("tipo_de_aceite")
+}
+
+/// O REGISTRO LEGAL, e a razao desta spec existir.
+///
+/// Append-only por regra (INV-024a): nada aqui e apagado nem alterado. A
+/// unicidade por (usuario, tipo, versao) e o que torna aceitar duas vezes
+/// idempotente em vez de virar duas linhas — toque duplo em conexao ruim e o
+/// caso real.
+model Aceite {
+  id        String       @id @default(uuid()) @db.Uuid
+  usuarioId String       @map("usuario_id") @db.Uuid
+  tipo      TipoDeAceite
+  versao    Int
+  aceitoEm  DateTime     @default(now()) @map("aceito_em")
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, tipo, versao], map: "aceites_usuario_tipo_versao_key")
+  @@index([usuarioId])
+  @@map("aceites")
 }
