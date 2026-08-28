@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -15,7 +16,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
-import { UpdateAutoCadastroDto } from './dto/update-auto-cadastro.dto';
+import { UpdateMinhaEmpresaDto } from './dto/update-minha-empresa.dto';
 
 /**
  * DEF-003 — a empresa precisa saber o próprio `slug` para divulgar o link
@@ -64,6 +65,10 @@ export class MeCompanyController {
         logoUrl: true,
         status: true,
         permiteAutoCadastro: true,
+        // SPEC-023: o Admin precisa LER o limite para mostrar o valor atual
+        // no campo. Rota que só escreve obriga a tela a adivinhar o que está
+        // salvo — e ela adivinharia "sem limite" para todo mundo.
+        limiteTurmasPorAluno: true,
       },
     });
 
@@ -82,6 +87,7 @@ export class MeCompanyController {
       slug: empresa.slug,
       status: empresa.status,
       permiteAutoCadastro: empresa.permiteAutoCadastro,
+      limiteTurmasPorAluno: empresa.limiteTurmasPorAluno,
       logoUrl: this.logos.resolver(empresa).logoUrl,
     };
   }
@@ -98,20 +104,44 @@ export class MeCompanyController {
    * default ligado é a fila de aprovação (INV-010), e ela existe e funciona.
    * É requisito não cumprido: o clube que for spamado não consegue fechar a
    * porta.
+   *
+   * **SPEC-023 acrescentou o limite de turmas por aluno aqui**, e com isso o
+   * corpo virou parcial: só o que vier é escrito. Com dois campos, exigir os
+   * dois seria armadilha — quem quisesse mexer só no limite teria de
+   * reenviar o auto-cadastro, e reenviar valor que não se quis mudar é como
+   * configuração se perde sem ninguém perceber.
    */
   @Patch()
   @Roles('company_admin')
   @ApiOkResponse({ type: MinhaEmpresaResponseDto })
-  async definirAutoCadastro(
+  async atualizarMinhaEmpresa(
     @CurrentUser() user: AccessTokenPayload,
-    @Body() dto: UpdateAutoCadastroDto,
+    @Body() dto: UpdateMinhaEmpresaDto,
   ): Promise<MinhaEmpresaResponseDto> {
+    const dados: {
+      permiteAutoCadastro?: boolean;
+      limiteTurmasPorAluno?: number | null;
+    } = {};
+    if (dto.permiteAutoCadastro !== undefined) {
+      dados.permiteAutoCadastro = dto.permiteAutoCadastro;
+    }
+    if (dto.limiteTurmasPorAluno !== undefined) {
+      dados.limiteTurmasPorAluno = dto.limiteTurmasPorAluno;
+    }
+    // Corpo vazio é engano de chamada, não "não mude nada": deixar passar
+    // devolveria 200 para quem acha que salvou algo.
+    if (Object.keys(dados).length === 0) {
+      throw new BadRequestException(
+        'Informe pelo menos um campo para atualizar.',
+      );
+    }
+
     // `updateMany` com o `company_id` do token, e não `update` por id: se a
     // empresa não for a do usuário, o resultado é zero linhas em vez de uma
     // escrita em tenant alheio.
     const { count } = await this.prisma.empresa.updateMany({
       where: { id: user.companyId as string },
-      data: { permiteAutoCadastro: dto.permiteAutoCadastro },
+      data: dados,
     });
 
     if (count === 0) {

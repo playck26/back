@@ -225,6 +225,19 @@ export class MinhaEmpresaResponseDto {
   @ApiProperty({ type: Boolean })
   permiteAutoCadastro!: boolean;
 
+  /**
+   * SPEC-023 — quantas turmas um aluno pode entrar **por conta própria**.
+   *
+   * `null` = sem limite, e é o padrão de propósito: empresa que já existe
+   * não muda de comportamento por causa de uma coluna nova.
+   *
+   * **Vale para entrar, nunca para expulsar** (INV-023a). Baixar o limite
+   * não tira ninguém de turma em que já está — ninguém sai de uma turma
+   * porque uma configuração mudou.
+   */
+  @ApiProperty({ type: Number, nullable: true, minimum: 1, example: 2 })
+  limiteTurmasPorAluno!: number | null;
+
   @ApiProperty({ type: String, nullable: true })
   logoUrl!: string | null;
 }

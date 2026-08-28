@@ -1463,14 +1463,14 @@
         ]
       },
       "patch": {
-        "operationId": "MeCompanyController_definirAutoCadastro",
+        "operationId": "MeCompanyController_atualizarMinhaEmpresa",
         "parameters": [],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateAutoCadastroDto"
+                "$ref": "#/components/schemas/UpdateMinhaEmpresaDto"
               }
             }
           }
@@ -2869,6 +2869,132 @@
                   "items": {
                     "$ref": "#/components/schemas/AulaDoAlunoResponseDto"
                   }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/classes/disponiveis": {
+      "get": {
+        "operationId": "MeClassesController_disponiveis",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TurmaDisponivelResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/classes/{id}": {
+      "post": {
+        "operationId": "MeClassesController_entrar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatriculaDoAlunoResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroDeMatriculaResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Turma inexistente — ou de outra empresa. São 404 iguais de propósito (INV-023b): distinguir já entregaria informação sobre o outro clube."
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroDeMatriculaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "delete": {
+        "operationId": "MeClassesController_sair",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "Turma inexistente, de outra empresa, ou o aluno não está nela. Sair de onde não se está é engano, e silenciar esconderia bug de tela."
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroDeMatriculaResponseDto"
                 }
               }
             }
@@ -4615,6 +4741,12 @@
           "permiteAutoCadastro": {
             "type": "boolean"
           },
+          "limiteTurmasPorAluno": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "example": 2
+          },
           "logoUrl": {
             "type": "string",
             "nullable": true
@@ -4626,20 +4758,25 @@
           "slug",
           "status",
           "permiteAutoCadastro",
+          "limiteTurmasPorAluno",
           "logoUrl"
         ]
       },
-      "UpdateAutoCadastroDto": {
+      "UpdateMinhaEmpresaDto": {
         "type": "object",
         "properties": {
           "permiteAutoCadastro": {
             "type": "boolean",
             "description": "Liga ou desliga o link público de auto-cadastro de alunos desta empresa."
+          },
+          "limiteTurmasPorAluno": {
+            "type": "object",
+            "nullable": true,
+            "minimum": 1,
+            "example": 2,
+            "description": "Quantas turmas um aluno pode entrar por conta própria. `null` = sem limite. Vale para ENTRAR, nunca para expulsar (INV-023a): baixar o limite não tira ninguém de turma em que já está."
           }
-        },
-        "required": [
-          "permiteAutoCadastro"
-        ]
+        }
       },
       "LogoDaEmpresaResponseDto": {
         "type": "object",
@@ -5923,6 +6060,145 @@
           "data",
           "horaInicio",
           "horaFim"
+        ]
+      },
+      "EncontroDaTurmaDisponivelDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "example": 2,
+            "description": "0 = domingo, 6 = sábado"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "horaInicio",
+          "horaFim"
+        ]
+      },
+      "TurmaDisponivelResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Iniciantes — Terça e Quinta"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "capacidade": {
+            "type": "number",
+            "example": 8
+          },
+          "matriculados": {
+            "type": "number",
+            "example": 6,
+            "description": "Quantos alunos já estão na turma. Vem da mesma fonte que a trava de capacidade (INV-003) — uma segunda contagem seria uma segunda verdade."
+          },
+          "jaEstouNela": {
+            "type": "boolean",
+            "example": false
+          },
+          "podeEntrar": {
+            "type": "boolean",
+            "example": true,
+            "description": "Calculado no servidor. Se a tela deduzisse, viraria uma segunda cópia das regras — e é a cópia que fica velha."
+          },
+          "motivo": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ALUNO_NAO_APROVADO",
+              "TURMA_INATIVA",
+              "LIMITE_DE_TURMAS",
+              "TURMA_CHEIA"
+            ],
+            "description": "Por que não pode entrar. `null` quando pode."
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EncontroDaTurmaDisponivelDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "status",
+          "capacidade",
+          "matriculados",
+          "jaEstouNela",
+          "podeEntrar",
+          "encontros"
+        ]
+      },
+      "MatriculaDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id",
+          "turmaId",
+          "alunoId"
+        ]
+      },
+      "ErroDeMatriculaResponseDto": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 409
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "ALUNO_NAO_APROVADO",
+              "TURMA_INATIVA",
+              "LIMITE_DE_TURMAS",
+              "TURMA_CHEIA",
+              "AULA_HOJE"
+            ],
+            "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy."
+          },
+          "message": {
+            "type": "string",
+            "example": "Esta turma já está com todas as vagas ocupadas."
+          }
+        },
+        "required": [
+          "statusCode",
+          "code",
+          "message"
         ]
       },
       "TurmaDoProfessorResponseDto": {

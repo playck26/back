@@ -20,6 +20,45 @@ const TIME_BASE_DATE = '1970-01-01';
 export const EXPEDIENTE_INICIO_HORA = 6;
 export const EXPEDIENTE_FIM_HORA = 22;
 
+/**
+ * SPEC-023 — **o fuso do clube, explícito.**
+ *
+ * O projeto não tinha fuso em lugar nenhum: `grep -rn "America/"` não
+ * devolvia nada, e "hoje" era `Date.UTC(...)` do relógio do servidor
+ * (`myUpcomingClasses` faz isso até hoje). Para quase tudo isso passa
+ * despercebido; para a regra "não sai no dia da aula" (REQ-004) não passa.
+ *
+ * **O Brasil é UTC-3, então das 21h à meia-noite locais o UTC já está no dia
+ * seguinte.** Aula de terça 19h, aluno tentando sair às 21h30 de segunda:
+ * em UTC já é terça, e ele levaria `AULA_HOJE` no dia errado. Aula à noite é
+ * o horário mais comum de clube de tênis — o caso raro é o caso normal.
+ *
+ * Fica **constante e explícita** em vez de vir do relógio do servidor: o
+ * servidor roda em UTC (DigitalOcean), e herdar o fuso dele é herdar uma
+ * decisão que ninguém tomou. Se um dia houver clube em outro fuso, isto
+ * vira campo da empresa — e o lugar de mudar é aqui, um só.
+ */
+export const FUSO_DO_CLUBE = 'America/Sao_Paulo';
+
+/**
+ * A data de "hoje" no fuso do clube, como `Date` de meia-noite UTC — o
+ * mesmo formato que as colunas `@db.Date` usam, para comparar sem
+ * conversão.
+ *
+ * `en-CA` porque ele formata como `YYYY-MM-DD`, que é exatamente o que
+ * `parseDateOnly` espera. Não é curiosidade: é a forma de pedir a data
+ * local sem montar string à mão a partir de partes.
+ */
+export function hojeNoFusoDoClube(agora: Date = new Date()): Date {
+  const local = new Intl.DateTimeFormat('en-CA', {
+    timeZone: FUSO_DO_CLUBE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(agora);
+  return parseDateOnly(local);
+}
+
 export function parseDateOnly(data: string): Date {
   return new Date(`${data}T00:00:00.000Z`);
 }

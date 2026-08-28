@@ -524,6 +524,45 @@ validação cruzada. **A primeira disparou de verdade** contra o harness,
 nomeando as turmas — que é a diferença entre "2 turmas sem encontro" e algo
 consertável.
 
+### O caminho de erro deixou de ser afirmação (SPEC-023, 2026-08-28)
+
+**Até 2026-08-28 a conta era `{2xx: 90, 4xx: 0}`** — medida em 2026-08-27 e
+registrada como LIM-004. Todas as respostas declaradas eram de sucesso, e
+**nenhum corpo de erro tinha schema**, embora sejam eles que decidem desvio
+de sessão (`SENHA_TEMPORARIA` manda ao primeiro acesso, `CONTA_INATIVA`
+encerra a sessão).
+
+A SPEC-023 tirou a conta do zero: **`{2xx: 93, 4xx: 5}`**. Os cinco são os
+erros de matrícula do aluno (`ALUNO_NAO_APROVADO`, `TURMA_INATIVA`,
+`LIMITE_DE_TURMAS`, `TURMA_CHEIA`, `AULA_HOJE`), publicados via
+`ErroDeMatriculaResponseDto`.
+
+**A regra que sai daqui:** rota nova cujo erro **muda o que a tela mostra**
+publica o schema do erro no mesmo commit. Foram três ciclos escrevendo que
+contrato errado é pior que contrato ausente antes de alguém publicar o
+primeiro `4xx` — aviso não é mecanismo.
+
+### O aluno entra e sai de turma (SPEC-023)
+
+`MatriculaDoAlunoService` mora fora de `ClassesService` de propósito: lá é o
+CRUD do gestor, e as regras do aluno são de outro ator. Misturar deixaria as
+regras novas valendo, sem querer, para o caminho do gestor — o oposto do que
+a spec decide (REQ-006: o gestor não perde nada).
+
+**O que ele não reinventa é a trava.** `INV-003` é `SELECT ... FOR UPDATE` na
+linha da turma e existe desde a SPEC-003; o caminho do aluno usa a mesma
+trava na mesma linha. Dois caminhos de matrícula com travas diferentes seriam
+duas verdades sobre a mesma vaga.
+
+**E o fuso deixou de ser implícito.** `hojeNoFusoDoClube()`
+(`courts/date-time.util.ts`) fixa `America/Sao_Paulo` porque a regra "não sai
+no dia da aula" depende de qual dia é — e o projeto não tinha fuso em lugar
+nenhum: `myUpcomingClasses` usa `Date.UTC(...)` **até hoje**. O Brasil é
+UTC-3, então das 21h à meia-noite locais o UTC já está no dia seguinte, e
+aula à noite é o horário mais comum de clube de tênis. Ver
+`fuso-do-clube.spec.ts`, que prova o acerto **e** documenta o erro que ele
+evita.
+
 ### Resposta tipada: 16 de 90, e por que a conta começou em zero
 
 **Até 2026-08-26 nenhuma resposta desta API declarava schema.** Contado, não

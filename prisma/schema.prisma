@@ -82,6 +82,15 @@ model Empresa {
   // Ligado por padrao (ADR-013); seguro porque quem se auto-cadastra
   // nasce `pendente` e nao ocupa nada ate um admin aprovar (INV-010).
   permiteAutoCadastro Boolean       @default(true) @map("permite_auto_cadastro")
+
+  /// SPEC-023 — quantas turmas um aluno pode entrar POR CONTA PROPRIA.
+  /// `NULL` = sem limite, e e o padrao: empresa existente nao muda de
+  /// comportamento por causa de uma coluna nova. O CHECK do banco garante
+  /// `>= 1` — zero seria "ninguem entra", que e desligar, nao limitar.
+  ///
+  /// **Vale para ENTRAR, nunca para expulsar** (INV-023a): baixar o limite
+  /// nao tira ninguem de turma em que ja esta.
+  limiteTurmasPorAluno Int?         @map("limite_turmas_por_aluno")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
