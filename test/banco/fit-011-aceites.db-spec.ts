@@ -128,7 +128,10 @@ describe('FIT-011 — o aceite', () => {
     await montar();
     await service.publicarContrato(EMPRESA, 'Contrato A');
 
-    await service.aceitar(USUARIO, { termo: TERMO_VERSAO_VIGENTE, contrato: 1 });
+    await service.aceitar(USUARIO, {
+      termo: TERMO_VERSAO_VIGENTE,
+      contrato: 1,
+    });
 
     // A coluna responde ao portão...
     const usuario = await db.usuario.findUniqueOrThrow({
@@ -176,7 +179,10 @@ describe('FIT-011 — o aceite', () => {
   it('contrato novo devolve a pessoa à pendência — e o aceite antigo fica', async () => {
     await montar();
     await service.publicarContrato(EMPRESA, 'Contrato A');
-    await service.aceitar(USUARIO, { termo: TERMO_VERSAO_VIGENTE, contrato: 1 });
+    await service.aceitar(USUARIO, {
+      termo: TERMO_VERSAO_VIGENTE,
+      contrato: 1,
+    });
 
     await service.publicarContrato(EMPRESA, 'Contrato B');
     const pendentes = await service.pendentes(USUARIO);
