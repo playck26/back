@@ -337,7 +337,13 @@ describe('Auth (e2e) - TEST-001', () => {
       nivelId: 'n1',
       usadoEm: null,
       expiraEm: new Date(Date.now() + 86_400_000),
-      empresa: { nome: 'Empresa Demo', status: 'ativa' },
+      // SPEC-024: `contratoVersaoVigente` entrou no `select` de
+      // `consultarPublico`. `null` = clube sem contrato publicado.
+      empresa: {
+        nome: 'Empresa Demo',
+        status: 'ativa',
+        contratoVersaoVigente: null,
+      },
     };
 
     it('AC-003: admin cria convite e recebe o token uma única vez', async () => {
@@ -373,9 +379,14 @@ describe('Auth (e2e) - TEST-001', () => {
         .get('/api/v1/public/invites/token-qualquer')
         .expect(200);
 
+      // SPEC-024/REQ-007 acrescentou `contrato` a esta resposta, por pedido
+      // do Israel ("o contrato pode ir junto do convite"). O que esta prova
+      // guarda continua igual: e-mail e telefone NAO saem daqui. A lista
+      // cresceu; a regra nao mudou.
       expect(res.body).toEqual({
         empresa: { nome: 'Empresa Demo' },
         nome: 'Convidado',
+        contrato: null,
       });
       const serializado = JSON.stringify(res.body);
       expect(serializado).not.toContain('convidado@x.com');
