@@ -91,7 +91,14 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
       nivelId: 'n1',
       usadoEm: null,
       expiraEm: new Date(Date.now() + 86_400_000),
-      empresa: { nome: 'Empresa X', status: 'ativa' },
+      // SPEC-024: `contratoVersaoVigente` entrou no `select` de
+      // `consultarPublico`. `null` aqui = clube sem contrato, que e o estado
+      // de toda empresa existente.
+      empresa: {
+        nome: 'Empresa X',
+        status: 'ativa',
+        contratoVersaoVigente: null,
+      },
     };
 
     it('devolve só nome da empresa e nome pré-preenchido — nunca e-mail, telefone ou nível (AC-025)', async () => {
@@ -99,7 +106,15 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
 
       const res = await ctx.service.consultarPublico('token-qualquer');
 
-      expect(res).toEqual({ empresa: { nome: 'Empresa X' }, nome: 'Fulano' });
+      // SPEC-024/REQ-007 acrescentou `contrato` a esta resposta — de
+      // proposito e por pedido do Israel ("pode ir junto do convite"). O que
+      // esta prova guarda continua sendo o mesmo: e-mail, telefone e nivel
+      // NAO saem daqui. A lista cresceu; a regra nao mudou.
+      expect(res).toEqual({
+        empresa: { nome: 'Empresa X' },
+        nome: 'Fulano',
+        contrato: null,
+      });
       const serializado = JSON.stringify(res);
       expect(serializado).not.toContain('f@x.com');
       expect(serializado).not.toContain('11999999999');

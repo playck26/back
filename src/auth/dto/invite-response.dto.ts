@@ -37,9 +37,29 @@ export class EmpresaDoConviteResponseDto {
  * da empresa também é carregado pela consulta e não sai — serve só para o
  * `410` quando a empresa está inativa.
  */
+export class ContratoDoConviteDto {
+  @ApiProperty({ type: Number, example: 3 })
+  versao!: number;
+
+  @ApiProperty({ type: String })
+  texto!: string;
+}
+
 export class ConvitePublicoResponseDto {
   @ApiProperty({ type: EmpresaDoConviteResponseDto })
   empresa!: EmpresaDoConviteResponseDto;
+
+  /**
+   * SPEC-024/REQ-007 — **o contrato do clube, na propria tela do convite.**
+   * Pedido explicito do Israel: "pode ir junto do convite".
+   *
+   * `null` quando o clube nao publicou contrato. Sai nesta rota publica
+   * porque quem recebeu o link precisa LER antes de criar a conta — e o
+   * texto e o mesmo que ele vai aceitar. Nao ha vazamento novo: e o
+   * documento que a propria empresa quer que a pessoa leia.
+   */
+  @ApiProperty({ type: ContratoDoConviteDto, nullable: true })
+  contrato!: ContratoDoConviteDto | null;
 
   /** `null` quando o admin não pré-preencheu o nome. A chave sempre existe. */
   @ApiProperty({ type: String, nullable: true, example: 'Ana Souza' })

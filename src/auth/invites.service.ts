@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { registrarAceiteNoCadastro } from '../aceites/registrar-aceite-no-cadastro';
 import { StudentsService } from '../people/students.service';
 import { ConviteAceitoResponseDto } from './dto/auth-response.dto';
 import type { AceitarConviteDto } from './dto/aceitar-convite.dto';
@@ -85,7 +86,11 @@ export class InvitesService {
   async consultarPublico(token: string) {
     const convite = await this.prisma.conviteAluno.findUnique({
       where: { tokenHash: this.hash(token) },
-      include: { empresa: { select: { nome: true, status: true } } },
+      include: {
+        empresa: {
+          select: { nome: true, status: true, contratoVersaoVigente: true },
+        },
+      },
     });
 
     if (!convite) {
@@ -100,7 +105,27 @@ export class InvitesService {
       throw new GoneException(CONVITE_INVALIDO);
     }
 
-    return { empresa: { nome: convite.empresa.nome }, nome: convite.nome };
+    // SPEC-024/REQ-007 — o contrato vai junto, para a pessoa ler ANTES de
+    // criar a conta. Uma segunda requisicao abriria a janela em que ela le
+    // um texto e aceita outro.
+    const contrato =
+      convite.empresa.contratoVersaoVigente === null
+        ? null
+        : await this.prisma.contratoDaEmpresa.findUnique({
+            where: {
+              companyId_versao: {
+                companyId: convite.companyId,
+                versao: convite.empresa.contratoVersaoVigente,
+              },
+            },
+            select: { versao: true, texto: true },
+          });
+
+    return {
+      empresa: { nome: convite.empresa.nome },
+      nome: convite.nome,
+      contrato,
+    };
   }
 
   /**
@@ -133,7 +158,9 @@ export class InvitesService {
 
       const convite = await tx.conviteAluno.findUniqueOrThrow({
         where: { tokenHash },
-        include: { empresa: { select: { status: true } } },
+        include: {
+          empresa: { select: { status: true, contratoVersaoVigente: true } },
+        },
       });
       if (convite.empresa.status !== 'ativa') {
         throw new GoneException(CONVITE_INVALIDO);
@@ -172,6 +199,20 @@ export class InvitesService {
         companyId: convite.companyId,
         nivelId: convite.nivelId,
         vinculo: 'aprovado',
+      });
+
+      // SPEC-024, duvida 2 da spec — **o aceite entra na MESMA transacao que
+      // cria a conta.** Fora dela existiria uma janela em que a conta existe
+      // sem aceite, e o portao mandaria a pessoa para a tela de aceite logo
+      // depois de ela ter aceitado. Falha em qualquer um dos dois nao deixa
+      // metade.
+      //
+      // As versoes vem do cliente e sao conferidas contra o vigente: aceitar
+      // "o que estiver valendo" seria concordar com um texto que nao se viu.
+      await registrarAceiteNoCadastro(tx, usuario.id, {
+        termoLido: dto.termoVersao,
+        contratoLido: dto.contratoVersao,
+        contratoVigente: convite.empresa.contratoVersaoVigente ?? null,
       });
 
       return { usuario: { id: usuario.id, email: usuario.email, nome } };

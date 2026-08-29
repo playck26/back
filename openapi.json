@@ -3703,6 +3703,14 @@
           },
           "telefone": {
             "type": "string"
+          },
+          "termoVersao": {
+            "type": "number",
+            "example": 1
+          },
+          "contratoVersao": {
+            "type": "number",
+            "example": 3
           }
         },
         "required": [
@@ -3831,11 +3839,36 @@
           "nome"
         ]
       },
+      "ContratoDoConviteDto": {
+        "type": "object",
+        "properties": {
+          "versao": {
+            "type": "number",
+            "example": 3
+          },
+          "texto": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "versao",
+          "texto"
+        ]
+      },
       "ConvitePublicoResponseDto": {
         "type": "object",
         "properties": {
           "empresa": {
             "$ref": "#/components/schemas/EmpresaDoConviteResponseDto"
+          },
+          "contrato": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContratoDoConviteDto"
+              }
+            ]
           },
           "nome": {
             "type": "string",
@@ -3845,6 +3878,7 @@
         },
         "required": [
           "empresa",
+          "contrato",
           "nome"
         ]
       },
