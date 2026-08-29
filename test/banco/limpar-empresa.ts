@@ -43,6 +43,10 @@ export interface ClienteSql {
  * `turmas`.
  */
 export const TABELAS_DA_EMPRESA = [
+  // SPEC-025: ANTES de `ocupacoes_quadra` e de `alunos` — a FK dela e
+  // CASCADE, mas a limpeza apaga por `company_id` tabela a tabela, e uma
+  // ordem que deixasse a avaliacao para depois esbarraria na empresa.
+  'avaliacoes_de_aula',
   'presencas',
   'chamadas',
   'ocupacoes_quadra',

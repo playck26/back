@@ -272,6 +272,9 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // SPEC-024 — o portão do aceite. `ACEITE_PENDENTE` vem do `JwtAuthGuard`;
   // `VERSAO_DESATUALIZADA`, do `AceitesService`.
   ['ErroDeAceiteResponseDto.code', ['ACEITE_PENDENTE', 'VERSAO_DESATUALIZADA']],
+  // SPEC-025 — as duas recusas de avaliar uma aula. Vêm de
+  // `AvaliacaoDeAulaService.exigirDireitoDeAvaliar`.
+  ['ErroDeAvaliacaoResponseDto.code', ['NAO_MATRICULADO', 'AULA_NAO_TERMINOU']],
 ]);
 
 function enumsPublicadosEmRespostas(): {

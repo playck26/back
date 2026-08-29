@@ -2695,6 +2695,41 @@
         ]
       }
     },
+    "/api/v1/classes/{id}/avaliacoes": {
+      "get": {
+        "operationId": "ClassesController_avaliacoesDaTurma",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvaliacoesDaTurmaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/frequencia": {
       "get": {
         "operationId": "ClassesController_frequencia",
@@ -3158,6 +3193,135 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErroDeMatriculaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/classes/anteriores": {
+      "get": {
+        "operationId": "MeClassesController_aulasAnteriores",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AulaAnteriorResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/classes/{id}/avaliacao": {
+      "get": {
+        "operationId": "MeClassesController_mediaDaTurma",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaDaTurmaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/classes/aulas/{ocupacaoId}/avaliacao": {
+      "put": {
+        "operationId": "MeClassesController_avaliarAula",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AvaliarAulaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinhaAvaliacaoResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroDeAvaliacaoResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroDeAvaliacaoResponseDto"
                 }
               }
             }
@@ -5842,6 +6006,75 @@
           }
         }
       },
+      "AvaliacaoParaOGestorDto": {
+        "type": "object",
+        "properties": {
+          "alunoNome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "nota": {
+            "type": "number",
+            "example": 4
+          },
+          "comentario": {
+            "type": "string",
+            "nullable": true
+          },
+          "dataDaAula": {
+            "type": "string",
+            "example": "2026-08-12",
+            "description": "A data da AULA, não a do registro: é ela que diz ao gestor qual terça-feira investigar."
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "avaliadaEm": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detrator": {
+            "type": "boolean",
+            "example": true,
+            "description": "Calculado no servidor. Se a tela calculasse, a régua de detrator viraria uma segunda cópia da regra."
+          }
+        },
+        "required": [
+          "alunoNome",
+          "nota",
+          "comentario",
+          "dataDaAula",
+          "horaInicio",
+          "avaliadaEm",
+          "detrator"
+        ]
+      },
+      "AvaliacoesDaTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "itens": {
+            "description": "Ordenadas por PIOR NOTA primeiro. A ordem é a funcionalidade: ordenar por data enterraria o 1 da semana passada embaixo dos 5 de ontem.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvaliacaoParaOGestorDto"
+            }
+          },
+          "detratores": {
+            "type": "number",
+            "example": 2
+          },
+          "notaMaximaDeDetrator": {
+            "type": "number",
+            "example": 2
+          }
+        },
+        "required": [
+          "itens",
+          "detratores",
+          "notaMaximaDeDetrator"
+        ]
+      },
       "AlunoNaFrequenciaDaTurmaResponseDto": {
         "type": "object",
         "properties": {
@@ -6538,6 +6771,154 @@
           "message": {
             "type": "string",
             "example": "Esta turma já está com todas as vagas ocupadas."
+          }
+        },
+        "required": [
+          "statusCode",
+          "code",
+          "message"
+        ]
+      },
+      "AulaAnteriorResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-08-12"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "minhaNota": {
+            "type": "number",
+            "nullable": true,
+            "description": "null quando ainda não avaliou. Vem junto para a tela distinguir \"não avaliei\" de \"dei 4\" sem uma requisição por linha."
+          },
+          "meuComentario": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "turmaId",
+          "turmaNome",
+          "quadraNome",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "minhaNota",
+          "meuComentario"
+        ]
+      },
+      "MediaDaTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "media": {
+            "type": "number",
+            "nullable": true,
+            "example": 4.3,
+            "description": "null enquanto não houver o mínimo de avaliações. Uma casa decimal: a tela desenha estrelas, e precisão maior seria falsa."
+          },
+          "quantidade": {
+            "type": "number",
+            "example": 7,
+            "description": "Aparece mesmo abaixo do mínimo — esconder a contagem faria a tela não conseguir dizer \"ainda faltam avaliações\", que é informação útil e não identifica ninguém."
+          },
+          "minimoParaMedia": {
+            "type": "number",
+            "example": 3
+          }
+        },
+        "required": [
+          "media",
+          "quantidade",
+          "minimoParaMedia"
+        ]
+      },
+      "AvaliarAulaDto": {
+        "type": "object",
+        "properties": {
+          "nota": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5,
+            "example": 5,
+            "description": "Nota inteira de 1 a 5. O banco tem CHECK equivalente — o DTO protege a API, o CHECK protege a tabela."
+          },
+          "comentario": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Texto puro. Sem markdown nem HTML: isto aparece no painel do gestor, e HTML vindo do aluno seria XSS lá dentro."
+          }
+        },
+        "required": [
+          "nota"
+        ]
+      },
+      "MinhaAvaliacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "nota": {
+            "type": "number",
+            "nullable": true,
+            "example": 5
+          },
+          "comentario": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "nota",
+          "comentario",
+          "updatedAt"
+        ]
+      },
+      "ErroDeAvaliacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 403
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "NAO_MATRICULADO",
+              "AULA_NAO_TERMINOU"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "example": "Você só pode avaliar turmas em que está matriculado."
           }
         },
         "required": [

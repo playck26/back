@@ -114,6 +114,7 @@ model Empresa {
   turmas           Turma[]
   configPagamento  ConfigPagamentoEmpresa?
   contratos        ContratoDaEmpresa[]
+  avaliacoesDeAula AvaliacaoDeAula[]
 
   presencas Presenca[]
   chamadas  Chamada[]
@@ -239,6 +240,7 @@ model Aluno {
   nivel       Nivel?           @relation(fields: [nivelId], references: [id])
   ocupacoes   OcupacaoQuadra[]
   turmaAlunos TurmaAluno[]
+  avaliacoes  AvaliacaoDeAula[]
   presencas   Presenca[]
 
   @@index([companyId])
@@ -402,6 +404,7 @@ model OcupacaoQuadra {
   // apagar uma turma deixaria ocupações órfãs na linha do tempo da quadra,
   // sem dono, contrariando INV-001. Drift encontrado em SPEC-009:TASK-000.
   origemTurma Turma?         @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
+  avaliacoes  AvaliacaoDeAula[]
 
   presencas Presenca[]
   // Prisma exige unicidade do par `(id, origem_tipo)` para modelar 1-1, e
@@ -850,4 +853,43 @@ model Aceite {
   @@unique([usuarioId, tipo, versao], map: "aceites_usuario_tipo_versao_key")
   @@index([usuarioId])
   @@map("aceites")
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-025 — avaliacao das aulas
+// ---------------------------------------------------------------------------
+
+/// A nota que o aluno da a UMA AULA (uma ocupacao de origem TURMA).
+///
+/// **A aula nao tem media propria; as notas dela alimentam a media da
+/// TURMA.** O motivo e o objetivo do Israel: "identificar com facilidade os
+/// detratores". Media por aula quase nunca teria volume — cada aula tem
+/// poucos alunos — mas a NOTA por aula aponta para a terca-feira concreta em
+/// que a pessoa se decepcionou, e e isso que um gestor consegue agir.
+///
+/// **Nao e anonima para o gestor** (ADR-017, item 4), e a tela do aluno diz
+/// isso antes de ele escrever.
+model AvaliacaoDeAula {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  ocupacaoId String   @map("ocupacao_id") @db.Uuid
+  alunoId    String   @map("aluno_id") @db.Uuid
+  /// 1..5, com CHECK no banco (INV-025c). O DTO protege a API; o CHECK
+  /// protege a tabela de qualquer outro caminho.
+  nota       Int      @db.SmallInt
+  /// Texto puro, ate 500. Sem markdown nem HTML: isto aparece no painel do
+  /// gestor, e HTML vindo do aluno seria XSS la dentro.
+  comentario String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  empresa  Empresa        @relation(fields: [companyId], references: [id])
+  ocupacao OcupacaoQuadra @relation(fields: [ocupacaoId], references: [id], onDelete: Cascade)
+  aluno    Aluno          @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+
+  @@unique([ocupacaoId, alunoId], map: "avaliacoes_de_aula_ocupacao_aluno_key")
+  @@index([ocupacaoId])
+  @@index([companyId])
+  @@index([alunoId])
+  @@map("avaliacoes_de_aula")
 }

@@ -7,6 +7,7 @@ import { ClassesService } from './classes.service';
 import { MeClassesController } from './me-classes.controller';
 import { MeTeacherAttendanceController } from './me-teacher-attendance.controller';
 import { MeTeacherClassesController } from './me-teacher-classes.controller';
+import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { PresencaService } from './presenca.service';
 
@@ -18,6 +19,11 @@ import { PresencaService } from './presenca.service';
     MeTeacherClassesController,
     MeTeacherAttendanceController,
   ],
-  providers: [ClassesService, MatriculaDoAlunoService, PresencaService],
+  providers: [
+    ClassesService,
+    AvaliacaoDeAulaService,
+    MatriculaDoAlunoService,
+    PresencaService,
+  ],
 })
 export class ClassesModule {}

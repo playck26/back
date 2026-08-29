@@ -10,6 +10,7 @@ import { ClassesController } from '../src/classes/classes.controller';
 import { MeTeacherClassesController } from '../src/classes/me-teacher-classes.controller';
 import { ClassesService } from '../src/classes/classes.service';
 import { FrequenciaService } from '../src/frequencia/frequencia.service';
+import { AvaliacaoDeAulaService } from '../src/classes/avaliacao-de-aula.service';
 import { PresencaService } from '../src/classes/presenca.service';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -111,6 +112,15 @@ describe('turmas (e2e) — SPEC-019', () => {
         { provide: ClassesService, useValue: classesMock },
         { provide: PresencaService, useValue: { listar: jest.fn() } },
         { provide: FrequenciaService, useValue: { relatorio: jest.fn() } },
+        // SPEC-025: o `ClassesController` ganhou a rota de avaliacoes da
+        // turma. Esta suite nao a exercita — o comportamento dela e provado
+        // no `fit-012`, contra Postgres real — mas o Nest resolve o
+        // construtor inteiro antes de qualquer rota, entao a dependencia
+        // precisa existir aqui.
+        {
+          provide: AvaliacaoDeAulaService,
+          useValue: { listarParaOGestor: jest.fn() },
+        },
         { provide: PrismaService, useValue: prisma },
       ],
     }).compile();

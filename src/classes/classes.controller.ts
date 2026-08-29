@@ -31,6 +31,8 @@ import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
+import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
+import { AvaliacoesDaTurmaResponseDto } from './dto/avaliacao-de-aula.dto';
 import { ClassesService } from './classes.service';
 import { PresencaService } from './presenca.service';
 import {
@@ -59,6 +61,7 @@ export class ClassesController {
     private readonly classesService: ClassesService,
     private readonly presencas: PresencaService,
     private readonly frequencias: FrequenciaService,
+    private readonly avaliacoes: AvaliacaoDeAulaService,
   ) {}
 
   /**
@@ -75,6 +78,25 @@ export class ClassesController {
    * O professor **não** vê frequência nesta spec (LIM-004) — ele lança a
    * chamada, quem lê o agregado é o gestor.
    */
+  /**
+   * SPEC-025/REQ-005 — **a lista completa, e ela só existe aqui.**
+   *
+   * Nome e comentário saem por esta rota e por nenhuma outra. A decisão do
+   * Israel (ADR-017, item 4) é que "somente o painel admin vê quem avaliou e
+   * os comentários" — e o que separa esta resposta da que o aluno recebe não
+   * é um filtro no meio do caminho: são **dois DTOs diferentes**, para que
+   * acrescentar um campo do lado errado seja uma decisão visível em vez de um
+   * vazamento silencioso (INV-025a).
+   */
+  @Get(':id/avaliacoes')
+  @ApiOkResponse({ type: AvaliacoesDaTurmaResponseDto })
+  avaliacoesDaTurma(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.avaliacoes.listarParaOGestor(user.companyId as string, id);
+  }
+
   @Get(':id/frequencia')
   @ApiOkResponse({ type: FrequenciaDaTurmaResponseDto })
   frequencia(
