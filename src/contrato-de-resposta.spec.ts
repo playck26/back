@@ -350,3 +350,49 @@ describe('DEF-016 — todo enum publicado tem origem conferível', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * **Achado 3 da validação cruzada da SPEC-025, virado gate.**
+ *
+ * As três rotas de avaliação lançavam `NotFoundException` em runtime e
+ * publicavam só `200`. O contrato escondia um caso que a própria spec exige,
+ * e um cliente gerado do OpenAPI não enxergava a recusa.
+ *
+ * Isto não é caso isolado: é a mesma família da LIM-004 — o caminho de erro
+ * sendo afirmação em vez de contrato. Por isso vira **gate** e não anotação:
+ * o projeto já aprendeu, no DEF-016, que aviso não é mecanismo.
+ *
+ * **O que este gate NÃO consegue fazer**, e vale declarar: ele não descobre
+ * sozinho quais rotas podem dar 404 — isso não é estático. Ele guarda a
+ * lista abaixo, que cresce à mão. É uma rede menor que a ideal, e ainda
+ * assim maior que nenhuma.
+ */
+const ROTAS_QUE_PRECISAM_DECLARAR_404: [string, string][] = [
+  ['/api/v1/classes/{id}/avaliacoes', 'get'],
+  ['/api/v1/me/classes/{id}/avaliacao', 'get'],
+  ['/api/v1/me/classes/aulas/{ocupacaoId}/avaliacao', 'put'],
+];
+
+describe('SPEC-025 — rota que recusa por 404 publica o 404', () => {
+  // `lerOpenApi()` e não `lerOpenApiCompleto()`: é este que expõe `paths`.
+  // O outro devolve `components`, e usá-lo aqui foi erro meu — o `tsc`
+  // pegou, que é exatamente o que ele existe para fazer.
+  const doc = lerOpenApi();
+
+  it('a lista foi lida do documento — senão o teste passa por vacuidade', () => {
+    for (const [caminho, metodo] of ROTAS_QUE_PRECISAM_DECLARAR_404) {
+      expect(doc.paths[caminho]?.[metodo]).toBeDefined();
+    }
+  });
+
+  it('todas declaram 404', () => {
+    const semDeclarar = ROTAS_QUE_PRECISAM_DECLARAR_404.filter(
+      ([caminho, metodo]) =>
+        !Object.keys(doc.paths[caminho]?.[metodo]?.responses ?? {}).includes(
+          '404',
+        ),
+    ).map(([caminho, metodo]) => `${metodo.toUpperCase()} ${caminho}`);
+
+    expect(semDeclarar).toEqual([]);
+  });
+});

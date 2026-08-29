@@ -2718,6 +2718,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Turma inexistente ou de outra empresa — as duas respondem igual."
           }
         },
         "security": [
@@ -3260,6 +3263,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Turma inexistente ou de outra empresa — as duas respondem igual."
           }
         },
         "security": [
@@ -3315,6 +3321,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Aula inexistente, de outra empresa, ou ocupação avulsa (que não é aula de turma). Os três respondem igual de propósito."
           },
           "409": {
             "description": "",

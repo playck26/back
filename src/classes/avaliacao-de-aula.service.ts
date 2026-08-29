@@ -238,7 +238,12 @@ export class AvaliacaoDeAulaService {
     }
 
     const agregado = await this.prisma.avaliacaoDeAula.aggregate({
-      where: { ocupacao: { origemTurmaId: turmaId } },
+      // `companyId` explícito aqui, e não só a relação — achado 1 da
+      // validação cruzada. A FK composta passou a impedir que uma ocupação
+      // de outra empresa aponte para esta turma; este filtro é a segunda
+      // tranca, no caminho de leitura. Isolamento entre empresas é caro
+      // demais para depender de uma camada só.
+      where: { companyId, ocupacao: { companyId, origemTurmaId: turmaId } },
       _avg: { nota: true },
       _count: { _all: true },
     });
@@ -278,7 +283,10 @@ export class AvaliacaoDeAulaService {
     }
 
     const avaliacoes = await this.prisma.avaliacaoDeAula.findMany({
-      where: { ocupacao: { origemTurmaId: turmaId } },
+      // Ver a nota gêmea em `mediaDaTurma`. Aqui o custo de um vazamento é
+      // maior: esta é a única resposta do produto que carrega NOME e
+      // COMENTÁRIO.
+      where: { companyId, ocupacao: { companyId, origemTurmaId: turmaId } },
       orderBy: [{ nota: 'asc' }, { updatedAt: 'desc' }],
       select: {
         nota: true,

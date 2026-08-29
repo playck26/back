@@ -18,6 +18,7 @@ import {
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiNoContentResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -90,6 +91,10 @@ export class ClassesController {
    */
   @Get(':id/avaliacoes')
   @ApiOkResponse({ type: AvaliacoesDaTurmaResponseDto })
+  @ApiNotFoundResponse({
+    description:
+      'Turma inexistente ou de outra empresa — as duas respondem igual.',
+  })
   avaliacoesDaTurma(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', ParseUUIDPipe) id: string,

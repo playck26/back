@@ -122,6 +122,10 @@ export class MeClassesController {
    */
   @Get(':id/avaliacao')
   @ApiOkResponse({ type: MediaDaTurmaResponseDto })
+  @ApiNotFoundResponse({
+    description:
+      'Turma inexistente ou de outra empresa — as duas respondem igual.',
+  })
   @Roles('aluno', 'professor')
   mediaDaTurma(
     @CurrentUser() user: AccessTokenPayload,
@@ -140,6 +144,17 @@ export class MeClassesController {
   @ApiOkResponse({ type: MinhaAvaliacaoResponseDto })
   @ApiForbiddenResponse({ type: ErroDeAvaliacaoResponseDto })
   @ApiConflictResponse({ type: ErroDeAvaliacaoResponseDto })
+  // Achado 3 da validação cruzada: o 404 acontecia em runtime e **não estava
+  // publicado**. Contrato que esconde um caso é contrato errado, e cliente
+  // gerado do OpenAPI não enxergava a recusa que a própria spec exige.
+  //
+  // Os três motivos devolvem o MESMO 404 de propósito: ocupação inexistente,
+  // ocupação de outra empresa e reserva avulsa. Distinguir entregaria
+  // informação sobre o outro clube (INV-023b).
+  @ApiNotFoundResponse({
+    description:
+      'Aula inexistente, de outra empresa, ou ocupação avulsa (que não é aula de turma). Os três respondem igual de propósito.',
+  })
   @Roles('aluno')
   avaliarAula(
     @CurrentUser() user: AccessTokenPayload,

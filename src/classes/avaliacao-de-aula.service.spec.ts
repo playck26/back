@@ -42,10 +42,18 @@ describe('INV-025a — a média não conta quem disse o quê', () => {
     }
   });
 
-  it('a média agrega pelas AULAS da turma, não por uma coluna na turma', async () => {
-    // O caminho é `avaliacao -> ocupacao -> turma`. Se alguém trocar isto por
-    // um filtro direto, a média deixa de refletir as notas das aulas — que é
-    // o pedido inteiro.
+  it('a média agrega pelas AULAS da turma, E escopada por empresa', async () => {
+    // Duas coisas numa assertiva só, e as duas custaram caro:
+    //
+    // 1. o caminho é `avaliacao -> ocupacao -> turma`. Trocá-lo por um
+    //    filtro direto faria a média deixar de refletir as notas das aulas,
+    //    que é o pedido inteiro;
+    // 2. o `companyId` explícito é o **achado 1 da validação cruzada**. A FK
+    //    composta passou a impedir ocupação de outra empresa apontando para
+    //    esta turma; este filtro é a segunda tranca, no caminho de leitura.
+    //    Isolamento entre empresas é caro demais para depender de uma camada
+    //    só — e esta prova caiu quando o filtro foi acrescentado, que é
+    //    exatamente o que ela deve fazer.
     const prisma = {
       turma: { findFirst: jest.fn().mockResolvedValue({ id: TURMA }) },
       avaliacaoDeAula: {
@@ -61,7 +69,10 @@ describe('INV-025a — a média não conta quem disse o quê', () => {
       prisma as unknown as { avaliacaoDeAula: { aggregate: jest.Mock } }
     ).avaliacaoDeAula.aggregate.mock.calls as unknown[][];
     const args = chamadas[0][0] as { where: object };
-    expect(args.where).toEqual({ ocupacao: { origemTurmaId: TURMA } });
+    expect(args.where).toEqual({
+      companyId: EMPRESA,
+      ocupacao: { companyId: EMPRESA, origemTurmaId: TURMA },
+    });
   });
 });
 

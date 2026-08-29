@@ -305,6 +305,65 @@ describe('FIT-012 — o gestor acha o detrator', () => {
   });
 });
 
+/**
+ * Achado 1 da validação cruzada (ALTA), fechado no banco.
+ *
+ * O validador descreveu o cenário exato: uma `ocupacoes_quadra` de EMPRESA_B
+ * apontando `origem_turma_id` para uma turma de EMPRESA_A. As FKs antigas
+ * aceitavam, e a média da turma agrega **por relação** — então a EMPRESA_A
+ * veria nota de aluno da EMPRESA_B, e na tela do gestor veria **nome e
+ * comentário**.
+ *
+ * Estas provas tentam criar a linha. Se um dia passarem a conseguir, o
+ * vazamento voltou.
+ */
+describe('FIT-012 — o isolamento entre empresas é do BANCO', () => {
+  const OUTRA_EMPRESA = 'f0120000-0000-4000-8000-000000000099';
+  const OUTRA_QUADRA = 'f0120000-0000-4000-8000-000000000098';
+
+  it('o banco RECUSA ocupação de uma empresa apontando para turma de outra', async () => {
+    await montar(1);
+    const q = (sql: string) => db.$executeRawUnsafe(sql);
+
+    await q(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${OUTRA_EMPRESA}','FIT-012 Outra','fit-012-outra',now())`,
+    );
+    await q(
+      `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${OUTRA_EMPRESA}','Tenis',0,now())`,
+    );
+    await q(
+      `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${OUTRA_QUADRA}','${OUTRA_EMPRESA}','Q outra',(SELECT id FROM esportes_de_quadra WHERE company_id='${OUTRA_EMPRESA}'),100)`,
+    );
+
+    // A linha do ataque: empresa B, turma de A.
+    await expect(
+      q(
+        `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${OUTRA_EMPRESA}','${OUTRA_QUADRA}',DATE '${dia(-1)}',TIME '18:00',TIME '19:00','TURMA','${TURMA}','pendente_pagamento',now())`,
+      ),
+    ).rejects.toThrow();
+
+    await limparEmpresa(db, OUTRA_EMPRESA);
+  });
+
+  it('e continua aceitando reserva AVULSA, que não tem turma', async () => {
+    // O outro lado: uma FK composta mal feita quebraria a reserva avulsa,
+    // porque `origem_turma_id` é NULL nela. MATCH SIMPLE não exige nada
+    // quando a coluna é nula — esta prova guarda isso.
+    //
+    // O `valor` não é enfeite da fixture: o CHECK `ocupacoes_valor_por_origem`
+    // exige valor na avulsa e proíbe na de turma (CON-006 — aula recorrente
+    // não tem cobrança própria). A primeira versão desta prova o esqueceu e o
+    // banco recusou, o que é o comportamento certo dele.
+    await montar(1);
+
+    await expect(
+      db.$executeRawUnsafe(
+        `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${dia(-3)}',TIME '07:00',TIME '08:00','AVULSO',100,'pendente_pagamento',now())`,
+      ),
+    ).resolves.toBeDefined();
+  });
+});
+
 describe('FIT-012 — as aulas anteriores, para poder avaliar', () => {
   it('lista só as que já passaram, da mais recente para a mais antiga', async () => {
     await montar(1);

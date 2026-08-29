@@ -532,7 +532,7 @@ registrada como LIM-004. Todas as respostas declaradas eram de sucesso, e
 de sessão (`SENHA_TEMPORARIA` manda ao primeiro acesso, `CONTA_INATIVA`
 encerra a sessão).
 
-A SPEC-023 tirou a conta do zero: **`{2xx: 93, 4xx: 5}`**. Os cinco são os
+A SPEC-023 tirou a conta do zero: `{2xx: 93, 4xx: 5}`; a SPEC-024 levou a `{98, 6}`; a SPEC-025, a **`{2xx: 102, 4xx: 8}`**. Os cinco são os
 erros de matrícula do aluno (`ALUNO_NAO_APROVADO`, `TURMA_INATIVA`,
 `LIMITE_DE_TURMAS`, `TURMA_CHEIA`, `AULA_HOJE`), publicados via
 `ErroDeMatriculaResponseDto`.
@@ -541,6 +541,31 @@ erros de matrícula do aluno (`ALUNO_NAO_APROVADO`, `TURMA_INATIVA`,
 publica o schema do erro no mesmo commit. Foram três ciclos escrevendo que
 contrato errado é pior que contrato ausente antes de alguém publicar o
 primeiro `4xx` — aviso não é mecanismo.
+
+### A avaliação é da AULA; a média é da TURMA (SPEC-025)
+
+`AvaliacaoDeAulaService` guarda uma nota por `(ocupacao_id, aluno_id)` e
+agrega a média por `avaliacao -> ocupacao -> turma`. **A aula não tem média
+própria** — decisão explícita do Israel — e o motivo é o objetivo dele:
+*"identificar com facilidade os detratores"*. Média por aula quase nunca
+teria volume; a **nota** por aula aponta para o dia concreto.
+
+Três coisas moram em constantes porque são as réguas mais prováveis de mudar:
+`MINIMO_PARA_MEDIA` (3, e é privacidade antes de estatística — ver
+`SECURITY_PRIVACY.md`), `NOTA_MAXIMA_DE_DETRATOR` (2) e `DIAS_DE_HISTORICO`
+(90).
+
+**`GET /me/classes/anteriores` nasceu junto e não é acessório:**
+`GET /me/classes` devolve só o futuro, então sem ela a avaliação seria uma
+funcionalidade sem porta de entrada. As duas usam o **mesmo corte** de "já
+terminou" — lista que oferece o que o servidor recusa é a armadilha do
+DEF-011 por outra porta.
+
+**A privacidade é estrutural, não um filtro.** Aluno e professor recebem
+`MediaDaTurmaResponseDto`; o gestor recebe `AvaliacaoParaOGestorDto`. São
+dois DTOs, e não um `if` no meio do caminho, para que acrescentar um campo do
+lado errado seja decisão visível e não vazamento silencioso (INV-025a, com
+prova sobre o JSON serializado).
 
 ### O aluno entra e sai de turma (SPEC-023)
 

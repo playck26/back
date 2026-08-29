@@ -403,7 +403,11 @@ model OcupacaoQuadra {
   // querendo reescrever a FK — e `SET NULL` seria errado no domínio:
   // apagar uma turma deixaria ocupações órfãs na linha do tempo da quadra,
   // sem dono, contrariando INV-001. Drift encontrado em SPEC-009:TASK-000.
-  origemTurma Turma?         @relation(fields: [origemTurmaId], references: [id], onDelete: Restrict)
+  /// SPEC-025 / validacao cruzada, achado 1 — a FK carrega a EMPRESA.
+  /// Mesmo padrao de `quadras.esporteRef`/`categoriaRef`: sem a empresa na
+  /// chave, o banco aceitaria ocupacao de uma empresa apontando para turma
+  /// de outra, e a media da turma agregaria nota alheia.
+  origemTurma Turma?         @relation(fields: [companyId, origemTurmaId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_origem_turma_fkey")
   avaliacoes  AvaliacaoDeAula[]
 
   presencas Presenca[]
@@ -456,6 +460,10 @@ model Turma {
 
   @@index([companyId])
   @@index([quadraId])
+  /// SPEC-025 / validacao cruzada — o alvo da FK composta de
+  /// `ocupacoes_quadra`. Sem ele, o banco aceitava ocupacao de uma empresa
+  /// apontando para turma de outra.
+  @@unique([companyId, id], map: "turmas_company_id_id_key")
   @@map("turmas")
 }
 
