@@ -542,6 +542,29 @@ publica o schema do erro no mesmo commit. Foram três ciclos escrevendo que
 contrato errado é pior que contrato ausente antes de alguém publicar o
 primeiro `4xx` — aviso não é mecanismo.
 
+### O calendário do professor (SPEC-026)
+
+`AgendaDoProfessorService` é **serviço próprio**, e não um parâmetro no
+`AgendaService` do gestor. Aquele é orientado a **quadra** e inclui reserva
+avulsa — coisas que não são trabalho do professor. Acrescentar um
+`professorId?` opcional lá faria uma função responder a duas perguntas
+diferentes, e o `?` acabaria esquecido em alguma chamada.
+
+**O escopo mora num método só** (`filtroDasAulasDele`): as duas rotas usam o
+mesmo `where`, porque escopo repetido é escopo que um dia diverge. Ele
+carrega quatro condições — empresa, professor, `origemTipo: TURMA` e as
+exclusões de cancelada/quadra inativa.
+
+**O estado da chamada sai resolvido em três valores** — `pendente`, `feita`,
+`legada`. `pendente` é a **ausência** de linha em `chamadas`, e é o caso que
+faz a tela valer: é o dia que o professor esqueceu de registrar. `legada` é
+`completude: desconhecida`, de antes da SPEC-015.
+
+**O `DataDaAgendaParamDto` valida a data**, ao contrário da rota equivalente
+do gestor: lá, `parseDateOnly('banana')` monta um `Invalid Date`, o Prisma
+consulta com ele e a resposta volta **vazia** — indistinguível de "não há
+aula nesse dia". Aqui é `400`.
+
 ### A avaliação é da AULA; a média é da TURMA (SPEC-025)
 
 `AvaliacaoDeAulaService` guarda uma nota por `(ocupacao_id, aluno_id)` e

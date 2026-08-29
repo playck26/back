@@ -3534,6 +3534,86 @@
         ]
       }
     },
+    "/api/v1/me/teacher/agenda": {
+      "get": {
+        "operationId": "MeTeacherAgendaController_resumoDoMes",
+        "parameters": [
+          {
+            "name": "mes",
+            "required": true,
+            "in": "query",
+            "description": "AAAA-MM",
+            "schema": {
+              "example": "2026-09",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DiaDaAgendaDoProfessorDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/agenda/{data}": {
+      "get": {
+        "operationId": "MeTeacherAgendaController_detalheDoDia",
+        "parameters": [
+          {
+            "name": "data",
+            "required": true,
+            "in": "path",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AulaDoDiaDoProfessorDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/dashboard/evasao": {
       "get": {
         "operationId": "DashboardController_evasao",
@@ -7236,6 +7316,79 @@
           "ocupacaoId",
           "versao",
           "total"
+        ]
+      },
+      "DiaDaAgendaDoProfessorDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "aulas": {
+            "type": "number",
+            "example": 2,
+            "description": "Quantas aulas dele neste dia."
+          },
+          "pendentes": {
+            "type": "number",
+            "example": 1,
+            "description": "Quantas ainda sem chamada registrada. É esta contagem que faz o calendário valer: a grade ele já conhece de cabeça; o que falta registrar, não."
+          }
+        },
+        "required": [
+          "data",
+          "aulas",
+          "pendentes"
+        ]
+      },
+      "AulaDoDiaDoProfessorDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "O MESMO id que `PUT /me/teacher/attendance/:ocupacaoId` aceita (INV-026b). Se divergirem, o caminho quebra no último passo."
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "chamada": {
+            "type": "string",
+            "enum": [
+              "pendente",
+              "feita",
+              "legada"
+            ],
+            "description": "`pendente` = não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`."
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "turmaId",
+          "turmaNome",
+          "quadraNome",
+          "horaInicio",
+          "horaFim",
+          "chamada"
         ]
       },
       "AlunoEmEvasaoResponseDto": {
