@@ -58,6 +58,14 @@ export const TABELAS_DA_EMPRESA = [
   'niveis',
   'convites_aluno',
   'config_pagamento_empresa',
+  // SPEC-024: ANTES de `usuarios` nao importa (a FK e para `empresas`), mas
+  // antes da empresa importa — `contratos_da_empresa` tem ON DELETE RESTRICT
+  // de proposito: apagar uma empresa nao pode levar embora o registro de qual
+  // texto os alunos aceitaram sem que alguem tenha decidido isso.
+  //
+  // `aceites` NAO entra: aponta para `usuarios`, com ON DELETE CASCADE, e cai
+  // junto com eles. Poe-la aqui seria apagar por um caminho que ja apaga.
+  'contratos_da_empresa',
   'usuarios',
 ] as const;
 
