@@ -180,6 +180,14 @@ describe('PresencaService (SPEC-014)', () => {
     ]);
   });
 
+  // SPEC-027 — os testes de horário fixam o relógio (`setSystemTime`). Sem
+  // devolvê-lo, o relógio falso vaza para o resto do arquivo e o próximo
+  // teste passa a medir uma data congelada — falha que aparece longe da
+  // causa.
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   // SPEC-015/INV-026: o padrão passou a ser a turma **inteira** (a1 e a2).
   // Antes era um aluno só — e a suíte inteira passava, o que é a prova de
   // que nada cobrava completude. A DEF-002 morava exatamente aqui.
@@ -242,19 +250,35 @@ describe('PresencaService (SPEC-014)', () => {
      * aula"*. Antes, o portão era `data > hoje`, então a aula das 18h de hoje
      * aceitava chamada às 8h da manhã — mesmo dia, comparação satisfeita.
      *
-     * A prova usa `23:58`, e o horário não é arbitrário: é o único que
-     * garante "ainda não começou" **em qualquer instante** em que a suíte
-     * rode, menos os dois últimos minutos do dia. Sem esse cuidado, o teste
-     * viraria o mesmo sorteio que o DEF-020 custou caro.
+     * ---
+     *
+     * **O relógio é FIXADO, e a primeira versão desta prova não fixava.**
+     *
+     * Ela usava `23:58` e um comentário meu dizendo que o horário garantia
+     * "ainda não começou em qualquer instante em que a suíte rode, menos os
+     * dois últimos minutos do dia". A validação cruzada respondeu o óbvio:
+     * **"menos dois minutos por dia" é exatamente o problema.** Rodando entre
+     * 23:58 e 00:00 no fuso do clube, a aula já teria começado e a prova
+     * falharia sem nada estar errado no produto.
+     *
+     * Foi a lição do DEF-020 me pegando dentro da correção que a citava. Uma
+     * prova de regra de tempo **não pode depender do relógio de quem a roda** —
+     * e "quase nunca depende" continua sendo depender.
+     *
+     * `setSystemTime` fixa 14:00 em São Paulo (17:00Z). A partir daí, 18:00
+     * ainda não começou e 09:00 já começou, todo dia, para sempre.
      */
+    const AS_14H_EM_SAO_PAULO = new Date('2026-09-15T17:00:00.000Z');
+
     it('recusa a aula de HOJE que ainda não começou', async () => {
+      jest.useFakeTimers().setSystemTime(AS_14H_EM_SAO_PAULO);
       armarOcupacao(
         prisma,
         estado,
         ocupacao({
           data: diaRelativo(0),
-          horaInicio: new Date('1970-01-01T23:58:00.000Z'),
-          horaFim: new Date('1970-01-01T23:59:00.000Z'),
+          horaInicio: new Date('1970-01-01T18:00:00.000Z'),
+          horaFim: new Date('1970-01-01T19:00:00.000Z'),
         }),
       );
 
@@ -266,13 +290,31 @@ describe('PresencaService (SPEC-014)', () => {
     it('e ACEITA a aula de hoje que já começou — o outro lado', async () => {
       // Sem esta, um portão que recusasse TUDO passaria na de cima, e o
       // professor ficaria sem lançar chamada nenhuma.
+      jest.useFakeTimers().setSystemTime(AS_14H_EM_SAO_PAULO);
       armarOcupacao(
         prisma,
         estado,
         ocupacao({
           data: diaRelativo(0),
-          horaInicio: new Date('1970-01-01T00:00:00.000Z'),
-          horaFim: new Date('1970-01-01T23:59:00.000Z'),
+          horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+          horaFim: new Date('1970-01-01T10:00:00.000Z'),
+        }),
+      );
+
+      await expect(salvar()).resolves.toMatchObject({ total: 2 });
+    });
+
+    it('a aula em andamento (começou, não terminou) é aceita', async () => {
+      // A fronteira do meio, que só existe com o relógio fixado: às 14h, uma
+      // aula de 13h às 15h está acontecendo.
+      jest.useFakeTimers().setSystemTime(AS_14H_EM_SAO_PAULO);
+      armarOcupacao(
+        prisma,
+        estado,
+        ocupacao({
+          data: diaRelativo(0),
+          horaInicio: new Date('1970-01-01T13:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
         }),
       );
 
