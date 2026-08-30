@@ -91,12 +91,29 @@ export class OcorrenciaDaTurmaResponseDto {
    * `podeLancar` responde "o servidor aceita?"; `estado` responde "por quê",
    * e é isso que a tela precisa para escolher a cor e o texto sem deduzir
    * regra nenhuma.
+   *
+   * **SPEC-030 — o vocabulário era o mesmo e a REGRA não era.** Este campo
+   * saía de um ternário próprio que decidia `feita` contando presenças,
+   * enquanto o calendário decidia pelo cabeçalho. Agora os dois vêm de
+   * `resolverEstadoDaChamada`, e por isso esta lista ganhou os dois valores
+   * que só o calendário publicava (`legada`) ou que ninguém publicava ainda
+   * (`nao_houve`).
    */
   @ApiProperty({
-    enum: ['futura', 'em_andamento', 'pendente', 'feita', 'cancelada'],
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'cancelada',
+    ],
     description:
       '`futura` = ainda não começou. `em_andamento` = começou e não ' +
-      'terminou. `pendente` = terminou sem chamada. `feita` = há presenças. ' +
+      'terminou. `pendente` = terminou sem chamada. `feita` = chamada ' +
+      'declarada completa. `legada` = chamada anterior à SPEC-015. ' +
+      '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). ' +
       '`cancelada` = ocorrência cancelada.',
   })
   estado!: string;

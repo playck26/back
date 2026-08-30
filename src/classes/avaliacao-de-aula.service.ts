@@ -128,6 +128,14 @@ export class AvaliacaoDeAulaService {
       origemTipo: 'TURMA' as const,
       origemTurmaId: { in: turmaIds },
       statusPagamento: { not: 'cancelado' as const },
+      // SPEC-030 — **aula não realizada some daqui.** Ela não foi cancelada
+      // (a quadra esteve ocupada), então o filtro acima não a pegava, e o
+      // aluno receberia um convite para avaliar uma aula que não aconteceu.
+      //
+      // `none` e não `some`+negação: `chamadas` é lista de zero ou um pela FK
+      // composta, e `none` cobre certo os dois casos — sem cabeçalho, e com
+      // cabeçalho de qualquer outra completude.
+      chamadas: { none: { completude: 'nao_houve' as const } },
       // `lt: hoje` e não `lte`: a regra de "já terminou" é a mesma do
       // `exigirAulaTerminada`, e as duas precisam concordar — lista que
       // oferece o que o servidor recusa é a armadilha do DEF-011.
@@ -198,7 +206,13 @@ export class AvaliacaoDeAulaService {
 
     const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
       where: { id: ocupacaoId, companyId, origemTipo: 'TURMA' },
-      select: { id: true, data: true, origemTurmaId: true },
+      select: {
+        id: true,
+        data: true,
+        origemTurmaId: true,
+        // SPEC-030 — o portão precisa saber se a aula aconteceu.
+        chamadas: { select: { completude: true } },
+      },
     });
     // 404 também para reserva avulsa e para ocupação de outra empresa: as
     // três são "esta aula não existe para você", e distinguir entregaria
@@ -212,6 +226,19 @@ export class AvaliacaoDeAulaService {
         statusCode: 409,
         code: 'AULA_NAO_TERMINOU',
         message: 'Você pode avaliar esta aula a partir do dia seguinte.',
+      });
+    }
+
+    // SPEC-030 — **não se avalia aula que não aconteteu.** A lista já não a
+    // oferece, e este portão existe pela mesma razão que o de `AULA_FUTURA`
+    // na chamada: esconder o botão resolve o engano honesto, só o servidor
+    // resolve o pedido montado à mão — e uma nota numa aula que não houve
+    // entraria na média da turma para sempre.
+    if (ocupacao.chamadas[0]?.completude === 'nao_houve') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'AULA_NAO_REALIZADA',
+        message: 'Esta aula não aconteceu e não pode ser avaliada.',
       });
     }
 

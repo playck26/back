@@ -172,7 +172,12 @@ export class ErroDeAvaliacaoResponseDto {
   @ApiProperty({ example: 403 })
   statusCode!: number;
 
-  @ApiProperty({ enum: ['NAO_MATRICULADO', 'AULA_NAO_TERMINOU'] })
+  // SPEC-030 — `AULA_NAO_REALIZADA` entrou aqui junto com o portao no
+  // servico. Codigo publicado que nao acompanha o servico e pior do que
+  // codigo ausente: quem integra confia na lista.
+  @ApiProperty({
+    enum: ['NAO_MATRICULADO', 'AULA_NAO_TERMINOU', 'AULA_NAO_REALIZADA'],
+  })
   code!: string;
 
   @ApiProperty({
