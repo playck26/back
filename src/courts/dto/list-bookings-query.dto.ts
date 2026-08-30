@@ -26,7 +26,10 @@ export class ListBookingsQueryDto {
    */
   @ApiPropertyOptional({
     type: Boolean,
-    description: 'Exclui ocupações canceladas. Combina com `status`.',
+    description:
+      'Exclui ocupações canceladas. Pode ser combinado com `status` — os ' +
+      'dois viram um `AND`, então `status=pago&excluirCanceladas=true` ' +
+      'devolve só as pagas.',
   })
   @IsOptional()
   // **NÃO use `@Type(() => Boolean)` aqui.** Query string chega como texto, e

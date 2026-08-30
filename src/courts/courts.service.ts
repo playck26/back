@@ -545,16 +545,32 @@ export class CourtsService {
     const where: Prisma.OcupacaoQuadraWhereInput = {
       companyId,
       ...(alunoIdScope ? { alunoId: alunoIdScope } : {}),
-      ...(query.status ? { statusPagamento: query.status } : {}),
       // SPEC-027 — **o filtro de canceladas saiu da tela e veio para cá.**
       //
       // O app do aluno filtrava `statusPagamento !== 'cancelado'` DEPOIS de
       // receber a página. Sem paginação isso era só desperdício; com ela
       // vira mentira: uma página de 20 mostraria 12 itens, e o rodapé diria
       // "1–20 de 47". Quem pagina precisa contar exatamente o que mostra.
-      ...(query.excluirCanceladas
-        ? { statusPagamento: { not: 'cancelado' as const } }
-        : {}),
+      //
+      // **Os dois filtros vivem na MESMA chave `statusPagamento`**, e a
+      // primeira versão disto usava dois spreads — o segundo apagava o
+      // primeiro em silêncio, então `?status=pago&excluirCanceladas=true`
+      // devolvia tudo que não fosse cancelado, inclusive pendente. O
+      // docstring do DTO chegou a dizer "combina com `status`", o que era
+      // falso. Resolvido com `AND`, que é a única forma de os dois
+      // coexistirem.
+      ...(query.status && query.excluirCanceladas
+        ? {
+            AND: [
+              { statusPagamento: query.status },
+              { statusPagamento: { not: 'cancelado' as const } },
+            ],
+          }
+        : query.status
+          ? { statusPagamento: query.status }
+          : query.excluirCanceladas
+            ? { statusPagamento: { not: 'cancelado' as const } }
+            : {}),
       ...(query.data ? { data: parseDateOnly(query.data) } : {}),
     };
 
@@ -563,7 +579,8 @@ export class CourtsService {
         where,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: [{ data: 'desc' }, { horaInicio: 'asc' }],
+        // SPEC-027 — `id` como desempate; ver `avaliacao-de-aula.service.ts`.
+        orderBy: [{ data: 'desc' }, { horaInicio: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.ocupacaoQuadra.count({ where }),
     ]);

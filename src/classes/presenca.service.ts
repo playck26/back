@@ -204,7 +204,10 @@ export class PresencaService {
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: { _count: { select: { presencas: true } } },
-      orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }],
+      // SPEC-027 — `id` como desempate: `data` + `horaInicio` não é ordem
+      // total, e com `skip`/`take` isso faz linha aparecer em duas páginas e
+      // sumir de outra.
+      orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }, { id: 'desc' }],
     });
 
     const hoje = this.hoje();

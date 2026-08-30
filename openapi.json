@@ -2120,7 +2120,7 @@
             "name": "excluirCanceladas",
             "required": false,
             "in": "query",
-            "description": "Exclui ocupações canceladas. Combina com `status`.",
+            "description": "Exclui ocupações canceladas. Pode ser combinado com `status` — os dois viram um `AND`, então `status=pago&excluirCanceladas=true` devolve só as pagas.",
             "schema": {
               "type": "boolean"
             }

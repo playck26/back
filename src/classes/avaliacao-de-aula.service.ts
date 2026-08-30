@@ -129,7 +129,14 @@ export class AvaliacaoDeAulaService {
           select: { nota: true, comentario: true },
         },
       },
-      orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }],
+      // SPEC-027 — **`id` como desempate, e sem ele a paginação erra.**
+      //
+      // `data` + `horaInicio` NÃO é ordem total: duas ocupações no mesmo dia
+      // e hora ficam em ordem indefinida, e o Postgres não promete a mesma
+      // entre duas consultas. Com `skip`/`take` isso faz uma linha aparecer
+      // em duas páginas e outra em nenhuma — o defeito clássico de
+      // paginação, e o mais difícil de notar, porque a lista parece certa.
+      orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }, { id: 'desc' }],
     });
 
     return {
