@@ -6453,6 +6453,18 @@
           "chamadaFeita": {
             "type": "boolean"
           },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "futura",
+              "em_andamento",
+              "pendente",
+              "feita",
+              "legada",
+              "nao_houve",
+              "cancelada"
+            ]
+          },
           "registradoPor": {
             "type": "string",
             "nullable": true,
@@ -6472,6 +6484,7 @@
           "horaFim",
           "cancelada",
           "chamadaFeita",
+          "estado",
           "registradoPor",
           "alunos"
         ]

@@ -268,8 +268,25 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
     'AulaDoDiaDoProfessorResponseDto.chamada',
     ['futura', 'em_andamento', 'pendente', 'feita', 'legada', 'nao_houve'],
   ],
+  // SPEC-030 — a lista da turma (professor) e o historico (gestor) publicam
+  // a MESMA lista, e as duas incluem `cancelada`: nenhuma das duas esconde
+  // ocorrencia cancelada, ao contrario do calendario. Duas entradas em vez de
+  // uma compartilhada porque a chave e por schema, e o dia em que uma delas
+  // divergir isso precisa aparecer aqui.
   [
     'OcorrenciaDaTurmaResponseDto.estado',
+    [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'cancelada',
+    ],
+  ],
+  [
+    'OcorrenciaNoHistoricoResponseDto.estado',
     [
       'futura',
       'em_andamento',
