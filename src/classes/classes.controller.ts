@@ -8,8 +8,8 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Patch,
+  Put,
   Post,
   Query,
   UseGuards,
@@ -32,6 +32,7 @@ import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { AvaliacoesDaTurmaResponseDto } from './dto/avaliacao-de-aula.dto';
 import { ClassesService } from './classes.service';
@@ -45,6 +46,7 @@ import {
   MatriculaEmTurmaResponseDto,
   OcorrenciaNoHistoricoResponseDto,
 } from './dto/presenca-historico-response.dto';
+import { ChamadaNaoHouveResponseDto } from './dto/me-response.dto';
 import { FrequenciaDaTurmaResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
@@ -97,7 +99,7 @@ export class ClassesController {
   })
   avaliacoesDaTurma(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.avaliacoes.listarParaOGestor(user.companyId as string, id);
   }
@@ -106,7 +108,7 @@ export class ClassesController {
   @ApiOkResponse({ type: FrequenciaDaTurmaResponseDto })
   frequencia(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Query('dias', new DefaultValuePipe(JANELA_PADRAO_DIAS), ParseIntPipe)
     dias: number,
   ) {
@@ -121,13 +123,61 @@ export class ClassesController {
   @ApiOkResponse({ type: [OcorrenciaNoHistoricoResponseDto] })
   historicoDePresenca(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
   ) {
     return this.presencas.historicoDaTurma(
       user.companyId as string,
       id,
       Math.min(Math.max(dias, 1), 90),
+    );
+  }
+
+  /**
+   * SPEC-030 — **o gestor registra que a aula não aconteceu.**
+   *
+   * Decisão do Israel (D1): registram os dois. O motivo é o caso que o
+   * professor não resolve — **professor sai do clube**, e a aula que ele não
+   * registrou ficaria pendente para sempre, sem ninguém com caminho para
+   * fechá-la.
+   *
+   * Aninhada sob a turma porque é a tela que ele já abre: o histórico logo
+   * acima (`GET :id/presencas`) é onde a aula pendente aparece para ele.
+   *
+   * **Mesmo serviço da rota do professor**, com o escopo de professor
+   * ausente — para o gestor não há "colega", e o que o separa de outra
+   * empresa é o `company_id`, que está no `WHERE` das duas queries do
+   * portão. Ausência de escopo de professor não é ausência de escopo.
+   *
+   * **`:turmaId` É CONFERIDO** — e a primeira versão desta rota não o
+   * conferia. A validação cruzada apontou: `PUT
+   * /classes/turma-A/presencas/ocupacao-da-turma-B/nao-houve` devolvia `200`
+   * e alterava **B**. Não escalava privilégio (a empresa continua no
+   * `WHERE`), mas eu tinha declarado isso como "inofensivo" no comentário —
+   * e não é: uma URL aninhada que altera outro recurso quebra o contrato do
+   * próprio caminho, e o log registra a turma errada.
+   */
+  // Sem `@Roles`: este controller inteiro é protegido por `CompanyAdminGuard`
+  // (topo da classe), não por `RolesGuard`. Um `@Roles` aqui seria decoração
+  // morta — parece que restringe e não é lido por ninguém, que é pior do que
+  // não ter.
+  @Put(':turmaId/presencas/:ocupacaoId/nao-houve')
+  @ApiOkResponse({ type: ChamadaNaoHouveResponseDto })
+  naoHouve(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.presencas.registrarNaoHouve(
+      user.companyId as string,
+      ocupacaoId,
+      user.sub,
+      // `false` = sem escopo de professor. A empresa continua valendo.
+      false,
+      // Ressalva da validação cruzada: o `turmaId` da URL deixou de ser
+      // decorativo. Sem ele, esta rota alterava ocorrência de OUTRA turma da
+      // mesma empresa e devolvia 200.
+      turmaId,
     );
   }
 
@@ -150,7 +200,7 @@ export class ClassesController {
   @ApiOkResponse({ type: TurmaDetalheResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.classesService.findOne(user.companyId as string, id);
   }
@@ -159,7 +209,7 @@ export class ClassesController {
   @ApiOkResponse({ type: TurmaDetalheResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateClassDto,
   ) {
     return this.classesService.update(user.companyId as string, id, dto);
@@ -169,8 +219,8 @@ export class ClassesController {
   @ApiCreatedResponse({ type: MatriculaEmTurmaResponseDto })
   allocateStudent(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('alunoId', ParseUUIDPipe) alunoId: string,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Param('alunoId', UuidCanonicoPipe) alunoId: string,
   ) {
     return this.classesService.allocateStudent(
       user.companyId as string,
@@ -184,8 +234,8 @@ export class ClassesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   removeStudent(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('alunoId', ParseUUIDPipe) alunoId: string,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Param('alunoId', UuidCanonicoPipe) alunoId: string,
   ) {
     return this.classesService.removeStudent(
       user.companyId as string,

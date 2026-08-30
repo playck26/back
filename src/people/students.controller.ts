@@ -7,7 +7,6 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -29,6 +28,7 @@ import {
   AlunoResponseDto,
 } from './dto/people-response.dto';
 import { FrequenciaDoAlunoResponseDto } from '../frequencia/dto/frequencia-response.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
@@ -62,7 +62,7 @@ export class StudentsController {
   @ApiOkResponse({ type: FrequenciaDoAlunoResponseDto })
   frequencia(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Query('dias', new DefaultValuePipe(JANELA_PADRAO_DIAS), ParseIntPipe)
     dias: number,
   ) {
@@ -93,7 +93,7 @@ export class StudentsController {
   @ApiOkResponse({ type: AlunoComSenhaTemporariaResponseDto })
   regenerarSenhaTemporaria(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.studentsService.regenerarSenhaTemporaria(
       user.companyId as string,
@@ -106,7 +106,7 @@ export class StudentsController {
   @ApiOkResponse({ type: AlunoResponseDto })
   aprovar(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.studentsService.decidirVinculo(
       user.companyId as string,
@@ -120,7 +120,7 @@ export class StudentsController {
   @ApiOkResponse({ type: AlunoResponseDto })
   recusar(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.studentsService.decidirVinculo(
       user.companyId as string,
@@ -142,7 +142,7 @@ export class StudentsController {
   @ApiOkResponse({ type: AlunoResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.studentsService.findOne(user.companyId as string, id);
   }
@@ -151,7 +151,7 @@ export class StudentsController {
   @ApiOkResponse({ type: AlunoResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateStudentDto,
   ) {
     return this.studentsService.update(user.companyId as string, id, dto);

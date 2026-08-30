@@ -6,7 +6,12 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import type { OcupacaoQuadra, StatusPresenca } from '@prisma/client';
+import type {
+  CompletudeChamada,
+  OcupacaoQuadra,
+  Prisma,
+  StatusPresenca,
+} from '@prisma/client';
 import {
   ChamadaResponseDto,
   ChamadaSalvaResponseDto,
@@ -14,8 +19,11 @@ import {
 } from './dto/me-response.dto';
 import { OcorrenciaNoHistoricoResponseDto } from './dto/presenca-historico-response.dto';
 import {
+  chamadaJaRegistrada,
+  resolverEstadoDaChamada,
+} from './estado-da-chamada';
+import {
   aulaJaComecou,
-  aulaJaTerminou,
   formatDateOnly,
   formatTimeOnly,
   hojeNoFusoDoClube,
@@ -157,6 +165,203 @@ export class PresencaService {
   }
 
   /**
+   * SPEC-030:TASK-004 — **o portão da escrita de chamada, num lugar só.**
+   *
+   * Travar a turma, reler sob o lock e recusar o que não pode receber
+   * chamada. Era o começo de `salvarChamada`; virou método próprio quando
+   * `registrarNaoHouve` passou a precisar exatamente das mesmas guardas.
+   *
+   * **Copiar este bloco teria sido o pior desfecho possível da SPEC-030.**
+   * Ele carrega o raciocínio do BLOQUEADOR da 9ª rodada de validação
+   * cruzada, e uma cópia que não acompanhasse a próxima correção reabriria
+   * uma corrida que já custou caro uma vez.
+   *
+   * `professorIdScope` é o único parâmetro que muda entre os dois chamadores
+   * (D1a): preenchido, só passa ocorrência daquele professor; `undefined`,
+   * o gestor alcança qualquer turma **da empresa** — o `company_id` está no
+   * `WHERE` das duas queries e não é opcional em nenhum caminho.
+   *
+   * ## Por que são DOIS statements, e nesta ordem
+   *
+   * INV-029/AC-011: `presencas` referencia `turma_alunos`, e a exclusão
+   * de um lado só não trava nada. A entrada está protegida de graça pela FK
+   * `turma_alunos -> turmas`, que obriga o INSERT a pegar `FOR KEY SHARE`
+   * na turma; a SAÍDA não, porque DELETE de filho não checa FK no pai.
+   *
+   * A v10 fazia num ato só — um JOIN com `FOR UPDATE OF t` — e isso parecia
+   * bastar. Não basta: em READ COMMITTED o snapshot é do STATEMENT. Quando
+   * esse statement esbarra no lock de `turmas` e espera, o Postgres, ao ser
+   * liberado, reavalia só a linha travada (EvalPlanQual) — as outras
+   * relações do JOIN continuam com o snapshot de antes da espera.
+   *
+   * Por isso a v10 acertava a troca de professor (`professor_id` vem de `t`,
+   * a relação travada) e errava o cancelamento (`status_pagamento` vem de
+   * `o`, que não é). Medido em `bloq9-snapshot.ts`: o JOIN devolveu
+   * `pendente_pagamento` com o banco já em `cancelado`; uma releitura em
+   * statement novo, com o lock na mão, devolveu `cancelado`.
+   *
+   * Continua travando SÓ `turmas`: raiz única é o que garante ordem de
+   * aquisição única (INV-029) e, portanto, ausência de deadlock.
+   */
+  private async travarEValidarOcorrencia(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    ocupacaoId: string,
+    professorIdScope?: string,
+    turmaIdDaRota?: string,
+  ): Promise<{
+    origemTurmaId: string;
+    data: Date;
+    horaInicio: Date;
+    statusPagamento: string;
+    professorId: string | null;
+  }> {
+    // (0a) descobrir a turma da ocorrência e TRAVAR a linha.
+    // `origem_turma_id` é gravado na criação e nunca alterado — os três
+    // `update` de `ocupacoes_quadra` escrevem apenas `status_pagamento` —,
+    // então descobrir por ele não corre risco de travar a turma errada. A
+    // releitura em (0b) confere isso de qualquer forma.
+    const travadas = await tx.$queryRaw<{ id: string }[]>`
+      SELECT t.id
+        FROM turmas t
+       WHERE t.id = (
+               SELECT o.origem_turma_id
+                 FROM ocupacoes_quadra o
+                WHERE o.id = ${ocupacaoId}::uuid
+                  AND o.company_id = ${companyId}::uuid
+                  AND o.origem_tipo = 'TURMA'
+             )
+       FOR UPDATE
+    `;
+    if (!travadas[0]) {
+      throw new NotFoundException();
+    }
+
+    // (0b) com o lock na mão, RELER num statement novo. Este snapshot é
+    // posterior ao commit de quem estava segurando a turma.
+    const linhas = await tx.$queryRaw<
+      {
+        origemTurmaId: string;
+        data: Date;
+        // SPEC-027: a janela da chamada passou a olhar a HORA, e esta
+        // releitura sob o lock precisa da coluna. Sem ela, o portão
+        // compararia `undefined` — o `tsc` pega, mas só porque o tipo acima
+        // e a query abaixo andam juntos. Mantenha os dois em par.
+        horaInicio: Date;
+        statusPagamento: string;
+        professorId: string | null;
+      }[]
+    >`
+      SELECT o.origem_turma_id   AS "origemTurmaId",
+             o.data              AS "data",
+             o.hora_inicio       AS "horaInicio",
+             o.status_pagamento  AS "statusPagamento",
+             t.professor_id      AS "professorId"
+        FROM ocupacoes_quadra o
+        JOIN turmas t ON t.id = o.origem_turma_id
+       WHERE o.id = ${ocupacaoId}::uuid
+         AND o.company_id = ${companyId}::uuid
+         AND o.origem_tipo = 'TURMA'
+    `;
+    const ocupacao = linhas[0];
+
+    // Guarda defensiva: se a ocorrência apontar para outra turma, o lock que
+    // está na mão não é o da turma certa. Não deveria acontecer, e por isso
+    // a resposta é 404 e não um código próprio.
+    if (!ocupacao || ocupacao.origemTurmaId !== travadas[0].id) {
+      throw new NotFoundException();
+    }
+
+    // Mesma razão do `ocorrenciaDoProfessor`: ocorrência de colega devolve
+    // 404, não 403 — 403 confirmaria que existe.
+    //
+    // **SPEC-030 — e o `if` só roda quando há escopo.** Para o gestor não há
+    // "colega": a empresa já está no `WHERE` das duas queries acima, e é ela
+    // que o separa de outra empresa. Ausência de escopo aqui é ausência de
+    // escopo de PROFESSOR, não ausência de escopo.
+    if (professorIdScope && ocupacao.professorId !== professorIdScope) {
+      throw new NotFoundException();
+    }
+
+    // **Achado 4 da 2ª validação cruzada (MÉDIA).** Esta conferência existia,
+    // e rodava DEPOIS do portão — então
+    // `PUT /classes/turma-A/presencas/ocupacao-futura-da-turma-B/nao-houve`
+    // devolvia `422 AULA_FUTURA` em vez de `404`. Não havia escrita indevida,
+    // mas a resposta **contava o estado de uma ocorrência que a URL não
+    // deveria alcançar**: quem chuta ids descobre se a aula existe e se já
+    // aconteceu.
+    //
+    // O lugar certo é aqui, no grupo dos `404` de escopo: "esta ocorrência
+    // não pertence a este caminho" é a mesma família de "não é sua", e as
+    // duas têm de responder antes de qualquer regra de domínio.
+    //
+    // **Achado 1 da 3ª validação cruzada (MÉDIA) — e o `!==` era o defeito.**
+    // `A000…001` e `a000…001` são o MESMO UUID; o Postgres devolve a forma
+    // minúscula, e o `ParseUUIDPipe` da rota preservava a grafia que veio.
+    // O gestor abria a URL da própria turma em maiúsculas e levava `404`.
+    //
+    // A correção de verdade é a fronteira — `UuidCanonicoPipe`, que
+    // normaliza todo `@Param` de UUID do projeto. Isto aqui é o portão se
+    // recusando a depender de um pipe declarado em outro arquivo: quem
+    // chama este serviço não é só o controller, e um gate que devolve 404
+    // não pode ter a resposta decidida por quem o chamou.
+    if (
+      turmaIdDaRota &&
+      ocupacao.origemTurmaId !== turmaIdDaRota.toLowerCase()
+    ) {
+      throw new NotFoundException();
+    }
+
+    // INV-016 (a metade que o banco não impõe): é regra de escrita.
+    if (ocupacao.statusPagamento === 'cancelado') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'AULA_CANCELADA',
+        message: 'Esta aula foi cancelada e não recebe chamada.',
+      });
+    }
+
+    // INV-017. O limite futuro impede a chamada de virar previsão — o caso
+    // real é banal: o professor abre a grade da semana e toca na linha
+    // errada. O limite passado existe porque a turma de hoje deixa de ser um
+    // retrato confiável do que era há muito tempo (LIM-003).
+    const hoje = this.hoje().getTime();
+    const dia = ocupacao.data.getTime();
+    // SPEC-027 — **o portão passou a olhar a HORA, não só o dia.**
+    //
+    // Era `dia > hoje`, e por isso a aula das 18h de hoje aceitava chamada às
+    // 8h da manhã. **Isto é o portão de verdade, e a tela não substitui:**
+    // esconder o botão resolve o engano honesto; só o servidor resolve o
+    // pedido montado à mão.
+    if (!aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'AULA_FUTURA',
+        message: 'Esta aula ainda não começou.',
+      });
+    }
+    if (dia > hoje) {
+      // Rede de segurança: `aulaJaComecou` já cobre o caso, e manter a
+      // comparação por dia custa uma linha. Se um dia a função de hora
+      // regredir, esta ainda barra a aula de amanhã.
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'AULA_FUTURA',
+        message: 'Esta aula ainda não aconteceu.',
+      });
+    }
+    if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'AULA_ANTIGA',
+        message: `A chamada pode ser lançada em até ${JANELA_RETROATIVA_DIAS} dias após a aula.`,
+      });
+    }
+
+    return ocupacao;
+  }
+
+  /**
    * SPEC-027 — **paginada**, a pedido do Israel.
    *
    * Era a lista mais longa do painel do professor: uma turma de 3x por semana
@@ -203,7 +408,16 @@ export class PresencaService {
       where: onde,
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: { _count: { select: { presencas: true } } },
+      include: {
+        _count: { select: { presencas: true } },
+        // SPEC-030 — **isto passou a ser selecionado aqui.** Antes esta
+        // lista decidia "chamada feita" contando presenças, e o calendário
+        // decidia pelo cabeçalho: uma ocorrência com cabeçalho e ZERO
+        // presenças saía `feita` num e `pendente` no outro, com o mesmo
+        // vocabulário na resposta. Agora as duas perguntam ao mesmo
+        // resolvedor, e ele precisa do cabeçalho.
+        chamadas: { select: { completude: true } },
+      },
       // SPEC-027 — `id` como desempate: `data` + `horaInicio` não é ordem
       // total, e com `skip`/`take` isso faz linha aparecer em duas páginas e
       // sumir de outra.
@@ -211,42 +425,49 @@ export class PresencaService {
     });
 
     const hoje = this.hoje();
-    const data = ocorrencias.map((o) => ({
-      ocupacaoId: o.id,
-      data: formatDateOnly(o.data),
-      horaInicio: formatTimeOnly(o.horaInicio),
-      horaFim: formatTimeOnly(o.horaFim),
-      cancelada: o.statusPagamento === 'cancelado',
-      // O que o professor precisa ver de relance: o que falta lançar.
-      chamadaFeita: o._count.presencas > 0,
-      marcados: o._count.presencas,
-      totalAlunos: turma._count.alunos,
-      // SPEC-027 — **`o.data <= hoje` não bastava.** A aula das 18h de hoje
-      // satisfazia a comparação às 8h da manhã, e a tela oferecia lançar
-      // presença de uma aula que ninguém tinha dado ainda. Agora o limite de
-      // cima é a HORA DE INÍCIO; o limite de baixo (janela retroativa)
-      // continua por dia, que é como a INV-017 foi escrita.
-      podeLancar:
-        o.statusPagamento !== 'cancelado' &&
-        aulaJaComecou(o.data, o.horaInicio) &&
-        o.data.getTime() >=
-          hoje.getTime() - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000,
-      /**
-       * SPEC-027 — o mesmo vocabulário do calendário, para a tela não ter de
-       * deduzir. Se ela deduzisse a partir de `podeLancar` + `chamadaFeita`,
-       * viraria a segunda cópia da regra — e é sempre a cópia que fica velha.
-       */
-      estado:
-        o.statusPagamento === 'cancelado'
-          ? ('cancelada' as const)
-          : o._count.presencas > 0
-            ? ('feita' as const)
-            : !aulaJaComecou(o.data, o.horaInicio)
-              ? ('futura' as const)
-              : !aulaJaTerminou(o.data, o.horaFim)
-                ? ('em_andamento' as const)
-                : ('pendente' as const),
-    }));
+    const data = ocorrencias.map((o) => {
+      const estado = resolverEstadoDaChamada({
+        cancelada: o.statusPagamento === 'cancelado',
+        completude: o.chamadas[0]?.completude,
+        data: o.data,
+        horaInicio: o.horaInicio,
+        horaFim: o.horaFim,
+      });
+      return {
+        ocupacaoId: o.id,
+        data: formatDateOnly(o.data),
+        horaInicio: formatTimeOnly(o.horaInicio),
+        horaFim: formatTimeOnly(o.horaFim),
+        cancelada: o.statusPagamento === 'cancelado',
+        // O que o professor precisa ver de relance: o que falta lançar.
+        // SPEC-030: deixou de ser `_count.presencas > 0`. Uma turma onde todo
+        // mundo faltou tem cabeçalho e zero presenças — e a chamada **foi
+        // feita**. A regra antiga mandava o professor lançar de novo.
+        chamadaFeita: chamadaJaRegistrada(estado),
+        marcados: o._count.presencas,
+        totalAlunos: turma._count.alunos,
+        // SPEC-027 — **`o.data <= hoje` não bastava.** A aula das 18h de hoje
+        // satisfazia a comparação às 8h da manhã, e a tela oferecia lançar
+        // presença de uma aula que ninguém tinha dado ainda. Agora o limite de
+        // cima é a HORA DE INÍCIO; o limite de baixo (janela retroativa)
+        // continua por dia, que é como a INV-017 foi escrita.
+        podeLancar:
+          o.statusPagamento !== 'cancelado' &&
+          aulaJaComecou(o.data, o.horaInicio) &&
+          o.data.getTime() >=
+            hoje.getTime() - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000,
+        /**
+         * SPEC-027 — o mesmo vocabulário do calendário, para a tela não ter de
+         * deduzir. Se ela deduzisse a partir de `podeLancar` + `chamadaFeita`,
+         * viraria a segunda cópia da regra — e é sempre a cópia que fica velha.
+         *
+         * **SPEC-030 — e era exatamente isso que estava acontecendo aqui.** O
+         * vocabulário era o mesmo do calendário, a regra não: esta cadeia
+         * decidia `feita` por contagem de presenças. Agora vem do resolvedor.
+         */
+        estado,
+      };
+    });
 
     return { data, page, pageSize, total };
   }
@@ -293,13 +514,27 @@ export class PresencaService {
     // instâncias antigas possam gravar na janela entre este deploy e o
     // `contract`. Trata igual a `desconhecida`, que é o que o backfill vai
     // registrar.
-    const completa = cabecalho?.completude === 'completa';
+    // **SPEC-030 / achado 1 da validação cruzada (ALTA) — e este era o pior
+    // defeito do ciclo.**
+    //
+    // Esta cadeia era um ternário de dois casos: `completa`, ou tudo o mais
+    // vira `desconhecida`. Quando `nao_houve` nasceu, ele caiu no "tudo o
+    // mais" — então o professor registrava que a aula não aconteceu, a tela
+    // relia, e recebia `desconhecida`: **o aviso de "chamada legada, confira
+    // e salve de novo"**, exatamente o oposto do que ele acabara de dizer.
+    //
+    // O `GET` prometia `nao_houve` no contrato publicado e devolvia outra
+    // coisa. **A prova do `Cliente` não pegou porque ela mockava a releitura
+    // já com `nao_houve`** — o teste dublou justamente a parte sob julgamento.
+    //
+    // Agora o valor do cabeçalho **passa direto**. Ausência de cabeçalho
+    // continua sendo `null` quando não há nada, e `desconhecida` quando há
+    // presenças sem cabeçalho — que é o legado descrito acima.
     const semRegistro = presencas.length === 0 && !cabecalho;
-    const completude: 'completa' | 'desconhecida' | null = semRegistro
+    const completude: CompletudeChamada | null = semRegistro
       ? null
-      : completa
-        ? 'completa'
-        : 'desconhecida';
+      : (cabecalho?.completude ?? 'desconhecida');
+    const completa = completude === 'completa';
 
     const doSnapshot: LinhaDaChamada[] = presencas.map((p) => ({
       alunoId: p.alunoId,
@@ -335,6 +570,119 @@ export class PresencaService {
       versao: this.versaoDe(presencas, cabecalho, matriculados),
       alunos: alunos.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
     };
+  }
+
+  /**
+   * SPEC-030:TASK-004 — **registrar que a aula não aconteceu.**
+   *
+   * O problema que isto resolve: choveu, e ninguém tinha caminho para dizer
+   * isso. A ocorrência ficava sem cabeçalho, a aula já tinha terminado, e o
+   * calendário do professor marcava "chamada pendente" **para sempre** — um
+   * ponto vermelho que ele não conseguia zerar sem mentir que deu a aula.
+   *
+   * **Não é cancelar a aula, e a diferença é o eixo da spec.** Cancelar
+   * libera o slot da quadra (a `EXCLUDE` ignora `cancelado`) e é decisão do
+   * gestor sobre a grade — segue sem caminho para ocorrência de turma
+   * (GAP-008/LIM-030b). Aqui a quadra **esteve** ocupada; o que muda é só o
+   * que o produto sabe sobre a aula.
+   *
+   * Escrevemos no cabeçalho e não em `ocupacoes_quadra` porque `chamadas` é
+   * de MOD-004, e `ocupacoes_quadra` é propriedade exclusiva de MOD-005
+   * (TARGET_ARCHITECTURE.md seção 5).
+   */
+  async registrarNaoHouve(
+    companyId: string,
+    ocupacaoId: string,
+    usuarioId: string,
+    comoProfessor: boolean,
+    /**
+     * **Ressalva contratual da validação cruzada.** A rota do gestor é
+     * aninhada (`/classes/:turmaId/presencas/:ocupacaoId/nao-houve`) e o
+     * `turmaId` era ignorado: `PUT /classes/turma-A/.../ocupacao-da-turma-B`
+     * devolvia `200` e alterava **B**. Não escalava privilégio — a empresa
+     * continua no `WHERE` —, mas uma URL aninhada que altera outro recurso
+     * quebra o contrato do próprio caminho, e quem lê o log vê a turma
+     * errada.
+     *
+     * `undefined` para a rota do professor, que não é aninhada em turma.
+     */
+    turmaIdDaRota?: string,
+  ): Promise<{ ocupacaoId: string; completude: string }> {
+    // INV-018 — o `professorId` vem do BANCO, pelo usuário autenticado, e
+    // **não** do JWT: claim é fotografia do login, autorização precisa do
+    // presente. O controller não tem como passar este id, e é por isso que
+    // ele passa um booleano de papel em vez do escopo pronto — na primeira
+    // versão desta rota eu passei `user.sub` como escopo, que é o id do
+    // usuário e nunca bate com `turmas.professor_id`.
+    const professorIdScope = comoProfessor
+      ? (await this.professorDoUsuario(companyId, usuarioId)).id
+      : undefined;
+
+    return this.prisma.$transaction(async (tx) => {
+      // As mesmas guardas de `salvarChamada`, e é de propósito: aula
+      // cancelada (`AULA_CANCELADA`), aula futura (`AULA_FUTURA`) e janela
+      // retroativa (`AULA_ANTIGA`) valem igual. Quem não pode lançar chamada
+      // também não pode declarar que não houve aula.
+      // A URL precisa dizer a verdade sobre o que altera, e a conferência
+      // roda DENTRO do portão, no grupo dos 404 — ver o comentário lá.
+      await this.travarEValidarOcorrencia(
+        tx,
+        companyId,
+        ocupacaoId,
+        professorIdScope,
+        turmaIdDaRota,
+      );
+
+      // LIM-030d — **não sobrescreve chamada com presença.** O AC-012 já
+      // decidiu que cancelar depois não desfaz quem esteve lá; apagar
+      // presenças aqui contradiria isso, e em silêncio.
+      //
+      // Não é o caminho de ninguém por acidente: se há presença, o dia já
+      // saiu do vermelho, então não há motivo para vir aqui. Quem vier
+      // mesmo assim está corrigindo um engano, e o caminho é apagar a
+      // chamada primeiro — explicitamente.
+      const comPresenca = await tx.presenca.count({ where: { ocupacaoId } });
+      if (comPresenca > 0) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'CHAMADA_COM_PRESENCA',
+          message:
+            'Esta aula já tem presenças lançadas. Apague a chamada antes de ' +
+            'registrar que a aula não aconteceu.',
+        });
+      }
+
+      // `upsert`, e não `create`: repetir a ação não é engano do usuário, é
+      // rede instável — a mesma razão pela qual `cancelBooking` é
+      // idempotente. E cobre a promoção de um cabeçalho `desconhecida` sem
+      // presença, que é chamada legada vazia.
+      //
+      // `esperados: null` é obrigação do CHECK
+      // (`chamadas_completude_esperados_check`): quem diz que a aula não
+      // aconteceu não afirma sobre quantos alunos eram esperados.
+      const cabecalho = await tx.chamada.upsert({
+        where: { ocupacaoId },
+        create: {
+          ocupacaoId,
+          origemTipo: 'TURMA',
+          companyId,
+          registradaPor: usuarioId,
+          completude: 'nao_houve',
+          esperados: null,
+        },
+        // REQ-004a/D1b — `registradaPor` é reescrito também no update: quem
+        // registrou por ÚLTIMO é a resposta útil quando o gestor fecha a
+        // aula de um professor que saiu do clube.
+        update: {
+          registradaPor: usuarioId,
+          completude: 'nao_houve',
+          esperados: null,
+        },
+        select: { ocupacaoId: true, completude: true },
+      });
+
+      return cabecalho;
+    });
   }
 
   async salvarChamada(
@@ -446,118 +794,12 @@ export class PresencaService {
       // antes. Os outros dois (`cancelBooking`, `updatePaymentStatus`)
       // recusam ocorrência de turma com `OCUPACAO_DE_TURMA`.
 
-      // (0a) descobrir a turma da ocorrência e TRAVAR a linha.
-      // `origem_turma_id` é gravado na criação e nunca alterado — os três
-      // `update` de `ocupacoes_quadra` escrevem apenas `status_pagamento`
-      // —, então descobrir por ele não corre risco de travar a turma
-      // errada. A releitura em (0b) confere isso de qualquer forma.
-      const travadas = await tx.$queryRaw<{ id: string }[]>`
-        SELECT t.id
-          FROM turmas t
-         WHERE t.id = (
-                 SELECT o.origem_turma_id
-                   FROM ocupacoes_quadra o
-                  WHERE o.id = ${ocupacaoId}::uuid
-                    AND o.company_id = ${companyId}::uuid
-                    AND o.origem_tipo = 'TURMA'
-               )
-         FOR UPDATE
-      `;
-      if (!travadas[0]) {
-        throw new NotFoundException();
-      }
-
-      // (0b) com o lock na mão, RELER num statement novo. Este snapshot é
-      // posterior ao commit de quem estava segurando a turma.
-      const linhas = await tx.$queryRaw<
-        {
-          origemTurmaId: string;
-          data: Date;
-          // SPEC-027: a janela da chamada passou a olhar a HORA, e esta
-          // releitura sob o lock precisa da coluna. Sem ela, o portão
-          // compararia `undefined` — o `tsc` pega, mas só porque o tipo
-          // acima e a query abaixo andam juntos. Mantenha os dois em par.
-          horaInicio: Date;
-          statusPagamento: string;
-          professorId: string | null;
-        }[]
-      >`
-        SELECT o.origem_turma_id   AS "origemTurmaId",
-               o.data              AS "data",
-               o.hora_inicio       AS "horaInicio",
-               o.status_pagamento  AS "statusPagamento",
-               t.professor_id      AS "professorId"
-          FROM ocupacoes_quadra o
-          JOIN turmas t ON t.id = o.origem_turma_id
-         WHERE o.id = ${ocupacaoId}::uuid
-           AND o.company_id = ${companyId}::uuid
-           AND o.origem_tipo = 'TURMA'
-      `;
-      const ocupacao = linhas[0];
-
-      // Guarda defensiva: se a ocorrência apontar para outra turma, o lock
-      // que está na mão não é o da turma certa. Não deveria acontecer (ver
-      // acima), e por isso a resposta é 404 e não um código próprio: é
-      // "não achei esta aula", não um estado que o professor possa
-      // resolver.
-      if (ocupacao && ocupacao.origemTurmaId !== travadas[0].id) {
-        throw new NotFoundException();
-      }
-
-      // Mesma razão do `ocorrenciaDoProfessor`: ocorrência de colega
-      // devolve 404, não 403 — 403 confirmaria que existe.
-      if (!ocupacao || ocupacao.professorId !== professor.id) {
-        throw new NotFoundException();
-      }
-
-      // INV-016 (a metade que o banco não impõe): é regra de escrita.
-      if (ocupacao.statusPagamento === 'cancelado') {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'AULA_CANCELADA',
-          message: 'Esta aula foi cancelada e não recebe chamada.',
-        });
-      }
-
-      // INV-017. O limite futuro impede a chamada de virar previsão — o
-      // caso real é banal: o professor abre a grade da semana e toca na
-      // linha errada. O limite passado existe porque a turma de hoje deixa
-      // de ser um retrato confiável do que era há muito tempo (LIM-003).
-      const hoje = this.hoje().getTime();
-      const dia = ocupacao.data.getTime();
-      // SPEC-027 — **o portão passou a olhar a HORA, não só o dia.**
-      //
-      // Era `dia > hoje`, e por isso a aula das 18h de hoje aceitava chamada
-      // às 8h da manhã: mesmo dia, comparação satisfeita. O Israel pediu que
-      // a chamada só abra "durante ou depois da aula".
-      //
-      // **Isto é o portão de verdade, e a tela não substitui.** Esconder o
-      // botão resolve o engano honesto; só o servidor resolve o pedido
-      // montado à mão — e a chamada é o retrato de quem estava lá.
-      if (!aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'AULA_FUTURA',
-          message: 'Esta aula ainda não começou.',
-        });
-      }
-      if (dia > hoje) {
-        // Rede de segurança: `aulaJaComecou` já cobre o caso, e manter a
-        // comparação por dia custa uma linha. Se um dia a função de hora
-        // regredir, esta ainda barra a aula de amanhã.
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'AULA_FUTURA',
-          message: 'Esta aula ainda não aconteceu.',
-        });
-      }
-      if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'AULA_ANTIGA',
-          message: `A chamada pode ser lançada em até ${JANELA_RETROATIVA_DIAS} dias após a aula.`,
-        });
-      }
+      const ocupacao = await this.travarEValidarOcorrencia(
+        tx,
+        companyId,
+        ocupacaoId,
+        professor.id,
+      );
 
       const [atuais, cabecalhoAtual, matriculados] = await Promise.all([
         tx.presenca.findMany({
@@ -711,6 +953,22 @@ export class PresencaService {
             registrante: { select: { nome: true } },
           },
         },
+        // SPEC-030 — o cabeçalho entrou aqui por duas razões.
+        //
+        // 1. O estado: esta lista decidia "chamada feita" por
+        //    `presencas.length > 0`, a **terceira** regra diferente para a
+        //    mesma pergunta. Agora vem do resolvedor, que precisa da
+        //    `completude`.
+        // 2. `registradoPor`: com `nao_houve` não há nenhuma presença, então
+        //    `presencas[0].registrante` seria nulo e o gestor não veria quem
+        //    fechou a aula — que é justamente o caso que motivou a SPEC-030
+        //    (professor saiu do clube, gestor fechou).
+        chamadas: {
+          select: {
+            completude: true,
+            registrante: { select: { nome: true } },
+          },
+        },
       },
       orderBy: [{ data: 'desc' }],
     });
@@ -721,28 +979,47 @@ export class PresencaService {
     });
     const naTurma = new Set(matriculados.map((m) => m.alunoId));
 
-    return ocorrencias.map((o) => ({
-      ocupacaoId: o.id,
-      data: formatDateOnly(o.data),
-      horaInicio: formatTimeOnly(o.horaInicio),
-      horaFim: formatTimeOnly(o.horaFim),
-      // AC-012: aula cancelada depois não desfaz quem esteve lá — por isso
-      // a chamada continua aqui, com a aula marcada como cancelada.
-      cancelada: o.statusPagamento === 'cancelado',
-      chamadaFeita: o.presencas.length > 0,
-      registradoPor: o.presencas[0]?.registrante.nome ?? null,
-      alunos: o.presencas
-        .map((p) => ({
-          alunoId: p.alunoId,
-          nome: p.aluno.usuario.nome,
-          status: p.status,
-          // Sinalizadores em vez de bloqueio: a spec decidiu que alocação é
-          // o único requisito para marcar presença, e que o gestor vê quem
-          // já não está ativo ou já não está na turma.
-          naTurmaHoje: naTurma.has(p.alunoId),
-          alunoAtivo: p.aluno.status === 'ativo',
-        }))
-        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
-    }));
+    return ocorrencias.map((o) => {
+      const cabecalho = o.chamadas[0];
+      const estado = resolverEstadoDaChamada({
+        cancelada: o.statusPagamento === 'cancelado',
+        completude: cabecalho?.completude,
+        data: o.data,
+        horaInicio: o.horaInicio,
+        horaFim: o.horaFim,
+      });
+      return {
+        ocupacaoId: o.id,
+        data: formatDateOnly(o.data),
+        horaInicio: formatTimeOnly(o.horaInicio),
+        horaFim: formatTimeOnly(o.horaFim),
+        // AC-012: aula cancelada depois não desfaz quem esteve lá — por isso
+        // a chamada continua aqui, com a aula marcada como cancelada.
+        cancelada: o.statusPagamento === 'cancelado',
+        // SPEC-030: era `o.presencas.length > 0`.
+        chamadaFeita: chamadaJaRegistrada(estado),
+        estado,
+        // O cabeçalho primeiro: ele existe em toda chamada, inclusive na
+        // `nao_houve`, que não tem nenhuma presença. As presenças ficam como
+        // segunda fonte para as chamadas antigas — as de antes da SPEC-015
+        // (`legada`) podem ter presença sem cabeçalho registrado por ninguém.
+        registradoPor:
+          cabecalho?.registrante.nome ??
+          o.presencas[0]?.registrante.nome ??
+          null,
+        alunos: o.presencas
+          .map((p) => ({
+            alunoId: p.alunoId,
+            nome: p.aluno.usuario.nome,
+            status: p.status,
+            // Sinalizadores em vez de bloqueio: a spec decidiu que alocação é
+            // o único requisito para marcar presença, e que o gestor vê quem
+            // já não está ativo ou já não está na turma.
+            naTurmaHoje: naTurma.has(p.alunoId),
+            alunoAtivo: p.aluno.status === 'ativo',
+          }))
+          .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+      };
+    });
   }
 }

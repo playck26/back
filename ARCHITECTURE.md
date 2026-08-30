@@ -1,6 +1,6 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: 2026-08-25.
+**Fonte: análise direta do código.** Data: 2026-08-30.
 **Commit de referência:** a **SPEC-017 completa** (TASK-001 a 007) mais a
 **SPEC-018:TASK-001** (as seis colunas de mídia), 2026-08-24/25, a partir de
 `f75615b`. Por nome e não por hash porque este arquivo faz parte do próprio
@@ -424,7 +424,7 @@ mídia, todas nulas).
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
-| `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção |
+| `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida` \| `nao_houve`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção; **`nao_houve` (SPEC-030) é a aula que não aconteceu** — cabeçalho sem nenhuma presença, e é o que tira o dia do vermelho no calendário sem mentir que a aula foi dada |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
 | `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
@@ -439,7 +439,7 @@ que são a garantia real):
 | `ocupacoes_valor_por_origem` | `valor` obrigatório em AVULSO, **nulo** em TURMA |
 | `ux_ocupacoes_quadra_client_request_id` (parcial) | idempotência anterior à SPEC-011, ainda válida para linhas antigas |
 | `chamadas_origem_tipo_check` + FK composta | cabeçalho de chamada só existe para aula de turma — mesma construção de `presencas` |
-| `chamadas_completude_esperados_check` | `completa` exige `esperados > 0`; `desconhecida` exige `esperados` nulo. Amarra os dois sentidos: afirmação sem lastro e lastro sem afirmação são igualmente recusados |
+| `chamadas_completude_esperados_check` | `completa` exige `esperados > 0`; `desconhecida` e `nao_houve` exigem `esperados` nulo. Amarra os dois sentidos: afirmação sem lastro e lastro sem afirmação são igualmente recusados. **Enumera os três casos um a um** — a versão curta (`completude <> 'completa'`) cobriria também qualquer valor futuro, e um valor futuro que precise de `esperados` passaria calado |
 | `presencas_chamada_fkey` (`ON DELETE NO ACTION`) | presença sem cabeçalho é impossível — INV-027 imposta pelo banco. `NO ACTION` e não `RESTRICT` porque apagar a ocorrência cascateia para as duas tabelas na mesma instrução; `RESTRICT` é checado na hora e abortaria |
 | `arquivos_pendentes_key_da_empresa_check` | INV-030 no banco: `key LIKE 'empresas/%'` e `split_part(key,'/',2) = company_id::text`. É o que substitui a FK que esta tabela não pode ter |
 | `arquivos_pendentes_erro_com_tentativa_check`, `..._lock_com_conflito_check` | erro sem tentativa é afirmação sem lastro; contador de lock e data do conflito existem ou não existem juntos |
@@ -455,7 +455,11 @@ src/
   auth/            MOD-001 — login, sessão, convites, troca de senha
   companies/       MOD-002 — tenants (+ rota pública por slug)
   people/          MOD-003 — alunos, professores, níveis
-  classes/         MOD-004 — turmas
+  classes/         MOD-004 — turmas, chamada e presença.
+                   `estado-da-chamada.ts` é a **fonte única** do estado de
+                   uma chamada (SPEC-030/INV-030b) e é importado também por
+                   `frequencia/` — a regra é de MOD-004, que é dono de
+                   `chamadas`
   courts/          MOD-005 — quadras, ocupações, horários, agenda
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
@@ -464,7 +468,7 @@ src/
                    da chave, StorageService, fonte única do upload, fila,
                    worker, advisory lock, limite de abuso e medidor de
                    bucket (SPEC-017). **Sem controller**
-  common/          guards, decorators, utils, tipos, smoke
+  common/          guards, decorators, **pipes**, utils, tipos, smoke
   prisma/          PrismaService (@Global)
 ```
 
@@ -555,10 +559,26 @@ mesmo `where`, porque escopo repetido é escopo que um dia diverge. Ele
 carrega quatro condições — empresa, professor, `origemTipo: TURMA` e as
 exclusões de cancelada/quadra inativa.
 
-**O estado da chamada sai resolvido em três valores** — `pendente`, `feita`,
-`legada`. `pendente` é a **ausência** de linha em `chamadas`, e é o caso que
-faz a tela valer: é o dia que o professor esqueceu de registrar. `legada` é
-`completude: desconhecida`, de antes da SPEC-015.
+**O estado da chamada sai resolvido, e desde a SPEC-030 vem de UM lugar** —
+`src/classes/estado-da-chamada.ts`. Era a regra mais duplicada do `Back`:
+**quatro** consumidores respondiam "esta aula teve chamada?" por **três**
+regras diferentes, publicando o mesmo vocabulário. Uma ocorrência com
+cabeçalho e zero presenças saía `feita` no calendário e `pendente` na lista
+da turma.
+
+A regra vencedora é **o cabeçalho, não a contagem de presenças**: uma turma
+onde todo mundo faltou tem cabeçalho e zero presenças, e a chamada foi feita.
+
+Os valores: `futura | em_andamento | pendente | feita | legada | nao_houve |
+cancelada`. `pendente` é a ausência de linha em `chamadas` numa aula que já
+terminou — o dia que o professor esqueceu. `legada` é `desconhecida`, de
+antes da SPEC-015. `nao_houve` é a SPEC-030.
+
+**O relatório de frequência é a exceção declarada, e não uma regressão:** ele
+não usa o estado colapsado, porque o resolvedor responde `cancelada` **antes**
+de olhar o cabeçalho e a AC-005 depende de distinguir *cancelada com chamada*
+de *cancelada sem*. Ele pergunta o estado ignorando o cancelamento e cruza com
+o campo ao lado.
 
 **O `DataDaAgendaParamDto` valida a data**, ao contrário da rota equivalente
 do gestor: lá, `parseDateOnly('banana')` monta um `Invalid Date`, o Prisma
@@ -716,6 +736,8 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 | **Nada dentro de `$transaction` custa uma ida ao banco por item de uma lista.** O laço que consulta por ocorrência cabe no timeout enquanto a lista é pequena, e estoura quando o produto deixa a lista crescer — foi o DEF-013 | `def-013-orcamento-da-transacao.spec.ts` monta `ClassesService`, `CourtsService` e `HorarioFuncionamentoService` de verdade e conta as idas: o teto não pode crescer com o número de encontros |
 | **Erro do Prisma só vira 409 se for de dado.** Transação expirada e conexão caída não são corrida perdida — traduzi-las em "conflito de horário" faz o produto mentir sobre uma quadra vazia | `ehCorridaPerdida()` em `courts.service.ts`, com teste de P2028 nos dois caminhos de escrita |
 | Rota autenticada nova nasce coberta por INV-008 | está no `JwtAuthGuard`; sair da trava exige `@PermiteSenhaTemporaria()` explícito |
+| **Comparação de UUID em memória não depende da grafia.** Onde os dois lados vêm do banco não há o que fazer; onde um lado vem de fora, ele é normalizado no ponto de comparação — `resolverDeLinhas` (corpo de `POST /classes`) e `TenantGuard` (params crus, porque guard roda antes de pipe) | `horario-funcionamento.service.spec.ts` ("a grafia do `quadraId` não decide a herança") e `tenant.guard.spec.ts`, os dois com par positivo e negativo e fixture de UUID **com letra hexadecimal** — `1111-…` não tem caixa, e `toUpperCase()` sobre ele é no-op |
+| **UUID de rota e de corpo chegam ao handler na grafia do banco** (`UuidCanonicoPipe` em todo `@Param` de id; `@UuidNoCorpo` em todo DTO de entrada) | **Quatro camadas, e o limite de cada uma declarado ao lado dela — foi anunciar cobertura que uma camada não tinha que produziu sete rodadas de achado.** (1) **Declaração:** os dois gates leem metadado de runtime, exigem **identidade exata** do pipe com nada depois dele na cadeia, e `@Transform` que roda em `PLAIN_TO_CLASS` (um `{ toPlainOnly: true }` satisfazia a versão anterior sem normalizar nada). (2) **Descoberta:** controllers pelo grafo de módulos, métodos pelo **`MetadataScanner` do próprio Nest** — `getOwnPropertyNames` via 56 parâmetros onde o Nest registra 60, perdendo o que `CourtSportsController`/`CourtCategoriesController` herdam de `CatalogoController`; DTOs pelos `design:paramtypes` das rotas. (3) **Resultado:** `fronteira-do-uuid.http.spec.ts`, por HTTP. (4) **Bootstrap:** `bootstrap-de-producao.spec.ts` executa `criarAppDeProducao`, a função que o `main.ts` chama. **Limite que fica:** guard roda antes de pipe e precisa de prova própria (só o `TenantGuard` lê `params` hoje), e nada impede o `main.ts` mexer no app depois de recebê-lo |
 | `openapi.json` nunca fica stale | CI regenera e falha em `git diff --exit-code` |
 | Schema e banco não divergem | `prisma migrate diff` deve devolver "empty migration" |
 
@@ -740,9 +762,10 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
 | 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
 | 11 | **DEF-006 — o `GET` e o `PUT` da chamada discordam sobre quem ela cobre.** `chamada()` com cabeçalho `completa` devolve o snapshot (INV-020 estrita); `salvarChamada()` recalcula `esperados` como `matriculados hoje ∪ já registrados`. Matrícula posterior a uma chamada completa faz o `PUT` do que o próprio `GET` devolveu virar 422 `CHAMADA_INCOMPLETA`, acusando aluno que a tela não mostra — e sem saída pelo produto (LIM-002: o gestor só lê) | **Alta quando ocorrer** — reproduzida em produção em 2026-08-23 |
-| 12 | **O histórico do gestor não expõe `completude`** (`historicoDaTurma`). Ele devolve `chamadaFeita` derivado de `presencas.length > 0`, então o gestor não distingue chamada completa de legada `desconhecida` — a informação existe no cabeçalho e não chega a quem lê | Baixa — some quando a TASK-001..004 da SPEC-015 sair |
+| 12 | ~~**O histórico do gestor não expõe `completude`**~~ — **fechado em 2026-08-30 (SPEC-030)**. Ele devolvia `chamadaFeita` derivado de `presencas.length > 0`; agora devolve `estado` resolvido pela fonte única, e `registradoPor` vem do cabeçalho antes das presenças — sem isso uma aula `nao_houve`, que não tem nenhuma presença, não mostraria quem a fechou | — |
 | 13 | **`ocorrenciasDaTurma` ordena `data desc` sem teto futuro**, então as ocorrências futuras ficam acima da única lançável: o card "fazer chamada" é sempre o último da lista. Medido em produção em 2026-08-23 (9º de 9 na Turma 02; 15º de 16 na turma 01, que ainda tem 8 ocupações canceladas duplicando as ativas) | Baixa — atrito na operação mais frequente do professor |
 | 14 | **`PUT /courts/:id/horarios` com o corpo que o `GET` devolveu quebra a herança.** Quadra que herda o padrão devolve `origem: "herdado"` e os 7 dias herdados; salvar isso sem alterar nada cria horário próprio e a quadra para de acompanhar o padrão da empresa. **Não é defeito hoje** — a tela avisa (*"Salvar aqui cria um horário próprio para ela"*) e oferece "Voltar a usar o padrão". **Mas a segurança mora na frase da tela, não no contrato:** qualquer outro cliente que faça a ida e volta quebra a herança em silêncio | Baixa — declarada na UI, não no contrato |
+| 15 | ~~**UUID de body/query sem normalização**~~ — **fechado**, e a lição custou seis rodadas. Declarei completude sobre os sítios **duas vezes, errado nas duas**, e escrevi **cinco gates seguidos** que provavam menos do que anunciavam: string, texto entre parênteses, nome de arquivo, `continue` em propriedade sem metadado, e `plainToInstance` provando metade de um decorador composto. O padrão era um só — perguntar a uma **representação** do código em vez de perguntar ao que o sistema registra e ao que o handler recebe. **`configurarApp` é o único lugar onde a configuração de app pode mudar**, e `main.ts`, `createTestApp` e a prova HTTP passam por ele | — |
 
 ## 10. Catálogo modular observado
 
@@ -856,10 +879,22 @@ neste código, com onde vê-los:
   horaInicio` não é ordem total e sem desempate uma linha aparece em duas
   páginas e some de outra. **Filtro no cliente depois de paginar é sempre
   defeito** — foi por isso que `GET /bookings` ganhou `excluirCanceladas`;
-- **Estado resolvido no servidor, não deduzido na tela** (SPEC-026/027): a
-  chamada de uma aula sai como `futura | em_andamento | pendente | feita |
-  legada`, já comparada com o relógio do clube. A tela escolhe cor e texto e
-  não conhece a regra — se conhecesse, seria a segunda cópia dela;
+- **Estado resolvido no servidor, não deduzido na tela** (SPEC-026/027/030):
+  a chamada de uma aula sai como `futura | em_andamento | pendente | feita |
+  legada | nao_houve | cancelada`, já comparada com o relógio do clube. A tela
+  escolhe cor e texto e não conhece a regra — se conhecesse, seria a segunda
+  cópia dela. **E "resolvido no servidor" não bastava:** até a SPEC-030 havia
+  quatro resoluções diferentes no próprio servidor, publicando o mesmo
+  vocabulário por três regras. Hoje a fonte é `estado-da-chamada.ts`, e a
+  prova de sabotagem exige que mexer nele derrube prova nos quatro
+  consumidores;
+- **Portão de escrita extraído, não copiado** (SPEC-030): `salvarChamada` e
+  `registrarNaoHouve` compartilham `travarEValidarOcorrencia` — o bloco que
+  trava a turma, relê sob o lock e recusa aula cancelada/futura/antiga. Ele
+  carrega o raciocínio do bloqueador da 9ª rodada (EvalPlanQual em `READ
+  COMMITTED`), e uma cópia que não acompanhasse a próxima correção reabriria
+  a corrida. O papel entra como escopo opcional (`professorIdScope`), nunca
+  como uma segunda cópia da regra;
 - **Claim atômica** (`updateMany` com condição no `WHERE` + `count === 1`):
   rotação de refresh token e aceite de convite. Substitui ler-e-decidir, que
   não é seguro sob `READ COMMITTED`;

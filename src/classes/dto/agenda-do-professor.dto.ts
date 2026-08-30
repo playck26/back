@@ -54,12 +54,22 @@ export class AulaDoDiaDoProfessorDto {
    * de `data` + `hora_inicio`/`hora_fim` contra o relógio do clube.
    */
   @ApiProperty({
-    enum: ['futura', 'em_andamento', 'pendente', 'feita', 'legada'],
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+    ],
     description:
       '`futura` = ainda não começou; a chamada **não** pode ser lançada. ' +
       '`em_andamento` = começou e não terminou; pode lançar, e não é ' +
       'pendência. `pendente` = já terminou e não há linha em `chamadas`. ' +
-      '`legada` = chamada de antes da SPEC-015, com `completude: desconhecida`.',
+      '`legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. ' +
+      '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); ' +
+      '**não** é pendência e não pinta o ponto vermelho. ' +
+      '`cancelada` não aparece aqui: o filtro do calendário a exclui antes.',
   })
   chamada!: string;
 }

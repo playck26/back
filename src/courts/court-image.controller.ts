@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Param,
-  ParseUUIDPipe,
   Put,
   UploadedFile,
   UseGuards,
@@ -25,6 +24,7 @@ import {
   exigirArquivo,
   UploadDeMidia,
 } from '../storage/upload-de-midia';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { ImagemDaQuadraResponseDto } from './dto/horarios-response.dto';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 
@@ -44,7 +44,7 @@ export const CAMPO_DA_CONFIRMACAO = 'semPessoasIdentificaveis';
  * **A regra que custou uma tela inteira em 2026-08-25 vale aqui: a tabela
  * de atores manda, a coluna "Quem" do contrato a repete, não a amplia.**
  *
- * `ParseUUIDPipe` na frente: id malformado é 400 antes de qualquer consulta,
+ * `UuidCanonicoPipe` na frente: id malformado é 400 antes de qualquer consulta,
  * e o parser da chave nunca recebe algo que não seja UUID.
  */
 @ApiTags('courts')
@@ -83,7 +83,7 @@ export class CourtImageController {
     },
   })
   substituir(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @CurrentUser() user: AccessTokenPayload,
     @Body() corpo: Record<string, unknown>,
     @UploadedFile() arquivo?: Express.Multer.File,
@@ -105,7 +105,7 @@ export class CourtImageController {
   @ApiOkResponse({ type: ImagemDaQuadraResponseDto })
   @Roles('company_admin')
   remover(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @CurrentUser() user: AccessTokenPayload,
   ) {
     return this.imagens.remover(id, user);

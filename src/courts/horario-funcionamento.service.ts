@@ -156,12 +156,31 @@ export class HorarioFuncionamentoService {
     quadraId: string,
     diaSemana: number,
   ): HorarioEfetivo {
+    // **O `quadraId` daqui pode vir do BODY, e por isso é normalizado.**
+    //
+    // O `UuidCanonicoPipe` cobre `@Param`; este método é chamado com
+    // `dto.quadraId` de `POST/PATCH /classes` (via
+    // `CourtsService.registerClassOccupancy`), que é campo de corpo —
+    // `@IsUUID()` valida o formato e **não normaliza a grafia**. As linhas
+    // vêm do Postgres em minúsculas, então `A000…` não casaria com
+    // nenhuma: `doQuadra` seria `undefined`, a herança cairia no padrão da
+    // empresa e o gate da INV-011/AC-018 validaria a aula contra o
+    // expediente ERRADO — recusando aula dentro do horário próprio da
+    // quadra, ou aceitando uma fora dele.
+    //
+    // Mora aqui, e não no DTO, porque este método é a **fonte única** da
+    // herança e recebe id de procedência variada (`q.id` do banco na agenda,
+    // `dto.quadraId` do corpo na criação de turma). Decorar cada campo de
+    // corpo criaria uma regra que alguém precisa lembrar de aplicar no
+    // próximo DTO; aqui a garantia é do lugar que faz a comparação.
+    const alvo = quadraId.toLowerCase();
+
     // Herança: a linha da quadra vence a da empresa. Quadra que segue o
     // padrão simplesmente não tem linha própria — por isso a herança
     // acompanha mudanças no padrão sem nenhuma escrita nas quadras
     // (REQ-003/AC-005).
     const doQuadra = linhas.find(
-      (l) => l.quadraId === quadraId && l.diaSemana === diaSemana,
+      (l) => l.quadraId === alvo && l.diaSemana === diaSemana,
     );
     const daEmpresa = linhas.find(
       (l) => l.quadraId === null && l.diaSemana === diaSemana,

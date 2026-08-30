@@ -6,7 +6,6 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   UseGuards,
@@ -17,6 +16,7 @@ import {
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CatalogoDeQuadraResponseDto } from './dto/quadra-response.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -72,7 +72,7 @@ abstract class CatalogoController {
   @ApiOkResponse({ type: CatalogoDeQuadraResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: CatalogoDeQuadraDto,
   ) {
     return this.servico.update(user.companyId as string, id, dto);
@@ -84,7 +84,7 @@ abstract class CatalogoController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.servico.remove(user.companyId as string, id);
   }

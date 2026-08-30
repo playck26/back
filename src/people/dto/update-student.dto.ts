@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 export class UpdateStudentDto {
   @ApiPropertyOptional()
@@ -15,7 +16,7 @@ export class UpdateStudentDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   nivelId?: string;
 
   @ApiPropertyOptional({ enum: ['ativo', 'inativo'] })

@@ -5,7 +5,6 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -19,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SuperAdminGuard } from '../common/guards/super-admin.guard';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CompaniesService } from './companies.service';
 import {
   AdminDaEmpresaResponseDto,
@@ -53,14 +53,14 @@ export class CompaniesController {
 
   @Get(':id')
   @ApiOkResponse({ type: EmpresaResponseDto })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Param('id', UuidCanonicoPipe) id: string) {
     return this.companiesService.findOne(id);
   }
 
   /** SPEC-016/AC-001 — os gestores da empresa. */
   @Get(':id/admins')
   @ApiOkResponse({ type: [AdminDaEmpresaResponseDto] })
-  listAdmins(@Param('id', ParseUUIDPipe) id: string) {
+  listAdmins(@Param('id', UuidCanonicoPipe) id: string) {
     return this.companiesService.listAdmins(id);
   }
 
@@ -76,8 +76,8 @@ export class CompaniesController {
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: SenhaDeAdminResponseDto })
   gerarSenhaDeAdmin(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('usuarioId', ParseUUIDPipe) usuarioId: string,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Param('usuarioId', UuidCanonicoPipe) usuarioId: string,
   ) {
     return this.companiesService.gerarSenhaTemporariaDeAdmin(id, usuarioId);
   }
@@ -85,7 +85,7 @@ export class CompaniesController {
   @Patch(':id')
   @ApiOkResponse({ type: EmpresaResponseDto })
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateCompanyDto,
   ) {
     return this.companiesService.update(id, dto);
@@ -94,7 +94,7 @@ export class CompaniesController {
   @Patch(':id/status')
   @ApiOkResponse({ type: EmpresaResponseDto })
   updateStatus(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateCompanyStatusDto,
   ) {
     return this.companiesService.updateStatus(id, dto);

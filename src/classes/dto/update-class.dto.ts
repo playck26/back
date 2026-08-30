@@ -7,11 +7,11 @@ import {
   IsOptional,
   IsPositive,
   IsString,
-  IsUUID,
   MinLength,
   ValidateNested,
 } from 'class-validator';
 import { EncontroDto } from './encontro.dto';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 export class UpdateClassDto {
   @ApiPropertyOptional()
@@ -22,17 +22,17 @@ export class UpdateClassDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   nivelId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   professorId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   quadraId?: string;
 
   /**

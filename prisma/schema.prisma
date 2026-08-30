@@ -554,6 +554,15 @@ enum StatusPresenca {
 enum CompletudeChamada {
   completa
   desconhecida
+  // SPEC-030: acrescentado **no fim**, pela mesma razao que `professor` em
+  // `UsuarioRole` — `ALTER TYPE ADD VALUE` sem `BEFORE`/`AFTER` anexa ao
+  // final, e declarar aqui em outra posicao criaria drift permanente.
+  // Segunda vez que esta regra governa este arquivo.
+  //
+  // `nao_houve` NAO e "chamada vazia": e a afirmacao de que a aula nao
+  // aconteceu. Por isso `esperados` e nulo (CHECK) e nao ha linha em
+  // `presencas` (INV-030a) — nao ha universo sobre o qual afirmar.
+  nao_houve
 
   @@map("completude_chamada")
 }
@@ -581,8 +590,11 @@ model Chamada {
   registradaPor String            @map("registrada_por") @db.Uuid
   updatedAt     DateTime          @updatedAt @map("updated_at")
   completude    CompletudeChamada
-  /// Nulo apenas quando `completude = desconhecida`, garantido por CHECK
-  /// escrito a mao na migration: quem afirma completude diz sobre quantos.
+  /// Nulo quando `completude` e `desconhecida` **ou `nao_houve`** (SPEC-030),
+  /// garantido por CHECK escrito a mao na migration: quem afirma completude
+  /// diz sobre quantos, e quem diz que a aula nao aconteceu nao afirma sobre
+  /// ninguem. O CHECK enumera os tres casos um a um, de proposito — ver
+  /// `20260830100100_spec030_check_esperados_nao_houve`.
   esperados     Int?
 
   empresa     Empresa        @relation(fields: [companyId], references: [id])

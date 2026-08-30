@@ -6,13 +6,13 @@ import {
   IsArray,
   IsEnum,
   IsString,
-  IsUUID,
   ValidateNested,
 } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 export class ItemChamadaDto {
   @ApiProperty()
-  @IsUUID()
+  @UuidNoCorpo()
   alunoId!: string;
 
   @ApiProperty({ enum: ['presente', 'ausente', 'justificado'] })

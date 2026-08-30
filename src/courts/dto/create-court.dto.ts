@@ -4,9 +4,9 @@ import {
   IsOptional,
   IsPositive,
   IsString,
-  IsUUID,
   MinLength,
 } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 export class CreateCourtDto {
   @ApiProperty()
@@ -20,7 +20,7 @@ export class CreateCourtDto {
    * mãos de quem digita.
    */
   @ApiProperty({ format: 'uuid', description: 'Opção de /court-sports.' })
-  @IsUUID()
+  @UuidNoCorpo()
   esporteId!: string;
 
   /** Opcional: nem todo clube classifica piso (decisão 3 da SPEC-020). */
@@ -29,7 +29,7 @@ export class CreateCourtDto {
     description: 'Opção de `/court-categories`.',
   })
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   categoriaId?: string;
 
   @ApiProperty()

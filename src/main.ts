@@ -1,29 +1,17 @@
-import { ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
 import { SwaggerModule } from '@nestjs/swagger';
-import cookieParser from 'cookie-parser';
-import helmet from 'helmet';
-import { AppModule } from './app.module';
+import { criarAppDeProducao } from './common/validation/configurar-app';
 import { buildSwaggerConfig } from './swagger.config';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-
-  app.setGlobalPrefix('api/v1');
-  // CSP desligado: o CSP padrão do helmet bloqueia o script/style inline
-  // que o Swagger UI usa (recomendação da própria doc do NestJS,
-  // https://docs.nestjs.com/security/helmet) — sem isso `/api/docs`
-  // quebra. Demais headers do helmet (X-Content-Type-Options, HSTS,
-  // remoção de X-Powered-By, etc.) continuam ativos.
-  app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(cookieParser());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-      forbidNonWhitelisted: true,
-    }),
-  );
+  // **O app já nasce configurado.** Prefixo, helmet, cookie-parser e
+  // `ValidationPipe` moram em `criarAppDeProducao`, e é ESSA função que a
+  // prova executa (`bootstrap-de-producao.spec.ts`) — a 7ª validação cruzada
+  // mostrou que provar `configurarApp` direto não provava o chamador.
+  //
+  // **Limite declarado:** nada impede acrescentar um `useGlobalPipes` depois
+  // desta linha. Fechar isso pediria subir o app com banco, o que esta
+  // máquina não faz.
+  const app = await criarAppDeProducao();
 
   // Fallback é a lista de dev de .env.example, nunca `true` — refletir
   // qualquer origem (allow-all) combinado com credentials:true é o

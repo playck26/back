@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsEmail, IsOptional, IsString } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 /**
  * SPEC-009/REQ-002 — o admin pode pré-preencher o que já sabe do aluno.
@@ -26,6 +27,6 @@ export class CriarConviteDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   nivelId?: string;
 }

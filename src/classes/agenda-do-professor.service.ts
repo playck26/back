@@ -1,12 +1,13 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { CompletudeChamada, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { formatTimeOnly, parseDateOnly } from '../courts/date-time.util';
 import {
-  aulaJaComecou,
-  aulaJaTerminou,
-  formatTimeOnly,
-  parseDateOnly,
-} from '../courts/date-time.util';
+  resolverEstadoDaChamada,
+  type EstadoDaChamada,
+} from './estado-da-chamada';
+
+export type { EstadoDaChamada };
 
 /**
  * SPEC-026 — **o calendário do professor.**
@@ -26,59 +27,43 @@ import {
  */
 
 /**
- * O estado da chamada de uma aula, **resolvido no servidor**.
+ * SPEC-030 — **a regra saiu daqui.**
  *
- * A tela não interpreta `completude` nem conta presenças: se interpretasse,
- * viraria uma segunda cópia da regra da SPEC-014 — e é sempre a cópia que
- * fica velha.
+ * Este arquivo tinha a sua própria `estadoDaChamada`, e ela era uma de
+ * **quatro** respostas diferentes para a mesma pergunta no `Back`. A regra
+ * agora mora em `estado-da-chamada.ts`, com a história inteira e o motivo de
+ * o cabeçalho mandar sobre a contagem de presenças (INV-030b).
  *
- * Os três valores foram conferidos no enum, não supostos. A spec chegou a
- * dizer `parcial`, que **não existe**.
- */
-export type EstadoDaChamada =
-  'futura' | 'em_andamento' | 'pendente' | 'feita' | 'legada';
-
-/**
- * SPEC-027 — **e aqui o estado deixou de ser só "tem linha ou não tem".**
+ * O que este serviço mantém é o que é dele: **o calendário nunca vê
+ * `cancelada`**, porque `filtroDasAulasDele` tira a aula cancelada antes da
+ * consulta. O resolvedor sabe devolver esse estado; aqui ele não aparece.
  *
- * O Israel viu o calendário marcando *"Chamada pendente"* numa aula de **31
- * de agosto**, com o app aberto no dia 29. Estava certo pela regra antiga e
- * errado pelo produto: o professor não esqueceu de nada — a aula não
- * aconteceu.
- *
- * A regra que ele pediu, literal: *"a aula que ainda não aconteceu não deve
- * ficar com chamada pendente, e nem com possibilidade de realizar chamada, só
- * pode realizar a chamada durante ou depois da aula, se for depois fica no
- * vermelho"*. São três momentos, não dois:
- *
- * | Momento | Estado | O que a tela faz |
- * |---|---|---|
- * | antes de `hora_inicio` | `futura` | não oferece chamada, sem ponto |
- * | entre início e fim | `em_andamento` | oferece, **sem** vermelho |
- * | depois de `hora_fim` | `pendente` | oferece, **em vermelho** |
- *
- * **`em_andamento` não conta como pendência**, e é essa a diferença que o
- * ponto vermelho do calendário existe para dizer: ele significa "você
- * esqueceu", não "está acontecendo agora".
- *
- * `feita`/`legada` continuam vindo antes de tudo: se a chamada existe, o
- * horário não importa mais.
+ * A lição da SPEC-027 continua valendo e agora está no resolvedor: são três
+ * momentos, não dois, e `em_andamento` **não** é pendência — o ponto
+ * vermelho significa "você esqueceu", não "está acontecendo agora".
  */
 function estadoDaChamada(
-  chamada: { completude: string } | null | undefined,
+  chamada: { completude: CompletudeChamada } | null | undefined,
   data: Date,
   horaInicio: Date,
   horaFim: Date,
   agora: Date = new Date(),
 ): EstadoDaChamada {
-  if (chamada) {
-    return chamada.completude === 'completa' ? 'feita' : 'legada';
-  }
-  if (!aulaJaComecou(data, horaInicio, agora)) return 'futura';
-  if (!aulaJaTerminou(data, horaFim, agora)) return 'em_andamento';
-  // Sem linha em `chamadas` **e a aula já terminou**: é o dia em que o
-  // professor esqueceu de registrar, e é para isso que o calendário existe.
-  return 'pendente';
+  return resolverEstadoDaChamada(
+    {
+      // Fixo, e é verdade **porque `filtroDasAulasDele` já tirou a
+      // cancelada da consulta** — a query nem seleciona `statusPagamento`.
+      // Se aquele filtro deixar de excluir cancelada, este `false` vira
+      // mentira: os dois andam juntos, e é por isso que o filtro está a
+      // poucas linhas daqui, num método só (INV-026a).
+      cancelada: false,
+      completude: chamada?.completude,
+      data,
+      horaInicio,
+      horaFim,
+    },
+    agora,
+  );
 }
 
 @Injectable()

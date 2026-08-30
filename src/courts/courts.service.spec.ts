@@ -11,6 +11,8 @@ import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import type { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CourtsService } from './courts.service';
+import { plainToInstance } from 'class-transformer';
+import { CreateBookingDto } from './dto/create-booking.dto';
 
 // TEST-005 (SPEC-004): unit tests de MOD-005 com Prisma mockado. FIT-001
 // (concorrência real, INV-001) exige banco vivo — validado à parte via
@@ -648,6 +650,96 @@ describe('CourtsService', () => {
     });
   });
 
+  /**
+   * **O RASTRO, CONFERIDO POR EXECUÇÃO EM VEZ DE POR LEITURA.**
+   *
+   * Eu tinha rastreado `dto.quadraId` (corpo de `POST/PATCH /classes`) até
+   * `resolverDeLinhas` lendo o código, e pedi na 4ª validação cruzada que
+   * conferissem o rastro — ninguém conferiu. Estas duas provas fecham isso
+   * pelo caminho real: entram por `registerClassOccupancy`, que é o método
+   * público que `ClassesService` chama, e o `resolverDeLinhas` aqui é a
+   * **implementação real** (ver `buildHorariosMock`), não dublê.
+   *
+   * O `quadraId` chega em MAIÚSCULAS porque `@IsUUID()` valida o formato e
+   * **não normaliza** — e o `UuidCanonicoPipe` cobre `@Param`, não corpo.
+   *
+   * O modo de falha é o pior possível: sem a normalização, `doQuadra` não
+   * casa, a herança cai no padrão da EMPRESA (06–22) e a aula das 07h é
+   * **GRAVADA**, fora do horário próprio da quadra (08–18). É escrita
+   * indevida, não recusa indevida.
+   */
+  describe('a grafia do `quadraId` do CORPO não afasta o gate da INV-011', () => {
+    const QUADRA_UUID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const SEGUNDA = new Date('2026-08-24T00:00:00.000Z');
+
+    /** Empresa 06–22 e quadra 08–18: conflitantes de propósito. Com o mesmo
+     * horário nos dois, a prova passaria pelos dois caminhos e não julgaria
+     * nada. */
+    const linhasEmConflito = [
+      {
+        quadraId: null,
+        diaSemana: 1,
+        fechado: false,
+        horaInicio: parseTimeOnly('06:00'),
+        horaFim: parseTimeOnly('22:00'),
+      },
+      {
+        quadraId: QUADRA_UUID,
+        diaSemana: 1,
+        fechado: false,
+        horaInicio: parseTimeOnly('08:00'),
+        horaFim: parseTimeOnly('18:00'),
+      },
+    ];
+
+    const as = (inicio: string, fim: string) => [
+      {
+        data: SEGUNDA,
+        horaInicio: parseTimeOnly(inicio),
+        horaFim: parseTimeOnly(fim),
+      },
+    ];
+
+    beforeEach(() => {
+      (horarios.carregarLinhas as jest.Mock).mockResolvedValue(
+        linhasEmConflito,
+      );
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+    });
+
+    it('07h com quadraId em MAIÚSCULAS é RECUSADA — o horário da quadra vale', async () => {
+      await expect(
+        service.registerClassOccupancy(
+          prisma as unknown as Prisma.TransactionClient,
+          'c1',
+          QUADRA_UUID.toUpperCase(),
+          't1',
+          as('07:00', '08:00'),
+        ),
+      ).rejects.toMatchObject({ response: { code: 'FORA_DO_EXPEDIENTE' } });
+
+      // O que importa não é o 422: é não ter gravado.
+      expect(prisma.ocupacaoQuadra.createMany).not.toHaveBeenCalled();
+    });
+
+    it('09h com quadraId em MAIÚSCULAS é ACEITA — normalizar não é recusar tudo', async () => {
+      // O par. Sem ele, uma normalização que quebrasse a herança para o
+      // outro lado (nunca achar a linha da quadra e sempre recusar) passaria
+      // na prova acima.
+      // Sem `as unknown as Prisma.TransactionClient` aqui: neste ponto o
+      // `tsc` já aceita o mock direto, e o lint recusa a asserção inútil.
+      await service.registerClassOccupancy(
+        prisma,
+        'c1',
+        QUADRA_UUID.toUpperCase(),
+        't1',
+        as('09:00', '10:00'),
+      );
+
+      expect(prisma.ocupacaoQuadra.createMany).toHaveBeenCalled();
+    });
+  });
+
   describe('cancelFutureClassOccupancies', () => {
     it('marca como cancelado só as ocupações futuras de TURMA ainda não canceladas', async () => {
       (prisma.ocupacaoQuadra.updateMany as jest.Mock).mockResolvedValue({
@@ -1146,6 +1238,94 @@ describe('CourtsService', () => {
       )) as { reservas: { id: string }[] };
 
       expect(r.reservas[0].id).toBe('o1');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    /**
+     * **ACHADO 1 DA 4ª VALIDAÇÃO CRUZADA (MÉDIA) — o retry cobrado como
+     * chave reusada.**
+     *
+     * `fingerprintDoPedido` compõe `quadraId|data|slots` como TEXTO. O
+     * `quadraId` vem do CORPO, e `@IsUUID()` validava sem normalizar: o
+     * mesmo pedido, reenviado com o UUID serializado em outra grafia,
+     * produzia outra impressão digital. O servidor respondia
+     * `422 IDEMPOTENCY_KEY_REUSED` **exatamente no caso que a idempotência
+     * existe para atender** — a resposta se perdeu e o cliente repetiu.
+     *
+     * **A prova passa pelo `plainToInstance` de propósito.** É ali que a
+     * garantia mora agora (`@UuidNoCorpo`), e um teste que chamasse
+     * `createBooking` com o objeto cru estaria dublando a fronteira sob
+     * julgamento — o padrão que a 3ª rodada nomeou.
+     */
+    it('AC-006/UUID: retry com o mesmo UUID em OUTRA grafia devolve o pedido original', async () => {
+      const QUADRA = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0011';
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(
+        QUADRA_COM_PRECO,
+      );
+      (prisma.pedidoReserva.findUnique as jest.Mock).mockResolvedValue({
+        id: 'p1',
+        // O que o primeiro pedido gravou: grafia canônica, porque foi ela
+        // que atravessou o mesmo decorador.
+        fingerprint: `${QUADRA}|2026-08-24|09:00-10:00`,
+        ocupacoes: [
+          {
+            id: 'o1',
+            companyId: 'c1',
+            quadraId: QUADRA,
+            data: parseDateOnly('2026-08-24'),
+            horaInicio: parseTimeOnly('09:00'),
+            horaFim: parseTimeOnly('10:00'),
+            origemTipo: 'AVULSO',
+            alunoId: null,
+            statusPagamento: 'pendente_pagamento',
+          },
+        ],
+      });
+
+      // O retry, como o cliente mandaria: mesmíssimo pedido, UUID em caixa
+      // alta. Passa pela fronteira, como uma requisição de verdade passa.
+      const retry = plainToInstance(CreateBookingDto, {
+        quadraId: QUADRA.toUpperCase(),
+        data: '2026-08-24',
+        slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
+      });
+
+      const r = (await service.createBooking('c1', retry, 'chave-1')) as {
+        reservas: { id: string }[];
+      };
+
+      expect(r.reservas[0].id).toBe('o1');
+      expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-010/UUID: OUTRA quadra na mesma chave continua sendo 422', async () => {
+      // O par. Sem ele, uma normalização que zerasse o `quadraId` da
+      // impressão digital passaria na prova acima — e "encaixar" outra
+      // quadra numa chave antiga voltaria a ser possível.
+      const QUADRA = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0011';
+      const OUTRA = 'bbbbbbbb-cccc-4ddd-8eee-ffff00112233';
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(
+        QUADRA_COM_PRECO,
+      );
+      (prisma.pedidoReserva.findUnique as jest.Mock).mockResolvedValue({
+        id: 'p1',
+        fingerprint: `${QUADRA}|2026-08-24|09:00-10:00`,
+        ocupacoes: [],
+      });
+
+      const erro = (await service
+        .createBooking(
+          'c1',
+          plainToInstance(CreateBookingDto, {
+            quadraId: OUTRA.toUpperCase(),
+            data: '2026-08-24',
+            slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
+          }),
+          'chave-1',
+        )
+        .catch((e: Error) => e)) as { response?: { code?: string } };
+
+      expect(erro.response?.code).toBe('IDEMPOTENCY_KEY_REUSED');
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
 

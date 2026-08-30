@@ -2833,6 +2833,49 @@
         ]
       }
     },
+    "/api/v1/classes/{turmaId}/presencas/{ocupacaoId}/nao-houve": {
+      "put": {
+        "operationId": "ClassesController_naoHouve",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChamadaNaoHouveResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "operationId": "ClassesController_list",
@@ -3561,6 +3604,41 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChamadaSalvaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/attendance/{ocupacaoId}/nao-houve": {
+      "put": {
+        "operationId": "MeTeacherAttendanceController_naoHouve",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChamadaNaoHouveResponseDto"
                 }
               }
             }
@@ -6375,6 +6453,18 @@
           "chamadaFeita": {
             "type": "boolean"
           },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "futura",
+              "em_andamento",
+              "pendente",
+              "feita",
+              "legada",
+              "nao_houve",
+              "cancelada"
+            ]
+          },
           "registradoPor": {
             "type": "string",
             "nullable": true,
@@ -6394,8 +6484,26 @@
           "horaFim",
           "cancelada",
           "chamadaFeita",
+          "estado",
           "registradoPor",
           "alunos"
+        ]
+      },
+      "ChamadaNaoHouveResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "completude": {
+            "type": "string",
+            "example": "nao_houve"
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "completude"
         ]
       },
       "TurmaEncontroResponseDto": {
@@ -6758,6 +6866,10 @@
           "horaFim": {
             "type": "string",
             "example": "19:00"
+          },
+          "naoRealizada": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -6768,7 +6880,8 @@
           "quadraNome",
           "data",
           "horaInicio",
-          "horaFim"
+          "horaFim",
+          "naoRealizada"
         ]
       },
       "EncontroDaTurmaDisponivelDto": {
@@ -6950,6 +7063,10 @@
           "meuComentario": {
             "type": "string",
             "nullable": true
+          },
+          "naoRealizada": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -6961,7 +7078,8 @@
           "horaInicio",
           "horaFim",
           "minhaNota",
-          "meuComentario"
+          "meuComentario",
+          "naoRealizada"
         ]
       },
       "AulasAnterioresPaginadasResponseDto": {
@@ -7068,7 +7186,8 @@
             "type": "string",
             "enum": [
               "NAO_MATRICULADO",
-              "AULA_NAO_TERMINOU"
+              "AULA_NAO_TERMINOU",
+              "AULA_NAO_REALIZADA"
             ]
           },
           "message": {
@@ -7229,9 +7348,11 @@
               "em_andamento",
               "pendente",
               "feita",
+              "legada",
+              "nao_houve",
               "cancelada"
             ],
-            "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou sem chamada. `feita` = há presenças. `cancelada` = ocorrência cancelada."
+            "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou sem chamada. `feita` = chamada declarada completa. `legada` = chamada anterior à SPEC-015. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). `cancelada` = ocorrência cancelada."
           }
         },
         "required": [
@@ -7338,7 +7459,8 @@
             "type": "string",
             "enum": [
               "completa",
-              "desconhecida"
+              "desconhecida",
+              "nao_houve"
             ],
             "nullable": true
           },
@@ -7485,9 +7607,10 @@
               "em_andamento",
               "pendente",
               "feita",
-              "legada"
+              "legada",
+              "nao_houve"
             ],
-            "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`."
+            "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); **não** é pendência e não pinta o ponto vermelho. `cancelada` não aparece aqui: o filtro do calendário a exclui antes."
           }
         },
         "required": [

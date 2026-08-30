@@ -4,7 +4,12 @@ import {
   FrequenciaDaTurmaResponseDto,
   FrequenciaDoAlunoResponseDto,
 } from './dto/frequencia-response.dto';
+import type { CompletudeChamada } from '@prisma/client';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
+import {
+  chamadaJaRegistrada,
+  resolverEstadoDaChamada,
+} from '../classes/estado-da-chamada';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -47,7 +52,20 @@ interface Registro {
   status: StatusPresenca;
 }
 
-/** Uma ocorrência, do ponto de vista de quem calcula cobertura. */
+/**
+ * Uma ocorrência, do ponto de vista de quem calcula cobertura.
+ *
+ * **SPEC-030 — por que este relatório NÃO guarda o `estado` colapsado.** Os
+ * outros três consumidores mostram um badge, e para eles o estado único
+ * basta. Aqui não: `resolverEstadoDaChamada` responde `cancelada` **antes**
+ * de olhar o cabeçalho, e a AC-005 depende justamente de distinguir
+ * *cancelada com chamada* (conta) de *cancelada sem chamada* (some). O
+ * estado colapsado apagaria essa diferença.
+ *
+ * A saída não é reimplementar a regra — é **perguntar ao resolvedor a
+ * pergunta certa**: qual seria o estado ignorando o cancelamento. O
+ * cancelamento fica no campo ao lado, onde a AC-005 pode cruzar os dois.
+ */
 interface Ocorrencia {
   id: string;
   data: Date;
@@ -56,6 +74,8 @@ interface Ocorrencia {
   temPresenca: boolean;
   completa: boolean;
   desconhecida: boolean;
+  /** SPEC-030 — alguém declarou que a aula não aconteceu. */
+  naoHouve: boolean;
 }
 
 export interface Cobertura {
@@ -102,24 +122,43 @@ export class FrequenciaService {
     origemTurmaId: true,
     chamadas: { select: { completude: true } },
     _count: { select: { presencas: true } },
+    // SPEC-030 — as duas entraram para o resolvedor poder ser chamado com o
+    // contrato inteiro. Este relatório não usa os estados de relógio
+    // (`futura`/`em_andamento`/`pendente`), mas passar campo pela metade
+    // para uma função compartilhada é como a regra volta a divergir.
+    horaInicio: true,
+    horaFim: true,
   } as const;
 
   private normaliza(o: {
     id: string;
     data: Date;
     statusPagamento: string;
-    chamadas: { completude: string }[];
+    chamadas: { completude: CompletudeChamada }[];
     _count: { presencas: number };
+    horaInicio: Date;
+    horaFim: Date;
   }): Ocorrencia {
     const cab = o.chamadas[0];
+    // **Ignorando o cancelamento, de propósito** — ver o comentário na
+    // interface `Ocorrencia`. O resolvedor responde `cancelada` antes de
+    // olhar o cabeçalho, e a AC-005 precisa dos dois fatos separados.
+    const estadoDoCabecalho = resolverEstadoDaChamada({
+      cancelada: false,
+      completude: cab?.completude,
+      data: o.data,
+      horaInicio: o.horaInicio,
+      horaFim: o.horaFim,
+    });
     return {
       id: o.id,
       data: o.data,
       cancelada: o.statusPagamento === 'cancelado',
-      temChamada: cab !== undefined,
+      temChamada: chamadaJaRegistrada(estadoDoCabecalho),
       temPresenca: o._count.presencas > 0,
-      completa: cab?.completude === 'completa',
-      desconhecida: cab?.completude === 'desconhecida',
+      completa: estadoDoCabecalho === 'feita',
+      desconhecida: estadoDoCabecalho === 'legada',
+      naoHouve: estadoDoCabecalho === 'nao_houve',
     };
   }
 
@@ -128,9 +167,22 @@ export class FrequenciaService {
    * chamada não aparece em lugar nenhum. Uma aula que não aconteceu e da
    * qual ninguém registrou nada não é ausência de ninguém, e contá-la
    * puniria o professor por uma aula que o clube cancelou.
+   *
+   * **SPEC-030 — `nao_houve` sai daqui, e é decisão explícita, não
+   * consequência.** O precedente da AC-005 não a cobria sozinho: aquela
+   * regra fala de `cancelada`, e `nao_houve` é uma aula **não cancelada, com
+   * cabeçalho** — pela regra antiga entraria no denominador.
+   *
+   * E entrar seria errado nos dois sentidos. No numerador ela nunca teria
+   * presença, então baixaria a frequência de todo mundo por uma aula que
+   * ninguém deu; no denominador de `completas / aconteceram` ela nunca seria
+   * completa, então derrubaria a confiança do período. **A aula que não
+   * aconteceu não é dado, é ausência de dado.**
    */
   private aconteceram(ocorrencias: Ocorrencia[]) {
-    return ocorrencias.filter((o) => !o.cancelada || o.temChamada);
+    return ocorrencias.filter(
+      (o) => !o.naoHouve && (!o.cancelada || o.temChamada),
+    );
   }
 
   /**

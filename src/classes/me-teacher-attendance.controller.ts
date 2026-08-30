@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Put,
   Query,
   UseGuards,
@@ -19,8 +18,10 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import {
   ChamadaResponseDto,
   ChamadaSalvaResponseDto,
+  ChamadaNaoHouveResponseDto,
   OcorrenciasDaTurmaPaginadasResponseDto,
 } from './dto/me-response.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { PresencaService } from './presenca.service';
@@ -44,7 +45,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   ocorrencias(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     // Default de 30 e teto de 90: sem limite, o endpoint cresce junto com o
     // histórico e um dia devolve anos de aula (ressalva da validação).
     @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
@@ -68,7 +69,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   chamada(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
   ) {
     return this.presencas.chamada(
       user.companyId as string,
@@ -82,7 +83,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   salvar(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
     @Body() dto: SalvarChamadaDto,
   ) {
     return this.presencas.salvarChamada(
@@ -91,6 +92,36 @@ export class MeTeacherAttendanceController {
       ocupacaoId,
       dto.versao,
       dto.itens,
+    );
+  }
+
+  /**
+   * SPEC-030 — **a aula não aconteceu.**
+   *
+   * Rota própria, e não um campo no `PUT` acima: o corpo daquele é a lista
+   * de alunos, e "salvei com zero alunos" é exatamente o engano que a
+   * SPEC-015 já tratou. Aqui não há corpo — a rota inteira é a afirmação.
+   *
+   * O gestor tem a dele em `classes.controller.ts`, sobre o mesmo serviço.
+   * Este caminho fica `professor`-only porque `/me/teacher` significa "meu,
+   * como professor", e um gestor chamando por aqui seria uma rota mentindo
+   * sobre quem chama.
+   */
+  @Put('attendance/:ocupacaoId/nao-houve')
+  @ApiOkResponse({ type: ChamadaNaoHouveResponseDto })
+  @Roles('professor')
+  naoHouve(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.presencas.registrarNaoHouve(
+      user.companyId as string,
+      ocupacaoId,
+      user.sub,
+      // `true` = estreita para as turmas DELE. O `professorId` em si é
+      // resolvido no serviço, a partir do banco — o JWT não o carrega
+      // (INV-018).
+      true,
     );
   }
 }

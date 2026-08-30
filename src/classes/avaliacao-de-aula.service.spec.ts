@@ -69,9 +69,24 @@ describe('INV-025a — a média não conta quem disse o quê', () => {
       prisma as unknown as { avaliacaoDeAula: { aggregate: jest.Mock } }
     ).avaliacaoDeAula.aggregate.mock.calls as unknown[][];
     const args = chamadas[0][0] as { where: object };
+    // **SPEC-030 — a terceira condição, e ela entrou por um achado ALTA.**
+    //
+    // Uma nota podia sobreviver à aula: o aluno avaliava, o gestor registrava
+    // `nao_houve` depois, e a nota continuava na média. O portão de escrita
+    // não cobre essa ordem — nem a corrida — e por isso o filtro é aqui, na
+    // leitura.
+    //
+    // A assertiva segue `toEqual` e não `objectContaining`, de propósito: é
+    // ela que obriga qualquer mudança neste `where` a passar por aqui. Foi o
+    // que aconteceu duas vezes — o `companyId` da 1ª validação cruzada da
+    // SPEC-025, e agora este.
     expect(args.where).toEqual({
       companyId: EMPRESA,
-      ocupacao: { companyId: EMPRESA, origemTurmaId: TURMA },
+      ocupacao: {
+        companyId: EMPRESA,
+        origemTurmaId: TURMA,
+        chamadas: { none: { completude: 'nao_houve' } },
+      },
     });
   });
 });

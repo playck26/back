@@ -248,23 +248,54 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // O papel do admin inicial, na criação da empresa: sempre este.
   ['role', ['company_admin']],
 
-  // SPEC-027 — os momentos de uma aula, do ponto de vista da chamada.
+  // SPEC-027/SPEC-030 — os momentos de uma aula, do ponto de vista da
+  // chamada. **As duas listas agora vêm da MESMA função**,
+  // `resolverEstadoDaChamada` (`estado-da-chamada.ts`).
   //
-  // Vêm de `estadoDaChamada` (`agenda-do-professor.service.ts`) e do ternário
-  // equivalente em `PresencaService.ocorrenciasDaTurma`. **São duas listas
-  // parecidas e NÃO iguais**, e a diferença é de propósito: o calendário
-  // esconde ocorrência cancelada (ela não entra no filtro), então lá não há
-  // `cancelada`; a lista da turma mostra a cancelada marcada, então lá há.
+  // **O que estava escrito aqui antes ficou falso, e vale registrar por
+  // quê.** Dizia: *"`legada` só existe no calendário porque só ele lê
+  // `completude` — a lista da turma decide por `_count.presencas`"*. Era
+  // verdade, e era exatamente o defeito: duas regras publicando o mesmo
+  // vocabulário. A SPEC-030 unificou, e `legada` passou a poder sair dos
+  // dois.
   //
-  // `legada` só existe no calendário porque só ele lê `completude` — a lista
-  // da turma decide por `_count.presencas`.
+  // **Continuam NÃO idênticas, e a diferença é a mesma de sempre:** o
+  // calendário esconde ocorrência cancelada (ela não entra no filtro), então
+  // lá não há `cancelada`; a lista da turma mostra a cancelada marcada,
+  // então lá há. Igualar as duas seria publicar um estado que uma delas
+  // nunca devolve.
   [
     'AulaDoDiaDoProfessorResponseDto.chamada',
-    ['futura', 'em_andamento', 'pendente', 'feita', 'legada'],
+    ['futura', 'em_andamento', 'pendente', 'feita', 'legada', 'nao_houve'],
   ],
+  // SPEC-030 — a lista da turma (professor) e o historico (gestor) publicam
+  // a MESMA lista, e as duas incluem `cancelada`: nenhuma das duas esconde
+  // ocorrencia cancelada, ao contrario do calendario. Duas entradas em vez de
+  // uma compartilhada porque a chave e por schema, e o dia em que uma delas
+  // divergir isso precisa aparecer aqui.
   [
     'OcorrenciaDaTurmaResponseDto.estado',
-    ['futura', 'em_andamento', 'pendente', 'feita', 'cancelada'],
+    [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'cancelada',
+    ],
+  ],
+  [
+    'OcorrenciaNoHistoricoResponseDto.estado',
+    [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'cancelada',
+    ],
   ],
 
   // SPEC-023 — por que o aluno não pode entrar nesta turma. Chave
@@ -293,7 +324,12 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   ['ErroDeAceiteResponseDto.code', ['ACEITE_PENDENTE', 'VERSAO_DESATUALIZADA']],
   // SPEC-025 — as duas recusas de avaliar uma aula. Vêm de
   // `AvaliacaoDeAulaService.exigirDireitoDeAvaliar`.
-  ['ErroDeAvaliacaoResponseDto.code', ['NAO_MATRICULADO', 'AULA_NAO_TERMINOU']],
+  [
+    'ErroDeAvaliacaoResponseDto.code',
+    // SPEC-030 acrescentou `AULA_NAO_REALIZADA`: nao se avalia aula que nao
+    // aconteceu, e a nota entraria na media da turma para sempre.
+    ['NAO_MATRICULADO', 'AULA_NAO_TERMINOU', 'AULA_NAO_REALIZADA'],
+  ],
 ]);
 
 function enumsPublicadosEmRespostas(): {

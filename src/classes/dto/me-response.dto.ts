@@ -47,6 +47,23 @@ export class AulaDoAlunoResponseDto {
 
   @ApiProperty({ type: String, example: '19:00' })
   horaFim!: string;
+
+  /**
+   * **SPEC-030 / achado 2 da validação cruzada (ALTA).**
+   *
+   * A dúvida 2 da spec decidiu que o aluno deve ver *"aula não realizada"* em
+   * vez de a aula sumir — sumir apaga uma aula pela qual ele pode ter ido até
+   * o clube. **A decisão foi escrita e o campo não foi criado**, então não
+   * havia payload capaz de cumpri-la: em "Próximas" a aula seguia aparecendo
+   * como normal, e no dia seguinte sumia das "Anteriores", porque
+   * `aulasAnteriores` filtra `nao_houve` para não oferecer avaliação.
+   *
+   * `false` para todo o resto: o aluno não precisa distinguir `completa` de
+   * `legada` — isso é registro do professor. O que muda a vida dele é uma
+   * coisa só: **a aula não aconteceu.**
+   */
+  @ApiProperty({ type: Boolean, example: false })
+  naoRealizada!: boolean;
 }
 
 /**
@@ -91,12 +108,29 @@ export class OcorrenciaDaTurmaResponseDto {
    * `podeLancar` responde "o servidor aceita?"; `estado` responde "por quê",
    * e é isso que a tela precisa para escolher a cor e o texto sem deduzir
    * regra nenhuma.
+   *
+   * **SPEC-030 — o vocabulário era o mesmo e a REGRA não era.** Este campo
+   * saía de um ternário próprio que decidia `feita` contando presenças,
+   * enquanto o calendário decidia pelo cabeçalho. Agora os dois vêm de
+   * `resolverEstadoDaChamada`, e por isso esta lista ganhou os dois valores
+   * que só o calendário publicava (`legada`) ou que ninguém publicava ainda
+   * (`nao_houve`).
    */
   @ApiProperty({
-    enum: ['futura', 'em_andamento', 'pendente', 'feita', 'cancelada'],
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'cancelada',
+    ],
     description:
       '`futura` = ainda não começou. `em_andamento` = começou e não ' +
-      'terminou. `pendente` = terminou sem chamada. `feita` = há presenças. ' +
+      'terminou. `pendente` = terminou sem chamada. `feita` = chamada ' +
+      'declarada completa. `legada` = chamada anterior à SPEC-015. ' +
+      '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). ' +
       '`cancelada` = ocorrência cancelada.',
   })
   estado!: string;
@@ -162,10 +196,19 @@ export class ChamadaResponseDto {
    * existe no código, e o `null` que existe teria sumido do contrato. É a
    * segunda vez nesta task que a memória inventou um contrato; das duas, quem
    * pegou foi o `tsc`, porque a amarra de retorno estava no lugar.
+   *
+   * **SPEC-030 — `nao_houve` é o quarto estado**, e é diferente de `null`:
+   * `null` é *"ninguém respondeu ainda"*, `nao_houve` é *"alguém respondeu
+   * que a aula não aconteceu"*. A distinção é o ponto da spec inteira — se a
+   * tela tratar os dois como iguais, o vermelho volta.
+   *
+   * E foi o gate da SPEC-021 que cobrou esta linha: acrescentar o valor no
+   * enum do Prisma sem tocar aqui derrubou
+   * `contrato-de-resposta.spec.ts`, com a mensagem exata do que faltava.
    */
   @ApiProperty({
     type: String,
-    enum: ['completa', 'desconhecida'],
+    enum: ['completa', 'desconhecida', 'nao_houve'],
     nullable: true,
   })
   completude!: string | null;
@@ -182,6 +225,26 @@ export class ChamadaResponseDto {
 }
 
 /** O que o `PUT` da chamada devolve: a versão nova, para a tela continuar. */
+/**
+ * SPEC-030 — a resposta de "não houve aula".
+ *
+ * Devolve o cabeçalho gravado, e não `204`: a tela precisa confirmar o
+ * estado que passou a valer para trocar o badge sem reconsultar.
+ *
+ * **`completude` sai sem `enum` no contrato, de propósito.** Publicar um
+ * enum de um valor só não informa nada — todo mundo que chama esta rota já
+ * sabe qual estado pediu — e ainda obrigaria o gate da SPEC-021 a manter uma
+ * exceção só para ele. Os valores possíveis de `completude` estão
+ * declarados onde eles de fato variam: `ChamadaResponseDto`.
+ */
+export class ChamadaNaoHouveResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  ocupacaoId!: string;
+
+  @ApiProperty({ type: String, example: 'nao_houve' })
+  completude!: string;
+}
+
 export class ChamadaSalvaResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   ocupacaoId!: string;

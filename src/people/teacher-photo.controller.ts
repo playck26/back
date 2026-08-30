@@ -2,7 +2,6 @@ import {
   Controller,
   Delete,
   Param,
-  ParseUUIDPipe,
   Put,
   UploadedFile,
   UseGuards,
@@ -25,6 +24,7 @@ import {
   exigirArquivo,
   UploadDeMidia,
 } from '../storage/upload-de-midia';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { FotoDeProfessorService } from './foto-de-professor.service';
 
 /**
@@ -40,7 +40,7 @@ import { FotoDeProfessorService } from './foto-de-professor.service';
  * (AC-014). Aqui isso pesa mais do que na logo — o objeto é a foto de uma
  * pessoa, e um 403 confirmaria que ela trabalha naquele clube.
  *
- * `ParseUUIDPipe` na frente: id malformado é 400 antes de qualquer consulta.
+ * `UuidCanonicoPipe` na frente: id malformado é 400 antes de qualquer consulta.
  */
 @ApiTags('teachers')
 @ApiBearerAuth()
@@ -63,7 +63,7 @@ export class TeacherPhotoController {
     },
   })
   substituir(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @CurrentUser() user: AccessTokenPayload,
     @UploadedFile() arquivo?: Express.Multer.File,
   ) {
@@ -80,7 +80,7 @@ export class TeacherPhotoController {
   @ApiOkResponse({ type: FotoDeProfessorResponseDto })
   @Roles('company_admin')
   remover(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @CurrentUser() user: AccessTokenPayload,
   ) {
     return this.fotos.remover(id, user);

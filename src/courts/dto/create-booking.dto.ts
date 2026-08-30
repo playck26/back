@@ -6,10 +6,10 @@ import {
   IsArray,
   IsDateString,
   IsOptional,
-  IsUUID,
   Matches,
   ValidateNested,
 } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -25,7 +25,7 @@ export class SlotDto {
 
 export class CreateBookingDto {
   @ApiProperty()
-  @IsUUID()
+  @UuidNoCorpo()
   quadraId!: string;
 
   @ApiProperty({ example: '2026-08-20' })
@@ -71,6 +71,6 @@ export class CreateBookingDto {
   // `company_admin` reservando em nome de um aluno (checado no controller).
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   alunoId?: string;
 }
