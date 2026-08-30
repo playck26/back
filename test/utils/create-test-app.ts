@@ -1,17 +1,20 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
+import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import cookieParser from 'cookie-parser';
 import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
+import { configurarApp } from '../../src/common/validation/configurar-app';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
-// Replica exatamente o setup de app-level de src/main.ts (prefixo,
-// cookie-parser, ValidationPipe) — as suítes e2e não passam por
-// bootstrap(), então cada peça precisa ser montada aqui manualmente ou os
-// testes não refletem o comportamento real da rota (ex.: sem
-// setGlobalPrefix, `/auth/login` nem existiria; sem ValidationPipe,
-// nenhum DTO seria validado). CORS e Swagger ficam de fora — não afetam
-// chamadas via Supertest.
+// **Chama `configurarApp`, a MESMA função que o `src/main.ts` chama.**
+//
+// O comentário que estava aqui dizia "replica exatamente o setup de
+// src/main.ts" — e era uma cópia manual, livre para divergir. A 6ª validação
+// cruzada usou justamente isso: trocar o pipe no `main.ts` por
+// `new ValidationPipe({})` não derrubava nenhum e2e, porque este arquivo
+// montava o seu próprio. Comentário pedindo cuidado não é ligação.
+//
+// CORS e Swagger continuam fora — dependem de ambiente e não afetam chamadas
+// por Supertest.
 export async function createTestApp(
   prismaMock: unknown,
 ): Promise<INestApplication<App>> {
@@ -23,15 +26,7 @@ export async function createTestApp(
     .compile();
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
-  app.setGlobalPrefix('api/v1');
-  app.use(cookieParser());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-      forbidNonWhitelisted: true,
-    }),
-  );
+  configurarApp(app);
   await app.init();
   return app;
 }

@@ -5,10 +5,10 @@ import {
   IsOptional,
   IsPositive,
   IsString,
-  IsUUID,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 export class UpdateCourtDto {
   @ApiPropertyOptional()
@@ -19,7 +19,7 @@ export class UpdateCourtDto {
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   esporteId?: string;
 
   /**
@@ -35,7 +35,7 @@ export class UpdateCourtDto {
   @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
   @IsOptional()
   @ValidateIf((_, valor) => valor !== null)
-  @IsUUID()
+  @UuidNoCorpo()
   categoriaId?: string | null;
 
   @ApiPropertyOptional()

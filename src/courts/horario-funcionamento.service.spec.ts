@@ -10,7 +10,16 @@ import {
 // esta mesma função (REQ-008/AC-015).
 
 const COMPANY = 'c1';
-const QUADRA = 'q1';
+/**
+ * **UUID de verdade, e com letra hexadecimal.**
+ *
+ * Era `'q1'`. Um apelido não tem caixa alta nem baixa, então nenhuma prova
+ * daqui podia exercitar a diferença entre a grafia que chega no corpo de
+ * `POST /classes` e a que o Postgres devolve — que é o que quebrava a
+ * herança (achado da 3ª validação cruzada). `1111-…` também não serviria:
+ * sem letra, `toUpperCase()` é um no-op.
+ */
+const QUADRA = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 interface TxHorarios {
   horarioFuncionamento: { deleteMany: jest.Mock; createMany: jest.Mock };
@@ -143,6 +152,68 @@ describe('HorarioFuncionamentoService (SPEC-010)', () => {
         { where: { diaSemana: number } },
       ];
       expect(args.where.diaSemana).toBe(0);
+    });
+  });
+
+  /**
+   * **ACHADO DA 3ª VALIDAÇÃO CRUZADA, sítio que o pipe NÃO alcança.**
+   *
+   * `resolverDeLinhas` é chamado com `dto.quadraId` de `POST/PATCH
+   * /classes`, via `CourtsService.registerClassOccupancy`. Corpo, não rota:
+   * `@IsUUID()` valida o formato e não normaliza, e o `UuidCanonicoPipe`
+   * cobre só `@Param`.
+   *
+   * Com a grafia divergente, `doQuadra` vinha `undefined`, a herança caía no
+   * padrão da EMPRESA, e o gate da INV-011/AC-018 media a aula contra o
+   * expediente errado — recusando aula dentro do horário próprio da quadra
+   * (ou aceitando uma fora dele, quando a quadra fecha antes da empresa).
+   *
+   * As fixtures são de propósito conflitantes: empresa 06–22, quadra 08–18.
+   * Se as duas tivessem o mesmo horário, a prova passaria pelos dois
+   * caminhos e não julgaria nada.
+   */
+  describe('a grafia do `quadraId` não decide a herança', () => {
+    it('quadraId em MAIÚSCULAS aplica o horário DA QUADRA, não o da empresa', () => {
+      const { service } = build([]);
+
+      const efetivo = service.resolverDeLinhas(
+        [linhaEmpresa(), linhaQuadra()],
+        QUADRA.toUpperCase(),
+        DIA,
+      );
+
+      expect(efetivo).toMatchObject({
+        horaInicio: parseTimeOnly('08:00'),
+        horaFim: parseTimeOnly('18:00'),
+      });
+    });
+
+    it('a grafia canônica continua aplicando o mesmo horário', () => {
+      // O par. Sem ele, um `resolverDeLinhas` que escolhesse sempre a linha
+      // da quadra — ignorando o id — passaria na prova acima.
+      const { service } = build([]);
+
+      expect(
+        service.resolverDeLinhas([linhaEmpresa(), linhaQuadra()], QUADRA, DIA),
+      ).toMatchObject({
+        horaInicio: parseTimeOnly('08:00'),
+        horaFim: parseTimeOnly('18:00'),
+      });
+    });
+
+    it('OUTRA quadra, em qualquer grafia, continua herdando a empresa', () => {
+      // O par negativo: normalizar não pode virar "casar com qualquer um".
+      const { service } = build([]);
+      const outra = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+
+      for (const id of [outra, outra.toUpperCase()]) {
+        expect(
+          service.resolverDeLinhas([linhaEmpresa(), linhaQuadra()], id, DIA),
+        ).toMatchObject({
+          horaInicio: parseTimeOnly('06:00'),
+          horaFim: parseTimeOnly('22:00'),
+        });
+      }
     });
   });
 

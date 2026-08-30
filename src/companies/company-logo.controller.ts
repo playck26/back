@@ -2,7 +2,6 @@ import {
   Controller,
   Delete,
   Param,
-  ParseUUIDPipe,
   Put,
   UploadedFile,
   UseGuards,
@@ -25,6 +24,7 @@ import {
   exigirArquivo,
   UploadDeMidia,
 } from '../storage/upload-de-midia';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 
 /**
@@ -37,7 +37,7 @@ import { LogoDaEmpresaService } from './logo-da-empresa.service';
  * nesta rota*; o serviço decide *qual empresa cada um alcança*, e recusa com
  * **404, nunca 403** (AC-014).
  *
- * `ParseUUIDPipe` na frente: id malformado é 400 antes de qualquer consulta,
+ * `UuidCanonicoPipe` na frente: id malformado é 400 antes de qualquer consulta,
  * e o parser da chave nunca recebe algo que não seja UUID.
  */
 @ApiTags('companies')
@@ -61,7 +61,7 @@ export class CompanyLogoController {
     },
   })
   substituir(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @CurrentUser() user: AccessTokenPayload,
     @UploadedFile() arquivo?: Express.Multer.File,
   ) {
@@ -77,7 +77,7 @@ export class CompanyLogoController {
   @ApiOkResponse({ type: LogoDaEmpresaResponseDto })
   @Roles('company_admin', 'super_admin')
   remover(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @CurrentUser() user: AccessTokenPayload,
   ) {
     return this.logos.remover(id, user);

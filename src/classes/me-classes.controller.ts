@@ -5,7 +5,6 @@ import {
   Get,
   HttpCode,
   Param,
-  ParseUUIDPipe,
   Post,
   Put,
   Query,
@@ -20,6 +19,7 @@ import {
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import {
   ErroDeMatriculaResponseDto,
@@ -93,7 +93,7 @@ export class MeClassesController {
   @Roles('aluno')
   entrar(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) turmaId: string,
+    @Param('id', UuidCanonicoPipe) turmaId: string,
   ) {
     return this.matricula.entrar(user.companyId as string, user.sub, turmaId);
   }
@@ -139,7 +139,7 @@ export class MeClassesController {
   @Roles('aluno', 'professor')
   mediaDaTurma(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) turmaId: string,
+    @Param('id', UuidCanonicoPipe) turmaId: string,
   ) {
     return this.avaliacoes.mediaDaTurma(user.companyId as string, turmaId);
   }
@@ -168,7 +168,7 @@ export class MeClassesController {
   @Roles('aluno')
   avaliarAula(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
     @Body() dto: AvaliarAulaDto,
   ) {
     return this.avaliacoes.avaliar(
@@ -191,7 +191,7 @@ export class MeClassesController {
   @Roles('aluno')
   sair(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) turmaId: string,
+    @Param('id', UuidCanonicoPipe) turmaId: string,
   ) {
     return this.matricula.sair(user.companyId as string, user.sub, turmaId);
   }

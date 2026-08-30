@@ -294,7 +294,21 @@ export class PresencaService {
     // O lugar certo é aqui, no grupo dos `404` de escopo: "esta ocorrência
     // não pertence a este caminho" é a mesma família de "não é sua", e as
     // duas têm de responder antes de qualquer regra de domínio.
-    if (turmaIdDaRota && ocupacao.origemTurmaId !== turmaIdDaRota) {
+    //
+    // **Achado 1 da 3ª validação cruzada (MÉDIA) — e o `!==` era o defeito.**
+    // `A000…001` e `a000…001` são o MESMO UUID; o Postgres devolve a forma
+    // minúscula, e o `ParseUUIDPipe` da rota preservava a grafia que veio.
+    // O gestor abria a URL da própria turma em maiúsculas e levava `404`.
+    //
+    // A correção de verdade é a fronteira — `UuidCanonicoPipe`, que
+    // normaliza todo `@Param` de UUID do projeto. Isto aqui é o portão se
+    // recusando a depender de um pipe declarado em outro arquivo: quem
+    // chama este serviço não é só o controller, e um gate que devolve 404
+    // não pode ter a resposta decidida por quem o chamou.
+    if (
+      turmaIdDaRota &&
+      ocupacao.origemTurmaId !== turmaIdDaRota.toLowerCase()
+    ) {
       throw new NotFoundException();
     }
 

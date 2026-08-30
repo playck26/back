@@ -1,11 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsEmail,
-  IsOptional,
-  IsString,
-  IsUUID,
-  MinLength,
-} from 'class-validator';
+import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 
 export class CreateStudentDto {
   @ApiProperty()
@@ -24,6 +19,6 @@ export class CreateStudentDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   nivelId?: string;
 }

@@ -6,7 +6,6 @@ import {
   HttpStatus,
   Headers,
   Param,
-  ParseUUIDPipe,
   Post,
   Query,
   UnprocessableEntityException,
@@ -24,6 +23,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CourtsService } from './courts.service';
 import {
   OcupacaoPaginadaResponseDto,
@@ -89,7 +89,7 @@ export class BookingsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async cancel(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     const alunoIdScope =
       user.role === 'aluno'

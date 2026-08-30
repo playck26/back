@@ -3,7 +3,6 @@ import {
   Controller,
   Get,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -24,6 +23,7 @@ import {
   ProfessorPaginadoResponseDto,
   ProfessorResponseDto,
 } from './dto/people-response.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
@@ -64,7 +64,7 @@ export class TeachersController {
   @ApiCreatedResponse({ type: ProfessorComSenhaTemporariaResponseDto })
   gerarAcesso(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.teachersService.gerarAcesso(user.companyId as string, id);
   }
@@ -73,7 +73,7 @@ export class TeachersController {
   @ApiOkResponse({ type: ProfessorResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.teachersService.findOne(user.companyId as string, id);
   }
@@ -82,7 +82,7 @@ export class TeachersController {
   @ApiOkResponse({ type: ProfessorResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateTeacherDto,
   ) {
     return this.teachersService.update(user.companyId as string, id, dto);

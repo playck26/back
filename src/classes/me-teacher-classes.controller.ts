@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Get,
-  Param,
-  ParseUUIDPipe,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
   TurmaDoProfessorDetalheResponseDto,
@@ -15,6 +9,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { ClassesService } from './classes.service';
 
 /**
@@ -49,7 +44,7 @@ export class MeTeacherClassesController {
   @Roles('professor')
   detalhe(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.classesService.myTeachingClassDetail(
       user.companyId as string,

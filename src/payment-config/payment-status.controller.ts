@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Param, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -14,6 +7,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { OcupacaoResponseDto } from '../courts/dto/booking-response.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
 
 // CON-006.3 — rota vive sob /bookings (mesmo prefixo de MOD-005), mas
@@ -34,7 +28,7 @@ export class PaymentStatusController {
   @Roles('company_admin')
   updateStatus(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdatePaymentStatusDto,
   ) {
     return this.courtsService.updatePaymentStatus(

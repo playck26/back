@@ -4,6 +4,26 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PresencaService } from './presenca.service';
 
 /**
+ * **ACHADO 1 DA 3ª VALIDAÇÃO CRUZADA — por que estas duas constantes são
+ * UUID, e não os apelidos curtos que estavam aqui.**
+ *
+ * As provas da conferência de `:turmaId` usavam nomes como `t1` e `OUTRA`.
+ * Elas julgavam a lógica ("igual passa, diferente recusa") e apagavam o
+ * dado: um apelido não tem caixa alta nem baixa, não tem forma canônica, e
+ * não existe fronteira entre `ParseUUIDPipe` e Postgres para ele
+ * atravessar. As provas ficavam verdes enquanto o gestor levava `404` na
+ * própria turma, porque a URL vinha em maiúsculas.
+ *
+ * Com UUID de verdade, a prova volta a poder falhar pelo motivo certo.
+ */
+// Hexadecimal COM LETRA, de propósito: `11111111-…` não tem caixa, e
+// `toUpperCase()` sobre ele é um no-op — a prova ficaria verde sem exercitar
+// nada. Custou uma contraprova descobrir isso, e é o mesmo erro de fixture
+// que a validação cruzada estava apontando.
+const TURMA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const OUTRA_TURMA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+/**
  * TEST (SPEC-030:TASK-005) — `registrarNaoHouve`, o método central da spec.
  *
  * **Este arquivo existia como buraco declarado no prompt de validação
@@ -63,7 +83,7 @@ function diaRelativo(dias: number): Date {
 function ocupacao(overrides: Record<string, unknown> = {}) {
   return {
     id: 'oc1',
-    origemTurmaId: 't1',
+    origemTurmaId: TURMA,
     origemTipo: 'TURMA',
     statusPagamento: 'pendente_pagamento',
     data: diaRelativo(-1),
@@ -312,7 +332,7 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
     // privilégio, mas a URL mentia sobre o que estava sendo alterado.
     it('RECUSA quando a ocorrência é de outra turma da mesma empresa', async () => {
       await expect(
-        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 'OUTRA'),
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, OUTRA_TURMA),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(tx.chamada.upsert).not.toHaveBeenCalled();
     });
@@ -322,7 +342,7 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
       // ela for, a regra já vale — e a prova impede que alguém a passe
       // acreditando que é ignorada.
       await expect(
-        service.registrarNaoHouve('c1', 'oc1', 'u-prof', true, 'OUTRA'),
+        service.registrarNaoHouve('c1', 'oc1', 'u-prof', true, OUTRA_TURMA),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -330,7 +350,7 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
       // O par: sem ele, uma conferência que recusasse SEMPRE passaria na
       // prova acima e a rota do gestor estaria morta.
       await expect(
-        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, TURMA),
       ).resolves.toMatchObject({ completude: 'nao_houve' });
     });
 
@@ -341,24 +361,58 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
     // o estado de uma ocorrência que a URL não deveria alcançar.
     it('ocorrência FUTURA de outra turma: 404, e NÃO 422 AULA_FUTURA', async () => {
       estado.ocupacao = ocupacao({
-        origemTurmaId: 'OUTRA',
+        origemTurmaId: OUTRA_TURMA,
         data: diaRelativo(3),
       });
 
       await expect(
-        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, TURMA),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('ocorrência CANCELADA de outra turma: 404, e NÃO 422 AULA_CANCELADA', async () => {
       estado.ocupacao = ocupacao({
-        origemTurmaId: 'OUTRA',
+        origemTurmaId: OUTRA_TURMA,
         statusPagamento: 'cancelado',
       });
 
       await expect(
-        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, TURMA),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    // **ACHADO 1 DA 3ª VALIDAÇÃO CRUZADA (MÉDIA) — a mesma turma, outra
+    // grafia.** `ParseUUIDPipe` valida o formato e devolve o que veio; o
+    // Postgres devolve sempre minúsculo. O `!==` entre os dois dizia
+    // "turmas diferentes" e o gestor levava `404` na própria turma.
+    //
+    // Esta prova cai contra a versão anterior do portão — foi escrita
+    // revertendo a correção e vendo-a falhar com `NotFoundException`.
+    it('a MESMA turma em MAIÚSCULAS é aceita — UUID não é texto', async () => {
+      await expect(
+        service.registrarNaoHouve(
+          'c1',
+          'oc1',
+          'u-gestor',
+          false,
+          TURMA.toUpperCase(),
+        ),
+      ).resolves.toMatchObject({ completude: 'nao_houve' });
+    });
+
+    // O par negativo, na mesma grafia: sem ele, um portão que só
+    // normalizasse (e nunca recusasse) passaria na prova acima.
+    it('OUTRA turma em MAIÚSCULAS continua recusada', async () => {
+      await expect(
+        service.registrarNaoHouve(
+          'c1',
+          'oc1',
+          'u-gestor',
+          false,
+          OUTRA_TURMA.toUpperCase(),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(tx.chamada.upsert).not.toHaveBeenCalled();
     });
 
     it('a rota do professor não passa turma, e continua funcionando', async () => {
@@ -409,10 +463,10 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
       let n = 0;
       tx.$queryRaw = jest.fn(() => {
         n += 1;
-        if (n === 1) return Promise.resolve([{ id: 't1' }]);
+        if (n === 1) return Promise.resolve([{ id: TURMA }]);
         return Promise.resolve([
           {
-            origemTurmaId: 'OUTRA-TURMA',
+            origemTurmaId: OUTRA_TURMA,
             data: diaRelativo(-1),
             horaInicio: new Date('1970-01-01T00:00:00.000Z'),
             statusPagamento: 'pendente_pagamento',
@@ -456,7 +510,7 @@ describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => 
       ocupacaoQuadra: {
         findFirst: jest.fn().mockResolvedValue({
           id: 'oc1',
-          origemTurmaId: 't1',
+          origemTurmaId: TURMA,
           origemTipo: 'TURMA',
           statusPagamento: 'pendente_pagamento',
           data: diaRelativo(-1),
@@ -549,7 +603,7 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
         : { ocupacaoId: 'oc1', completude, updatedAt: new Date(1000) };
     const ocupacao = {
       id: 'oc1',
-      origemTurmaId: 't1',
+      origemTurmaId: TURMA,
       origemTipo: 'TURMA',
       statusPagamento: 'pendente_pagamento',
       data: diaRelativo(-1),
@@ -575,11 +629,11 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
       $queryRaw: jest.fn(() => {
         statement += 1;
         if (statement % 2 === 1) {
-          return Promise.resolve([{ id: 't1' }]);
+          return Promise.resolve([{ id: TURMA }]);
         }
         return Promise.resolve([
           {
-            origemTurmaId: 't1',
+            origemTurmaId: TURMA,
             data: ocupacao.data,
             horaInicio: ocupacao.horaInicio,
             statusPagamento: ocupacao.statusPagamento,

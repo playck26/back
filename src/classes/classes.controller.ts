@@ -8,7 +8,6 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Patch,
   Put,
   Post,
@@ -33,6 +32,7 @@ import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { AvaliacoesDaTurmaResponseDto } from './dto/avaliacao-de-aula.dto';
 import { ClassesService } from './classes.service';
@@ -99,7 +99,7 @@ export class ClassesController {
   })
   avaliacoesDaTurma(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.avaliacoes.listarParaOGestor(user.companyId as string, id);
   }
@@ -108,7 +108,7 @@ export class ClassesController {
   @ApiOkResponse({ type: FrequenciaDaTurmaResponseDto })
   frequencia(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Query('dias', new DefaultValuePipe(JANELA_PADRAO_DIAS), ParseIntPipe)
     dias: number,
   ) {
@@ -123,7 +123,7 @@ export class ClassesController {
   @ApiOkResponse({ type: [OcorrenciaNoHistoricoResponseDto] })
   historicoDePresenca(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
   ) {
     return this.presencas.historicoDaTurma(
@@ -165,8 +165,8 @@ export class ClassesController {
   @ApiOkResponse({ type: ChamadaNaoHouveResponseDto })
   naoHouve(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('turmaId', ParseUUIDPipe) turmaId: string,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
   ) {
     return this.presencas.registrarNaoHouve(
       user.companyId as string,
@@ -200,7 +200,7 @@ export class ClassesController {
   @ApiOkResponse({ type: TurmaDetalheResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.classesService.findOne(user.companyId as string, id);
   }
@@ -209,7 +209,7 @@ export class ClassesController {
   @ApiOkResponse({ type: TurmaDetalheResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateClassDto,
   ) {
     return this.classesService.update(user.companyId as string, id, dto);
@@ -219,8 +219,8 @@ export class ClassesController {
   @ApiCreatedResponse({ type: MatriculaEmTurmaResponseDto })
   allocateStudent(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('alunoId', ParseUUIDPipe) alunoId: string,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Param('alunoId', UuidCanonicoPipe) alunoId: string,
   ) {
     return this.classesService.allocateStudent(
       user.companyId as string,
@@ -234,8 +234,8 @@ export class ClassesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   removeStudent(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('alunoId', ParseUUIDPipe) alunoId: string,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Param('alunoId', UuidCanonicoPipe) alunoId: string,
   ) {
     return this.classesService.removeStudent(
       user.companyId as string,

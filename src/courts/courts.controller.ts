@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   Put,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -18,6 +17,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CourtsService } from './courts.service';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import {
@@ -73,7 +73,7 @@ export class CourtsController {
   @ApiOkResponse({ type: QuadraResponseDto })
   findOne(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.courtsService.findOne(user.companyId as string, id);
   }
@@ -83,7 +83,7 @@ export class CourtsController {
   @ApiOkResponse({ type: QuadraResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateCourtDto,
   ) {
     return this.courtsService.update(user.companyId as string, id, dto);
@@ -94,7 +94,7 @@ export class CourtsController {
   @Roles('company_admin', 'aluno')
   availability(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Query() query: AvailabilityQueryDto,
   ) {
     return this.courtsService.availability(
@@ -112,7 +112,7 @@ export class CourtsController {
   @Roles('company_admin')
   horarios(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.horariosService.listarDaQuadra(user.companyId as string, id);
   }
@@ -122,7 +122,7 @@ export class CourtsController {
   @Roles('company_admin')
   definirHorarios(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: DefinirHorariosDto,
   ) {
     return this.horariosService.definirDaQuadra(
@@ -138,7 +138,7 @@ export class CourtsController {
   @Roles('company_admin')
   removerHorarios(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.horariosService.removerDaQuadra(user.companyId as string, id);
   }

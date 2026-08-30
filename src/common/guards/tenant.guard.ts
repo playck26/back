@@ -38,7 +38,19 @@ export class TenantGuard implements CanActivate {
       return true;
     }
 
-    if (routeCompanyId !== user.companyId) {
+    // **`toLowerCase()`, e o `UuidCanonicoPipe` NÃO resolve isto.**
+    //
+    // Guard roda ANTES de pipe no ciclo do Nest: o que chega aqui é
+    // `request.params` cru, com a grafia que veio da URL. O `companyId` do
+    // token é canônico (sai de `usuario.companyId`/`empresa.id`, lidos do
+    // Postgres), então `A000…` na rota contra `a000…` no token dava `404`
+    // na PRÓPRIA empresa do gestor.
+    //
+    // Hoje só a rota de smoke usa este guard, então não é defeito em
+    // produção — mas ele existe para ser reusado (ver a nota acima sobre
+    // endpoints futuros), e reusar um gate quebrado é como o defeito
+    // voltaria.
+    if (routeCompanyId.toLowerCase() !== user.companyId) {
       throw new NotFoundException();
     }
 

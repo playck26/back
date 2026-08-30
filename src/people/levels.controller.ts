@@ -6,7 +6,6 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   UseGuards,
@@ -22,6 +21,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { NivelResponseDto } from './dto/people-response.dto';
 import { CreateLevelDto } from './dto/create-level.dto';
 import { UpdateLevelDto } from './dto/update-level.dto';
@@ -50,7 +50,7 @@ export class LevelsController {
   @ApiOkResponse({ type: NivelResponseDto })
   update(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateLevelDto,
   ) {
     return this.levelsService.update(user.companyId as string, id, dto);
@@ -61,7 +61,7 @@ export class LevelsController {
   @ApiNoContentResponse()
   remove(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.levelsService.remove(user.companyId as string, id);
   }

@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   ParseIntPipe,
-  ParseUUIDPipe,
   Put,
   Query,
   UseGuards,
@@ -22,6 +21,7 @@ import {
   ChamadaNaoHouveResponseDto,
   OcorrenciasDaTurmaPaginadasResponseDto,
 } from './dto/me-response.dto';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
 import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { PresencaService } from './presenca.service';
@@ -45,7 +45,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   ocorrencias(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', UuidCanonicoPipe) id: string,
     // Default de 30 e teto de 90: sem limite, o endpoint cresce junto com o
     // histórico e um dia devolve anos de aula (ressalva da validação).
     @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
@@ -69,7 +69,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   chamada(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
   ) {
     return this.presencas.chamada(
       user.companyId as string,
@@ -83,7 +83,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   salvar(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
     @Body() dto: SalvarChamadaDto,
   ) {
     return this.presencas.salvarChamada(
@@ -112,7 +112,7 @@ export class MeTeacherAttendanceController {
   @Roles('professor')
   naoHouve(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
   ) {
     return this.presencas.registrarNaoHouve(
       user.companyId as string,
