@@ -42,7 +42,18 @@ const usuarioId = (n: number) =>
   `bbbbbbbb-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 let fatia = -1;
-async function novaAula(turmaId = TURMA, diasAtras = 0): Promise<string> {
+/**
+ * SPEC-027 — **o padrão é ONTEM, não hoje.**
+ *
+ * A chamada passou a exigir que a aula tenha começado, e estas fixtures montam
+ * horários a partir de `TIME '00:00'`. Com "hoje", a suíte falharia toda vez
+ * que rodasse na primeira hora da madrugada — e foi o que derrubou o CI em
+ * 2026-08-30, às 00:03 de Brasília.
+ *
+ * Ontem já passou inteiro a qualquer hora, e continua dentro da janela
+ * retroativa de 7 dias. Ver `hoje-no-clube-sql.ts`.
+ */
+async function novaAula(turmaId = TURMA, diasAtras = 1): Promise<string> {
   fatia += 1;
   const [r] = await db.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)

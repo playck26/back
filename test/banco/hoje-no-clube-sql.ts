@@ -21,6 +21,23 @@
 export const HOJE_NO_CLUBE_SQL =
   "(now() AT TIME ZONE 'America/Sao_Paulo')::date";
 
+/**
+ * **SPEC-027 — e agora a HORA da fixture importa, não só o dia.**
+ *
+ * A chamada só abre "durante ou depois da aula". Uma fixture que cria a aula
+ * **hoje** passa a depender da hora em que a suíte roda: as fixtures deste
+ * projeto montam horários como `TIME '00:00' + N*10min`, e às 00:04 da manhã
+ * a aula das 00:10 **ainda não começou**.
+ *
+ * Foi exatamente o que derrubou o CI em 2026-08-30 às 03:03Z — 00:03 em São
+ * Paulo. Passava aqui às 22h e falhava lá às 00h, sem uma linha de diferença.
+ *
+ * **Regra para fixture de aula: use ONTEM (`diasAtrasNoClube(1)`), não hoje.**
+ * Ontem já passou inteiro, a qualquer hora, e continua dentro da janela
+ * retroativa de 7 dias (INV-017). "Hoje" só serve quando o teste controla o
+ * relógio.
+ */
+
 /** `HOJE_NO_CLUBE_SQL` menos N dias — o mesmo que `CURRENT_DATE - N` fazia. */
 export function diasAtrasNoClube(dias: number): string {
   return dias === 0 ? HOJE_NO_CLUBE_SQL : `${HOJE_NO_CLUBE_SQL} - ${dias}`;

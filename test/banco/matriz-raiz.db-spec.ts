@@ -26,7 +26,9 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
-import { diasAtrasNoClube, HOJE_NO_CLUBE_SQL } from './hoje-no-clube-sql';
+// SPEC-027: ONTEM, não hoje — a chamada exige que a aula tenha começado, e
+// estas fixtures usam horários a partir de 00:00. Ver `hoje-no-clube-sql.ts`.
+import { diasAtrasNoClube } from './hoje-no-clube-sql';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
@@ -64,7 +66,7 @@ async function novaAula(): Promise<string> {
   fatia += 1;
   const [r] = await A.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
-    VALUES (gen_random_uuid(),'${ids.empresa}','${ids.quadra}',${HOJE_NO_CLUBE_SQL},
+    VALUES (gen_random_uuid(),'${ids.empresa}','${ids.quadra}',${diasAtrasNoClube(1)},
             TIME '00:00' + (${fatia} * INTERVAL '10 minutes'),
             TIME '00:00' + (${fatia} * INTERVAL '10 minutes') + INTERVAL '9 minutes',
             'TURMA','${ids.turma}','pendente_pagamento',now())
