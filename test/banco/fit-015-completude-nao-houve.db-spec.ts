@@ -80,10 +80,33 @@ function inserirChamada(
  * Quatro defeitos de 2026-08-30 vieram dessa família, e dois derrubaram o CI.
  * A regra está em `hoje-no-clube-sql.ts`, e é ela que este arquivo segue.
  */
+/**
+ * **`valor` NULO, e o CI foi quem ensinou.**
+ *
+ * A primeira versão gravava `valor=100` numa ocupação de `TURMA`, e as 7
+ * provas deste arquivo caíam em `ocupacoes_valor_por_origem`:
+ *
+ * ```sql
+ * CHECK (
+ *   (origem_tipo = 'AVULSO' AND valor IS NOT NULL AND valor >= 0)
+ *   OR (origem_tipo = 'TURMA' AND valor IS NULL)
+ * )
+ * ```
+ *
+ * Valor é da reserva avulsa; a aula de turma é paga pela mensalidade, e
+ * atribuir preço a ela seria cobrar duas vezes. **A fixture escrevia um
+ * estado que o produto não tem.**
+ *
+ * Este arquivo passou sete rodadas de validação cruzada declarado como *"o
+ * único sem prova executada, e o mais provável de estar errado"* — Docker não
+ * sobe nesta máquina e o Postgres local recusa conexão. Estava errado, e
+ * nenhuma leitura pegou: o CHECK mora na migration, não no código que a
+ * fixture parece contradizer.
+ */
 async function criarOcupacao(ocId: string) {
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,valor,updated_at)
-     VALUES ('${ocId}','${EMPRESA}','${QUADRA}',${diasAtrasNoClube(1)},TIME '18:00',TIME '19:00','TURMA','${TURMA}','pendente_pagamento',100,now())`,
+     VALUES ('${ocId}','${EMPRESA}','${QUADRA}',${diasAtrasNoClube(1)},TIME '18:00',TIME '19:00','TURMA','${TURMA}','pendente_pagamento',NULL,now())`,
   );
 }
 
