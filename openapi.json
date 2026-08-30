@@ -2833,6 +2833,49 @@
         ]
       }
     },
+    "/api/v1/classes/{turmaId}/presencas/{ocupacaoId}/nao-houve": {
+      "put": {
+        "operationId": "ClassesController_naoHouve",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChamadaNaoHouveResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "operationId": "ClassesController_list",
@@ -3561,6 +3604,41 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChamadaSalvaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/teacher/attendance/{ocupacaoId}/nao-houve": {
+      "put": {
+        "operationId": "MeTeacherAttendanceController_naoHouve",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChamadaNaoHouveResponseDto"
                 }
               }
             }
@@ -6398,6 +6476,23 @@
           "alunos"
         ]
       },
+      "ChamadaNaoHouveResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "completude": {
+            "type": "string",
+            "example": "nao_houve"
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "completude"
+        ]
+      },
       "TurmaEncontroResponseDto": {
         "type": "object",
         "properties": {
@@ -7338,7 +7433,8 @@
             "type": "string",
             "enum": [
               "completa",
-              "desconhecida"
+              "desconhecida",
+              "nao_houve"
             ],
             "nullable": true
           },

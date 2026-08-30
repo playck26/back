@@ -162,10 +162,19 @@ export class ChamadaResponseDto {
    * existe no código, e o `null` que existe teria sumido do contrato. É a
    * segunda vez nesta task que a memória inventou um contrato; das duas, quem
    * pegou foi o `tsc`, porque a amarra de retorno estava no lugar.
+   *
+   * **SPEC-030 — `nao_houve` é o quarto estado**, e é diferente de `null`:
+   * `null` é *"ninguém respondeu ainda"*, `nao_houve` é *"alguém respondeu
+   * que a aula não aconteceu"*. A distinção é o ponto da spec inteira — se a
+   * tela tratar os dois como iguais, o vermelho volta.
+   *
+   * E foi o gate da SPEC-021 que cobrou esta linha: acrescentar o valor no
+   * enum do Prisma sem tocar aqui derrubou
+   * `contrato-de-resposta.spec.ts`, com a mensagem exata do que faltava.
    */
   @ApiProperty({
     type: String,
-    enum: ['completa', 'desconhecida'],
+    enum: ['completa', 'desconhecida', 'nao_houve'],
     nullable: true,
   })
   completude!: string | null;
@@ -182,6 +191,26 @@ export class ChamadaResponseDto {
 }
 
 /** O que o `PUT` da chamada devolve: a versão nova, para a tela continuar. */
+/**
+ * SPEC-030 — a resposta de "não houve aula".
+ *
+ * Devolve o cabeçalho gravado, e não `204`: a tela precisa confirmar o
+ * estado que passou a valer para trocar o badge sem reconsultar.
+ *
+ * **`completude` sai sem `enum` no contrato, de propósito.** Publicar um
+ * enum de um valor só não informa nada — todo mundo que chama esta rota já
+ * sabe qual estado pediu — e ainda obrigaria o gate da SPEC-021 a manter uma
+ * exceção só para ele. Os valores possíveis de `completude` estão
+ * declarados onde eles de fato variam: `ChamadaResponseDto`.
+ */
+export class ChamadaNaoHouveResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  ocupacaoId!: string;
+
+  @ApiProperty({ type: String, example: 'nao_houve' })
+  completude!: string;
+}
+
 export class ChamadaSalvaResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   ocupacaoId!: string;

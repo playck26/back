@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   ParseUUIDPipe,
   Patch,
+  Put,
   Post,
   Query,
   UseGuards,
@@ -45,6 +46,7 @@ import {
   MatriculaEmTurmaResponseDto,
   OcorrenciaNoHistoricoResponseDto,
 } from './dto/presenca-historico-response.dto';
+import { ChamadaNaoHouveResponseDto } from './dto/me-response.dto';
 import { FrequenciaDaTurmaResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
@@ -128,6 +130,46 @@ export class ClassesController {
       user.companyId as string,
       id,
       Math.min(Math.max(dias, 1), 90),
+    );
+  }
+
+  /**
+   * SPEC-030 — **o gestor registra que a aula não aconteceu.**
+   *
+   * Decisão do Israel (D1): registram os dois. O motivo é o caso que o
+   * professor não resolve — **professor sai do clube**, e a aula que ele não
+   * registrou ficaria pendente para sempre, sem ninguém com caminho para
+   * fechá-la.
+   *
+   * Aninhada sob a turma porque é a tela que ele já abre: o histórico logo
+   * acima (`GET :id/presencas`) é onde a aula pendente aparece para ele.
+   *
+   * **Mesmo serviço da rota do professor**, com o escopo de professor
+   * ausente — para o gestor não há "colega", e o que o separa de outra
+   * empresa é o `company_id`, que está no `WHERE` das duas queries do
+   * portão. Ausência de escopo de professor não é ausência de escopo.
+   *
+   * `:turmaId` não é usado na busca (o `ocupacaoId` já é único e escopado
+   * por empresa), e continua na rota porque é o recurso ao qual a ação
+   * pertence — quem lê a URL entende o que está sendo alterado.
+   */
+  // Sem `@Roles`: este controller inteiro é protegido por `CompanyAdminGuard`
+  // (topo da classe), não por `RolesGuard`. Um `@Roles` aqui seria decoração
+  // morta — parece que restringe e não é lido por ninguém, que é pior do que
+  // não ter.
+  @Put(':turmaId/presencas/:ocupacaoId/nao-houve')
+  @ApiOkResponse({ type: ChamadaNaoHouveResponseDto })
+  naoHouve(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', ParseUUIDPipe) _turmaId: string,
+    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+  ) {
+    return this.presencas.registrarNaoHouve(
+      user.companyId as string,
+      ocupacaoId,
+      user.sub,
+      // `false` = sem escopo de professor. A empresa continua valendo.
+      false,
     );
   }
 

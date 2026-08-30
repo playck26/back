@@ -19,6 +19,7 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import {
   ChamadaResponseDto,
   ChamadaSalvaResponseDto,
+  ChamadaNaoHouveResponseDto,
   OcorrenciasDaTurmaPaginadasResponseDto,
 } from './dto/me-response.dto';
 import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
@@ -91,6 +92,36 @@ export class MeTeacherAttendanceController {
       ocupacaoId,
       dto.versao,
       dto.itens,
+    );
+  }
+
+  /**
+   * SPEC-030 — **a aula não aconteceu.**
+   *
+   * Rota própria, e não um campo no `PUT` acima: o corpo daquele é a lista
+   * de alunos, e "salvei com zero alunos" é exatamente o engano que a
+   * SPEC-015 já tratou. Aqui não há corpo — a rota inteira é a afirmação.
+   *
+   * O gestor tem a dele em `classes.controller.ts`, sobre o mesmo serviço.
+   * Este caminho fica `professor`-only porque `/me/teacher` significa "meu,
+   * como professor", e um gestor chamando por aqui seria uma rota mentindo
+   * sobre quem chama.
+   */
+  @Put('attendance/:ocupacaoId/nao-houve')
+  @ApiOkResponse({ type: ChamadaNaoHouveResponseDto })
+  @Roles('professor')
+  naoHouve(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
+  ) {
+    return this.presencas.registrarNaoHouve(
+      user.companyId as string,
+      ocupacaoId,
+      user.sub,
+      // `true` = estreita para as turmas DELE. O `professorId` em si é
+      // resolvido no serviço, a partir do banco — o JWT não o carrega
+      // (INV-018).
+      true,
     );
   }
 }
