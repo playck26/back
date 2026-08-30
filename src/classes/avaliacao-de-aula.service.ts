@@ -37,7 +37,25 @@ export class AvaliacaoDeAulaService {
    * disse o quê mesmo olhando só a média. Três dá alguma diluição, e continua
    * sendo pouca (LIM-025a).
    */
-  static readonly MINIMO_PARA_MEDIA = 3;
+  /**
+   * **REMOVIDO em 2026-08-30, por decisão do Israel.** O valor era `3`.
+   *
+   * Ele viu a tela e disse: *"o que seria 2 de 3 aval? Precisa apresentar a
+   * média de nota e não essa quantidade atual"*. A média passa a ser
+   * publicada **desde a primeira avaliação**.
+   *
+   * **O que se perdeu, para quem ler isto depois:** o mínimo não era
+   * estatística, era **privacidade**. A avaliação é anônima para o professor
+   * e para os outros alunos — mas com UMA nota, a média *é* aquela nota. Numa
+   * turma de dois alunos (existe uma assim em produção: "Nova turma", 2 de 6),
+   * o professor sabe exatamente quem disse o quê.
+   *
+   * Foi sinalizado a ele antes de implementar, e ele decidiu assim mesmo. A
+   * LIM-025a — que já dizia que três dá "pouca diluição" — passa a valer sem
+   * diluição nenhuma. Restaurar é reintroduzir a comparação aqui e o campo
+   * `minimoParaMedia` no DTO.
+   */
+  static readonly MINIMO_PARA_MEDIA_REMOVIDO = 3;
 
   /**
    * **Detrator é quem deu 1 ou 2.**
@@ -282,18 +300,15 @@ export class AvaliacaoDeAulaService {
     });
 
     const quantidade = agregado._count._all;
-    const atingiuMinimo =
-      quantidade >= AvaliacaoDeAulaService.MINIMO_PARA_MEDIA;
 
     return {
       quantidade,
       // Uma casa decimal: a tela desenha estrelas, e precisão maior seria
       // falsa — cinco notas não distinguem 4,26 de 4,3.
       media:
-        atingiuMinimo && agregado._avg.nota !== null
+        agregado._avg.nota !== null
           ? Math.round(agregado._avg.nota * 10) / 10
           : null,
-      minimoParaMedia: AvaliacaoDeAulaService.MINIMO_PARA_MEDIA,
     };
   }
 

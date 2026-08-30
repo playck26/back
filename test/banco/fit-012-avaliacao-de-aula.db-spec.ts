@@ -253,15 +253,37 @@ describe('FIT-012 — as notas das aulas alimentam a média da TURMA', () => {
     expect(r.media).toBe(4); // (5+4+3)/3
   });
 
-  it('com 2 notas a média é null, e a contagem aparece', async () => {
+  /**
+   * **SPEC-028 — invertida.** Ela exigia `media: null` com 2 notas, por causa
+   * do mínimo de 3 (D4 da SPEC-025). O Israel viu a tela dizendo "2 de 3
+   * avaliações", perguntou o que aquilo significava, e pediu a média. O
+   * mínimo saiu.
+   *
+   * Contra banco real ela vale mais que a unitária: prova que o `_avg` do
+   * Postgres sobre duas linhas chega inteiro até a resposta, sem o gate no
+   * meio.
+   *
+   * **O que se perdeu:** privacidade. Com uma nota, a média É aquela nota.
+   */
+  it('com 2 notas a média APARECE — o mínimo de 3 foi removido', async () => {
     await montar(2);
     await service.avaliar(EMPRESA, usuarioId(1), AULA_ONTEM, { nota: 5 });
     await service.avaliar(EMPRESA, usuarioId(2), AULA_ONTEM, { nota: 1 });
 
     const r = await service.mediaDaTurma(EMPRESA, TURMA);
 
-    expect(r.media).toBeNull();
+    expect(r.media).toBe(3);
     expect(r.quantidade).toBe(2);
+  });
+
+  it('e com UMA nota também — o caso que custa a privacidade', async () => {
+    await montar(2);
+    await service.avaliar(EMPRESA, usuarioId(1), AULA_ONTEM, { nota: 2 });
+
+    const r = await service.mediaDaTurma(EMPRESA, TURMA);
+
+    expect(r.media).toBe(2);
+    expect(r.quantidade).toBe(1);
   });
 });
 

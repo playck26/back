@@ -60,24 +60,29 @@ export class MinhaAvaliacaoResponseDto {
  * visível e não um vazamento silencioso.
  */
 export class MediaDaTurmaResponseDto {
+  /**
+   * SPEC-028 — **`null` agora significa "ninguém avaliou ainda"**, e só isso.
+   *
+   * Antes significava também "há avaliações, mas menos que o mínimo de 3".
+   * Esse mínimo foi removido por decisão do Israel em 2026-08-30 — a média sai
+   * desde a primeira nota. Ver `AvaliacaoDeAulaService`, onde o que se perdeu
+   * está registrado.
+   */
   @ApiProperty({
     type: Number,
     nullable: true,
     example: 4.3,
     description:
-      'null enquanto não houver o mínimo de avaliações. Uma casa decimal: a tela desenha estrelas, e precisão maior seria falsa.',
+      'null quando ainda não há nenhuma avaliação. Uma casa decimal: a tela desenha estrelas, e precisão maior seria falsa.',
   })
   media!: number | null;
 
   @ApiProperty({
     example: 7,
     description:
-      'Aparece mesmo abaixo do mínimo — esconder a contagem faria a tela não conseguir dizer "ainda faltam avaliações", que é informação útil e não identifica ninguém.',
+      'Quantas avaliações compõem a média. A tela mostra ao lado dela — média sem o tamanho da amostra faz 5,0 de uma nota parecer 5,0 de vinte.',
   })
   quantidade!: number;
-
-  @ApiProperty({ example: 3 })
-  minimoParaMedia!: number;
 }
 
 /** **Só o gestor recebe isto.** */

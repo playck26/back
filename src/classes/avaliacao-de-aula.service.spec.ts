@@ -76,18 +76,40 @@ describe('INV-025a — a média não conta quem disse o quê', () => {
   });
 });
 
-describe('o mínimo para exibir a média', () => {
-  it('com 2, a média é null — mas a contagem aparece', async () => {
-    // Esconder também a contagem faria a tela não conseguir dizer "ainda
-    // faltam avaliações", que é informação útil e não identifica ninguém.
+/**
+ * **SPEC-028 — o mínimo de 3 foi REMOVIDO, e estas provas mudaram de lado.**
+ *
+ * O Israel viu a tela mostrando "2 de 3 avaliações" e disse: *"o que seria 2
+ * de 3 aval? Precisa apresentar a média de nota e não essa quantidade
+ * atual"*. A média sai desde a primeira nota.
+ *
+ * A prova que exigia `null` com 2 avaliações **passou a exigir o contrário**.
+ * Ela não foi apagada: inverter e explicar deixa o `git log` legível para
+ * quem, daqui a seis meses, se perguntar por que a média de uma nota só
+ * aparece.
+ *
+ * **O que se perdeu:** o mínimo era privacidade, não estatística. Com uma
+ * nota, a média É aquela nota — e numa turma de dois alunos o professor sabe
+ * quem disse o quê. Sinalizado a ele antes; decisão dele.
+ */
+describe('a média sai desde a primeira avaliação', () => {
+  it('com 2, a média aparece — antes era `null`', async () => {
     const r = await servicoCom(4.5, 2).mediaDaTurma(EMPRESA, TURMA);
 
-    expect(r.media).toBeNull();
+    expect(r.media).toBe(4.5);
     expect(r.quantidade).toBe(2);
-    expect(r.minimoParaMedia).toBe(3);
   });
 
-  it('com 3, aparece', async () => {
+  it('com UMA só, também', async () => {
+    // O caso extremo, e o que custa a privacidade: a média é a nota daquela
+    // pessoa. Está aqui explícito para ninguém achar que foi descuido.
+    const r = await servicoCom(2, 1).mediaDaTurma(EMPRESA, TURMA);
+
+    expect(r.media).toBe(2);
+    expect(r.quantidade).toBe(1);
+  });
+
+  it('com 3, continua aparecendo', async () => {
     expect((await servicoCom(4, 3).mediaDaTurma(EMPRESA, TURMA)).media).toBe(4);
   });
 
@@ -106,11 +128,6 @@ describe('o mínimo para exibir a média', () => {
 });
 
 describe('as réguas ficam num lugar só', () => {
-  it('o mínimo é 3, e é dele que as provas acima dependem', () => {
-    // Sabotagem declarada: baixar para 1 derruba a prova do `null`.
-    expect(AvaliacaoDeAulaService.MINIMO_PARA_MEDIA).toBe(3);
-  });
-
   it('detrator é quem deu 1 ou 2 — decisão sinalizada ao Israel', () => {
     // Escala 1–5 na leitura clássica: 1–2 detrator, 3 neutro, 4–5 promotor.
     // É a régua mais provável de ele querer mexer, e mora numa constante.
