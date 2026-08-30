@@ -317,12 +317,48 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
       expect(tx.chamada.upsert).not.toHaveBeenCalled();
     });
 
+    it('a conferência da URL vale para o PROFESSOR também', async () => {
+      // A rota dele não é aninhada hoje, mas o portão é um só: se algum dia
+      // ela for, a regra já vale — e a prova impede que alguém a passe
+      // acreditando que é ignorada.
+      await expect(
+        service.registrarNaoHouve('c1', 'oc1', 'u-prof', true, 'OUTRA'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
     it('ACEITA quando a turma da URL é a da ocorrência', async () => {
       // O par: sem ele, uma conferência que recusasse SEMPRE passaria na
       // prova acima e a rota do gestor estaria morta.
       await expect(
         service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
       ).resolves.toMatchObject({ completude: 'nao_houve' });
+    });
+
+    // **Achado 4 da 2ª validação cruzada.** A prova anterior usava só uma
+    // ocorrência PASSADA e VÁLIDA, então não discriminava a ordem: qualquer
+    // posição da conferência a fazia passar. Com uma ocorrência FUTURA de
+    // outra turma, a conferência tardia devolvia `422 AULA_FUTURA` — contando
+    // o estado de uma ocorrência que a URL não deveria alcançar.
+    it('ocorrência FUTURA de outra turma: 404, e NÃO 422 AULA_FUTURA', async () => {
+      estado.ocupacao = ocupacao({
+        origemTurmaId: 'OUTRA',
+        data: diaRelativo(3),
+      });
+
+      await expect(
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('ocorrência CANCELADA de outra turma: 404, e NÃO 422 AULA_CANCELADA', async () => {
+      estado.ocupacao = ocupacao({
+        origemTurmaId: 'OUTRA',
+        statusPagamento: 'cancelado',
+      });
+
+      await expect(
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('a rota do professor não passa turma, e continua funcionando', async () => {

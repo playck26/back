@@ -165,6 +165,20 @@ export class AulaAnteriorResponseDto {
 
   @ApiProperty({ type: String, nullable: true })
   meuComentario!: string | null;
+
+  /**
+   * **SPEC-030 / achado 1 da 2ª validação cruzada (ALTA).**
+   *
+   * A aula não realizada **continua nesta lista**, marcada. A primeira versão
+   * a excluía — e como `GET /me/classes` só devolve o futuro, ela sumia das
+   * duas listas do aluno, que pode ter ido até o clube.
+   *
+   * O que sai não é a aula: é o formulário de avaliação. Quem impede a ação é
+   * o portão (`409 AULA_NAO_REALIZADA`); a lista existe para contar o que
+   * houve.
+   */
+  @ApiProperty({ type: Boolean, example: false })
+  naoRealizada!: boolean;
 }
 
 /** Ver a nota do topo: o código é o contrato; a mensagem é copy. */

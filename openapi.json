@@ -7063,6 +7063,10 @@
           "meuComentario": {
             "type": "string",
             "nullable": true
+          },
+          "naoRealizada": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -7074,7 +7078,8 @@
           "horaInicio",
           "horaFim",
           "minhaNota",
-          "meuComentario"
+          "meuComentario",
+          "naoRealizada"
         ]
       },
       "AulasAnterioresPaginadasResponseDto": {

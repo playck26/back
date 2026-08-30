@@ -128,14 +128,19 @@ export class AvaliacaoDeAulaService {
       origemTipo: 'TURMA' as const,
       origemTurmaId: { in: turmaIds },
       statusPagamento: { not: 'cancelado' as const },
-      // SPEC-030 — **aula não realizada some daqui.** Ela não foi cancelada
-      // (a quadra esteve ocupada), então o filtro acima não a pegava, e o
-      // aluno receberia um convite para avaliar uma aula que não aconteceu.
+      // **SPEC-030 — a 1ª e a 2ª validação cruzada se contradizem aqui, em
+      // aparência. A conclusão é uma terceira coisa, e fica escrita.**
       //
-      // `none` e não `some`+negação: `chamadas` é lista de zero ou um pela FK
-      // composta, e `none` cobre certo os dois casos — sem cabeçalho, e com
-      // cabeçalho de qualquer outra completude.
-      chamadas: { none: { completude: 'nao_houve' as const } },
+      // A 1ª rodada apontou que o aluno recebia convite para avaliar uma aula
+      // que não aconteceu. Eu resolvi **excluindo-a desta lista** — e a 2ª
+      // mostrou o custo: `GET /me/classes` só devolve o futuro, então a aula
+      // de ONTEM marcada `nao_houve` sumia das DUAS listas. O aluno pode ter
+      // ido até o clube, e o produto simplesmente a apagava.
+      //
+      // **A aula FICA aqui, marcada; o que sai é a possibilidade de
+      // avaliá-la.** Esconder informação para impedir uma ação é o desenho
+      // errado: quem impede é o portão (`409 AULA_NAO_REALIZADA`), e a lista
+      // existe para contar o que houve.
       // `lt: hoje` e não `lte`: a regra de "já terminou" é a mesma do
       // `exigirAulaTerminada`, e as duas precisam concordar — lista que
       // oferece o que o servidor recusa é a armadilha do DEF-011.
@@ -150,6 +155,8 @@ export class AvaliacaoDeAulaService {
       include: {
         origemTurma: { select: { id: true, nome: true } },
         quadra: { select: { nome: true } },
+        // SPEC-030 — o cabeçalho entra para marcar a aula não realizada.
+        chamadas: { select: { completude: true } },
         avaliacoes: {
           where: { alunoId: aluno.id },
           select: { nota: true, comentario: true },
@@ -176,6 +183,10 @@ export class AvaliacaoDeAulaService {
         horaFim: formatTimeOnly(o.horaFim),
         minhaNota: o.avaliacoes[0]?.nota ?? null,
         meuComentario: o.avaliacoes[0]?.comentario ?? null,
+        // A tela usa isto para não montar o formulário — e o servidor recusa
+        // de qualquer forma, com `409 AULA_NAO_REALIZADA`. Os dois lados, como
+        // manda a lição do DEF-011.
+        naoRealizada: o.chamadas[0]?.completude === 'nao_houve',
       })),
       page,
       pageSize,
@@ -321,7 +332,28 @@ export class AvaliacaoDeAulaService {
       // de outra empresa aponte para esta turma; este filtro é a segunda
       // tranca, no caminho de leitura. Isolamento entre empresas é caro
       // demais para depender de uma camada só.
-      where: { companyId, ocupacao: { companyId, origemTurmaId: turmaId } },
+      where: {
+        companyId,
+        ocupacao: {
+          companyId,
+          origemTurmaId: turmaId,
+          // **SPEC-030 / achado 2 da 2ª validação cruzada (ALTA).**
+          //
+          // O portão `AULA_NAO_REALIZADA` barra avaliar uma aula já marcada, e
+          // eu tinha escrito no comentário dele que isso impedia a nota de
+          // entrar na média "para sempre". **Não impedia.** A ordem inversa
+          // passava inteira: o aluno avalia uma aula sem cabeçalho, o gestor
+          // registra `nao_houve` depois — a única barreira do registro é
+          // `count(presencas) > 0`, e avaliação não é presença — e a nota
+          // continuava na média. Há ainda a versão concorrente, que lock
+          // nenhum fecharia: a avaliação lê antes do `upsert` e grava depois.
+          //
+          // **Filtrar na LEITURA resolve as duas ordens e a corrida**, e sem
+          // apagar dado do aluno: quem avaliou continua tendo avaliado, e a
+          // nota apenas deixa de falar sobre uma aula que não aconteceu.
+          chamadas: { none: { completude: 'nao_houve' as const } },
+        },
+      },
       _avg: { nota: true },
       _count: { _all: true },
     });
@@ -361,7 +393,28 @@ export class AvaliacaoDeAulaService {
       // Ver a nota gêmea em `mediaDaTurma`. Aqui o custo de um vazamento é
       // maior: esta é a única resposta do produto que carrega NOME e
       // COMENTÁRIO.
-      where: { companyId, ocupacao: { companyId, origemTurmaId: turmaId } },
+      where: {
+        companyId,
+        ocupacao: {
+          companyId,
+          origemTurmaId: turmaId,
+          // **SPEC-030 / achado 2 da 2ª validação cruzada (ALTA).**
+          //
+          // O portão `AULA_NAO_REALIZADA` barra avaliar uma aula já marcada, e
+          // eu tinha escrito no comentário dele que isso impedia a nota de
+          // entrar na média "para sempre". **Não impedia.** A ordem inversa
+          // passava inteira: o aluno avalia uma aula sem cabeçalho, o gestor
+          // registra `nao_houve` depois — a única barreira do registro é
+          // `count(presencas) > 0`, e avaliação não é presença — e a nota
+          // continuava na média. Há ainda a versão concorrente, que lock
+          // nenhum fecharia: a avaliação lê antes do `upsert` e grava depois.
+          //
+          // **Filtrar na LEITURA resolve as duas ordens e a corrida**, e sem
+          // apagar dado do aluno: quem avaliou continua tendo avaliado, e a
+          // nota apenas deixa de falar sobre uma aula que não aconteceu.
+          chamadas: { none: { completude: 'nao_houve' as const } },
+        },
+      },
       orderBy: [{ nota: 'asc' }, { updatedAt: 'desc' }],
       select: {
         nota: true,

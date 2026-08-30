@@ -208,6 +208,7 @@ export class PresencaService {
     companyId: string,
     ocupacaoId: string,
     professorIdScope?: string,
+    turmaIdDaRota?: string,
   ): Promise<{
     origemTurmaId: string;
     data: Date;
@@ -279,6 +280,21 @@ export class PresencaService {
     // que o separa de outra empresa. Ausência de escopo aqui é ausência de
     // escopo de PROFESSOR, não ausência de escopo.
     if (professorIdScope && ocupacao.professorId !== professorIdScope) {
+      throw new NotFoundException();
+    }
+
+    // **Achado 4 da 2ª validação cruzada (MÉDIA).** Esta conferência existia,
+    // e rodava DEPOIS do portão — então
+    // `PUT /classes/turma-A/presencas/ocupacao-futura-da-turma-B/nao-houve`
+    // devolvia `422 AULA_FUTURA` em vez de `404`. Não havia escrita indevida,
+    // mas a resposta **contava o estado de uma ocorrência que a URL não
+    // deveria alcançar**: quem chuta ids descobre se a aula existe e se já
+    // aconteceu.
+    //
+    // O lugar certo é aqui, no grupo dos `404` de escopo: "esta ocorrência
+    // não pertence a este caminho" é a mesma família de "não é sua", e as
+    // duas têm de responder antes de qualquer regra de domínio.
+    if (turmaIdDaRota && ocupacao.origemTurmaId !== turmaIdDaRota) {
       throw new NotFoundException();
     }
 
@@ -593,19 +609,15 @@ export class PresencaService {
       // cancelada (`AULA_CANCELADA`), aula futura (`AULA_FUTURA`) e janela
       // retroativa (`AULA_ANTIGA`) valem igual. Quem não pode lançar chamada
       // também não pode declarar que não houve aula.
-      const ocupacao = await this.travarEValidarOcorrencia(
+      // A URL precisa dizer a verdade sobre o que altera, e a conferência
+      // roda DENTRO do portão, no grupo dos 404 — ver o comentário lá.
+      await this.travarEValidarOcorrencia(
         tx,
         companyId,
         ocupacaoId,
         professorIdScope,
+        turmaIdDaRota,
       );
-
-      // A URL precisa dizer a verdade sobre o que altera. 404 e não 400: para
-      // quem pediu, "esta ocorrência não existe nesta turma" é o mesmo que
-      // não existir — e distinguir entregaria informação sobre outra turma.
-      if (turmaIdDaRota && ocupacao.origemTurmaId !== turmaIdDaRota) {
-        throw new NotFoundException();
-      }
 
       // LIM-030d — **não sobrescreve chamada com presença.** O AC-012 já
       // decidiu que cancelar depois não desfaz quem esteve lá; apagar
