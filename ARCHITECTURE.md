@@ -848,6 +848,18 @@ o gate é `contagem-por-ip.spec.ts`, que confere os handlers reais.
 **Observado não é aprovado** (`A_Method_PatternMap.md`). Padrões recorrentes
 neste código, com onde vê-los:
 
+- **Paginação `{ data, page, pageSize, total }`** (SPEC-027): `quadras`,
+  `ocupações`, `alunos`, `me/classes/anteriores` e
+  `me/teacher/classes/:id/ocorrencias`. Duas regras que já custaram defeito:
+  o **mesmo `where`** alimenta a página e a contagem — filtro diferente faz o
+  rodapé mentir; e o `orderBy` termina em `{ id }`, porque `data +
+  horaInicio` não é ordem total e sem desempate uma linha aparece em duas
+  páginas e some de outra. **Filtro no cliente depois de paginar é sempre
+  defeito** — foi por isso que `GET /bookings` ganhou `excluirCanceladas`;
+- **Estado resolvido no servidor, não deduzido na tela** (SPEC-026/027): a
+  chamada de uma aula sai como `futura | em_andamento | pendente | feita |
+  legada`, já comparada com o relógio do clube. A tela escolhe cor e texto e
+  não conhece a regra — se conhecesse, seria a segunda cópia dela;
 - **Claim atômica** (`updateMany` com condição no `WHERE` + `count === 1`):
   rotação de refresh token e aceite de convite. Substitui ler-e-decidir, que
   não é seguro sob `READ COMMITTED`;
