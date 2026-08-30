@@ -47,6 +47,23 @@ export class AulaDoAlunoResponseDto {
 
   @ApiProperty({ type: String, example: '19:00' })
   horaFim!: string;
+
+  /**
+   * **SPEC-030 / achado 2 da validação cruzada (ALTA).**
+   *
+   * A dúvida 2 da spec decidiu que o aluno deve ver *"aula não realizada"* em
+   * vez de a aula sumir — sumir apaga uma aula pela qual ele pode ter ido até
+   * o clube. **A decisão foi escrita e o campo não foi criado**, então não
+   * havia payload capaz de cumpri-la: em "Próximas" a aula seguia aparecendo
+   * como normal, e no dia seguinte sumia das "Anteriores", porque
+   * `aulasAnteriores` filtra `nao_houve` para não oferecer avaliação.
+   *
+   * `false` para todo o resto: o aluno não precisa distinguir `completa` de
+   * `legada` — isso é registro do professor. O que muda a vida dele é uma
+   * coisa só: **a aula não aconteceu.**
+   */
+  @ApiProperty({ type: Boolean, example: false })
+  naoRealizada!: boolean;
 }
 
 /**

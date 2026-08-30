@@ -437,7 +437,15 @@ export class ClassesService {
         statusPagamento: { not: 'cancelado' },
         data: { gte: hojeUTC },
       },
-      include: { origemTurma: true, quadra: true },
+      include: {
+        origemTurma: true,
+        quadra: true,
+        // SPEC-030 / achado 2 — o aluno precisa saber que a aula não
+        // aconteceu. Sem isto ela aparecia como aula normal em "Próximas" e
+        // sumia das "Anteriores" no dia seguinte (o filtro da avaliação),
+        // sem nunca dizer o que houve.
+        chamadas: { select: { completude: true } },
+      },
       orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
     });
 
@@ -447,6 +455,10 @@ export class ClassesService {
       turmaNome: ocupacao.origemTurma?.nome ?? null,
       quadraId: ocupacao.quadraId,
       quadraNome: ocupacao.quadra.nome,
+      // Um booleano, e não o `estado` inteiro: o aluno não precisa
+      // distinguir `completa` de `legada` — isso é registro do professor. O
+      // que muda a vida dele é só "a aula não aconteceu".
+      naoRealizada: ocupacao.chamadas[0]?.completude === 'nao_houve',
       data: formatDateOnly(ocupacao.data),
       horaInicio: formatTimeOnly(ocupacao.horaInicio),
       horaFim: formatTimeOnly(ocupacao.horaFim),

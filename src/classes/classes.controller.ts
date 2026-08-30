@@ -149,9 +149,13 @@ export class ClassesController {
    * empresa é o `company_id`, que está no `WHERE` das duas queries do
    * portão. Ausência de escopo de professor não é ausência de escopo.
    *
-   * `:turmaId` não é usado na busca (o `ocupacaoId` já é único e escopado
-   * por empresa), e continua na rota porque é o recurso ao qual a ação
-   * pertence — quem lê a URL entende o que está sendo alterado.
+   * **`:turmaId` É CONFERIDO** — e a primeira versão desta rota não o
+   * conferia. A validação cruzada apontou: `PUT
+   * /classes/turma-A/presencas/ocupacao-da-turma-B/nao-houve` devolvia `200`
+   * e alterava **B**. Não escalava privilégio (a empresa continua no
+   * `WHERE`), mas eu tinha declarado isso como "inofensivo" no comentário —
+   * e não é: uma URL aninhada que altera outro recurso quebra o contrato do
+   * próprio caminho, e o log registra a turma errada.
    */
   // Sem `@Roles`: este controller inteiro é protegido por `CompanyAdminGuard`
   // (topo da classe), não por `RolesGuard`. Um `@Roles` aqui seria decoração
@@ -161,7 +165,7 @@ export class ClassesController {
   @ApiOkResponse({ type: ChamadaNaoHouveResponseDto })
   naoHouve(
     @CurrentUser() user: AccessTokenPayload,
-    @Param('turmaId', ParseUUIDPipe) _turmaId: string,
+    @Param('turmaId', ParseUUIDPipe) turmaId: string,
     @Param('ocupacaoId', ParseUUIDPipe) ocupacaoId: string,
   ) {
     return this.presencas.registrarNaoHouve(
@@ -170,6 +174,10 @@ export class ClassesController {
       user.sub,
       // `false` = sem escopo de professor. A empresa continua valendo.
       false,
+      // Ressalva da validação cruzada: o `turmaId` da URL deixou de ser
+      // decorativo. Sem ele, esta rota alterava ocorrência de OUTRA turma da
+      // mesma empresa e devolvia 200.
+      turmaId,
     );
   }
 

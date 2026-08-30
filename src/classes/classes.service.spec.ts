@@ -696,6 +696,12 @@ describe('ClassesService', () => {
           origemTurma: { nome: 'Turma A' },
           quadraId: 'q1',
           quadra: { nome: 'Quadra 1' },
+          // SPEC-030 — o `include` passou a trazer o cabeçalho, e o mock
+          // precisa espelhar a query. Mock que devolve menos do que o
+          // serviço lê produz `undefined` silencioso: aqui ele estourou na
+          // hora, mas a mesma omissão em outro campo passaria a medir outra
+          // coisa em silêncio.
+          chamadas: [],
           data: new Date('2026-08-25T00:00:00.000Z'),
           horaInicio: new Date('1970-01-01T14:00:00.000Z'),
           horaFim: new Date('1970-01-01T15:00:00.000Z'),
@@ -727,8 +733,63 @@ describe('ClassesService', () => {
           data: '2026-08-25',
           horaInicio: '14:00',
           horaFim: '15:00',
+          // SPEC-030 — o aluno passou a saber que a aula não aconteceu. A
+          // asserção é `toEqual` (não `objectContaining`), então ela cobra
+          // campo novo no contrato — e é isso que se quer aqui: o DEF-012
+          // nasceu de resposta que ganhou/perdeu campo sem nada acender.
+          naoRealizada: false,
         },
       ]);
+    });
+
+    // SPEC-030 / achado 2 da validação cruzada — o par positivo. Sem ele,
+    // `naoRealizada: false` fixo passaria na prova acima.
+    it('marca `naoRealizada` quando o cabeçalho diz `nao_houve`', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({ id: 'a1' });
+      (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
+        { turmaId: 't1' },
+      ]);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'o1',
+          origemTurmaId: 't1',
+          origemTurma: { nome: 'Turma A' },
+          quadraId: 'q1',
+          quadra: { nome: 'Quadra 1' },
+          chamadas: [{ completude: 'nao_houve' }],
+          data: new Date('2026-08-25T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.myUpcomingClasses('c1', 'u1');
+
+      expect(result[0].naoRealizada).toBe(true);
+    });
+
+    it('chamada normal NÃO marca `naoRealizada`', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({ id: 'a1' });
+      (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
+        { turmaId: 't1' },
+      ]);
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'o1',
+          origemTurmaId: 't1',
+          origemTurma: { nome: 'Turma A' },
+          quadraId: 'q1',
+          quadra: { nome: 'Quadra 1' },
+          chamadas: [{ completude: 'completa' }],
+          data: new Date('2026-08-25T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.myUpcomingClasses('c1', 'u1');
+
+      expect(result[0].naoRealizada).toBe(false);
     });
   });
 });

@@ -6,7 +6,12 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import type { OcupacaoQuadra, Prisma, StatusPresenca } from '@prisma/client';
+import type {
+  CompletudeChamada,
+  OcupacaoQuadra,
+  Prisma,
+  StatusPresenca,
+} from '@prisma/client';
 import {
   ChamadaResponseDto,
   ChamadaSalvaResponseDto,
@@ -479,13 +484,27 @@ export class PresencaService {
     // instâncias antigas possam gravar na janela entre este deploy e o
     // `contract`. Trata igual a `desconhecida`, que é o que o backfill vai
     // registrar.
-    const completa = cabecalho?.completude === 'completa';
+    // **SPEC-030 / achado 1 da validação cruzada (ALTA) — e este era o pior
+    // defeito do ciclo.**
+    //
+    // Esta cadeia era um ternário de dois casos: `completa`, ou tudo o mais
+    // vira `desconhecida`. Quando `nao_houve` nasceu, ele caiu no "tudo o
+    // mais" — então o professor registrava que a aula não aconteceu, a tela
+    // relia, e recebia `desconhecida`: **o aviso de "chamada legada, confira
+    // e salve de novo"**, exatamente o oposto do que ele acabara de dizer.
+    //
+    // O `GET` prometia `nao_houve` no contrato publicado e devolvia outra
+    // coisa. **A prova do `Cliente` não pegou porque ela mockava a releitura
+    // já com `nao_houve`** — o teste dublou justamente a parte sob julgamento.
+    //
+    // Agora o valor do cabeçalho **passa direto**. Ausência de cabeçalho
+    // continua sendo `null` quando não há nada, e `desconhecida` quando há
+    // presenças sem cabeçalho — que é o legado descrito acima.
     const semRegistro = presencas.length === 0 && !cabecalho;
-    const completude: 'completa' | 'desconhecida' | null = semRegistro
+    const completude: CompletudeChamada | null = semRegistro
       ? null
-      : completa
-        ? 'completa'
-        : 'desconhecida';
+      : (cabecalho?.completude ?? 'desconhecida');
+    const completa = completude === 'completa';
 
     const doSnapshot: LinhaDaChamada[] = presencas.map((p) => ({
       alunoId: p.alunoId,
@@ -546,6 +565,18 @@ export class PresencaService {
     ocupacaoId: string,
     usuarioId: string,
     comoProfessor: boolean,
+    /**
+     * **Ressalva contratual da validação cruzada.** A rota do gestor é
+     * aninhada (`/classes/:turmaId/presencas/:ocupacaoId/nao-houve`) e o
+     * `turmaId` era ignorado: `PUT /classes/turma-A/.../ocupacao-da-turma-B`
+     * devolvia `200` e alterava **B**. Não escalava privilégio — a empresa
+     * continua no `WHERE` —, mas uma URL aninhada que altera outro recurso
+     * quebra o contrato do próprio caminho, e quem lê o log vê a turma
+     * errada.
+     *
+     * `undefined` para a rota do professor, que não é aninhada em turma.
+     */
+    turmaIdDaRota?: string,
   ): Promise<{ ocupacaoId: string; completude: string }> {
     // INV-018 — o `professorId` vem do BANCO, pelo usuário autenticado, e
     // **não** do JWT: claim é fotografia do login, autorização precisa do
@@ -562,12 +593,19 @@ export class PresencaService {
       // cancelada (`AULA_CANCELADA`), aula futura (`AULA_FUTURA`) e janela
       // retroativa (`AULA_ANTIGA`) valem igual. Quem não pode lançar chamada
       // também não pode declarar que não houve aula.
-      await this.travarEValidarOcorrencia(
+      const ocupacao = await this.travarEValidarOcorrencia(
         tx,
         companyId,
         ocupacaoId,
         professorIdScope,
       );
+
+      // A URL precisa dizer a verdade sobre o que altera. 404 e não 400: para
+      // quem pediu, "esta ocorrência não existe nesta turma" é o mesmo que
+      // não existir — e distinguir entregaria informação sobre outra turma.
+      if (turmaIdDaRota && ocupacao.origemTurmaId !== turmaIdDaRota) {
+        throw new NotFoundException();
+      }
 
       // LIM-030d — **não sobrescreve chamada com presença.** O AC-012 já
       // decidiu que cancelar depois não desfaz quem esteve lá; apagar

@@ -306,6 +306,32 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
     });
   });
 
+  describe('a rota aninhada do gestor confere a turma da URL', () => {
+    // Ressalva da validação cruzada. `PUT /classes/turma-A/presencas/
+    // ocupacao-da-turma-B/nao-houve` devolvia 200 e alterava B — não escalava
+    // privilégio, mas a URL mentia sobre o que estava sendo alterado.
+    it('RECUSA quando a ocorrência é de outra turma da mesma empresa', async () => {
+      await expect(
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 'OUTRA'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(tx.chamada.upsert).not.toHaveBeenCalled();
+    });
+
+    it('ACEITA quando a turma da URL é a da ocorrência', async () => {
+      // O par: sem ele, uma conferência que recusasse SEMPRE passaria na
+      // prova acima e a rota do gestor estaria morta.
+      await expect(
+        service.registrarNaoHouve('c1', 'oc1', 'u-gestor', false, 't1'),
+      ).resolves.toMatchObject({ completude: 'nao_houve' });
+    });
+
+    it('a rota do professor não passa turma, e continua funcionando', async () => {
+      await expect(
+        service.registrarNaoHouve('c1', 'oc1', 'u-prof', true),
+      ).resolves.toMatchObject({ completude: 'nao_houve' });
+    });
+  });
+
   describe('a ordem das guardas', () => {
     // Ordem diferente muda QUAL erro o cliente vê, e a tela decide o texto
     // pelo código. O escopo vem primeiro de propósito: um estranho não pode
@@ -363,5 +389,98 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
         service.registrarNaoHouve('c1', 'oc1', 'u-prof', true),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
+  });
+});
+
+/**
+ * **ACHADO 1 DA VALIDAÇÃO CRUZADA (ALTA) — a volta pelo `GET`.**
+ *
+ * O ciclo inteiro da SPEC-030 é: registrar → reler → a tela mostra "aula não
+ * realizada". A metade da ida tinha 18 provas; **a volta não tinha nenhuma**,
+ * e estava quebrada.
+ *
+ * `chamada()` colapsava a completude num ternário de dois casos — `completa`,
+ * ou tudo o mais vira `desconhecida`. `nao_houve` caía no "tudo o mais",
+ * então o professor registrava e recebia de volta o aviso de **chamada
+ * legada, confira e salve de novo**: o oposto exato do que ele acabara de
+ * dizer, e um convite a desfazer sem querer.
+ *
+ * **Por que nenhuma prova pegou:** a do `Cliente` mockava `getChamada` já
+ * devolvendo `nao_houve`. Ela dublou justamente a parte sob julgamento — e
+ * ficou verde provando que a tela sabe pintar um valor que o servidor nunca
+ * mandava.
+ */
+describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => {
+  function servicoComCabecalho(
+    completude: string | null,
+    presencas: unknown[] = [],
+  ) {
+    const prisma = {
+      professor: { findFirst: jest.fn().mockResolvedValue({ id: 'p1' }) },
+      ocupacaoQuadra: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'oc1',
+          origemTurmaId: 't1',
+          origemTipo: 'TURMA',
+          statusPagamento: 'pendente_pagamento',
+          data: diaRelativo(-1),
+          horaInicio: new Date('1970-01-01T00:00:00.000Z'),
+          horaFim: new Date('1970-01-01T23:59:00.000Z'),
+        }),
+      },
+      presenca: { findMany: jest.fn().mockResolvedValue(presencas) },
+      turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+      chamada: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(
+            completude === null
+              ? null
+              : { ocupacaoId: 'oc1', completude, updatedAt: new Date(0) },
+          ),
+      },
+    } as unknown as PrismaService;
+    return new PresencaService(prisma);
+  }
+
+  it('cabeçalho `nao_houve` volta como `nao_houve` — NÃO como `desconhecida`', async () => {
+    const resposta = await servicoComCabecalho('nao_houve').chamada(
+      'c1',
+      'u-prof',
+      'oc1',
+    );
+
+    expect(resposta.completude).toBe('nao_houve');
+  });
+
+  it('os outros três casos continuam como eram', async () => {
+    // O par negativo. Sem ele, "devolve o valor do cabeçalho sempre" passaria
+    // na prova acima e quebraria o legado — que é justamente o caso em que
+    // presença SEM cabeçalho tem de virar `desconhecida`.
+    await expect(
+      servicoComCabecalho('completa').chamada('c1', 'u-prof', 'oc1'),
+    ).resolves.toMatchObject({ completude: 'completa' });
+
+    await expect(
+      servicoComCabecalho('desconhecida').chamada('c1', 'u-prof', 'oc1'),
+    ).resolves.toMatchObject({ completude: 'desconhecida' });
+
+    // Nada registrado: `null` é estado real ("não lançada"), não ausência.
+    await expect(
+      servicoComCabecalho(null).chamada('c1', 'u-prof', 'oc1'),
+    ).resolves.toMatchObject({ completude: null });
+  });
+
+  it('LEGADO — presença SEM cabeçalho continua virando `desconhecida`', async () => {
+    const resposta = await servicoComCabecalho(null, [
+      {
+        alunoId: 'a1',
+        status: 'presente',
+        updatedAt: new Date(0),
+        aluno: { usuario: { nome: 'Ana' } },
+      },
+    ]).chamada('c1', 'u-prof', 'oc1');
+
+    expect(resposta.completude).toBe('desconhecida');
   });
 });

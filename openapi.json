@@ -6866,6 +6866,10 @@
           "horaFim": {
             "type": "string",
             "example": "19:00"
+          },
+          "naoRealizada": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -6876,7 +6880,8 @@
           "quadraNome",
           "data",
           "horaInicio",
-          "horaFim"
+          "horaFim",
+          "naoRealizada"
         ]
       },
       "EncontroDaTurmaDisponivelDto": {
