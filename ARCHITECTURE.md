@@ -604,12 +604,26 @@ duas verdades sobre a mesma vaga.
 
 **E o fuso deixou de ser implícito.** `hojeNoFusoDoClube()`
 (`courts/date-time.util.ts`) fixa `America/Sao_Paulo` porque a regra "não sai
-no dia da aula" depende de qual dia é — e o projeto não tinha fuso em lugar
-nenhum: `myUpcomingClasses` usa `Date.UTC(...)` **até hoje**. O Brasil é
-UTC-3, então das 21h à meia-noite locais o UTC já está no dia seguinte, e
-aula à noite é o horário mais comum de clube de tênis. Ver
-`fuso-do-clube.spec.ts`, que prova o acerto **e** documenta o erro que ele
-evita.
+no dia da aula" depende de qual dia é. O Brasil é UTC-3, então das 21h à
+meia-noite locais o UTC já está no dia seguinte, e aula à noite é o horário
+mais comum de clube de tênis.
+
+**DEF-020 (2026-08-29) — e o parágrafo acima ficou meio certo por uma
+semana.** Ele dizia, aqui, que `myUpcomingClasses` usava `Date.UTC(...)`
+"até hoje". Era verdade, ficou escrito, e ninguém agiu: a SPEC-023 criou a
+função para **uma** regra e deixou **seis** serviços em UTC. O Israel viu o
+sintoma em produção — aula das 22h sumindo de "próximas aulas" às 21h.
+
+Hoje `hojeNoFusoDoClube()` é a convenção **única** (7 serviços convertidos),
+com `mesCorrenteNoFusoDoClube()` para os dois pontos que assumem o mês
+corrente. O que mudou de verdade não foi a conversão, foi o **gate** em
+`fuso-do-clube.spec.ts`: ele varre `src/` e reprova qualquer arquivo, fora do
+`date-time.util.ts`, que calcule "hoje" a partir do relógio do servidor.
+Documentar o defeito não o impede — foi o que este parágrafo provou.
+
+O mesmo valeu para as fixtures: elas usavam `CURRENT_DATE` (data do Postgres,
+que roda em UTC) e **13 provas caíram** na hora da conversão, com
+`AULA_FUTURA`. Ver `test/banco/hoje-no-clube-sql.ts`.
 
 ### Resposta tipada: 16 de 90, e por que a conta começou em zero
 
@@ -708,15 +722,16 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 ## 8. Requisitos de plataforma
 
 Node 22+ (CI usa 22; local 24). `pnpm`. Deploy: DigitalOcean App Platform
-(Basic), domínio `api.playck.com.br`. Sem fuso configurável: datas e horas
-são tratadas como hora local da empresa — **dívida consciente**, ver Gaps.
+(Basic), domínio `api.playck.com.br`. Sem fuso **configurável**: o fuso é
+constante (`America/Sao_Paulo`, em `courts/date-time.util.ts`) e não vem do
+relógio do servidor — **dívida consciente**, ver Gaps.
 
 ## 9. Gaps e pontos de atenção
 
 | # | Gap | Severidade |
 |---|---|---|
 | 1 | ~~Professor não tem identidade~~ — **fechado em 2026-08-22 (SPEC-013)**. O que sobra: professor só lê; não há chamada/presença, e não existe modelo para isso | Baixa — escopo declarado |
-| 2 | **Sem fuso horário configurável.** Funciona enquanto todas as empresas estiverem no mesmo fuso; vira defeito silencioso na primeira fora | Média — gatilho declarado |
+| 2 | **Sem fuso horário configurável.** Constante `America/Sao_Paulo`, num arquivo só, com gate que impede um segundo lugar decidir (DEF-020). Funciona enquanto todas as empresas estiverem no mesmo fuso; vira defeito silencioso na primeira fora — e o lugar de virar campo da empresa é `date-time.util.ts` | Média — gatilho declarado |
 | 3 | **Formato antigo de `POST /bookings` ainda aceito**, para não quebrar frontend em produção durante o deploy. Condição de saída no DTO | Média — dívida datada |
 | 4 | **`courts/` acumula 4 controllers e ~750 linhas de service.** Ainda coeso (tudo toca a linha do tempo), mas é o candidato natural a divisão | Média |
 | 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008). `presencas` é base para resolver, mas **não resolve** — remarcar exige estado além de presente/ausente/justificado | Média — adiado por decisão |

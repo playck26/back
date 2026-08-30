@@ -13,7 +13,11 @@ import {
   OcorrenciaDaTurmaResponseDto,
 } from './dto/me-response.dto';
 import { OcorrenciaNoHistoricoResponseDto } from './dto/presenca-historico-response.dto';
-import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
+import {
+  formatDateOnly,
+  formatTimeOnly,
+  hojeNoFusoDoClube,
+} from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** SPEC-014/INV-017: janela em que a chamada pode ser lançada. */
@@ -48,17 +52,19 @@ export class PresencaService {
   /**
    * SPEC-014/INV-017 — "hoje" na única data operacional que o produto tem.
    *
-   * Não há fuso configurável (gap declarado na `ARCHITECTURE.md`), e esta
-   * spec **não** introduz um: fuso atravessa empresa, agenda, dashboard e
-   * disponibilidade. Segue a mesma convenção UTC-truncada que
-   * `gerarDatasSemanaisFuturas` e o resto do domínio já usam — o importante
-   * é ser a **mesma** convenção, não uma nova.
+   * **DEF-020 mudou a convenção, e o comentário que estava aqui merece ser
+   * lembrado em vez de apagado.** Ele dizia: *"esta spec não introduz fuso;
+   * o importante é ser a mesma convenção, não uma nova"*. O argumento estava
+   * certo — e foi a SPEC-023 que o quebrou, criando `hojeNoFusoDoClube()`
+   * para uma regra só e deixando as outras seis em UTC. Ficaram as **duas**
+   * convenções que este comentário existia para evitar.
+   *
+   * Agora há uma de novo, e é a do fuso: das 21h à meia-noite o UTC já está
+   * no dia seguinte, então a janela retroativa da chamada abria e fechava um
+   * dia adiantada justamente no horário de pico de um clube de tênis.
    */
   private hoje(): Date {
-    const agora = new Date();
-    return new Date(
-      Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate()),
-    );
+    return hojeNoFusoDoClube();
   }
 
   /**

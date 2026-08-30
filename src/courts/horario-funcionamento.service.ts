@@ -10,6 +10,7 @@ import {
   EXPEDIENTE_INICIO_HORA,
   formatDateOnly,
   formatTimeOnly,
+  hojeNoFusoDoClube,
   parseTimeOnly,
 } from './date-time.util';
 import {
@@ -434,10 +435,10 @@ export class HorarioFuncionamentoService {
     companyId: string,
     quadraId: string | null,
   ): Promise<ResultadoDefinicao> {
-    const hoje = new Date();
-    const hojeUTC = new Date(
-      Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate()),
-    );
+    // DEF-020: o relatório de impacto conta ocupações **futuras**. Em UTC,
+    // das 21h à meia-noite ele já não contava as de hoje — e o gestor
+    // mudava o horário de funcionamento vendo "0 ocupações afetadas".
+    const hojeUTC = hojeNoFusoDoClube();
 
     const [ocupacoes, horarios] = await Promise.all([
       this.prisma.ocupacaoQuadra.findMany({

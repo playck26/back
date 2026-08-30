@@ -345,6 +345,13 @@ model Quadra {
   turmas       Turma[]
   horarios     HorarioFuncionamento[]
 
+  /// INV-054b (DEF-022) — o alvo das FKs compostas que apontam para quadra.
+  /// `id` já é PK, então isto não muda o que é único: existe para que
+  /// `ocupacoes_quadra`, `turmas` e `horarios_funcionamento` possam referenciar
+  /// `(company_id, id)` e o banco recusar vínculo entre empresas diferentes.
+  /// Mesmo papel do `@@unique` que `esportes_de_quadra` já tinha para a
+  /// INV-054.
+  @@unique([companyId, id], map: "quadras_company_id_id_key")
   @@index([companyId])
   @@index([imagemConfirmadaPor])
   @@map("quadras")
@@ -394,7 +401,15 @@ model OcupacaoQuadra {
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
   empresa     Empresa        @relation(fields: [companyId], references: [id])
-  quadra      Quadra         @relation(fields: [quadraId], references: [id])
+  /// DEF-022 (validação cruzada da SPEC-026, achado 3) — **FK COMPOSTA.**
+  ///
+  /// Era `references: [id]`, simples. O banco aceitava ocupação com
+  /// `company_id = A` apontando para quadra da empresa B, e o detalhe do dia
+  /// devolvia `quadraNome` alheio. Não havia caminho de produto que criasse
+  /// isso — mas a INV-054 já tinha ensinado que "não há caminho hoje" não é
+  /// a mesma coisa que "o banco não deixa", e foi exatamente por confiar
+  /// nisso que a SPEC-025 vazou nota de turma entre empresas.
+  quadra      Quadra         @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_quadra_fkey")
   aluno       Aluno?         @relation(fields: [alunoId], references: [id])
   pedido      PedidoReserva? @relation(fields: [pedidoId], references: [id])
   // `onDelete: Restrict` declarado explicitamente para casar com o que a
@@ -453,7 +468,9 @@ model Turma {
   empresa   Empresa          @relation(fields: [companyId], references: [id])
   nivel     Nivel?           @relation(fields: [nivelId], references: [id])
   professor Professor?       @relation(fields: [professorId], references: [id])
-  quadra    Quadra           @relation(fields: [quadraId], references: [id])
+  /// DEF-022 — FK composta, mesmo motivo de `ocupacoes_quadra.quadra`: turma
+  /// da empresa A não pode ser marcada numa quadra da empresa B.
+  quadra    Quadra           @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "turmas_quadra_fkey")
   alunos    TurmaAluno[]
   ocupacoes OcupacaoQuadra[]
   encontros TurmaEncontro[]
@@ -716,7 +733,11 @@ model HorarioFuncionamento {
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
   empresa Empresa @relation(fields: [companyId], references: [id])
-  quadra  Quadra? @relation(fields: [quadraId], references: [id], onDelete: Cascade)
+  /// DEF-022 — FK composta. `quadra_id` é nulável (linha da EMPRESA inteira),
+  /// e o MATCH SIMPLE do Postgres não dispara quando qualquer coluna da chave
+  /// é nula — então a regra da empresa continua funcionando exatamente como
+  /// antes. `Cascade` preservado: apagar a quadra apaga o horário dela.
+  quadra  Quadra? @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Cascade, map: "horarios_funcionamento_quadra_fkey")
 
   // Declarado aqui para o Prisma não acusar drift (ele introspecta índices
   // únicos btree). O `NULLS NOT DISTINCT` — que é o que realmente impede

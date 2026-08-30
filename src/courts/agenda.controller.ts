@@ -10,6 +10,8 @@ import {
   ItemDaAgendaResponseDto,
 } from './dto/booking-response.dto';
 import { AgendaQueryDto } from './dto/agenda-query.dto';
+import { DataDaAgendaParamDto } from './dto/data-do-calendario.dto';
+import { mesCorrenteNoFusoDoClube } from './date-time.util';
 
 /**
  * SPEC-012 — agenda do gestor. Só `company_admin`: o aluno tem a própria
@@ -32,16 +34,29 @@ export class AgendaController {
     @CurrentUser() user: AccessTokenPayload,
     @Query() query: AgendaQueryDto,
   ) {
-    const hoje = new Date();
-    const mes =
-      query.mes ??
-      `${hoje.getUTCFullYear()}-${String(hoje.getUTCMonth() + 1).padStart(2, '0')}`;
+    // DEF-020: mês corrente no fuso do clube, não no relógio UTC do
+    // servidor (DigitalOcean roda em UTC — herdar o fuso dele é herdar uma
+    // decisão que ninguém tomou).
+    const mes = query.mes ?? mesCorrenteNoFusoDoClube();
     return this.agenda.resumoDoMes(user.companyId as string, mes);
   }
 
+  /**
+   * DEF-020 — **a data passou a ser validada aqui também.**
+   *
+   * Era `@Param('data') data: string`, cru. `parseDateOnly('banana')` monta
+   * um `Invalid Date`, o Prisma consulta com ele e a resposta volta
+   * **vazia** — indistinguível de "não há reserva nesse dia". A SPEC-026
+   * fechou esse buraco na rota do professor e deixou este aberto, o que é a
+   * mesma assimetria que produziu o DEF-020 inteiro: corrigir onde se está
+   * olhando e não onde o defeito mora.
+   */
   @Get(':data')
   @ApiOkResponse({ type: [ItemDaAgendaResponseDto] })
-  dia(@CurrentUser() user: AccessTokenPayload, @Param('data') data: string) {
-    return this.agenda.detalheDoDia(user.companyId as string, data);
+  dia(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param() params: DataDaAgendaParamDto,
+  ) {
+    return this.agenda.detalheDoDia(user.companyId as string, params.data);
   }
 }

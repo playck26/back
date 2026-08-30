@@ -14,6 +14,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diasAtrasNoClube } from './hoje-no-clube-sql';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
@@ -45,7 +46,7 @@ async function novaAula(turmaId = TURMA, diasAtras = 0): Promise<string> {
   fatia += 1;
   const [r] = await db.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
-    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',CURRENT_DATE - ${diasAtras},
+    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',${diasAtrasNoClube(diasAtras)},
             TIME '00:00' + (${fatia} * INTERVAL '10 minutes'),
             TIME '00:00' + (${fatia} * INTERVAL '10 minutes') + INTERVAL '9 minutes',
             'TURMA','${turmaId}','pendente_pagamento',now())

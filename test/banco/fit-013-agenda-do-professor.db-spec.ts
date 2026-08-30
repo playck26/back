@@ -15,6 +15,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { AgendaDoProfessorService } from '../../src/classes/agenda-do-professor.service';
+import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
 
@@ -46,6 +47,12 @@ const MES = '2026-09';
 
 const db = new PrismaClient();
 const service = new AgendaDoProfessorService(db as unknown as PrismaService);
+/**
+ * O serviço da chamada entra aqui na validação cruzada (achado 5): a INV-026b
+ * afirma que o `ocupacaoId` da agenda é o mesmo que a chamada aceita, e essa
+ * afirmação só é verificável chamando **as duas**.
+ */
+const presenca = new PresencaService(db as unknown as PrismaService);
 
 const q = (sql: string) => db.$executeRawUnsafe(sql);
 
@@ -322,22 +329,20 @@ describe('FIT-013 — o que NÃO é aula dele', () => {
     expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([]);
   });
 
-  it('quadra inativa não é agenda de ninguém', async () => {
-    await montar();
-    await aula(
-      'f0130000-0000-4000-8000-000000000141',
-      EMPRESA,
-      QUADRA,
-      TURMA_A,
-      DIA_1,
-      '18:00',
-    );
-    await db.$executeRawUnsafe(
-      `UPDATE quadras SET status='inativa' WHERE id='${QUADRA}'`,
-    );
-
-    expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([]);
-  });
+  /**
+   * **Aqui havia uma prova que dizia o contrário, e ela caiu de propósito.**
+   *
+   * Chamava-se *"quadra inativa não é agenda de ninguém"* e exigia mês vazio.
+   * A validação cruzada da SPEC-026 (achado 2) mostrou que aquilo
+   * contradizia a decisão que a própria spec tinha tomado na dúvida 3 —
+   * turma inativa continua aparecendo, porque quem deu a aula precisa
+   * registrar a presença. Desativar uma quadra em setembro não desfaz a aula
+   * que aconteceu nela em agosto.
+   *
+   * Fica o registro em vez do apagamento: quem ler o `git log` daqui a seis
+   * meses vai encontrar uma prova invertida, e o motivo tem que estar junto.
+   * A prova nova está em "quadra desativada não apaga a aula que aconteceu".
+   */
 });
 
 describe('FIT-013 — INV-026b: o id do calendário é o id da chamada', () => {
@@ -384,5 +389,204 @@ describe('FIT-013 — INV-026b: o id do calendário é o id da chamada', () => {
     const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
 
     expect(dia.map((a) => a.horaInicio)).toEqual(['07:00', '20:00']);
+  });
+});
+
+/**
+ * **INV-026b, agora com prova que cai** — achado 5 da validação cruzada.
+ *
+ * O relatório apontou o buraco com precisão: as provas anteriores conferiam
+ * que o `ocupacaoId` existia e apontava para turma, mas **nunca chamavam a
+ * chamada**. Se o escopo de `PresencaService` ficasse mais frouxo ou mais
+ * rígido que o da agenda, o `fit-013` continuaria verde e o professor
+ * descobriria em produção, no último toque do caminho.
+ *
+ * Aqui as duas pontas se encontram de verdade: o id sai de `detalheDoDia` e
+ * entra em `PresencaService.chamada`.
+ */
+describe('FIT-013 — INV-026b: o id do calendário é o que a chamada aceita', () => {
+  it('o id que a agenda devolve abre a chamada', async () => {
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000201',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_1,
+      '18:00',
+    );
+
+    const [naAgenda] = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    const chamada = await presenca.chamada(
+      EMPRESA,
+      UPROF_A,
+      naAgenda.ocupacaoId,
+    );
+
+    expect(chamada.ocupacaoId).toBe(naAgenda.ocupacaoId);
+    expect(chamada.data).toBe(DIA_1);
+  });
+
+  it('e o id da aula do COLEGA é recusado pela chamada', async () => {
+    // O outro lado: sem esta, um `PresencaService` que aceitasse qualquer
+    // ocupação passaria na prova acima.
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000202',
+      EMPRESA,
+      QUADRA,
+      TURMA_B,
+      DIA_1,
+      '19:00',
+    );
+
+    await expect(
+      presenca.chamada(
+        EMPRESA,
+        UPROF_A,
+        'f0130000-0000-4000-8000-000000000202',
+      ),
+    ).rejects.toThrow();
+  });
+});
+
+/**
+ * **Achado 2 — a agenda escondia aula de quadra desativada.**
+ *
+ * O relatório leu isso como "a chamada está frouxa". Era o contrário: a
+ * chamada aceitava e a agenda não mostrava, então o professor ficava **sem
+ * caminho** para lançar uma chamada que o sistema aceitaria. E o filtro
+ * contradizia a decisão que a própria SPEC-026 tinha tomado na dúvida 3 —
+ * turma inativa continua aparecendo, porque quem deu a aula precisa
+ * registrar a presença.
+ */
+describe('FIT-013 — quadra desativada não apaga a aula que aconteceu', () => {
+  it('a aula continua no calendário e na lista do dia', async () => {
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000211',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_1,
+      '18:00',
+    );
+    await q(`UPDATE quadras SET status='inativa' WHERE id='${QUADRA}'`);
+
+    expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([
+      { data: DIA_1, aulas: 1, pendentes: 1 },
+    ]);
+    expect(await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1)).toHaveLength(1);
+  });
+
+  it('e as duas pontas concordam: a chamada aceita o mesmo id', async () => {
+    // É esta que fecha o achado. Antes, agenda e chamada divergiam
+    // exatamente aqui.
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000212',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_1,
+      '18:00',
+    );
+    await q(`UPDATE quadras SET status='inativa' WHERE id='${QUADRA}'`);
+
+    const [naAgenda] = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    await expect(
+      presenca.chamada(EMPRESA, UPROF_A, naAgenda.ocupacaoId),
+    ).resolves.toBeDefined();
+  });
+});
+
+/**
+ * **As bordas do mês** — o relatório notou que o código parecia certo e que
+ * faltava prova. Faltava mesmo: `lte` no último dia é o tipo de coisa que
+ * funciona em 30 de setembro e falha em 31 de outubro.
+ */
+describe('FIT-013 — as bordas do mês', () => {
+  it('o dia 1 e o último dia aparecem — inclusive em mês de 31', async () => {
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000221',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      '2026-10-01',
+      '18:00',
+    );
+    await aula(
+      'f0130000-0000-4000-8000-000000000222',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      '2026-10-31',
+      '18:00',
+    );
+
+    const outubro = await service.resumoDoMes(EMPRESA, UPROF_A, '2026-10');
+
+    expect(outubro.map((d) => d.data)).toEqual(['2026-10-01', '2026-10-31']);
+  });
+
+  it('fevereiro de ano NÃO bissexto termina no 28', async () => {
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000223',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      '2026-02-28',
+      '18:00',
+    );
+
+    expect(
+      (await service.resumoDoMes(EMPRESA, UPROF_A, '2026-02')).map(
+        (d) => d.data,
+      ),
+    ).toEqual(['2026-02-28']);
+  });
+
+  it('fevereiro BISSEXTO inclui o dia 29', async () => {
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000224',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      '2028-02-29',
+      '18:00',
+    );
+
+    expect(
+      (await service.resumoDoMes(EMPRESA, UPROF_A, '2028-02')).map(
+        (d) => d.data,
+      ),
+    ).toEqual(['2028-02-29']);
+  });
+
+  it('e o mês NÃO invade o vizinho', async () => {
+    // Sem esta, um `lte` frouxo (ou um `lt` no mês seguinte) passaria nas
+    // três acima.
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000225',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      '2026-09-30',
+      '18:00',
+    );
+    await aula(
+      'f0130000-0000-4000-8000-000000000226',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      '2026-11-01',
+      '18:00',
+    );
+
+    expect(await service.resumoDoMes(EMPRESA, UPROF_A, '2026-10')).toEqual([]);
   });
 });

@@ -24,9 +24,16 @@ export const EXPEDIENTE_FIM_HORA = 22;
  * SPEC-023 — **o fuso do clube, explícito.**
  *
  * O projeto não tinha fuso em lugar nenhum: `grep -rn "America/"` não
- * devolvia nada, e "hoje" era `Date.UTC(...)` do relógio do servidor
- * (`myUpcomingClasses` faz isso até hoje). Para quase tudo isso passa
- * despercebido; para a regra "não sai no dia da aula" (REQ-004) não passa.
+ * devolvia nada, e "hoje" era `Date.UTC(...)` do relógio do servidor. Para
+ * quase tudo isso passa despercebido; para a regra "não sai no dia da aula"
+ * (REQ-004) não passa.
+ *
+ * **DEF-020 (2026-08-29) — e este comentário dizia, aqui, que
+ * `myUpcomingClasses` continuava em UTC "até hoje".** Ficou escrito uma
+ * semana, verde, enquanto o horário aparecia errado no app. Hoje esta é a
+ * convenção **única**: sete serviços foram convertidos e o gate em
+ * `fuso-do-clube.spec.ts` recusa um oitavo lugar calculando "hoje" sozinho.
+ * A lição, pela terceira vez neste projeto: aviso não é mecanismo.
  *
  * **O Brasil é UTC-3, então das 21h à meia-noite locais o UTC já está no dia
  * seguinte.** Aula de terça 19h, aluno tentando sair às 21h30 de segunda:
@@ -59,6 +66,36 @@ export function hojeNoFusoDoClube(agora: Date = new Date()): Date {
   return parseDateOnly(local);
 }
 
+/**
+ * DEF-020 — o mês corrente no fuso do clube, como `AAAA-MM`.
+ *
+ * Existe porque duas rotas assumem o mês corrente quando o cliente não
+ * manda um (`GET /agenda` do gestor e o período do dashboard), e as duas
+ * montavam a string com `getUTCFullYear()/getUTCMonth()`. **Às 21h de 31 de
+ * dezembro, isso abre janeiro do ano seguinte** — o gestor pede a agenda e
+ * recebe um mês vazio, sem nada na tela explicando por quê.
+ */
+export function mesCorrenteNoFusoDoClube(agora: Date = new Date()): string {
+  return formatDateOnly(hojeNoFusoDoClube(agora)).slice(0, 7);
+}
+
+/**
+ * DEF-020 — **a data existe mesmo?**
+ *
+ * `parseDateOnly` monta a data por string ISO, e o JS **normaliza em
+ * silêncio**: `2026-04-31` vira 1º de maio, `2026-02-30` vira 2 de março.
+ * Uma rota que aceita isso responde com as aulas de um dia que não é o
+ * pedido — e responde `200`, que é a pior forma de errar.
+ *
+ * Validação cruzada da SPEC-026, achado 4. Regex não resolve: `3[01]` não
+ * sabe quantos dias tem fevereiro. A única forma honesta é montar e
+ * conferir se o que voltou é o que se pediu.
+ */
+export function dataExiste(data: string): boolean {
+  const d = parseDateOnly(data);
+  return !Number.isNaN(d.getTime()) && formatDateOnly(d) === data;
+}
+
 export function parseDateOnly(data: string): Date {
   return new Date(`${data}T00:00:00.000Z`);
 }
@@ -89,13 +126,12 @@ export function gerarDatasSemanaisFuturas(
   janelaSemanas: number = JANELA_OCUPACOES_TURMA_SEMANAS,
   referencia: Date = new Date(),
 ): Date[] {
-  const hojeUTC = new Date(
-    Date.UTC(
-      referencia.getUTCFullYear(),
-      referencia.getUTCMonth(),
-      referencia.getUTCDate(),
-    ),
-  );
+  // DEF-020: `referencia` é um INSTANTE, e o dia dele é lido no fuso do
+  // clube. Antes era `getUTCDate()` direto: criar uma turma de segunda às
+  // 21h30 de uma segunda-feira fazia o UTC já estar em terça, e a primeira
+  // ocorrência pulava para a segunda seguinte — a aula de hoje sumia da
+  // grade recém-criada.
+  const hojeUTC = hojeNoFusoDoClube(referencia);
   const diaAtual = hojeUTC.getUTCDay();
   const diffDias = (diaSemana - diaAtual + 7) % 7;
   const primeiraOcorrencia = new Date(hojeUTC);

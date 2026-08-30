@@ -26,6 +26,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diasAtrasNoClube, HOJE_NO_CLUBE_SQL } from './hoje-no-clube-sql';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
@@ -63,7 +64,7 @@ async function novaAula(): Promise<string> {
   fatia += 1;
   const [r] = await A.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
-    VALUES (gen_random_uuid(),'${ids.empresa}','${ids.quadra}',CURRENT_DATE,
+    VALUES (gen_random_uuid(),'${ids.empresa}','${ids.quadra}',${HOJE_NO_CLUBE_SQL},
             TIME '00:00' + (${fatia} * INTERVAL '10 minutes'),
             TIME '00:00' + (${fatia} * INTERVAL '10 minutes') + INTERVAL '9 minutes',
             'TURMA','${ids.turma}','pendente_pagamento',now())
@@ -244,7 +245,7 @@ describe('AC-000i/INV-029 — o PUT observa tudo que decide escrita depois da ra
   it('aula SAI DA JANELA de 7 dias → 422 AULA_ANTIGA', async () => {
     const r = await respostaSobConcorrencia([ids.a1], (tb, aula) =>
       tb.$executeRawUnsafe(
-        `UPDATE ocupacoes_quadra SET data = CURRENT_DATE - 30 WHERE id='${aula}'`,
+        `UPDATE ocupacoes_quadra SET data = ${diasAtrasNoClube(30)} WHERE id='${aula}'`,
       ),
     );
     expect(r).toBe('422 AULA_ANTIGA');

@@ -2302,7 +2302,9 @@
             "name": "data",
             "required": true,
             "in": "path",
+            "description": "AAAA-MM-DD",
             "schema": {
+              "example": "2026-09-01",
               "type": "string"
             }
           }
@@ -3542,7 +3544,7 @@
             "name": "mes",
             "required": true,
             "in": "query",
-            "description": "AAAA-MM",
+            "description": "AAAA-MM (ano 2000–2099)",
             "schema": {
               "example": "2026-09",
               "type": "string"

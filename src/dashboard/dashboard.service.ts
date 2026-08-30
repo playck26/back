@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   EXPEDIENTE_FIM_HORA,
   EXPEDIENTE_INICIO_HORA,
+  mesCorrenteNoFusoDoClube,
 } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { DashboardResumoResponseDto } from '../courts/dto/booking-response.dto';
@@ -209,10 +210,9 @@ export class DashboardService {
   }
 
   private resolvePeriodo(periodo?: string): Periodo {
-    const hoje = new Date();
-    const periodoResolvido =
-      periodo ??
-      `${hoje.getUTCFullYear()}-${String(hoje.getUTCMonth() + 1).padStart(2, '0')}`;
+    // DEF-020: o mês assumido é o do fuso do clube. Em UTC, às 21h de 31 de
+    // dezembro o dashboard abria em janeiro — vazio, sem nada explicando.
+    const periodoResolvido = periodo ?? mesCorrenteNoFusoDoClube();
     const [anoStr, mesStr] = periodoResolvido.split('-');
     const ano = Number(anoStr);
     const mes = Number(mesStr);

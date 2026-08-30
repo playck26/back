@@ -4,6 +4,7 @@ import {
   FrequenciaDaTurmaResponseDto,
   FrequenciaDoAlunoResponseDto,
 } from './dto/frequencia-response.dto';
+import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -71,12 +72,15 @@ export interface Cobertura {
 export class FrequenciaService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Mesma convenção UTC-truncada do resto do domínio (não há fuso configurável). */
+  /**
+   * DEF-020 — o fuso do clube, que passou a ser a convenção única.
+   *
+   * A frase que estava aqui ("mesma convenção UTC-truncada do resto do
+   * domínio, não há fuso configurável") deixou de ser verdade quando a
+   * SPEC-023 criou `hojeNoFusoDoClube()` — e ficou escrita mais uma semana.
+   */
   private hoje(): Date {
-    const agora = new Date();
-    return new Date(
-      Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate()),
-    );
+    return hojeNoFusoDoClube();
   }
 
   private janela(dias: number) {

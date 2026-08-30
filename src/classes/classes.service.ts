@@ -8,6 +8,7 @@ import {
   formatDateOnly,
   formatTimeOnly,
   gerarDatasSemanaisFuturas,
+  hojeNoFusoDoClube,
   parseTimeOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
@@ -273,13 +274,15 @@ export class ClassesService {
       });
 
       if (mudouHorario) {
-        const hojeUTC = new Date(
-          Date.UTC(
-            new Date().getUTCFullYear(),
-            new Date().getUTCMonth(),
-            new Date().getUTCDate(),
-          ),
-        );
+        // DEF-020: o corte (`gte`) é hoje NO FUSO DO CLUBE. Em UTC, uma
+        // edição feita às 21h30 de segunda tinha corte na terça — e a
+        // ocupação de segunda escapava do cancelamento, sobrevivendo com o
+        // horário ANTIGO enquanto a grade nova era gerada a partir de terça.
+        //
+        // O corte precisa ser o mesmo que `gerarDatasSemanaisFuturas` usa
+        // logo abaixo para regerar: são as duas metades da mesma operação, e
+        // é por isso que as duas passaram a chamar a mesma função.
+        const hojeUTC = hojeNoFusoDoClube();
         await this.courtsService.cancelFutureClassOccupancies(
           tx,
           companyId,
@@ -419,13 +422,12 @@ export class ClassesService {
       return [];
     }
 
-    const hojeUTC = new Date(
-      Date.UTC(
-        new Date().getUTCFullYear(),
-        new Date().getUTCMonth(),
-        new Date().getUTCDate(),
-      ),
-    );
+    // DEF-020 — **este era o ponto que o Israel via.** `date-time.util.ts`
+    // chegou a citá-lo pelo nome ("`myUpcomingClasses` faz isso até hoje") e
+    // ele ficou em UTC mesmo assim. Das 21h à meia-noite o UTC já está no dia
+    // seguinte, então a aula de hoje às 22h desaparecia de "próximas aulas"
+    // uma hora antes de começar — no horário de pico de um clube de tênis.
+    const hojeUTC = hojeNoFusoDoClube();
 
     const ocupacoes = await this.prisma.ocupacaoQuadra.findMany({
       where: {

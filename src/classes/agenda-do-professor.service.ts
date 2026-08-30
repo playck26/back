@@ -154,8 +154,26 @@ export class AgendaDoProfessorService {
    *   empresa;
    * - `origemTipo: TURMA`: reserva avulsa não é aula dele;
    * - `cancelado` fora: aula cancelada não é compromisso, e é assim que a
-   *   agenda do gestor já se comporta;
-   * - `quadra ativa`: quadra desativada não é agenda de ninguém.
+   *   agenda do gestor já se comporta.
+   *
+   * **`quadra: { status: 'ativa' }` saiu daqui — validação cruzada, achado 2.**
+   *
+   * Ele estava justificado como *"quadra desativada não é agenda de
+   * ninguém"*, e isso **contradizia uma decisão que esta mesma spec já tinha
+   * tomado**: na dúvida 3, turma inativa continua aparecendo, porque quem
+   * deu a aula precisa poder registrar a presença. Desativar uma quadra em
+   * setembro não desfaz a aula que aconteceu nela em agosto.
+   *
+   * O sintoma era exatamente o que o achado descreve: `GET .../attendance/:id`
+   * aceitava a ocorrência e o calendário não a mostrava. O relatório leu isso
+   * como "a chamada está frouxa". Era o contrário — **a agenda estava
+   * escondendo aula do próprio professor**, e ele ficava sem caminho para
+   * lançar uma chamada que o sistema aceitaria.
+   *
+   * O que **continua** assimétrico, de propósito: a chamada aceita ocorrência
+   * cancelada no `GET` e a recusa no `PUT`, enquanto a agenda não a mostra.
+   * Aula cancelada é o assunto da próxima spec (LIM-026a) e o lugar de
+   * resolver isso é lá, não num remendo aqui.
    */
   private filtroDasAulasDele(
     companyId: string,
@@ -167,7 +185,6 @@ export class AgendaDoProfessorService {
       data,
       origemTipo: 'TURMA' as const,
       statusPagamento: { not: 'cancelado' as const },
-      quadra: { status: 'ativa' as const },
       origemTurma: { professorId, companyId },
     };
   }
