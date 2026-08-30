@@ -484,3 +484,133 @@ describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => 
     expect(resposta.completude).toBe('desconhecida');
   });
 });
+
+/**
+ * **REQ-005 / D4 — a volta.** A spec declarou `nao_houve` reversível e o
+ * prompt de validação cruzada listou isso como buraco: *"a tela relê depois
+ * de gravar, mas ninguém provou que o `PUT` seguinte não bate com a
+ * INV-019"*.
+ *
+ * O caso real é banal e é o que torna a prova necessária: o professor toca na
+ * linha errada, marca a aula de terça como não realizada, e precisa desfazer.
+ * Se o `PUT` seguinte devolvesse `409 CHAMADA_DESATUALIZADA`, a única saída
+ * seria recarregar — e ele não saberia disso.
+ *
+ * **O ciclo é provado inteiro, sem fixar a versão na mão:** a versão que o
+ * `PUT` recebe é a que o `GET` devolveu. Escrever `'0'` ali provaria que o
+ * serviço aceita a string que eu escolhi, não que as duas metades concordam.
+ */
+describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
+  const MATRICULADOS = [
+    { alunoId: 'a1', aluno: { usuario: { nome: 'Ana' } } },
+    { alunoId: 'a2', aluno: { usuario: { nome: 'Bruno' } } },
+  ];
+
+  function servicoComCabecalho(completude: string | null) {
+    const cabecalho =
+      completude === null
+        ? null
+        : { ocupacaoId: 'oc1', completude, updatedAt: new Date(1000) };
+    const ocupacao = {
+      id: 'oc1',
+      origemTurmaId: 't1',
+      origemTipo: 'TURMA',
+      statusPagamento: 'pendente_pagamento',
+      data: diaRelativo(-1),
+      horaInicio: new Date('1970-01-01T00:00:00.000Z'),
+      horaFim: new Date('1970-01-01T23:59:00.000Z'),
+    };
+    const upsertDoCabecalho: jest.Mock<
+      Promise<unknown>,
+      [ArgsDoUpsert]
+    > = jest.fn();
+    let statement = 0;
+    const tx = {
+      presenca: {
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      chamada: {
+        findUnique: jest.fn().mockResolvedValue(cabecalho),
+        upsert: upsertDoCabecalho,
+      },
+      turmaAluno: { findMany: jest.fn().mockResolvedValue(MATRICULADOS) },
+      $queryRaw: jest.fn(() => {
+        statement += 1;
+        if (statement % 2 === 1) {
+          return Promise.resolve([{ id: 't1' }]);
+        }
+        return Promise.resolve([
+          {
+            origemTurmaId: 't1',
+            data: ocupacao.data,
+            horaInicio: ocupacao.horaInicio,
+            statusPagamento: ocupacao.statusPagamento,
+            professorId: 'p1',
+          },
+        ]);
+      }),
+    };
+    const prisma = {
+      professor: { findFirst: jest.fn().mockResolvedValue({ id: 'p1' }) },
+      ocupacaoQuadra: { findFirst: jest.fn().mockResolvedValue(ocupacao) },
+      presenca: { findMany: jest.fn().mockResolvedValue([]) },
+      turmaAluno: { findMany: jest.fn().mockResolvedValue(MATRICULADOS) },
+      chamada: { findUnique: jest.fn().mockResolvedValue(cabecalho) },
+      $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
+    } as unknown as PrismaService;
+    return { service: new PresencaService(prisma), upsertDoCabecalho };
+  }
+
+  it('a versão que o GET devolve é aceita pelo PUT — sem 409', async () => {
+    const { service, upsertDoCabecalho } = servicoComCabecalho('nao_houve');
+
+    // 1. a tela relê, como faz depois de registrar
+    const lida = await service.chamada('c1', 'u-prof', 'oc1');
+    expect(lida.completude).toBe('nao_houve');
+    // 2. e ela mostra os DOIS alunos para marcar: com `nao_houve` o piso é a
+    //    união (não o snapshot), então há o que salvar de volta.
+    expect(lida.alunos).toHaveLength(2);
+
+    // 3. o professor marca todo mundo e salva, com a versão que recebeu
+    await expect(
+      service.salvarChamada('c1', 'u-prof', 'oc1', lida.versao, [
+        { alunoId: 'a1', status: 'presente' },
+        { alunoId: 'a2', status: 'ausente' },
+      ]),
+    ).resolves.toBeDefined();
+
+    // 4. e o cabeçalho volta a ser uma chamada de verdade
+    const args = upsertDoCabecalho.mock.calls[0][0];
+    expect(args.update).toMatchObject({
+      completude: 'completa',
+      esperados: 2,
+    });
+  });
+
+  it('salvar SEM todos os alunos continua sendo recusado', async () => {
+    // O par negativo. Sem ele, um piso que virasse vazio ao desfazer passaria
+    // na prova acima — e a DEF-002 (chamada gravada pela metade) voltaria
+    // justamente pelo caminho novo.
+    const { service } = servicoComCabecalho('nao_houve');
+    const lida = await service.chamada('c1', 'u-prof', 'oc1');
+
+    await expect(
+      service.salvarChamada('c1', 'u-prof', 'oc1', lida.versao, [
+        { alunoId: 'a1', status: 'presente' },
+      ]),
+    ).rejects.toMatchObject({ response: { code: 'CHAMADA_INCOMPLETA' } });
+  });
+
+  it('versão velha continua batendo em 409 — a INV-019 não afrouxou', async () => {
+    const { service } = servicoComCabecalho('nao_houve');
+
+    await expect(
+      service.salvarChamada('c1', 'u-prof', 'oc1', 'versao-de-outra-tela', [
+        { alunoId: 'a1', status: 'presente' },
+        { alunoId: 'a2', status: 'ausente' },
+      ]),
+    ).rejects.toMatchObject({ response: { code: 'CHAMADA_DESATUALIZADA' } });
+  });
+});
