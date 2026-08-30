@@ -103,10 +103,20 @@ function inserirChamada(
  * nenhuma leitura pegou: o CHECK mora na migration, não no código que a
  * fixture parece contradizer.
  */
-async function criarOcupacao(ocId: string) {
+async function criarOcupacao(ocId: string, n: number) {
+  // **Uma HORA por ocupação — `no_overlap_por_quadra` (INV-001).**
+  //
+  // A primeira versão criava as 6 na mesma quadra, mesma data e mesmo
+  // horário: a exclusion constraint recusa da segunda em diante. As 6 são só
+  // âncoras distintas para 6 chamadas, e nenhuma asserção olha a hora — o
+  // que precisa continuar valendo é a data de ONTEM, e continua.
+  //
+  // Segunda camada de erro do mesmo arquivo, e a segunda que só um Postgres
+  // de verdade pega: `valor` foi a primeira.
+  const hora = String(7 + n).padStart(2, '0');
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,valor,updated_at)
-     VALUES ('${ocId}','${EMPRESA}','${QUADRA}',${diasAtrasNoClube(1)},TIME '18:00',TIME '19:00','TURMA','${TURMA}','pendente_pagamento',NULL,now())`,
+     VALUES ('${ocId}','${EMPRESA}','${QUADRA}',${diasAtrasNoClube(1)},TIME '${hora}:00',TIME '${hora}:59','TURMA','${TURMA}','pendente_pagamento',NULL,now())`,
   );
 }
 
@@ -131,7 +141,7 @@ beforeAll(async () => {
     `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma','${QUADRA}','${PROF}',10,'ativa')`,
   );
   for (let n = 1; n <= 6; n += 1) {
-    await criarOcupacao(ocupacaoId(n));
+    await criarOcupacao(ocupacaoId(n), n);
   }
 });
 
