@@ -41,9 +41,22 @@ const TURMA_A = 'f0130000-0000-4000-8000-000000000021';
 const TURMA_B = 'f0130000-0000-4000-8000-000000000022';
 const TURMA_C = 'f0130000-0000-4000-8000-000000000023';
 
-const DIA_1 = '2026-09-01';
-const DIA_2 = '2026-09-02';
-const MES = '2026-09';
+/**
+ * SPEC-027 — **as datas destas provas passaram a ser do PASSADO, e o motivo
+ * é a regra nova.**
+ *
+ * Eram `2026-09-01` e `2026-09-02`, escritas quando "pendente" significava
+ * apenas "não há linha em `chamadas`". Agora significa *"a aula já terminou e
+ * não há linha"* — e uma aula de setembro, num ciclo que roda em agosto, é
+ * `futura`: não conta pendência e não abre chamada.
+ *
+ * Datas fixas no passado, e não relativas a hoje, porque as provas de borda
+ * de mês logo abaixo dependem de meses concretos (fevereiro bissexto, mês de
+ * 31 dias). Duas convenções de data no mesmo arquivo seriam pior.
+ */
+const DIA_1 = '2026-08-03';
+const DIA_2 = '2026-08-04';
+const MES = '2026-08';
 
 const db = new PrismaClient();
 const service = new AgendaDoProfessorService(db as unknown as PrismaService);
@@ -588,5 +601,122 @@ describe('FIT-013 — as bordas do mês', () => {
     );
 
     expect(await service.resumoDoMes(EMPRESA, UPROF_A, '2026-10')).toEqual([]);
+  });
+});
+
+/**
+ * **SPEC-027 — a aula que ainda não aconteceu não cobra chamada.**
+ *
+ * O Israel viu o app marcando *"Chamada pendente"* numa aula de **31 de
+ * agosto**, com o calendário aberto no dia 29. A regra antiga estava
+ * cumprindo o que dizia — "sem linha em `chamadas` é pendente" — e o produto
+ * estava errado: o professor não esqueceu nada, a aula não aconteceu.
+ */
+describe('FIT-013 — SPEC-027: futura não é pendente', () => {
+  /** Bem no futuro, para não depender de quando a suíte roda. */
+  const DIA_FUTURO = '2099-06-15';
+  const MES_FUTURO = '2099-06';
+
+  /**
+   * **Prova COMPANHEIRA — ela não cai sozinha, e fica registrada como tal.**
+   *
+   * Rodei a sabotagem (removi o ramo `futura` de `estadoDaChamada`): esta
+   * continua verde, porque sem `futura` o estado vira `em_andamento`, que
+   * também não conta como pendência. Ela guarda a **contagem**, não o estado.
+   *
+   * Quem discrimina o estado é a prova seguinte. Mantida porque a contagem é
+   * o que o Israel viu na tela — o ponto vermelho — e uma regressão nela
+   * merece um vermelho próprio.
+   */
+  it('a aula de um mês futuro aparece, e com ZERO pendências', async () => {
+    // As duas metades importam: sumir com ela seria outro defeito — o
+    // professor precisa ver a grade que vem.
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000301',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_FUTURO,
+      '18:00',
+    );
+
+    expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES_FUTURO)).toEqual([
+      { data: DIA_FUTURO, aulas: 1, pendentes: 0 },
+    ]);
+  });
+
+  it('e o estado dela é `futura`, não `pendente`', async () => {
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000302',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_FUTURO,
+      '18:00',
+    );
+
+    const [aulaDoDia] = await service.detalheDoDia(
+      EMPRESA,
+      UPROF_A,
+      DIA_FUTURO,
+    );
+
+    expect(aulaDoDia.chamada).toBe('futura');
+  });
+
+  it('a aula que JÁ terminou continua pendente — o outro lado', async () => {
+    // Sem esta, um `estadoDaChamada` que devolvesse SEMPRE `futura` passaria
+    // nas duas de cima, e o ponto vermelho sumiria do produto inteiro.
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000303',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_1,
+      '18:00',
+    );
+
+    const [aulaDoDia] = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+
+    expect(aulaDoDia.chamada).toBe('pendente');
+  });
+
+  /**
+   * **Também COMPANHEIRA**, e por um motivo bom: a rede de segurança pega.
+   *
+   * Sabotei `aulaJaComecou` no `PUT` e esta continuou verde — porque a
+   * comparação por dia (`dia > hoje`), que ficou de propósito logo abaixo,
+   * barra a aula de 2099 sozinha. Ou seja, ela prova a rede, não a regra
+   * nova.
+   *
+   * Quem discrimina a regra nova é a prova unitária *"recusa a aula de HOJE
+   * que ainda não começou"* (`presenca.service.spec.ts`), que usa 23:58 — o
+   * único caso que só o portão por hora alcança. Essa cai na sabotagem.
+   */
+  it('e a chamada RECUSA a aula futura — a tela não é o portão', async () => {
+    // Esconder o botão resolve o engano honesto; só o servidor resolve o
+    // pedido montado à mão. A chamada é o retrato de quem estava lá.
+    await montar();
+    await aula(
+      'f0130000-0000-4000-8000-000000000304',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_FUTURO,
+      '18:00',
+    );
+
+    await expect(
+      presenca.salvarChamada(
+        EMPRESA,
+        UPROF_A,
+        'f0130000-0000-4000-8000-000000000304',
+        '0',
+        [],
+      ),
+    ).rejects.toMatchObject({ response: { code: 'AULA_FUTURA' } });
   });
 });

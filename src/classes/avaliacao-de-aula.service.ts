@@ -71,7 +71,21 @@ export class AvaliacaoDeAulaService {
    * a pessoa deu — a tela precisa distinguir "ainda não avaliei" de "dei 4",
    * e uma segunda requisição por aula seria uma por linha da lista.
    */
-  async aulasAnteriores(companyId: string, usuarioId: string) {
+  /**
+   * SPEC-027 — **paginada**, a pedido do Israel ("vamos precisar de paginacao
+   * nas paginas necessarias").
+   *
+   * Esta era a lista do aluno que mais crescia: a janela de 90 dias de um
+   * aluno com tres aulas por semana ja passa de 35 cartoes, e cada cartao
+   * carrega um formulario de avaliacao. O `pageSize` continua opcional e o
+   * padrao mantem o comportamento antigo para quem nao passar nada.
+   */
+  async aulasAnteriores(
+    companyId: string,
+    usuarioId: string,
+    page = 1,
+    pageSize = 20,
+  ) {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
 
     const alocacoes = await this.prisma.turmaAluno.findMany({
@@ -80,7 +94,7 @@ export class AvaliacaoDeAulaService {
     });
     const turmaIds = alocacoes.map((a) => a.turmaId);
     if (turmaIds.length === 0) {
-      return [];
+      return { data: [], page, pageSize, total: 0 };
     }
 
     const hoje = hojeNoFusoDoClube();
@@ -89,17 +103,24 @@ export class AvaliacaoDeAulaService {
       inicio.getUTCDate() - AvaliacaoDeAulaService.DIAS_DE_HISTORICO,
     );
 
+    // O MESMO `where` para a pagina e para a contagem — duplicar o filtro
+    // e como o total passa a mentir sobre a lista.
+    const onde = {
+      companyId,
+      origemTipo: 'TURMA' as const,
+      origemTurmaId: { in: turmaIds },
+      statusPagamento: { not: 'cancelado' as const },
+      // `lt: hoje` e não `lte`: a regra de "já terminou" é a mesma do
+      // `exigirAulaTerminada`, e as duas precisam concordar — lista que
+      // oferece o que o servidor recusa é a armadilha do DEF-011.
+      data: { gte: inicio, lt: hoje },
+    };
+
+    const total = await this.prisma.ocupacaoQuadra.count({ where: onde });
     const ocupacoes = await this.prisma.ocupacaoQuadra.findMany({
-      where: {
-        companyId,
-        origemTipo: 'TURMA',
-        origemTurmaId: { in: turmaIds },
-        statusPagamento: { not: 'cancelado' },
-        // `lt: hoje` e não `lte`: a regra de "já terminou" é a mesma do
-        // `exigirAulaTerminada`, e as duas precisam concordar — lista que
-        // oferece o que o servidor recusa é a armadilha do DEF-011.
-        data: { gte: inicio, lt: hoje },
-      },
+      where: onde,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: {
         origemTurma: { select: { id: true, nome: true } },
         quadra: { select: { nome: true } },
@@ -111,17 +132,22 @@ export class AvaliacaoDeAulaService {
       orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }],
     });
 
-    return ocupacoes.map((o) => ({
-      ocupacaoId: o.id,
-      turmaId: o.origemTurmaId,
-      turmaNome: o.origemTurma?.nome ?? null,
-      quadraNome: o.quadra.nome,
-      data: formatDateOnly(o.data),
-      horaInicio: formatTimeOnly(o.horaInicio),
-      horaFim: formatTimeOnly(o.horaFim),
-      minhaNota: o.avaliacoes[0]?.nota ?? null,
-      meuComentario: o.avaliacoes[0]?.comentario ?? null,
-    }));
+    return {
+      data: ocupacoes.map((o) => ({
+        ocupacaoId: o.id,
+        turmaId: o.origemTurmaId,
+        turmaNome: o.origemTurma?.nome ?? null,
+        quadraNome: o.quadra.nome,
+        data: formatDateOnly(o.data),
+        horaInicio: formatTimeOnly(o.horaInicio),
+        horaFim: formatTimeOnly(o.horaFim),
+        minhaNota: o.avaliacoes[0]?.nota ?? null,
+        meuComentario: o.avaliacoes[0]?.comentario ?? null,
+      })),
+      page,
+      pageSize,
+      total,
+    };
   }
 
   /**

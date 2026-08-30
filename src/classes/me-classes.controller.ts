@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -26,13 +27,14 @@ import {
   TurmaDisponivelResponseDto,
 } from './dto/matricula-do-aluno-response.dto';
 import {
-  AulaAnteriorResponseDto,
+  AulasAnterioresPaginadasResponseDto,
   AvaliarAulaDto,
   ErroDeAvaliacaoResponseDto,
   MediaDaTurmaResponseDto,
   MinhaAvaliacaoResponseDto,
 } from './dto/avaliacao-de-aula.dto';
 import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
+import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -106,10 +108,18 @@ export class MeClassesController {
    * até a aula para dar nota.
    */
   @Get('anteriores')
-  @ApiOkResponse({ type: [AulaAnteriorResponseDto] })
+  @ApiOkResponse({ type: AulasAnterioresPaginadasResponseDto })
   @Roles('aluno')
-  aulasAnteriores(@CurrentUser() user: AccessTokenPayload) {
-    return this.avaliacoes.aulasAnteriores(user.companyId as string, user.sub);
+  aulasAnteriores(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.avaliacoes.aulasAnteriores(
+      user.companyId as string,
+      user.sub,
+      query.page,
+      query.pageSize,
+    );
   }
 
   /**

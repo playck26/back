@@ -67,6 +67,11 @@ function buildMocks() {
         {
           origemTurmaId: oc.origemTurmaId,
           data: oc.data,
+          // SPEC-027: a releitura sob o lock passou a trazer `hora_inicio`,
+          // porque o portão da chamada olha a hora. O mock precisa espelhar
+          // a query — mock que devolve menos colunas que o SQL real produz
+          // `undefined` silencioso, e o teste passa a medir outra coisa.
+          horaInicio: oc.horaInicio,
           statusPagamento: oc.statusPagamento,
           professorId: estado.professorIdDaTurma,
         },
@@ -133,8 +138,22 @@ function ocupacao(overrides: Record<string, unknown> = {}) {
     origemTipo: 'TURMA',
     statusPagamento: 'pendente_pagamento',
     data: diaRelativo(0),
-    horaInicio: new Date('1970-01-01T09:00:00.000Z'),
-    horaFim: new Date('1970-01-01T10:00:00.000Z'),
+    /**
+     * SPEC-027 — **00:00 às 23:59, e o horário é escolhido para NÃO depender
+     * do relógio.**
+     *
+     * A janela da chamada passou a olhar a hora: a aula das 18h de hoje não
+     * aceita chamada às 8h da manhã. Com a fixture em 09:00, esta suíte
+     * passaria depois das 9h e falharia antes — o mesmo sorteio que o DEF-020
+     * acabou de custar 12 provas.
+     *
+     * `00:00` já começou em qualquer instante do dia (`0 <= minutos`, sempre),
+     * e `23:59` só termina no último minuto — então "hoje" é sempre uma aula
+     * **em andamento**, que é o estado que estes testes querem exercitar.
+     * Quem quiser testar a fronteira usa `ocupacao({ horaInicio: ... })`.
+     */
+    horaInicio: new Date('1970-01-01T00:00:00.000Z'),
+    horaFim: new Date('1970-01-01T23:59:00.000Z'),
     ...overrides,
   };
 }
@@ -216,6 +235,50 @@ describe('PresencaService (SPEC-014)', () => {
   });
 
   describe('INV-017 — a janela', () => {
+    /**
+     * SPEC-027 — **a aula de HOJE que ainda não começou também é futura.**
+     *
+     * O pedido do Israel: *"só pode realizar a chamada durante ou depois da
+     * aula"*. Antes, o portão era `data > hoje`, então a aula das 18h de hoje
+     * aceitava chamada às 8h da manhã — mesmo dia, comparação satisfeita.
+     *
+     * A prova usa `23:58`, e o horário não é arbitrário: é o único que
+     * garante "ainda não começou" **em qualquer instante** em que a suíte
+     * rode, menos os dois últimos minutos do dia. Sem esse cuidado, o teste
+     * viraria o mesmo sorteio que o DEF-020 custou caro.
+     */
+    it('recusa a aula de HOJE que ainda não começou', async () => {
+      armarOcupacao(
+        prisma,
+        estado,
+        ocupacao({
+          data: diaRelativo(0),
+          horaInicio: new Date('1970-01-01T23:58:00.000Z'),
+          horaFim: new Date('1970-01-01T23:59:00.000Z'),
+        }),
+      );
+
+      await expect(salvar()).rejects.toMatchObject({
+        response: { code: 'AULA_FUTURA' },
+      });
+    });
+
+    it('e ACEITA a aula de hoje que já começou — o outro lado', async () => {
+      // Sem esta, um portão que recusasse TUDO passaria na de cima, e o
+      // professor ficaria sem lançar chamada nenhuma.
+      armarOcupacao(
+        prisma,
+        estado,
+        ocupacao({
+          data: diaRelativo(0),
+          horaInicio: new Date('1970-01-01T00:00:00.000Z'),
+          horaFim: new Date('1970-01-01T23:59:00.000Z'),
+        }),
+      );
+
+      await expect(salvar()).resolves.toMatchObject({ total: 2 });
+    });
+
     it('recusa aula futura (o toque na linha errada da grade)', async () => {
       armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(1) }));
 

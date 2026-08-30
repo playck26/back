@@ -67,6 +67,72 @@ export function hojeNoFusoDoClube(agora: Date = new Date()): Date {
 }
 
 /**
+ * SPEC-027 — **o instante de agora no fuso do clube: dia E minuto.**
+ *
+ * `hojeNoFusoDoClube()` responde "que dia é hoje", e isso bastava enquanto a
+ * única regra de tempo era por data. Deixou de bastar quando o Israel pediu
+ * que a chamada só abrisse **durante ou depois da aula**: às 8h da manhã, a
+ * aula das 18h de hoje é do dia de hoje — e ainda não aconteceu.
+ *
+ * Devolve os minutos desde a meia-noite porque é assim que se compara com
+ * `hora_inicio`/`hora_fim`, que são `@db.Time` ancorados em 1970-01-01Z.
+ */
+export function agoraNoFusoDoClube(agora: Date = new Date()): {
+  dia: Date;
+  minutos: number;
+} {
+  const partes = new Intl.DateTimeFormat('en-GB', {
+    timeZone: FUSO_DO_CLUBE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(agora);
+  const [hora, minuto] = partes.split(':').map(Number);
+  return {
+    dia: hojeNoFusoDoClube(agora),
+    // 24:00 existe no `en-GB` para meia-noite; vira 0, que é o que ela é.
+    minutos: (hora % 24) * 60 + minuto,
+  };
+}
+
+/** Minutos desde a meia-noite de uma coluna `@db.Time`. */
+export function minutosDaHora(hora: Date): number {
+  return hora.getUTCHours() * 60 + hora.getUTCMinutes();
+}
+
+/**
+ * SPEC-027 — a aula **já começou**? (`data` + `horaInicio` contra agora.)
+ *
+ * É o portão da chamada: antes disso o professor não lança presença de uma
+ * aula que ainda não aconteceu, e a tela não deve nem oferecer o caminho.
+ */
+export function aulaJaComecou(
+  data: Date,
+  horaInicio: Date,
+  agora: Date = new Date(),
+): boolean {
+  const { dia, minutos } = agoraNoFusoDoClube(agora);
+  if (data.getTime() !== dia.getTime()) return data.getTime() < dia.getTime();
+  return minutosDaHora(horaInicio) <= minutos;
+}
+
+/**
+ * SPEC-027 — a aula **já terminou**? (`data` + `horaFim` contra agora.)
+ *
+ * Separa "em andamento" de "pendente": só depois do fim a chamada que falta
+ * vira cobrança — o ponto vermelho no calendário.
+ */
+export function aulaJaTerminou(
+  data: Date,
+  horaFim: Date,
+  agora: Date = new Date(),
+): boolean {
+  const { dia, minutos } = agoraNoFusoDoClube(agora);
+  if (data.getTime() !== dia.getTime()) return data.getTime() < dia.getTime();
+  return minutosDaHora(horaFim) <= minutos;
+}
+
+/**
  * DEF-020 — o mês corrente no fuso do clube, como `AAAA-MM`.
  *
  * Existe porque duas rotas assumem o mês corrente quando o cliente não

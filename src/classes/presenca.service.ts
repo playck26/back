@@ -14,6 +14,8 @@ import {
 } from './dto/me-response.dto';
 import { OcorrenciaNoHistoricoResponseDto } from './dto/presenca-historico-response.dto';
 import {
+  aulaJaComecou,
+  aulaJaTerminou,
   formatDateOnly,
   formatTimeOnly,
   hojeNoFusoDoClube,
@@ -154,12 +156,27 @@ export class PresencaService {
     return ocupacao as OcupacaoQuadra & { origemTurmaId: string };
   }
 
+  /**
+   * SPEC-027 — **paginada**, a pedido do Israel.
+   *
+   * Era a lista mais longa do painel do professor: uma turma de 3x por semana
+   * enche 38 linhas na janela padrao, e o professor rola tudo para achar a
+   * aula de ontem. O `pageSize` e opcional e o padrao preserva o
+   * comportamento de quem nao passar nada.
+   */
   async ocorrenciasDaTurma(
     companyId: string,
     usuarioId: string,
     turmaId: string,
     janelaDias: number,
-  ): Promise<OcorrenciaDaTurmaResponseDto[]> {
+    page = 1,
+    pageSize = 20,
+  ): Promise<{
+    data: OcorrenciaDaTurmaResponseDto[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }> {
     const professor = await this.professorDoUsuario(companyId, usuarioId);
 
     const turma = await this.prisma.turma.findFirst({
@@ -173,19 +190,25 @@ export class PresencaService {
     const desde = new Date(this.hoje());
     desde.setUTCDate(desde.getUTCDate() - janelaDias);
 
+    // O MESMO `where` para a pagina e para a contagem.
+    const onde = {
+      companyId,
+      origemTipo: 'TURMA' as const,
+      origemTurmaId: turmaId,
+      data: { gte: desde },
+    };
+
+    const total = await this.prisma.ocupacaoQuadra.count({ where: onde });
     const ocorrencias = await this.prisma.ocupacaoQuadra.findMany({
-      where: {
-        companyId,
-        origemTipo: 'TURMA',
-        origemTurmaId: turmaId,
-        data: { gte: desde },
-      },
+      where: onde,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: { _count: { select: { presencas: true } } },
       orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }],
     });
 
     const hoje = this.hoje();
-    return ocorrencias.map((o) => ({
+    const data = ocorrencias.map((o) => ({
       ocupacaoId: o.id,
       data: formatDateOnly(o.data),
       horaInicio: formatTimeOnly(o.horaInicio),
@@ -195,12 +218,34 @@ export class PresencaService {
       chamadaFeita: o._count.presencas > 0,
       marcados: o._count.presencas,
       totalAlunos: turma._count.alunos,
+      // SPEC-027 — **`o.data <= hoje` não bastava.** A aula das 18h de hoje
+      // satisfazia a comparação às 8h da manhã, e a tela oferecia lançar
+      // presença de uma aula que ninguém tinha dado ainda. Agora o limite de
+      // cima é a HORA DE INÍCIO; o limite de baixo (janela retroativa)
+      // continua por dia, que é como a INV-017 foi escrita.
       podeLancar:
         o.statusPagamento !== 'cancelado' &&
-        o.data.getTime() <= hoje.getTime() &&
+        aulaJaComecou(o.data, o.horaInicio) &&
         o.data.getTime() >=
           hoje.getTime() - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000,
+      /**
+       * SPEC-027 — o mesmo vocabulário do calendário, para a tela não ter de
+       * deduzir. Se ela deduzisse a partir de `podeLancar` + `chamadaFeita`,
+       * viraria a segunda cópia da regra — e é sempre a cópia que fica velha.
+       */
+      estado:
+        o.statusPagamento === 'cancelado'
+          ? ('cancelada' as const)
+          : o._count.presencas > 0
+            ? ('feita' as const)
+            : !aulaJaComecou(o.data, o.horaInicio)
+              ? ('futura' as const)
+              : !aulaJaTerminou(o.data, o.horaFim)
+                ? ('em_andamento' as const)
+                : ('pendente' as const),
     }));
+
+    return { data, page, pageSize, total };
   }
 
   async chamada(
@@ -425,12 +470,18 @@ export class PresencaService {
         {
           origemTurmaId: string;
           data: Date;
+          // SPEC-027: a janela da chamada passou a olhar a HORA, e esta
+          // releitura sob o lock precisa da coluna. Sem ela, o portão
+          // compararia `undefined` — o `tsc` pega, mas só porque o tipo
+          // acima e a query abaixo andam juntos. Mantenha os dois em par.
+          horaInicio: Date;
           statusPagamento: string;
           professorId: string | null;
         }[]
       >`
         SELECT o.origem_turma_id   AS "origemTurmaId",
                o.data              AS "data",
+               o.hora_inicio       AS "horaInicio",
                o.status_pagamento  AS "statusPagamento",
                t.professor_id      AS "professorId"
           FROM ocupacoes_quadra o
@@ -471,7 +522,26 @@ export class PresencaService {
       // de ser um retrato confiável do que era há muito tempo (LIM-003).
       const hoje = this.hoje().getTime();
       const dia = ocupacao.data.getTime();
+      // SPEC-027 — **o portão passou a olhar a HORA, não só o dia.**
+      //
+      // Era `dia > hoje`, e por isso a aula das 18h de hoje aceitava chamada
+      // às 8h da manhã: mesmo dia, comparação satisfeita. O Israel pediu que
+      // a chamada só abra "durante ou depois da aula".
+      //
+      // **Isto é o portão de verdade, e a tela não substitui.** Esconder o
+      // botão resolve o engano honesto; só o servidor resolve o pedido
+      // montado à mão — e a chamada é o retrato de quem estava lá.
+      if (!aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'AULA_FUTURA',
+          message: 'Esta aula ainda não começou.',
+        });
+      }
       if (dia > hoje) {
+        // Rede de segurança: `aulaJaComecou` já cobre o caso, e manter a
+        // comparação por dia custa uma linha. Se um dia a função de hora
+        // regredir, esta ainda barra a aula de amanhã.
         throw new UnprocessableEntityException({
           statusCode: 422,
           code: 'AULA_FUTURA',

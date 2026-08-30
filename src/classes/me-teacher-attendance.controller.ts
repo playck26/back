@@ -19,9 +19,10 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import {
   ChamadaResponseDto,
   ChamadaSalvaResponseDto,
-  OcorrenciaDaTurmaResponseDto,
+  OcorrenciasDaTurmaPaginadasResponseDto,
 } from './dto/me-response.dto';
 import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
+import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { PresencaService } from './presenca.service';
 
 /**
@@ -39,7 +40,7 @@ export class MeTeacherAttendanceController {
   constructor(private readonly presencas: PresencaService) {}
 
   @Get('classes/:id/ocorrencias')
-  @ApiOkResponse({ type: [OcorrenciaDaTurmaResponseDto] })
+  @ApiOkResponse({ type: OcorrenciasDaTurmaPaginadasResponseDto })
   @Roles('professor')
   ocorrencias(
     @CurrentUser() user: AccessTokenPayload,
@@ -47,12 +48,18 @@ export class MeTeacherAttendanceController {
     // Default de 30 e teto de 90: sem limite, o endpoint cresce junto com o
     // histórico e um dia devolve anos de aula (ressalva da validação).
     @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
+    // SPEC-027: paginacao por cima da janela de dias. As duas coexistem de
+    // proposito — `dias` limita QUANTO HISTORICO existe, `page` limita
+    // quanto vem por vez. Trocar uma pela outra perderia a metade util.
+    @Query() paginacao: PaginationQueryDto,
   ) {
     return this.presencas.ocorrenciasDaTurma(
       user.companyId as string,
       user.sub,
       id,
       Math.min(Math.max(dias, 1), 90),
+      paginacao.page,
+      paginacao.pageSize,
     );
   }
 

@@ -1,7 +1,12 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { formatTimeOnly, parseDateOnly } from '../courts/date-time.util';
+import {
+  aulaJaComecou,
+  aulaJaTerminou,
+  formatTimeOnly,
+  parseDateOnly,
+} from '../courts/date-time.util';
 
 /**
  * SPEC-026 — **o calendário do professor.**
@@ -30,16 +35,50 @@ import { formatTimeOnly, parseDateOnly } from '../courts/date-time.util';
  * Os três valores foram conferidos no enum, não supostos. A spec chegou a
  * dizer `parcial`, que **não existe**.
  */
-export type EstadoDaChamada = 'pendente' | 'feita' | 'legada';
+export type EstadoDaChamada =
+  'futura' | 'em_andamento' | 'pendente' | 'feita' | 'legada';
 
+/**
+ * SPEC-027 — **e aqui o estado deixou de ser só "tem linha ou não tem".**
+ *
+ * O Israel viu o calendário marcando *"Chamada pendente"* numa aula de **31
+ * de agosto**, com o app aberto no dia 29. Estava certo pela regra antiga e
+ * errado pelo produto: o professor não esqueceu de nada — a aula não
+ * aconteceu.
+ *
+ * A regra que ele pediu, literal: *"a aula que ainda não aconteceu não deve
+ * ficar com chamada pendente, e nem com possibilidade de realizar chamada, só
+ * pode realizar a chamada durante ou depois da aula, se for depois fica no
+ * vermelho"*. São três momentos, não dois:
+ *
+ * | Momento | Estado | O que a tela faz |
+ * |---|---|---|
+ * | antes de `hora_inicio` | `futura` | não oferece chamada, sem ponto |
+ * | entre início e fim | `em_andamento` | oferece, **sem** vermelho |
+ * | depois de `hora_fim` | `pendente` | oferece, **em vermelho** |
+ *
+ * **`em_andamento` não conta como pendência**, e é essa a diferença que o
+ * ponto vermelho do calendário existe para dizer: ele significa "você
+ * esqueceu", não "está acontecendo agora".
+ *
+ * `feita`/`legada` continuam vindo antes de tudo: se a chamada existe, o
+ * horário não importa mais.
+ */
 function estadoDaChamada(
   chamada: { completude: string } | null | undefined,
+  data: Date,
+  horaInicio: Date,
+  horaFim: Date,
+  agora: Date = new Date(),
 ): EstadoDaChamada {
-  // Sem linha em `chamadas` é o caso mais comum e o mais importante: é o dia
-  // em que o professor esqueceu de registrar, e é para isso que o calendário
-  // existe.
-  if (!chamada) return 'pendente';
-  return chamada.completude === 'completa' ? 'feita' : 'legada';
+  if (chamada) {
+    return chamada.completude === 'completa' ? 'feita' : 'legada';
+  }
+  if (!aulaJaComecou(data, horaInicio, agora)) return 'futura';
+  if (!aulaJaTerminou(data, horaFim, agora)) return 'em_andamento';
+  // Sem linha em `chamadas` **e a aula já terminou**: é o dia em que o
+  // professor esqueceu de registrar, e é para isso que o calendário existe.
+  return 'pendente';
 }
 
 @Injectable()
@@ -88,6 +127,10 @@ export class AgendaDoProfessorService {
       select: {
         id: true,
         data: true,
+        // SPEC-027: o estado passou a depender da HORA, não só do dia — uma
+        // aula das 18h ainda não aconteceu às 8h da manhã do mesmo dia.
+        horaInicio: true,
+        horaFim: true,
         // `chamadas` é lista no Prisma, e o comentário do schema explica:
         // a relação é composta e o banco garante UMA por ocorrência, pela
         // PK. Aqui isso vira `[0]`.
@@ -100,7 +143,14 @@ export class AgendaDoProfessorService {
       const dia = o.data.toISOString().slice(0, 10);
       const atual = porDia.get(dia) ?? { aulas: 0, pendentes: 0 };
       atual.aulas += 1;
-      if (estadoDaChamada(o.chamadas[0]) === 'pendente') {
+      // SPEC-027 — só conta como pendência a aula que JÁ TERMINOU sem
+      // chamada. `futura` e `em_andamento` não são esquecimento, e pintar o
+      // ponto vermelho nelas fazia o calendário cobrar o professor por uma
+      // aula que ele ainda vai dar.
+      if (
+        estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim) ===
+        'pendente'
+      ) {
         atual.pendentes += 1;
       }
       porDia.set(dia, atual);
@@ -140,7 +190,7 @@ export class AgendaDoProfessorService {
       quadraNome: o.quadra.nome,
       horaInicio: formatTimeOnly(o.horaInicio),
       horaFim: formatTimeOnly(o.horaFim),
-      chamada: estadoDaChamada(o.chamadas[0]),
+      chamada: estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim),
     }));
   }
 

@@ -175,3 +175,24 @@ export class ErroDeAvaliacaoResponseDto {
   })
   message!: string;
 }
+
+/**
+ * SPEC-027 — a página de aulas anteriores.
+ *
+ * Mesmo formato `{ data, page, pageSize, total }` que `quadras` e `ocupações`
+ * já publicam. Uma segunda forma de paginação no mesmo contrato obrigaria
+ * cada frontend a saber qual rota fala qual dialeto.
+ */
+export class AulasAnterioresPaginadasResponseDto {
+  @ApiProperty({ type: [AulaAnteriorResponseDto] })
+  data!: AulaAnteriorResponseDto[];
+
+  @ApiProperty({ type: Number, example: 1 })
+  page!: number;
+
+  @ApiProperty({ type: Number, example: 20 })
+  pageSize!: number;
+
+  @ApiProperty({ type: Number, example: 37 })
+  total!: number;
+}

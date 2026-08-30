@@ -46,10 +46,20 @@ export class AulaDoDiaDoProfessorDto {
   @ApiProperty({ example: '19:00' })
   horaFim!: string;
 
+  /**
+   * SPEC-027 — ganhou `futura` e `em_andamento`, e a diferença é de produto.
+   *
+   * Antes, ausência de linha em `chamadas` era sempre `pendente`, então uma
+   * aula da semana que vem aparecia cobrando chamada. O estado agora depende
+   * de `data` + `hora_inicio`/`hora_fim` contra o relógio do clube.
+   */
   @ApiProperty({
-    enum: ['pendente', 'feita', 'legada'],
+    enum: ['futura', 'em_andamento', 'pendente', 'feita', 'legada'],
     description:
-      '`pendente` = não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`.',
+      '`futura` = ainda não começou; a chamada **não** pode ser lançada. ' +
+      '`em_andamento` = começou e não terminou; pode lançar, e não é ' +
+      'pendência. `pendente` = já terminou e não há linha em `chamadas`. ' +
+      '`legada` = chamada de antes da SPEC-015, com `completude: desconhecida`.',
   })
   chamada!: string;
 }

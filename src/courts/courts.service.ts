@@ -546,6 +546,15 @@ export class CourtsService {
       companyId,
       ...(alunoIdScope ? { alunoId: alunoIdScope } : {}),
       ...(query.status ? { statusPagamento: query.status } : {}),
+      // SPEC-027 — **o filtro de canceladas saiu da tela e veio para cá.**
+      //
+      // O app do aluno filtrava `statusPagamento !== 'cancelado'` DEPOIS de
+      // receber a página. Sem paginação isso era só desperdício; com ela
+      // vira mentira: uma página de 20 mostraria 12 itens, e o rodapé diria
+      // "1–20 de 47". Quem pagina precisa contar exatamente o que mostra.
+      ...(query.excluirCanceladas
+        ? { statusPagamento: { not: 'cancelado' as const } }
+        : {}),
       ...(query.data ? { data: parseDateOnly(query.data) } : {}),
     };
 

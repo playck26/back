@@ -368,7 +368,10 @@ describe('FIT-012 — as aulas anteriores, para poder avaliar', () => {
   it('lista só as que já passaram, da mais recente para a mais antiga', async () => {
     await montar(1);
 
-    const aulas = await service.aulasAnteriores(EMPRESA, usuarioId(1));
+    const { data: aulas } = await service.aulasAnteriores(
+      EMPRESA,
+      usuarioId(1),
+    );
 
     expect(aulas.map((a) => a.data)).toEqual([dia(-1), dia(-2)]);
     expect(aulas.some((a) => a.data === dia(1))).toBe(false);
@@ -383,7 +386,10 @@ describe('FIT-012 — as aulas anteriores, para poder avaliar', () => {
       comentario: 'Boa',
     });
 
-    const aulas = await service.aulasAnteriores(EMPRESA, usuarioId(1));
+    const { data: aulas } = await service.aulasAnteriores(
+      EMPRESA,
+      usuarioId(1),
+    );
 
     expect(aulas.find((a) => a.ocupacaoId === AULA_ONTEM)?.minhaNota).toBe(4);
     expect(
@@ -397,7 +403,10 @@ describe('FIT-012 — as aulas anteriores, para poder avaliar', () => {
     await montar(2);
     await service.avaliar(EMPRESA, usuarioId(2), AULA_ONTEM, { nota: 1 });
 
-    const aulas = await service.aulasAnteriores(EMPRESA, usuarioId(1));
+    const { data: aulas } = await service.aulasAnteriores(
+      EMPRESA,
+      usuarioId(1),
+    );
 
     expect(
       aulas.find((a) => a.ocupacaoId === AULA_ONTEM)?.minhaNota,
@@ -407,6 +416,8 @@ describe('FIT-012 — as aulas anteriores, para poder avaliar', () => {
   it('aluno sem turma recebe lista vazia, sem erro', async () => {
     await montar(1, false);
 
-    expect(await service.aulasAnteriores(EMPRESA, usuarioId(1))).toEqual([]);
+    expect((await service.aulasAnteriores(EMPRESA, usuarioId(1))).data).toEqual(
+      [],
+    );
   });
 });

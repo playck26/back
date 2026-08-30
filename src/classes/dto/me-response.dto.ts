@@ -84,6 +84,22 @@ export class OcorrenciaDaTurmaResponseDto {
 
   @ApiProperty({ type: Boolean })
   podeLancar!: boolean;
+
+  /**
+   * SPEC-027 — o mesmo vocabulário do calendário do professor.
+   *
+   * `podeLancar` responde "o servidor aceita?"; `estado` responde "por quê",
+   * e é isso que a tela precisa para escolher a cor e o texto sem deduzir
+   * regra nenhuma.
+   */
+  @ApiProperty({
+    enum: ['futura', 'em_andamento', 'pendente', 'feita', 'cancelada'],
+    description:
+      '`futura` = ainda não começou. `em_andamento` = começou e não ' +
+      'terminou. `pendente` = terminou sem chamada. `feita` = há presenças. ' +
+      '`cancelada` = ocorrência cancelada.',
+  })
+  estado!: string;
 }
 
 export class LinhaDaChamadaResponseDto {
@@ -240,4 +256,23 @@ export class MinhaEmpresaResponseDto {
 
   @ApiProperty({ type: String, nullable: true })
   logoUrl!: string | null;
+}
+
+/**
+ * SPEC-027 — a página de ocorrências de uma turma (histórico de chamadas).
+ *
+ * Mesmo formato `{ data, page, pageSize, total }` do resto do contrato.
+ */
+export class OcorrenciasDaTurmaPaginadasResponseDto {
+  @ApiProperty({ type: [OcorrenciaDaTurmaResponseDto] })
+  data!: OcorrenciaDaTurmaResponseDto[];
+
+  @ApiProperty({ type: Number, example: 1 })
+  page!: number;
+
+  @ApiProperty({ type: Number, example: 20 })
+  pageSize!: number;
+
+  @ApiProperty({ type: Number, example: 38 })
+  total!: number;
 }

@@ -248,6 +248,25 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // O papel do admin inicial, na criação da empresa: sempre este.
   ['role', ['company_admin']],
 
+  // SPEC-027 — os momentos de uma aula, do ponto de vista da chamada.
+  //
+  // Vêm de `estadoDaChamada` (`agenda-do-professor.service.ts`) e do ternário
+  // equivalente em `PresencaService.ocorrenciasDaTurma`. **São duas listas
+  // parecidas e NÃO iguais**, e a diferença é de propósito: o calendário
+  // esconde ocorrência cancelada (ela não entra no filtro), então lá não há
+  // `cancelada`; a lista da turma mostra a cancelada marcada, então lá há.
+  //
+  // `legada` só existe no calendário porque só ele lê `completude` — a lista
+  // da turma decide por `_count.presencas`.
+  [
+    'AulaDoDiaDoProfessorResponseDto.chamada',
+    ['futura', 'em_andamento', 'pendente', 'feita', 'legada'],
+  ],
+  [
+    'OcorrenciaDaTurmaResponseDto.estado',
+    ['futura', 'em_andamento', 'pendente', 'feita', 'cancelada'],
+  ],
+
   // SPEC-023 — por que o aluno não pode entrar nesta turma. Chave
   // qualificada porque `motivo` já existe acima com outro significado.
   // A ordem aqui é a ordem das checagens no serviço, e ela É a mensagem:

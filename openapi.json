@@ -2117,6 +2117,15 @@
             }
           },
           {
+            "name": "excluirCanceladas",
+            "required": false,
+            "in": "query",
+            "description": "Exclui ocupações canceladas. Combina com `status`.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "data",
             "required": false,
             "in": "query",
@@ -3216,17 +3225,33 @@
     "/api/v1/me/classes/anteriores": {
       "get": {
         "operationId": "MeClassesController_aulasAnteriores",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AulaAnteriorResponseDto"
-                  }
+                  "$ref": "#/components/schemas/AulasAnterioresPaginadasResponseDto"
                 }
               }
             }
@@ -3431,6 +3456,24 @@
             "schema": {
               "type": "number"
             }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
           }
         ],
         "responses": {
@@ -3439,10 +3482,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/OcorrenciaDaTurmaResponseDto"
-                  }
+                  "$ref": "#/components/schemas/OcorrenciasDaTurmaPaginadasResponseDto"
                 }
               }
             }
@@ -6924,6 +6964,35 @@
           "meuComentario"
         ]
       },
+      "AulasAnterioresPaginadasResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AulaAnteriorResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 37
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
       "MediaDaTurmaResponseDto": {
         "type": "object",
         "properties": {
@@ -7157,6 +7226,17 @@
           },
           "podeLancar": {
             "type": "boolean"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "futura",
+              "em_andamento",
+              "pendente",
+              "feita",
+              "cancelada"
+            ],
+            "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou sem chamada. `feita` = há presenças. `cancelada` = ocorrência cancelada."
           }
         },
         "required": [
@@ -7168,7 +7248,37 @@
           "chamadaFeita",
           "marcados",
           "totalAlunos",
-          "podeLancar"
+          "podeLancar",
+          "estado"
+        ]
+      },
+      "OcorrenciasDaTurmaPaginadasResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OcorrenciaDaTurmaResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 38
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
         ]
       },
       "LinhaDaChamadaResponseDto": {
@@ -7376,11 +7486,13 @@
           "chamada": {
             "type": "string",
             "enum": [
+              "futura",
+              "em_andamento",
               "pendente",
               "feita",
               "legada"
             ],
-            "description": "`pendente` = não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`."
+            "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`."
           }
         },
         "required": [
