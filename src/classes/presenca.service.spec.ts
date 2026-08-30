@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresencaService } from './presenca.service';
 
@@ -104,13 +105,24 @@ function armarOcupacao(
   estado.ocupacao = oc;
 }
 
+/**
+ * **DEF-020 — e este helper era uma bomba-relógio.**
+ *
+ * Ele montava "hoje" com `Date.UTC(...getUTCDate())`, e o serviço passou a
+ * usar `hojeNoFusoDoClube()`. Das 21h à meia-noite em Brasília os dois
+ * discordam do dia, e a suíte inteira passava a acusar `AULA_FUTURA`.
+ *
+ * O detalhe que assusta: **passou às 20h54 e falhou às 21h45.** Não mudou uma
+ * linha entre as duas rodadas — mudou o relógio. Um teste que depende da hora
+ * em que roda não é verde nem vermelho, é sorteio, e teria falhado no CI
+ * dependendo só do horário do push.
+ *
+ * A regra vale nas três camadas, e a correção precisou das três: produto,
+ * fixture de banco (`test/banco/hoje-no-clube-sql.ts`) e aqui. **Uma
+ * convenção, não duas** — o que o próprio comentário da SPEC-014 já dizia.
+ */
 function diaRelativo(dias: number): Date {
-  const hoje = new Date();
-  const base = Date.UTC(
-    hoje.getUTCFullYear(),
-    hoje.getUTCMonth(),
-    hoje.getUTCDate(),
-  );
+  const base = hojeNoFusoDoClube().getTime();
   return new Date(base + dias * 24 * 60 * 60 * 1000);
 }
 

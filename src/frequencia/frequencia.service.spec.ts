@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { FrequenciaService } from './frequencia.service';
 
@@ -7,11 +8,13 @@ import { FrequenciaService } from './frequencia.service';
 // números, piso de confiança, régua de risco e ordenação. Escopo de
 // empresa também, porque é um WHERE.
 
+/**
+ * DEF-020 — mesma convenção do serviço (`hojeNoFusoDoClube`). Em UTC, das
+ * 21h à meia-noite o helper e o serviço discordavam do dia, e o resultado
+ * dependia da hora em que a suíte rodasse.
+ */
 function diaAtras(dias: number): Date {
-  const d = new Date();
-  const data = new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-  );
+  const data = hojeNoFusoDoClube();
   data.setUTCDate(data.getUTCDate() - dias);
   return data;
 }

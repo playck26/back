@@ -99,6 +99,26 @@ const SRC = join(__dirname, '..');
  */
 const DONO_DA_CONVENCAO = join(SRC, 'courts', 'date-time.util.ts');
 
+/**
+ * **Este próprio arquivo é a única exceção**, e por um motivo: a prova "o
+ * cálculo ingênuo em UTC erraria esse mesmo instante" precisa **escrever** o
+ * cálculo errado para compará-lo com o certo.
+ */
+const ESTE_ARQUIVO = join(SRC, 'courts', 'fuso-do-clube.spec.ts');
+
+/**
+ * **O gate varre os `.spec.ts` também — e essa lacuna custou caro.**
+ *
+ * A primeira versão pulava specs, por parecer óbvio que teste não é produto.
+ * Duas horas depois, `presenca.service.spec.ts` e `frequencia.service.spec.ts`
+ * derrubaram 12 provas: os helpers deles montavam "hoje" em UTC enquanto o
+ * serviço já usava o fuso.
+ *
+ * O detalhe que decide a regra: **a suíte passou às 20h54 e falhou às 21h45,
+ * sem uma linha mudar entre as duas.** Mudou o relógio. Teste cujo resultado
+ * depende da hora em que roda não é verde nem vermelho — é sorteio, e teria
+ * quebrado o CI dependendo só do horário do push. Foi o que aconteceu.
+ */
 function arquivosDeCodigo(dir: string): string[] {
   const saida: string[] = [];
   for (const nome of readdirSync(dir)) {
@@ -107,7 +127,7 @@ function arquivosDeCodigo(dir: string): string[] {
       saida.push(...arquivosDeCodigo(caminho));
       continue;
     }
-    if (!nome.endsWith('.ts') || nome.endsWith('.spec.ts')) continue;
+    if (!nome.endsWith('.ts')) continue;
     saida.push(caminho);
   }
   return saida;
@@ -127,13 +147,17 @@ describe('o fuso do clube é a única convenção de "hoje"', () => {
   it('varreu o código de verdade — senão o teste passa por vacuidade', () => {
     expect(arquivos.length).toBeGreaterThan(50);
     expect(arquivos).toContain(DONO_DA_CONVENCAO);
+    // E os specs entraram na varredura: era neles que estava a bomba.
+    expect(arquivos).toContain(
+      join(SRC, 'classes', 'presenca.service.spec.ts'),
+    );
   });
 
-  it('nenhum serviço calcula "hoje" a partir do relógio UTC do servidor', () => {
+  it('nem serviço nem TESTE calcula "hoje" pelo relógio UTC do servidor', () => {
     const infratores: string[] = [];
 
     for (const caminho of arquivos) {
-      if (caminho === DONO_DA_CONVENCAO) continue;
+      if (caminho === DONO_DA_CONVENCAO || caminho === ESTE_ARQUIVO) continue;
       const codigo = semComentarios(readFileSync(caminho, 'utf8'));
       // `getUTCFullYear()` só aparece quando alguém está montando a data de
       // "agora" — ler o ano de uma coluna `@db.Date` não precisa dele.

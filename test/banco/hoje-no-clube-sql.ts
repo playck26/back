@@ -18,7 +18,8 @@
  * não duas.** Fixture que calcula a data de um jeito e serviço de outro
  * testa a diferença entre os dois, não a regra.
  */
-export const HOJE_NO_CLUBE_SQL = "(now() AT TIME ZONE 'America/Sao_Paulo')::date";
+export const HOJE_NO_CLUBE_SQL =
+  "(now() AT TIME ZONE 'America/Sao_Paulo')::date";
 
 /** `HOJE_NO_CLUBE_SQL` menos N dias — o mesmo que `CURRENT_DATE - N` fazia. */
 export function diasAtrasNoClube(dias: number): string {
