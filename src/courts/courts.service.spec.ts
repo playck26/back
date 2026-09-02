@@ -49,6 +49,14 @@ function buildPrismaMock() {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
     },
+    // SPEC-032: a acao nasce PREGUICOSA, entao o dublê devolve um id — e os
+    // testes de idempotencia conferem que ela NAO foi chamada.
+    acaoAdministrativa: {
+      create: jest.fn().mockResolvedValue({ id: 'acao-1' }),
+    },
+    eventoDeOcupacao: {
+      create: jest.fn(),
+    },
     $transaction: jest.fn(),
   } as unknown as PrismaService;
 }
@@ -792,9 +800,54 @@ describe('CourtsService', () => {
     it('lança 404 cross-tenant', async () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
-      await expect(service.cancelBooking('c1', 'o1')).rejects.toBeInstanceOf(
+      await expect(service.cancelBooking('c1', 'o1', 'autor-1')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+
+    // SPEC-032/AC-002 — a prova que justifica o registrador PREGUICOSO.
+    it('cancelamento idempotente NAO grava acao nem evento', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        statusPagamento: 'cancelado',
+      });
+
+      await service.cancelBooking('c1', 'o1', 'autor-1');
+
+      // Nem escrita de estado, nem rastro. Criar a acao ao ENTRAR no caso de
+      // uso gravaria uma linha vazia a cada retentativa de rede — e a
+      // auditoria passaria a contar tentativas em vez de gestos.
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+      expect(prisma.acaoAdministrativa.create).not.toHaveBeenCalled();
+      expect(prisma.eventoDeOcupacao.create).not.toHaveBeenCalled();
+    });
+
+    // SPEC-032/AC-002 + INV-064
+    it('grava UMA acao e UM evento, com a MESMA transicao do update', async () => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+      });
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
+
+      await service.cancelBooking('c1', 'o1', 'autor-1');
+
+      expect(prisma.acaoAdministrativa.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventoDeOcupacao.create).toHaveBeenCalledTimes(1);
+
+      const doUpdate = (prisma.ocupacaoQuadra.update as jest.Mock).mock
+        .calls[0][0] as { data: { transicaoId: string } };
+      const doEvento = (prisma.eventoDeOcupacao.create as jest.Mock).mock
+        .calls[0][0] as { data: { transicaoId: string; tipo: string } };
+
+      // Se estes dois divergirem, a trigger recusa no COMMIT — e nenhum
+      // teste de rota veria, porque o dublê nao tem trigger.
+      expect(doEvento.data.transicaoId).toBe(doUpdate.data.transicaoId);
+      expect(doEvento.data.tipo).toBe('cancelada');
+      expect(
+        (prisma.acaoAdministrativa.create as jest.Mock).mock.calls[0][0],
+      ).toMatchObject({ data: { tipo: 'reserva_cancelada', autorId: 'autor-1' } });
     });
 
     it('marca status_pagamento como cancelado (AC-003)', async () => {
@@ -804,11 +857,16 @@ describe('CourtsService', () => {
       });
       (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
 
-      await service.cancelBooking('c1', 'o1');
+      await service.cancelBooking('c1', 'o1', 'autor-1');
 
       expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
         where: { id: 'o1' },
-        data: { statusPagamento: 'cancelado' },
+        // SPEC-032/INV-064: a transicao ganha identidade, e o evento carrega
+        // a MESMA — e o par que a trigger confere no COMMIT.
+        data: {
+          statusPagamento: 'cancelado',
+          transicaoId: expect.any(String) as unknown as string,
+        },
       });
     });
 
@@ -820,7 +878,7 @@ describe('CourtsService', () => {
       });
 
       await expect(
-        service.cancelBooking('c1', 'o1', 'a1'),
+        service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
@@ -833,11 +891,16 @@ describe('CourtsService', () => {
       });
       (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
 
-      await service.cancelBooking('c1', 'o1', 'a1');
+      await service.cancelBooking('c1', 'o1', 'autor-1', 'a1');
 
       expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
         where: { id: 'o1' },
-        data: { statusPagamento: 'cancelado' },
+        // SPEC-032/INV-064: a transicao ganha identidade, e o evento carrega
+        // a MESMA — e o par que a trigger confere no COMMIT.
+        data: {
+          statusPagamento: 'cancelado',
+          transicaoId: expect.any(String) as unknown as string,
+        },
       });
     });
   });
@@ -1074,7 +1137,7 @@ describe('CourtsService', () => {
         alunoId: null,
       });
 
-      await expect(service.cancelBooking('c1', 'o1')).rejects.toBeInstanceOf(
+      await expect(service.cancelBooking('c1', 'o1', 'autor-1')).rejects.toBeInstanceOf(
         UnprocessableEntityException,
       );
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
@@ -1101,7 +1164,7 @@ describe('CourtsService', () => {
         statusPagamento: 'cancelado',
       });
 
-      await expect(service.cancelBooking('c1', 'o1')).resolves.toBeUndefined();
+      await expect(service.cancelBooking('c1', 'o1', 'autor-1')).resolves.toBeUndefined();
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
   });

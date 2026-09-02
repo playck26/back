@@ -103,6 +103,10 @@ export class BookingsController {
     return this.courtsService.cancelBooking(
       user.companyId as string,
       id,
+      // SPEC-032/D6: a acao do ALUNO tambem vira evento. Registrar so o
+      // gestor deixaria buraco onde a pergunta "quem cancelou isto?" e mais
+      // provavel — quem le decide o papel pelo `role` do autor.
+      user.sub,
       alunoIdScope,
     );
   }

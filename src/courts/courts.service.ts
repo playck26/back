@@ -10,6 +10,10 @@ import { StudentsService } from '../people/students.service';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  novaTransicao,
+  RegistradorDeAcao,
+} from '../common/auditoria/registrador-de-acao';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import {
   formatDateOnly,
@@ -751,40 +755,69 @@ export class CourtsService {
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
   // cancelar reserva onde `aluno_id` bate com o próprio — "dono da reserva
   // ou company_admin" (API_CONTRACTS.md CON-005.6).
+  /**
+   * SPEC-032/TASK-002 — **passou a rodar dentro de uma transação**, e isso
+   * não é refinamento: eram duas instruções soltas (`findFirst` + `update`),
+   * e a trigger `ocupacao_cancelada_exige_evento` exige o evento **no mesmo
+   * `COMMIT`** do cancelamento. Sem transação, não há mesmo COMMIT.
+   *
+   * A SPEC-033 depende deste mesmo passo para debitar e devolver crédito com
+   * segurança, e por isso ele está declarado lá como TASK-000.
+   */
   async cancelBooking(
     companyId: string,
     id: string,
+    autorId: string,
     alunoIdScope?: string,
   ): Promise<void> {
-    const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
-      where: { id, companyId },
-    });
-    if (!ocupacao) {
-      throw new NotFoundException();
-    }
-    if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
-      throw new ForbiddenException();
-    }
+    await this.prisma.$transaction(async (tx) => {
+      const ocupacao = await tx.ocupacaoQuadra.findFirst({
+        where: { id, companyId },
+      });
+      if (!ocupacao) {
+        throw new NotFoundException();
+      }
+      if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
+        throw new ForbiddenException();
+      }
 
-    // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
-    // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
-    // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
-    // esta rota apagaria a aula da agenda de todo mundo a partir de uma
-    // ação pensada para reserva individual.
-    this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+      // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
+      // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
+      // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
+      // esta rota apagaria a aula da agenda de todo mundo a partir de uma
+      // ação pensada para reserva individual.
+      this.assertOcupacaoAvulsa(ocupacao.origemTipo);
 
-    // Cancelar o que já está cancelado é idempotente: sem escrita, sem
-    // erro. Repetir a ação não é engano do usuário, é rede instável.
-    if (ocupacao.statusPagamento === 'cancelado') {
-      return;
-    }
+      // Cancelar o que já está cancelado é idempotente: sem escrita, sem
+      // erro. Repetir a ação não é engano do usuário, é rede instável.
+      //
+      // SPEC-032/AC-002: sair aqui não grava ação NEM evento — é por isso que
+      // o registrador é preguiçoso. Criá-lo antes gravaria uma ação vazia a
+      // cada retentativa de rede.
+      if (ocupacao.statusPagamento === 'cancelado') {
+        return;
+      }
 
-    // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
-    // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
-    // migration), então essa escrita sozinha já resolve.
-    await this.prisma.ocupacaoQuadra.update({
-      where: { id },
-      data: { statusPagamento: 'cancelado' },
+      const transicaoId = novaTransicao();
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        'reserva_cancelada',
+      );
+
+      // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
+      // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
+      // migration), então essa escrita sozinha já resolve.
+      await tx.ocupacaoQuadra.update({
+        where: { id },
+        data: { statusPagamento: 'cancelado', transicaoId },
+      });
+
+      // A ordem entre esta linha e o `update` acima **não importa**: a
+      // trigger é `DEFERRABLE INITIALLY DEFERRED` e só julga no COMMIT.
+      // Fosse imediata, gravar a ocupação antes do evento falharia sempre.
+      await registrador.registrar(id, 'cancelada', transicaoId);
     });
   }
 
