@@ -1,5 +1,10 @@
 /**
- * **FIT-016, FIT-017 e FIT-020 — a auditoria que o BANCO impõe.**
+ * **FIT-016 e FIT-020 — a auditoria que o BANCO impõe.**
+ *
+ * O FIT-017 (a trigger que exige evento no cancelamento) mora em
+ * `fit-017-cancelar-exige-evento.db-spec.ts`, e **isso não é organização, é
+ * entrega**: aquela trigger vem na fase `contract`, aplicada só depois que o
+ * código que grava eventos estiver no ar. Ver o cabeçalho da migration.
  *
  * SPEC-032. As três invariantes provadas aqui têm uma coisa em comum: **não
  * estão em código nenhum.** Estão em triggers e em chaves estrangeiras, e um
@@ -186,160 +191,6 @@ describe('FIT-016 — nada cruza empresa (INV-077)', () => {
       () => q(`DELETE FROM usuarios WHERE id='${USUARIO}'`),
       'acoes_autor_fkey',
     );
-  });
-});
-
-describe('FIT-017 — cancelar exige evento DESTA transição (INV-064)', () => {
-  /**
-   * Cada caso numa transação própria, e **todos forçam a constraint a
-   * IMMEDIATE antes de sair**. Sem isso o rollback chega antes do `COMMIT`,
-   * a trigger nunca julga, e a prova fica verde por não ter perguntado nada.
-   */
-  const emTransacao = (corpo: (tx: PrismaClient) => Promise<void>) =>
-    db.$transaction(async (tx) => {
-      await corpo(tx as unknown as PrismaClient);
-      await tx.$executeRawUnsafe(
-        `SET CONSTRAINTS "ocupacao_cancelada_exige_evento" IMMEDIATE`,
-      );
-      throw new Error('ROLLBACK_DA_PROVA');
-    });
-
-  const rolou = async (p: Promise<unknown>) =>
-    p.then(
-      () => 'passou',
-      (e: unknown) =>
-        String((e as Error).message).includes('ROLLBACK_DA_PROVA')
-          ? 'passou'
-          : (e as Error).message,
-    );
-
-  const cancelar = (tx: PrismaClient, oc: string, transicao: string) =>
-    tx.$executeRawUnsafe(
-      `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
-    );
-
-  const gravarEvento = (
-    tx: PrismaClient,
-    acao: string,
-    oc: string,
-    transicao: string,
-  ) =>
-    tx.$executeRawUnsafe(
-      `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
-       VALUES ('${uuid()}','${EMPRESA}','${acao}','${oc}','cancelada','${transicao}')`,
-    );
-
-  it('cancelar SEM evento é recusado', async () => {
-    const oc = await novaOcupacao('2027-02-01');
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await cancelar(tx, oc, uuid());
-      }),
-    );
-    expect(r).toContain('INV-064');
-  });
-
-  it('cancelar sem transicao_id é recusado', async () => {
-    const oc = await novaOcupacao('2027-02-02');
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `UPDATE ocupacoes_quadra SET status_pagamento='cancelado' WHERE id='${oc}'`,
-        );
-      }),
-    );
-    expect(r).toContain('INV-064');
-  });
-
-  it('cancelar COM evento da mesma transição passa', async () => {
-    const oc = await novaOcupacao('2027-02-03');
-    const acao = await novaAcao();
-    const t = uuid();
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await cancelar(tx, oc, t);
-        await gravarEvento(tx, acao, oc, t);
-      }),
-    );
-    expect(r).toBe('passou');
-  });
-
-  /**
-   * **O primeiro dos dois furos que derrubaram a versão com
-   * `transaction_timestamp()`.** O timestamp é o início da transação, não a
-   * identidade dela: o evento de qualquer transação iniciada depois
-   * satisfazia a exigência.
-   */
-  it('evento de OUTRA transição não serve', async () => {
-    const oc = await novaOcupacao('2027-02-04');
-    const acao = await novaAcao();
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await cancelar(tx, oc, uuid());
-        await gravarEvento(tx, acao, oc, uuid());
-      }),
-    );
-    expect(r).toContain('INV-064');
-  });
-
-  /** **O segundo furo.** Um evento não pode pagar por duas transições. */
-  it('cancelar → reativar → cancelar com UM evento é recusado', async () => {
-    const oc = await novaOcupacao('2027-02-05');
-    const acao = await novaAcao();
-    const t1 = uuid();
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await cancelar(tx, oc, t1);
-        await gravarEvento(tx, acao, oc, t1);
-        await tx.$executeRawUnsafe(
-          `UPDATE ocupacoes_quadra SET status_pagamento='pendente_pagamento' WHERE id='${oc}'`,
-        );
-        await cancelar(tx, oc, uuid());
-      }),
-    );
-    expect(r).toContain('INV-064');
-  });
-
-  /**
-   * O `DEFERRABLE` provado pelo caminho positivo: gravar o evento **antes**
-   * do cancelamento tem de passar. Se a trigger fosse imediata, a ordem
-   * natural do código — que grava a ocupação primeiro, porque o evento aponta
-   * para ela — falharia sempre.
-   */
-  it('evento gravado ANTES do cancelamento passa', async () => {
-    const oc = await novaOcupacao('2027-02-06');
-    const acao = await novaAcao();
-    const t = uuid();
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await gravarEvento(tx, acao, oc, t);
-        await cancelar(tx, oc, t);
-      }),
-    );
-    expect(r).toBe('passou');
-  });
-
-  it('mexer em outra coluna de ocupação já cancelada NÃO exige evento', async () => {
-    const oc = await novaOcupacao('2027-02-07');
-    const acao = await novaAcao();
-    const t = uuid();
-    await db.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${t}' WHERE id='${oc}'`,
-      );
-      await tx.$executeRawUnsafe(
-        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
-         VALUES ('${uuid()}','${EMPRESA}','${acao}','${oc}','cancelada','${t}')`,
-      );
-    });
-    const r = await rolou(
-      emTransacao(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `UPDATE ocupacoes_quadra SET updated_at=now() WHERE id='${oc}'`,
-        );
-      }),
-    );
-    expect(r).toBe('passou');
   });
 });
 
