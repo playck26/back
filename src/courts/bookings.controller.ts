@@ -63,6 +63,9 @@ export class BookingsController {
       { ...dto, alunoId },
       user.sub,
       idempotencyKey,
+      // SPEC-042 — o papel vai junto porque a regra do passado é assimétrica:
+      // o aluno não reserva horário que já começou, o gestor reserva (D-I5).
+      user.role === 'aluno' ? 'aluno' : 'company_admin',
     );
   }
 
