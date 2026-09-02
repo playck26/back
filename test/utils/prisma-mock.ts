@@ -67,6 +67,10 @@ export interface PrismaMock {
   ocupacaoQuadra: {
     groupBy: jest.Mock;
     findMany: jest.Mock;
+    // SPEC-041 — `count` entrou porque `GET /bookings` nunca tinha sido
+    // exercitada por e2e: a rota pagina desde a SPEC-027, e a contagem é
+    // metade do que ela promete.
+    count: jest.Mock;
     findFirst: jest.Mock;
     update: jest.Mock;
   };
@@ -136,6 +140,7 @@ export function buildPrismaMock(): PrismaMock {
     ocupacaoQuadra: {
       groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
       findFirst: jest.fn(),
       update: jest.fn(),
     },
