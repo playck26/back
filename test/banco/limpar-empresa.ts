@@ -38,6 +38,33 @@ export interface ClienteSql {
 }
 
 /**
+ * SPEC-032/TASK-005 — a limpeza passou a precisar de **transação própria**: a
+ * válvula das tabelas append-only é um GUC `is_local`, que morre com a
+ * transação. Sem transação não há escopo, e o salvo-conduto vazaria para a
+ * sessão inteira.
+ *
+ * A transação é aberta **aqui dentro**, e não nos 32 chamadores, de
+ * propósito: exigir que cada um lembrasse de envolver seria a mesma aposta
+ * que a lista incompleta já perdeu duas vezes neste arquivo.
+ */
+interface ComTransacao {
+  $transaction<T>(fn: (tx: ClienteSql) => Promise<T>): Promise<T>;
+}
+
+/**
+ * As tabelas que a trigger de append-only protege (SPEC-032/INV-061).
+ *
+ * O `DELETE` delas só passa dentro da transação da limpeza, e **como a role
+ * `playck_test_cleanup`** — que só existe no banco de testes, criada pelo
+ * `globalSetup`. Ver `bootstrap-role-de-limpeza.ts` para o porquê de não
+ * bastar o GUC.
+ */
+const APPEND_ONLY: ReadonlySet<string> = new Set([
+  'eventos_de_ocupacao',
+  'acoes_administrativas',
+]);
+
+/**
  * Tabelas com `company_id`, na ordem em que podem ser apagadas.
  * `turma_alunos` não aparece: não tem `company_id` e cai por cascata de
  * `turmas`.
@@ -49,6 +76,9 @@ export const TABELAS_DA_EMPRESA = [
   'avaliacoes_de_aula',
   'presencas',
   'chamadas',
+  // SPEC-032: ANTES de `ocupacoes_quadra` e de `acoes_administrativas` — o
+  // evento aponta para as duas por FK composta, com RESTRICT nas duas.
+  'eventos_de_ocupacao',
   'ocupacoes_quadra',
   'pedidos_reserva',
   'turmas',
@@ -70,6 +100,9 @@ export const TABELAS_DA_EMPRESA = [
   // `aceites` NAO entra: aponta para `usuarios`, com ON DELETE CASCADE, e cai
   // junto com eles. Poe-la aqui seria apagar por um caminho que ja apaga.
   'contratos_da_empresa',
+  // SPEC-032: DEPOIS de `eventos_de_ocupacao` (que aponta para ela) e ANTES
+  // de `usuarios` (o autor, com RESTRICT).
+  'acoes_administrativas',
   'usuarios',
 ] as const;
 
@@ -83,14 +116,41 @@ export async function limparEmpresa(
   cliente: ClienteSql,
   companyId: string,
 ): Promise<void> {
-  for (const tabela of TABELAS_DA_EMPRESA) {
-    await cliente.$executeRawUnsafe(
-      `DELETE FROM ${tabela} WHERE company_id = $1::uuid`,
+  // O `$transaction` do Prisma e SOBRECARREGADO (array | callback), e
+  // sobrecarga nao casa estruturalmente com uma interface de assinatura
+  // unica: o TypeScript para na primeira e reclama. O cast e local e o
+  // runtime e exatamente o mesmo — a alternativa era espalhar o
+  // `$transaction` pelos 32 chamadores.
+  const comTransacao = cliente as unknown as ComTransacao;
+  await comTransacao.$transaction(async (tx) => {
+    for (const tabela of TABELAS_DA_EMPRESA) {
+      if (APPEND_ONLY.has(tabela)) {
+        // A válvula, e ela é **estreita de propósito**: vale por uma
+        // instrução, dentro desta transação, e como uma role que não existe
+        // em produção. `RESET ROLE` logo depois para que o resto da limpeza
+        // volte a correr como o dono do schema.
+        await tx.$executeRawUnsafe(`SET LOCAL ROLE playck_test_cleanup`);
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('playck.limpeza_append_only', 'on', true)`,
+        );
+        await tx.$executeRawUnsafe(
+          `DELETE FROM ${tabela} WHERE company_id = $1::uuid`,
+          companyId,
+        );
+        await tx.$executeRawUnsafe(
+          `SELECT set_config('playck.limpeza_append_only', '', true)`,
+        );
+        await tx.$executeRawUnsafe(`RESET ROLE`);
+        continue;
+      }
+      await tx.$executeRawUnsafe(
+        `DELETE FROM ${tabela} WHERE company_id = $1::uuid`,
+        companyId,
+      );
+    }
+    await tx.$executeRawUnsafe(
+      `DELETE FROM empresas WHERE id = $1::uuid`,
       companyId,
     );
-  }
-  await cliente.$executeRawUnsafe(
-    `DELETE FROM empresas WHERE id = $1::uuid`,
-    companyId,
-  );
+  });
 }
