@@ -35,6 +35,7 @@ export class PaymentStatusController {
       user.companyId as string,
       id,
       dto.status,
+      user.sub,
     );
   }
 }

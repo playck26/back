@@ -318,6 +318,7 @@ export class CourtsService {
   async createBooking(
     companyId: string,
     dto: CreateBookingDto,
+    autorId: string,
     clientRequestId?: string,
   ) {
     const quadra = await this.buscarQuadraDaEmpresa(companyId, dto.quadraId);
@@ -412,25 +413,37 @@ export class CourtsService {
             })
           : null;
 
+        // SPEC-032/AC-001 e INV-078 — **UMA ação para o pedido inteiro**, N
+        // eventos. A identidade do comando lógico aqui é o PEDIDO, não o
+        // bloco: três blocos são um gesto do usuário, não três.
+        const registrador = new RegistradorDeAcao(
+          tx,
+          companyId,
+          autorId,
+          'reserva_criada',
+        );
+
         const resultado: OcupacaoParaResposta[] = [];
         for (const bloco of blocos) {
-          resultado.push(
-            await tx.ocupacaoQuadra.create({
-              data: {
-                companyId,
-                quadraId: dto.quadraId,
-                data: dataDate,
-                horaInicio: parseTimeOnly(bloco.horaInicio),
-                horaFim: parseTimeOnly(bloco.horaFim),
-                origemTipo: 'AVULSO',
-                alunoId: dto.alunoId,
-                // Congelado na criação (AC-004): reajustar o preço da
-                // quadra depois não mexe em reserva existente.
-                valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
-                pedidoId: pedido?.id,
-              },
-            }),
-          );
+          const transicaoId = novaTransicao();
+          const ocupacao = await tx.ocupacaoQuadra.create({
+            data: {
+              companyId,
+              quadraId: dto.quadraId,
+              data: dataDate,
+              horaInicio: parseTimeOnly(bloco.horaInicio),
+              horaFim: parseTimeOnly(bloco.horaFim),
+              origemTipo: 'AVULSO',
+              alunoId: dto.alunoId,
+              // Congelado na criação (AC-004): reajustar o preço da
+              // quadra depois não mexe em reserva existente.
+              valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
+              pedidoId: pedido?.id,
+              transicaoId,
+            },
+          });
+          await registrador.registrar(ocupacao.id, 'criada', transicaoId);
+          resultado.push(ocupacao);
         }
         return resultado;
       });
@@ -834,6 +847,7 @@ export class CourtsService {
     companyId: string,
     id: string,
     status: 'pago' | 'cancelado',
+    autorId: string,
   ) {
     const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
       where: { id, companyId },
@@ -869,9 +883,29 @@ export class CourtsService {
       });
     }
 
-    const atualizada = await this.prisma.ocupacaoQuadra.update({
-      where: { id },
-      data: { statusPagamento: status },
+    // SPEC-032 — esta rota tambem CANCELA (`status = 'cancelado'`), entao ela
+    // dispara a trigger `ocupacao_cancelada_exige_evento` e precisa da mesma
+    // atomicidade que o `cancelBooking`. O `pago` nao dispara a trigger, mas
+    // grava evento pela mesma razao do resto: sem autor, `updated_at` responde
+    // "quando" e ninguem responde "quem".
+    const atualizada = await this.prisma.$transaction(async (tx) => {
+      const transicaoId = novaTransicao();
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        status === 'pago' ? 'pagamento_confirmado' : 'reserva_cancelada',
+      );
+      const linha = await tx.ocupacaoQuadra.update({
+        where: { id },
+        data: { statusPagamento: status, transicaoId },
+      });
+      await registrador.registrar(
+        id,
+        status === 'pago' ? 'pagamento_confirmado' : 'cancelada',
+        transicaoId,
+      );
+      return linha;
     });
     return this.toOcupacaoResponse(atualizada);
   }

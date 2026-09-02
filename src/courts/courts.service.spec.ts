@@ -37,7 +37,12 @@ function buildPrismaMock() {
     ocupacaoQuadra: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
-      create: jest.fn(),
+      // SPEC-032: `createBooking` passou a LER a linha criada — o evento
+      // aponta para `ocupacao.id`. Antes o retorno era ignorado, e o dublê
+      // podia devolver `undefined`.
+      create: jest.fn().mockImplementation((args: { data: unknown }) =>
+        Promise.resolve({ id: 'oc-nova', ...(args?.data as object) }),
+      ),
       createMany: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -340,7 +345,7 @@ describe('CourtsService', () => {
           ...dto,
           horaInicio: '15:00',
           horaFim: '14:00',
-        }),
+        }, 'autor-1'),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
     });
 
@@ -358,7 +363,7 @@ describe('CourtsService', () => {
         statusPagamento: 'pendente_pagamento',
       });
 
-      const result = await service.createBooking('c1', dto, 'req-123');
+      const result = await service.createBooking('c1', dto, 'autor-1', 'req-123');
 
       expect(comoReserva(result).id).toBe('o1');
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
@@ -377,7 +382,7 @@ describe('CourtsService', () => {
       );
 
       await expect(
-        service.createBooking('c1', { ...dto, alunoId: 'a1' }, 'req-999'),
+        service.createBooking('c1', { ...dto, alunoId: 'a1' }, 'autor-1', 'req-999'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
@@ -389,7 +394,7 @@ describe('CourtsService', () => {
         origemTipo: 'TURMA',
       });
 
-      await expect(service.createBooking('c1', dto)).rejects.toBeInstanceOf(
+      await expect(service.createBooking('c1', dto, 'autor-1')).rejects.toBeInstanceOf(
         ConflictException,
       );
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
@@ -410,7 +415,7 @@ describe('CourtsService', () => {
         statusPagamento: 'pendente_pagamento',
       });
 
-      const result = await service.createBooking('c1', dto);
+      const result = await service.createBooking('c1', dto, 'autor-1');
 
       expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -441,7 +446,7 @@ describe('CourtsService', () => {
         ),
       );
 
-      await expect(service.createBooking('c1', dto)).rejects.toBeInstanceOf(
+      await expect(service.createBooking('c1', dto, 'autor-1')).rejects.toBeInstanceOf(
         ConflictException,
       );
     });
@@ -910,7 +915,7 @@ describe('CourtsService', () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.updatePaymentStatus('c1', 'o1', 'pago'),
+        service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -934,11 +939,14 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
       });
 
-      const result = await service.updatePaymentStatus('c1', 'o1', 'pago');
+      const result = await service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1');
 
       expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
         where: { id: 'o1' },
-        data: { statusPagamento: 'pago' },
+        data: {
+          statusPagamento: 'pago',
+          transicaoId: expect.any(String) as unknown as string,
+        },
       });
       expect(result.statusPagamento).toBe('pago');
     });
@@ -956,7 +964,7 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
       });
 
-      const result = await service.updatePaymentStatus('c1', 'o1', 'pago');
+      const result = await service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1');
 
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       expect(result.statusPagamento).toBe('pago');
@@ -1066,6 +1074,7 @@ describe('CourtsService', () => {
             horaInicio: '10:00',
             horaFim: '11:00',
           },
+          'autor-1',
           'req-fora',
         )
         .catch((e: Error) => e)) as { response?: { code?: string } };
@@ -1105,7 +1114,7 @@ describe('CourtsService', () => {
       });
 
       const erro = (await service
-        .updatePaymentStatus('c1', 'o1', 'pago')
+        .updatePaymentStatus('c1', 'o1', 'pago', 'autor-1')
         .catch((e: Error) => e)) as { response?: { code?: string } };
 
       expect((erro as unknown) instanceof UnprocessableEntityException).toBe(
@@ -1123,7 +1132,7 @@ describe('CourtsService', () => {
       });
 
       const erro = (await service
-        .updatePaymentStatus('c1', 'o1', 'pago')
+        .updatePaymentStatus('c1', 'o1', 'pago', 'autor-1')
         .catch((e: Error) => e)) as { response?: { code?: string } };
 
       expect(erro.response?.code).toBe('OCUPACAO_DE_TURMA');
@@ -1152,7 +1161,7 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
       });
 
-      const r = await service.updatePaymentStatus('c1', 'o1', 'pago');
+      const r = await service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1');
 
       expect(r.statusPagamento).toBe('pago');
     });
@@ -1215,7 +1224,7 @@ describe('CourtsService', () => {
           { horaInicio: '09:00', horaFim: '10:00' },
           { horaInicio: '10:00', horaFim: '11:00' },
         ],
-      })) as { reservas: unknown[] };
+      }, 'autor-1')) as { reservas: unknown[] };
 
       expect(r.reservas).toHaveLength(1);
       expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(1);
@@ -1238,7 +1247,7 @@ describe('CourtsService', () => {
           { horaInicio: '09:00', horaFim: '10:00' },
           { horaInicio: '15:00', horaFim: '16:00' },
         ],
-      })) as { reservas: unknown[] };
+      }, 'autor-1')) as { reservas: unknown[] };
 
       expect(r.reservas).toHaveLength(2);
       expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(2);
@@ -1262,7 +1271,7 @@ describe('CourtsService', () => {
             { horaInicio: '09:00', horaFim: '10:00' },
             { horaInicio: '10:00', horaFim: '11:00' },
           ],
-        }),
+        }, 'autor-1'),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
 
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
@@ -1297,6 +1306,7 @@ describe('CourtsService', () => {
           data: '2026-08-24',
           slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
         },
+        'autor-1',
         'chave-1',
       )) as { reservas: { id: string }[] };
 
@@ -1353,7 +1363,7 @@ describe('CourtsService', () => {
         slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
       });
 
-      const r = (await service.createBooking('c1', retry, 'chave-1')) as {
+      const r = (await service.createBooking('c1', retry, 'autor-1', 'chave-1')) as {
         reservas: { id: string }[];
       };
 
@@ -1384,6 +1394,7 @@ describe('CourtsService', () => {
             data: '2026-08-24',
             slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
           }),
+          'autor-1',
           'chave-1',
         )
         .catch((e: Error) => e)) as { response?: { code?: string } };
@@ -1413,6 +1424,7 @@ describe('CourtsService', () => {
             data: '2026-08-24',
             slots: [{ horaInicio: '15:00', horaFim: '16:00' }],
           },
+          'autor-1',
           'chave-1',
         )
         .catch((e: Error) => e)) as { response?: { code?: string } };
@@ -1461,6 +1473,7 @@ describe('CourtsService', () => {
             { horaInicio: '10:00', horaFim: '11:00' },
           ],
         },
+        'autor-1',
         'chave-antiga',
       )) as { reservas: { valor: number }[] };
 
@@ -1475,7 +1488,7 @@ describe('CourtsService', () => {
         data: '2026-08-24',
         horaInicio: '09:00',
         horaFim: '10:00',
-      });
+      }, 'autor-1');
 
       expect(comoReserva(r).id).toBeDefined();
       expect((r as { reservas?: unknown[] }).reservas).toBeUndefined();

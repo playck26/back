@@ -56,6 +56,7 @@ export class BookingsController {
     return this.courtsService.createBooking(
       user.companyId as string,
       { ...dto, alunoId },
+      user.sub,
       idempotencyKey,
     );
   }
