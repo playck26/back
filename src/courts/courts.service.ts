@@ -21,6 +21,7 @@ import {
   parseDateOnly,
   parseTimeOnly,
   recorteTemporal,
+  aulaJaComecou,
 } from './date-time.util';
 
 /**
@@ -352,6 +353,19 @@ export class CourtsService {
     dto: CreateBookingDto,
     autorId: string,
     clientRequestId?: string,
+    /**
+     * SPEC-042 — **o papel decide se o passado é permitido.**
+     *
+     * O aluno nunca reserva um horário que já começou. O gestor reserva,
+     * porque registrar jogo que já aconteceu é trabalho real de fechar caixa
+     * — e o projeto já trata essa assimetria assim na presença, com janela
+     * retroativa para o professor.
+     *
+     * Opcional com padrão `company_admin` para não quebrar chamador interno:
+     * quem gera ocupação de turma passa por outro caminho
+     * (`registerClassOccupancy`) e não por aqui.
+     */
+    papelDoAutor: 'aluno' | 'company_admin' = 'company_admin',
   ) {
     const quadra = await this.buscarQuadraDaEmpresa(companyId, dto.quadraId);
 
@@ -396,6 +410,32 @@ export class CourtsService {
     );
 
     for (const bloco of blocos) {
+      /**
+       * SPEC-042/INV-093 — **o aluno não reserva o que já começou.**
+       *
+       * Antes desta guarda não havia **uma linha** de comparação temporal em
+       * todo o caminho de `POST /bookings`: o DTO valida só o formato da
+       * data, o expediente confere **dia da semana** (uma quarta de 1998 abre
+       * igual), e a `EXCLUDE` de sobreposição não pega passado porque passado
+       * não colide com nada. Sete ocupações chegaram a nascer assim em
+       * produção.
+       *
+       * Vem **antes** do expediente pela mesma razão que o comentário abaixo
+       * dá para o conflito: responder "fora do expediente" para quem tentou
+       * ontem às 19h mentiria sobre o motivo da recusa.
+       */
+      if (
+        papelDoAutor === 'aluno' &&
+        aulaJaComecou(dataDate, parseTimeOnly(bloco.horaInicio))
+      ) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'HORARIO_NO_PASSADO',
+          message: 'Não é possível reservar um horário que já começou.',
+          bloco,
+        });
+      }
+
       // INV-011 antes do conflito: horário fora do expediente é inválido
       // mesmo com a quadra livre, e responder "conflito" mentiria sobre o
       // motivo. O bloco precisa caber **inteiro** — meia reserva aceita
@@ -906,6 +946,33 @@ export class CourtsService {
       // cada retentativa de rede.
       if (ocupacao.statusPagamento === 'cancelado') {
         return;
+      }
+
+      /**
+       * SPEC-042/INV-094 — **o aluno não cancela o que já começou.**
+       *
+       * Decisão do Israel (D-I5): o horário foi consumido, a quadra ficou
+       * ocupada, e cancelar depois é apagar uma cobrança legítima. O gestor
+       * continua podendo — ele precisa corrigir lançamento errado, e é por
+       * isso que a guarda olha `alunoIdScope`, que só existe para aluno.
+       *
+       * **Depois da saída idempotente, de propósito.** Uma retentativa de
+       * rede de um cancelamento que já deu certo tem de continuar devolvendo
+       * sucesso; posta antes, ela passaria a devolver erro pelo simples fato
+       * de o horário ter chegado nesse meio-tempo.
+       *
+       * O corte é pelo **início**, não pelo fim — diferente do corte das abas
+       * (SPEC-041/D-I4), e não é incoerência: lá a pergunta é "onde isto
+       * aparece", aqui é "ainda dá para desfazer". Uma reserva das 19h às 21h
+       * consultada às 20h continua na aba `Reservas` **e** já não é
+       * cancelável, porque a pessoa está na quadra.
+       */
+      if (alunoIdScope && aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'RESERVA_JA_COMECOU',
+          message: 'Esta reserva já começou e não pode mais ser cancelada.',
+        });
       }
 
       const transicaoId = novaTransicao();

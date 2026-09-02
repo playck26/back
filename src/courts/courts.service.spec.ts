@@ -467,6 +467,139 @@ describe('CourtsService', () => {
       expect(comoReserva(result).statusPagamento).toBe('pendente_pagamento');
     });
 
+    /**
+     * SPEC-042 — **o passado, e a assimetria entre aluno e gestor.**
+     *
+     * Antes desta guarda não havia UMA comparação temporal em todo o caminho
+     * de `POST /bookings`. Sete ocupações nasceram assim em produção, duas
+     * ainda vivas quando o Israel reportou.
+     *
+     * Os testes acima passam com `data: '2026-08-20'`, que é passado — e
+     * continuam passando **porque o papel padrão do método é
+     * `company_admin`**, que pode. Isso não é descuido do fixture: é a
+     * assimetria funcionando.
+     */
+    describe('data no passado (SPEC-042/D-I5)', () => {
+      // 2026-09-15, 20h no fuso do clube. Todo `agora` aqui é explícito.
+      const AS_20H = new Date('2026-09-15T23:00:00.000Z');
+
+      beforeEach(() => {
+        jest.useFakeTimers().setSystemTime(AS_20H);
+        (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      });
+
+      afterEach(() => {
+        jest.useRealTimers();
+      });
+
+      const naData = (data: string, horaInicio: string, horaFim: string) => ({
+        quadraId: 'q1',
+        data,
+        horaInicio,
+        horaFim,
+        alunoId: 'a1',
+      });
+
+      it('ALUNO: recusa dia que já passou, com 422 e código próprio', async () => {
+        await expect(
+          service.createBooking(
+            'c1',
+            naData('2026-09-14', '14:00', '15:00'),
+            'autor-1',
+            undefined,
+            'aluno',
+          ),
+        ).rejects.toMatchObject({
+          response: { code: 'HORARIO_NO_PASSADO' },
+        });
+        expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
+      });
+
+      it('ALUNO: recusa hora que já passou HOJE — o caso que o dia sozinho não pega', async () => {
+        // São 20h. O slot das 8h de hoje é passado, e um corte por dia o
+        // deixaria passar: mesma data de hoje, tudo liberado.
+        await expect(
+          service.createBooking(
+            'c1',
+            naData('2026-09-15', '08:00', '09:00'),
+            'autor-1',
+            undefined,
+            'aluno',
+          ),
+        ).rejects.toMatchObject({
+          response: { code: 'HORARIO_NO_PASSADO' },
+        });
+      });
+
+      it('ALUNO: aceita hora que ainda não começou hoje', async () => {
+        (prisma.ocupacaoQuadra.create as jest.Mock).mockResolvedValue({
+          id: 'o1',
+          companyId: 'c1',
+          quadraId: 'q1',
+          data: new Date('2026-09-15T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T21:00:00.000Z'),
+          horaFim: new Date('1970-01-01T22:00:00.000Z'),
+          origemTipo: 'AVULSO',
+          alunoId: 'a1',
+          statusPagamento: 'pendente_pagamento',
+        });
+
+        await service.createBooking(
+          'c1',
+          naData('2026-09-15', '21:00', '22:00'),
+          'autor-1',
+          undefined,
+          'aluno',
+        );
+
+        expect(prisma.ocupacaoQuadra.create).toHaveBeenCalled();
+      });
+
+      it('ALUNO: a recusa vem ANTES do expediente — a mensagem não mente sobre o motivo', async () => {
+        // 05h de ontem é passado E fora do expediente. Se a ordem estivesse
+        // trocada, o aluno leria "fora do expediente" para uma tentativa cujo
+        // problema é outro — e tentaria de novo às 8h do mesmo dia passado.
+        await expect(
+          service.createBooking(
+            'c1',
+            naData('2026-09-14', '05:00', '06:00'),
+            'autor-1',
+            undefined,
+            'aluno',
+          ),
+        ).rejects.toMatchObject({
+          response: { code: 'HORARIO_NO_PASSADO' },
+        });
+      });
+
+      it('GESTOR: reserva no passado continua permitida (D-I5)', async () => {
+        // Registrar jogo que já aconteceu, para cobrar. É trabalho real de
+        // fechar caixa, e foi decisão do Israel manter.
+        (prisma.ocupacaoQuadra.create as jest.Mock).mockResolvedValue({
+          id: 'o1',
+          companyId: 'c1',
+          quadraId: 'q1',
+          data: new Date('2026-09-14T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+          origemTipo: 'AVULSO',
+          alunoId: 'a1',
+          statusPagamento: 'pendente_pagamento',
+        });
+
+        await service.createBooking(
+          'c1',
+          naData('2026-09-14', '14:00', '15:00'),
+          'autor-1',
+          undefined,
+          'company_admin',
+        );
+
+        expect(prisma.ocupacaoQuadra.create).toHaveBeenCalled();
+      });
+    });
+
     it('corrida perdida na constraint EXCLUDE vira 409 (INV-001, mesma lógica do FIT-001)', async () => {
       // A violação da EXCLUDE constraint (código Postgres 23P01) não tem
       // P-código dedicado no Prisma, então chega como
@@ -1094,10 +1227,18 @@ describe('CourtsService', () => {
     });
 
     it('com alunoIdScope, cancela a própria reserva normalmente', async () => {
+      // SPEC-042 — **a fixture ganhou `data` e `horaInicio`, e não tinha.**
+      // Ela descrevia uma ocupação sem horário nenhum, o que não existe no
+      // banco (as duas colunas são NOT NULL). Passava porque nada olhava
+      // para elas; a guarda de "já começou" foi o primeiro código a olhar, e
+      // estourou. Fixture mais pobre que a tabela é defeito adormecido.
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-15T23:00:00.000Z'));
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
         alunoId: 'a1',
+        data: new Date('2026-09-16T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
       });
       (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
 
@@ -1111,6 +1252,100 @@ describe('CourtsService', () => {
           statusPagamento: 'cancelado',
           transicaoId: expect.any(String),
         },
+      });
+      jest.useRealTimers();
+    });
+
+    /**
+     * SPEC-042/D-I5 — **começou, acabou: o aluno não desfaz.**
+     *
+     * O horário foi consumido e a quadra ficou ocupada; cancelar depois é
+     * apagar uma cobrança legítima. O gestor continua podendo, porque
+     * corrigir lançamento errado é trabalho dele.
+     */
+    describe('reserva que já começou (SPEC-042)', () => {
+      const AS_20H = new Date('2026-09-15T23:00:00.000Z');
+
+      const ocupacaoDe = (dia: string, hora: string) => ({
+        id: 'o1',
+        companyId: 'c1',
+        alunoId: 'a1',
+        origemTipo: 'AVULSO' as const,
+        statusPagamento: 'pendente_pagamento' as const,
+        data: new Date(`${dia}T00:00:00.000Z`),
+        horaInicio: new Date(`1970-01-01T${hora}:00.000Z`),
+      });
+
+      beforeEach(() => {
+        jest.useFakeTimers().setSystemTime(AS_20H);
+        (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
+      });
+
+      afterEach(() => {
+        jest.useRealTimers();
+      });
+
+      it('ALUNO: 409 ao cancelar reserva que já começou', async () => {
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
+          ocupacaoDe('2026-09-15', '19:00'),
+        );
+
+        await expect(
+          service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
+        ).rejects.toMatchObject({
+          response: { code: 'RESERVA_JA_COMECOU' },
+        });
+        expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+      });
+
+      it('ALUNO: a reserva das 19h às 21h já não é cancelável às 20h, ainda que apareça em "Reservas"', async () => {
+        // O corte aqui é pelo INÍCIO; o das abas (SPEC-041/D-I4) é pelo FIM.
+        // Não é incoerência: lá a pergunta é "onde isto aparece", aqui é
+        // "ainda dá para desfazer". A pessoa está na quadra.
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
+          ocupacaoDe('2026-09-15', '19:00'),
+        );
+
+        await expect(
+          service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
+        ).rejects.toMatchObject({ response: { code: 'RESERVA_JA_COMECOU' } });
+      });
+
+      it('ALUNO: reserva que ainda não começou hoje continua cancelável', async () => {
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
+          ocupacaoDe('2026-09-15', '21:00'),
+        );
+
+        await service.cancelBooking('c1', 'o1', 'autor-1', 'a1');
+
+        expect(prisma.ocupacaoQuadra.update).toHaveBeenCalled();
+      });
+
+      it('GESTOR: cancela reserva passada — precisa corrigir lançamento errado', async () => {
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
+          ocupacaoDe('2026-09-14', '19:00'),
+        );
+
+        // Sem `alunoIdScope` = é gestor. Mesmo sinal que a rota já usava para
+        // decidir escopo; nenhuma assinatura mudou.
+        await service.cancelBooking('c1', 'o1', 'autor-1');
+
+        expect(prisma.ocupacaoQuadra.update).toHaveBeenCalled();
+      });
+
+      it('idempotência vence a guarda: recancelar o que já está cancelado segue sem erro', async () => {
+        // **A ordem importa.** Posta antes da saída idempotente, a guarda
+        // faria uma retentativa de rede de um cancelamento que já deu certo
+        // passar a responder 409 — só porque o horário chegou nesse meio-tempo.
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+          ...ocupacaoDe('2026-09-15', '19:00'),
+          statusPagamento: 'cancelado',
+        });
+
+        await expect(
+          service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
+        ).resolves.toBeUndefined();
+        expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       });
     });
   });

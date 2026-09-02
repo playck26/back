@@ -697,6 +697,13 @@ corrente. O que mudou de verdade não foi a conversão, foi o **gate** em
 `date-time.util.ts`, que calcule "hoje" a partir do relógio do servidor.
 Documentar o defeito não o impede — foi o que este parágrafo provou.
 
+**SPEC-042 achou a outra metade do buraco, um dia depois.** O gate procura quem
+calcula "hoje" **errado**. `createBooking` não calculava "hoje" de jeito nenhum
+— não havia **uma linha** de comparação temporal em todo o caminho de
+`POST /bookings`, e sete ocupações nasceram no passado em produção antes de
+alguém reparar. **O gate pega "hoje" errado, não "hoje" ausente**, e ausência é
+o modo de falha mais silencioso dos dois.
+
 **E o gate não prova o que parece provar, o que a SPEC-041 obrigou a escrever
 aqui.** Ele varre bem — 224 arquivos, código sem comentários, com
 anti-vacuidade — mas **proíbe um token só**: `getUTCFullYear()`. Um
@@ -832,6 +839,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | 4 | **`courts/` acumula 4 controllers e ~750 linhas de service.** Ainda coeso (tudo toca a linha do tempo), mas é o candidato natural a divisão | Média |
 | 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008). `presencas` é base para resolver, mas **não resolve** — remarcar exige estado além de presente/ausente/justificado | Média — adiado por decisão |
 | 6 | Cancelar parte de um bloco de reserva não é suportado (GAP-013) | Baixa |
+| 7 | **A regra do passado é assimétrica por papel, e mora só na aplicação** (SPEC-042, D-I5): o aluno não cria nem cancela horário já começado; o gestor faz os dois, porque fechar caixa e corrigir lançamento errado são trabalho real. **Não há CHECK que possa sustentar isso** — a regra depende de quem pede, e o banco não conhece papel. Sete ocupações passadas nasceram antes da guarda e **ficaram**: duas com cobrança em aberto, e apagar cobrança por script é pior que a origem | Média — invariante só de aplicação, por impossibilidade e não por descuido |
 | 7 | Sem e-mail transacional (GAP-004): recuperação de senha é manual, via admin | Baixa — ADR-013 |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
 | 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
