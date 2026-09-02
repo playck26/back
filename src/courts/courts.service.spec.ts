@@ -44,6 +44,12 @@ function buildPrismaMock() {
         Promise.resolve({ id: 'oc-nova', ...(args?.data as object) }),
       ),
       createMany: jest.fn(),
+      // SPEC-032: o evento precisa do `id` de cada linha, entao as escritas
+      // de turma usam as variantes que RETORNAM.
+      createManyAndReturn: jest.fn().mockImplementation((a: { data?: unknown[] }) =>
+        Promise.resolve((a?.data ?? []).map((_, i) => ({ id: `oc-${i}` }))),
+      ),
+      updateManyAndReturn: jest.fn().mockResolvedValue([{ id: 'oc-1' }]),
       update: jest.fn(),
       updateMany: jest.fn(),
       count: jest.fn(),
@@ -64,6 +70,22 @@ function buildPrismaMock() {
     },
     $transaction: jest.fn(),
   } as unknown as PrismaService;
+}
+
+/**
+ * SPEC-032 — o registrador que as escritas de turma recebem.
+ *
+ * Dublê e nao a classe real porque estes testes sao de OCUPACAO: o que eles
+ * precisam provar e que o servico chama `registrar` uma vez por linha
+ * escrita, com o `transicaoId` que ele gravou. A preguica da acao tem prova
+ * propria, em `registrador-de-acao.spec.ts`.
+ */
+function registradorFalso() {
+  return {
+    registrar: jest.fn().mockResolvedValue(undefined),
+    registrarMuitos: jest.fn().mockResolvedValue(undefined),
+    idDaAcao: null,
+  } as unknown as import('../common/auditoria/registrador-de-acao').RegistradorDeAcao;
 }
 
 const QUADRA_ATIVA = {
@@ -509,11 +531,12 @@ describe('CourtsService', () => {
           'q1',
           't1',
           tres,
+          registradorFalso(),
         ),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
 
       // Nada gravado: a turma inteira é recusada, não parcialmente criada.
-      expect(prisma.ocupacaoQuadra.createMany).not.toHaveBeenCalled();
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).not.toHaveBeenCalled();
     });
 
     // Chamado por MOD-004 (ClassesService) dentro de sua própria transação
@@ -535,9 +558,9 @@ describe('CourtsService', () => {
 
     it('gera as ocupações via createMany numa única chamada quando não há conflito (NFR-002)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockResolvedValue({
-        count: 2,
-      });
+      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockResolvedValue([
+        { id: 'oc-0' }, { id: 'oc-1' },
+      ]);
 
       await service.registerClassOccupancy(
         prisma,
@@ -545,10 +568,14 @@ describe('CourtsService', () => {
         'q1',
         't1',
         ocorrencias,
+        registradorFalso(),
       );
 
-      expect(prisma.ocupacaoQuadra.createMany).toHaveBeenCalledTimes(1);
-      expect(prisma.ocupacaoQuadra.createMany).toHaveBeenCalledWith({
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).toHaveBeenCalledTimes(1);
+      // SPEC-032: a linha ganhou `transicaoId` (o mesmo para todas — e UMA
+      // transicao afetando N ocorrencias) e a chamada ganhou `select`, porque
+      // o evento precisa do `id` de cada linha criada.
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).toHaveBeenCalledWith({
         data: ocorrencias.map((ocorrencia) => ({
           companyId: 'c1',
           quadraId: 'q1',
@@ -557,7 +584,9 @@ describe('CourtsService', () => {
           horaFim: ocorrencia.horaFim,
           origemTipo: 'TURMA',
           origemTurmaId: 't1',
+          transicaoId: expect.any(String) as unknown as string,
         })),
+        select: { id: true },
       });
     });
 
@@ -571,9 +600,9 @@ describe('CourtsService', () => {
      */
     it('julga todas as ocorrências numa consulta só (AC-001)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockResolvedValue({
-        count: 2,
-      });
+      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockResolvedValue([
+        { id: 'oc-0' }, { id: 'oc-1' },
+      ]);
 
       await service.registerClassOccupancy(
         prisma,
@@ -581,6 +610,7 @@ describe('CourtsService', () => {
         'q1',
         't1',
         ocorrencias,
+        registradorFalso(),
       );
 
       expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledTimes(1);
@@ -607,14 +637,15 @@ describe('CourtsService', () => {
           'q1',
           't1',
           ocorrencias,
+          registradorFalso(),
         ),
       ).rejects.toBeInstanceOf(ConflictException);
-      expect(prisma.ocupacaoQuadra.createMany).not.toHaveBeenCalled();
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).not.toHaveBeenCalled();
     });
 
     it('corrida perdida na constraint EXCLUDE durante createMany vira 409 (INV-001)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockRejectedValue(
+      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockRejectedValue(
         new Prisma.PrismaClientUnknownRequestError(
           'conflicting key value violates exclusion constraint "no_overlap_por_quadra"',
           { clientVersion: '6.19.3' },
@@ -628,6 +659,7 @@ describe('CourtsService', () => {
           'q1',
           't1',
           ocorrencias,
+          registradorFalso(),
         ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
@@ -640,7 +672,7 @@ describe('CourtsService', () => {
      */
     it('P2028 durante createMany NÃO vira 409 (DEF-013)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createMany as jest.Mock).mockRejectedValue(
+      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError(
           'Transaction already closed: A query cannot be executed on an expired transaction.',
           {
@@ -658,6 +690,7 @@ describe('CourtsService', () => {
           'q1',
           't1',
           ocorrencias,
+          registradorFalso(),
         ),
       ).rejects.toMatchObject({ code: 'P2028' });
     });
@@ -728,11 +761,12 @@ describe('CourtsService', () => {
           QUADRA_UUID.toUpperCase(),
           't1',
           as('07:00', '08:00'),
+          registradorFalso(),
         ),
       ).rejects.toMatchObject({ response: { code: 'FORA_DO_EXPEDIENTE' } });
 
       // O que importa não é o 422: é não ter gravado.
-      expect(prisma.ocupacaoQuadra.createMany).not.toHaveBeenCalled();
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).not.toHaveBeenCalled();
     });
 
     it('09h com quadraId em MAIÚSCULAS é ACEITA — normalizar não é recusar tudo', async () => {
@@ -747,22 +781,25 @@ describe('CourtsService', () => {
         QUADRA_UUID.toUpperCase(),
         't1',
         as('09:00', '10:00'),
+        registradorFalso(),
       );
 
-      expect(prisma.ocupacaoQuadra.createMany).toHaveBeenCalled();
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).toHaveBeenCalled();
     });
   });
 
   describe('cancelFutureClassOccupancies', () => {
     it('marca como cancelado só as ocupações futuras de TURMA ainda não canceladas', async () => {
-      (prisma.ocupacaoQuadra.updateMany as jest.Mock).mockResolvedValue({
-        count: 3,
-      });
+      (prisma.ocupacaoQuadra.updateManyAndReturn as jest.Mock).mockResolvedValue([
+        { id: 'oc-0' }, { id: 'oc-1' }, { id: 'oc-2' },
+      ]);
 
       const aPartirDe = new Date('2026-08-20T00:00:00.000Z');
-      await service.cancelFutureClassOccupancies(prisma, 'c1', 't1', aPartirDe);
+      await service.cancelFutureClassOccupancies(prisma, 'c1', 't1', aPartirDe,
+        registradorFalso(),
+      );
 
-      expect(prisma.ocupacaoQuadra.updateMany).toHaveBeenCalledWith({
+      expect(prisma.ocupacaoQuadra.updateManyAndReturn).toHaveBeenCalledWith({
         where: {
           companyId: 'c1',
           origemTipo: 'TURMA',
@@ -770,7 +807,13 @@ describe('CourtsService', () => {
           statusPagamento: { not: 'cancelado' },
           data: { gte: aPartirDe },
         },
-        data: { statusPagamento: 'cancelado' },
+        // SPEC-032: uma transicao para as N ocorrencias canceladas, e o
+        // `select` porque o evento precisa do `id` de cada uma.
+        data: {
+          statusPagamento: 'cancelado',
+          transicaoId: expect.any(String) as unknown as string,
+        },
+        select: { id: true },
       });
     });
   });

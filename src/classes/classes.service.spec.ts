@@ -12,6 +12,20 @@ import {
 import type { StudentsService } from '../people/students.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClassesService } from './classes.service';
+import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
+
+/**
+ * SPEC-032 — dublê do registrador de acao. Ver `registrador-de-acao.spec.ts`
+ * para a prova da preguica; aqui o que importa e que o servico o repassa.
+ */
+function registradorFalso() {
+  return {
+    registrar: jest.fn().mockResolvedValue(undefined),
+    registrarMuitos: jest.fn().mockResolvedValue(undefined),
+    idDaAcao: null,
+  } as unknown as import('../common/auditoria/registrador-de-acao').RegistradorDeAcao;
+}
+
 
 // TEST-004 (SPEC-003, fatia de turmas): unit tests de MOD-004 com Prisma e
 // CourtsService (MOD-005) mockados. A garantia física de INV-001 (sem
@@ -141,7 +155,7 @@ describe('ClassesService', () => {
         service.create('c1', {
           ...dto,
           encontros: [{ diaSemana: 2, horaInicio: '15:00', horaFim: '14:00' }],
-        }),
+        }, 'autor-1',),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -151,7 +165,7 @@ describe('ClassesService', () => {
       // transação seria abrir transação para descobrir que não havia o que
       // gravar.
       await expect(
-        service.create('c1', { ...dto, encontros: [] }),
+        service.create('c1', { ...dto, encontros: [] }, 'autor-1',),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -164,7 +178,7 @@ describe('ClassesService', () => {
             { diaSemana: 2, horaInicio: '18:00', horaFim: '19:00' },
             { diaSemana: 2, horaInicio: '18:30', horaFim: '19:30' },
           ],
-        }),
+        }, 'autor-1',),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -172,7 +186,7 @@ describe('ClassesService', () => {
     it('lança 404 se a quadra não é da empresa', async () => {
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(null);
 
-      await expect(service.create('c1', dto)).rejects.toBeInstanceOf(
+      await expect(service.create('c1', dto, 'autor-1')).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -200,7 +214,7 @@ describe('ClassesService', () => {
         ],
       });
 
-      const result = await service.create('c1', dto);
+      const result = await service.create('c1', dto, 'autor-1');
 
       const ocorrenciasEsperadas = gerarDatasSemanaisFuturas(
         dto.encontros[0].diaSemana,
@@ -216,6 +230,10 @@ describe('ClassesService', () => {
         'q1',
         't1',
         ocorrenciasEsperadas,
+        // SPEC-032/INV-078 — o registrador vem de FORA, e e o mesmo objeto
+        // nas duas metades da edicao de horario. E isso que torna "editar o
+        // horario" UM gesto com dois tipos de evento, em vez de dois gestos.
+        expect.any(RegistradorDeAcao),
       );
       expect(result.id).toBe('t1');
       expect(result.alunosAlocados).toBe(0);
@@ -232,7 +250,7 @@ describe('ClassesService', () => {
         }),
       );
 
-      await expect(service.create('c1', dto)).rejects.toBeInstanceOf(
+      await expect(service.create('c1', dto, 'autor-1')).rejects.toBeInstanceOf(
         ConflictException,
       );
     });
@@ -283,7 +301,7 @@ describe('ClassesService', () => {
           { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
           { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
         ],
-      });
+      }, 'autor-1',);
 
       expect(ocorrenciasRegistradas()).toHaveLength(24);
     });
@@ -299,7 +317,7 @@ describe('ClassesService', () => {
           { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
           { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
         ],
-      });
+      }, 'autor-1',);
 
       const porDia = new Map<number, Set<string>>();
       for (const o of ocorrenciasRegistradas()) {
@@ -327,7 +345,7 @@ describe('ClassesService', () => {
           { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
           { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
         ],
-      });
+      }, 'autor-1',);
 
       expect(courtsServiceMock.registerClassOccupancy).toHaveBeenCalledTimes(1);
     });
@@ -345,7 +363,7 @@ describe('ClassesService', () => {
             { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
             { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
           ],
-        }),
+        }, 'autor-1',),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -364,7 +382,7 @@ describe('ClassesService', () => {
       (prisma.turma.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.update('c1', 't1', { nome: 'Nova' }),
+        service.update('c1', 't1', { nome: 'Nova' }, 'autor-1'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -434,7 +452,9 @@ describe('ClassesService', () => {
             { diaSemana: 3, horaInicio: '18:00', horaFim: '19:00' },
             { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
           ],
-        });
+        },
+        'autor-1',
+      );
 
         expect(
           courtsServiceMock.cancelFutureClassOccupancies,
@@ -447,7 +467,9 @@ describe('ClassesService', () => {
 
         await service.update('c1', 't1', {
           encontros: [{ diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' }],
-        });
+        },
+        'autor-1',
+      );
 
         const dias = new Set(
           ocorrenciasGeradas().map((o) => o.data.getUTCDay()),
@@ -465,7 +487,9 @@ describe('ClassesService', () => {
 
         await service.update('c1', 't1', {
           encontros: [{ diaSemana: 5, horaInicio: '20:00', horaFim: '21:00' }],
-        });
+        },
+        'autor-1',
+      );
 
         const dias = new Set(
           ocorrenciasGeradas().map((o) => o.data.getUTCDay()),
@@ -479,7 +503,7 @@ describe('ClassesService', () => {
         // vem do banco, e é por isso que ela é validada mesmo assim.
         prontoParaEditar(DOIS);
 
-        await service.update('c1', 't1', { quadraId: 'q2' });
+        await service.update('c1', 't1', { quadraId: 'q2' }, 'autor-1');
 
         expect(prisma.turmaEncontro.findMany).toHaveBeenCalled();
         expect(ocorrenciasGeradas()).toHaveLength(16);
@@ -506,7 +530,7 @@ describe('ClassesService', () => {
         });
       tx.turma.update.mockResolvedValue({ id: 't1' });
 
-      await service.update('c1', 't1', { nome: 'Nova' });
+      await service.update('c1', 't1', { nome: 'Nova' }, 'autor-1');
 
       expect(
         courtsServiceMock.cancelFutureClassOccupancies,
@@ -536,18 +560,41 @@ describe('ClassesService', () => {
 
       await service.update('c1', 't1', {
         encontros: [{ diaSemana: 2, horaInicio: '16:00', horaFim: '17:00' }],
-      });
+      },
+      'autor-1',
+    );
 
       expect(
         courtsServiceMock.cancelFutureClassOccupancies,
-      ).toHaveBeenCalledWith(tx, 'c1', 't1', expect.any(Date));
+        // SPEC-032/D2 — **o MESMO registrador** vai para as duas chamadas.
+        // Editar o horario cancela as antigas e cria as novas a partir de UM
+        // `PATCH`: e uma acao com dois tipos de evento, nao duas acoes.
+      ).toHaveBeenCalledWith(
+        tx,
+        'c1',
+        't1',
+        expect.any(Date),
+        expect.any(RegistradorDeAcao),
+      );
       expect(courtsServiceMock.registerClassOccupancy).toHaveBeenCalledWith(
         tx,
         'c1',
         'q1',
         't1',
         expect.any(Array),
+        expect.any(RegistradorDeAcao),
       );
+
+      // SPEC-032/INV-078 — **o MESMO objeto** nas duas. Se fossem dois
+      // registradores, nasceriam DUAS acoes para um `PATCH`, e o banco nao
+      // reclamaria: a instancia unica e o mecanismo, e esta linha e o que o
+      // prende.
+      const cancel = (
+        courtsServiceMock.cancelFutureClassOccupancies as jest.Mock
+      ).mock.calls[0];
+      const cria = (courtsServiceMock.registerClassOccupancy as jest.Mock).mock
+        .calls[0];
+      expect(cancel[4]).toBe(cria[5]);
     });
   });
 

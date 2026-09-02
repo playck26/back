@@ -9,6 +9,19 @@ import { ClassesService } from './classes.service';
 import type { EncontroDaTurma } from './encontros';
 
 /**
+ * SPEC-032 — dublê do registrador de acao. Ver `registrador-de-acao.spec.ts`
+ * para a prova da preguica; aqui o que importa e que o servico o repassa.
+ */
+function registradorFalso() {
+  return {
+    registrar: jest.fn().mockResolvedValue(undefined),
+    registrarMuitos: jest.fn().mockResolvedValue(undefined),
+    idDaAcao: null,
+  } as unknown as import('../common/auditoria/registrador-de-acao').RegistradorDeAcao;
+}
+
+
+/**
  * DEF-013 — **a transação de turma estoura o timeout do Prisma quando a
  * turma tem mais de um encontro.**
  *
@@ -209,6 +222,19 @@ function buildTxContado(
         ),
       ),
     },
+    acaoAdministrativa: {
+      create: jest.fn(() =>
+        ida('acaoAdministrativa.create', 'AcaoAdministrativa', { id: 'acao-1' }),
+      ),
+    },
+    eventoDeOcupacao: {
+      createMany: jest.fn(() =>
+        ida('eventoDeOcupacao.createMany', 'EventoDeOcupacao', { count: 0 }),
+      ),
+      create: jest.fn(() =>
+        ida('eventoDeOcupacao.create', 'EventoDeOcupacao', {}),
+      ),
+    },
     ocupacaoQuadra: {
       findFirst: jest.fn(() =>
         ida('ocupacaoQuadra.findFirst', 'OcupacaoQuadra', null),
@@ -222,6 +248,30 @@ function buildTxContado(
       ),
       updateMany: jest.fn(() =>
         ida('ocupacaoQuadra.updateMany', 'OcupacaoQuadra', { count: 0 }),
+      ),
+      // SPEC-032 — as variantes que RETORNAM. `createMany`/`updateMany` dao
+      // so a contagem, e o evento precisa do `id` de cada linha: a trigger
+      // `ocupacao_cancelada_exige_evento` e FOR EACH ROW.
+      //
+      // Continuam sendo UMA ida cada, e e isso que o orcamento deste arquivo
+      // exige — a versao anterior gravava os eventos num LACO, N idas, e este
+      // teste pegou.
+      //
+      // **Devolvem LINHAS, nao `[]`.** Com array vazio o `registrarMuitos`
+      // sai cedo, os eventos nunca sao escritos e este orcamento para de
+      // medir o custo que ele existe para medir — falso verde. Medido: com
+      // `[]` a edicao dava 5 idas; com linhas, 7.
+      createManyAndReturn: jest.fn((args?: { data?: unknown[] }) =>
+        ida(
+          'ocupacaoQuadra.createManyAndReturn',
+          'OcupacaoQuadra',
+          (args?.data ?? [{}]).map((_, i) => ({ id: `oc-nova-${i}` })),
+        ),
+      ),
+      updateManyAndReturn: jest.fn(() =>
+        ida('ocupacaoQuadra.updateManyAndReturn', 'OcupacaoQuadra', [
+          { id: 'oc-antiga-1' },
+        ]),
       ),
     },
   };
@@ -309,16 +359,32 @@ describe('DEF-013 — orçamento da transação de turma', () => {
      * Fixas na criação: `turma.create`, a consulta de conflito e o
      * `createMany`.
      */
+    /**
+     * **SPEC-032 subiu a constante de 3 para 5, e a invariante continua a
+     * mesma.**
+     *
+     * A auditoria acrescenta DUAS idas fixas — `acaoAdministrativa.create` e
+     * `eventoDeOcupacao.createMany` — e nenhuma delas depende do numero de
+     * encontros. O que este arquivo protege e a frase do titulo, *"o custo
+     * nao pode crescer com o numero de encontros"*, e ela vale: medido, 1
+     * encontro custa 6 e 3 encontros custam 6.
+     *
+     * A primeira versao gravava um evento POR OCORRENCIA num laco, e este
+     * teste pegou — viraria N idas dentro da transacao que ja estourou P2028
+     * em producao. Virou `registrarMuitos`, uma instrucao.
+     *
+     * Folga no relogio: 6 idas x 200 ms = 1,2 s contra o timeout de 5 s.
+     */
     function tetoDaCriacao(encontros: EncontroDaTurma[]) {
       const diasDistintos = new Set(encontros.map((e) => e.diaSemana)).size;
-      return 3 + diasDistintos;
+      return 5 + diasDistintos;
     }
 
     it('criar turma de 1 encontro cabe no teto', async () => {
       const { tx, idas } = buildTxContado();
       const service = buildClassesService(tx);
 
-      await service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO });
+      await service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1');
 
       expect(idas.length).toBeLessThanOrEqual(tetoDaCriacao(UM_ENCONTRO));
     });
@@ -327,7 +393,7 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const { tx, idas } = buildTxContado();
       const service = buildClassesService(tx);
 
-      await service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS });
+      await service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS }, 'autor-1',);
 
       expect(idas.length).toBeLessThanOrEqual(tetoDaCriacao(DOIS_ENCONTROS));
     });
@@ -343,13 +409,13 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       await buildClassesService(um.tx).create('c1', {
         ...DTO_BASE,
         encontros: UM_ENCONTRO,
-      });
+      }, 'autor-1',);
 
       const tres = buildTxContado();
       await buildClassesService(tres.tx).create('c1', {
         ...DTO_BASE,
         encontros: TRES_ENCONTROS,
-      });
+      }, 'autor-1',);
 
       expect(tres.idas).toEqual(um.idas);
       expect(tres.idas.length).toBeLessThanOrEqual(tetoDaCriacao(UM_ENCONTRO));
@@ -364,13 +430,14 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const { tx, idas } = buildTxContado();
       const service = buildClassesService(tx);
 
-      await service.update('c1', 't1', { encontros: DOIS_ENCONTROS });
+      await service.update('c1', 't1', { encontros: DOIS_ENCONTROS }, 'autor-1');
 
       const diasDistintos = new Set(DOIS_ENCONTROS.map((e) => e.diaSemana))
         .size;
-      // Fixas: `turma.update`, o `updateMany` do cancelamento, a consulta de
-      // conflito e o `createMany`.
-      expect(idas.length).toBeLessThanOrEqual(4 + diasDistintos);
+      // Fixas: `turma.update`, o cancelamento, a consulta de conflito, o
+      // `createManyAndReturn` — e as DUAS da auditoria (SPEC-032), que nao
+      // dependem do numero de encontros.
+      expect(idas.length).toBeLessThanOrEqual(6 + diasDistintos);
     });
   });
 
@@ -388,7 +455,7 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const service = buildClassesService(tx);
 
       await expect(
-        service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }),
+        service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1',),
       ).resolves.toBeDefined();
       expect(decorridoMs()).toBeLessThan(TIMEOUT_PADRAO_DO_PRISMA_MS);
     });
@@ -401,7 +468,7 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const service = buildClassesService(tx);
 
       await expect(
-        service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS }),
+        service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS }, 'autor-1',),
       ).resolves.toBeDefined();
     });
 
@@ -424,7 +491,7 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const service = buildClassesService(tx);
       // Uma passagem seca só para descobrir quantas idas o caminho custa
       // hoje; o teto abaixo é derivado dela, não chutado.
-      await service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO });
+      await service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1');
       const idasDoCaminho = idas.length;
 
       const apertado = buildTxContado({
@@ -435,7 +502,7 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const outro = buildClassesService(apertado.tx);
 
       await expect(
-        outro.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }),
+        outro.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1',),
       ).rejects.toMatchObject({ code: 'P2028' });
     });
   });

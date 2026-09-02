@@ -78,6 +78,45 @@ export class RegistradorDeAcao {
     });
   }
 
+  /**
+   * N eventos em **uma** instrução, para os caminhos de turma.
+   *
+   * **Não é otimização — é orçamento.** O DEF-013 existe porque a transação
+   * de turma estourou `P2028` em produção, e o teste do orçamento afirma que
+   * *"o custo não pode crescer com o número de encontros"*. Um laço de
+   * `registrar` faria N idas ao banco dentro da transação e quebraria essa
+   * invariante — o teste pegou, e é por isso que este método existe.
+   */
+  async registrarMuitos(
+    ocupacaoIds: string[],
+    tipo: TipoDeEventoDeOcupacao,
+    transicaoId: string,
+  ): Promise<void> {
+    if (ocupacaoIds.length === 0) return;
+
+    this.acaoId ??= (
+      await this.tx.acaoAdministrativa.create({
+        data: {
+          companyId: this.companyId,
+          tipo: this.tipo,
+          autorId: this.autorId,
+          motivo: this.motivo ?? null,
+        },
+        select: { id: true },
+      })
+    ).id;
+
+    await this.tx.eventoDeOcupacao.createMany({
+      data: ocupacaoIds.map((ocupacaoId) => ({
+        companyId: this.companyId,
+        acaoId: this.acaoId as string,
+        ocupacaoId,
+        tipo,
+        transicaoId,
+      })),
+    });
+  }
+
   /** Só para prova: `null` enquanto nada foi registrado. */
   get idDaAcao(): string | null {
     return this.acaoId;

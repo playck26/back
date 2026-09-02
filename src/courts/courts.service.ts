@@ -624,6 +624,7 @@ export class CourtsService {
     quadraId: string,
     turmaId: string,
     ocorrencias: { data: Date; horaInicio: Date; horaFim: Date }[],
+    registrador: RegistradorDeAcao,
   ): Promise<void> {
     // SPEC-010/INV-011 (AC-018): **todas** as ocorrências são validadas
     // antes de qualquer escrita. Hoje elas compartilham dia e hora, então
@@ -716,9 +717,32 @@ export class CourtsService {
       });
     }
 
+    // SPEC-032/TASK-005b — **A ORDENACAO MORA AQUI**, no dono final da
+    // escrita, e nao no chamador.
+    //
+    // `classes.service.ts` entregava a lista na ordem dos encontros, com um
+    // comentario afirmando que "a ordem nao importa: o EXCLUDE decide
+    // conflito por intervalo, nao por posicao". Isso e verdade para
+    // CORRETUDE e **falso para deadlock**: `createMany` vira um
+    // `INSERT ... VALUES` unico, o Postgres avalia as tuplas na ordem do
+    // array, e e essa ordem que decide quem espera quem na `EXCLUDE`.
+    //
+    // Duas turmas com encontros em ordens opostas na mesma quadra travam uma
+    // a outra e uma aborta com `40P01`. Ordenar no chamador deixaria o
+    // proximo chamador livre para errar — por isso e aqui.
+    const emOrdem = [...ocorrencias].sort(
+      (a, b) =>
+        a.data.getTime() - b.data.getTime() ||
+        a.horaInicio.getTime() - b.horaInicio.getTime(),
+    );
+
+    const transicaoId = novaTransicao();
     try {
-      await tx.ocupacaoQuadra.createMany({
-        data: ocorrencias.map((ocorrencia) => ({
+      // `createManyAndReturn` e nao `createMany`: o evento precisa do `id` de
+      // cada ocorrencia, e `createMany` devolve so a contagem. Continua sendo
+      // **uma** instrucao SQL (NFR-002).
+      const criadas = await tx.ocupacaoQuadra.createManyAndReturn({
+        data: emOrdem.map((ocorrencia) => ({
           companyId,
           quadraId,
           data: ocorrencia.data,
@@ -726,8 +750,21 @@ export class CourtsService {
           horaFim: ocorrencia.horaFim,
           origemTipo: 'TURMA' as const,
           origemTurmaId: turmaId,
+          transicaoId,
         })),
+        select: { id: true },
       });
+      // Uma acao por TURMA (INV-078), N eventos. O registrador vem de fora
+      // justamente para que editar o horario — que cancela as antigas e cria
+      // as novas — seja UM gesto com dois tipos de evento, e nao dois gestos.
+      // UMA instrucao para os N eventos — ver `registrarMuitos`. O laco
+      // custaria N idas ao banco dentro da transacao e quebraria o orcamento
+      // do DEF-013, que existe porque isso ja estourou P2028 em producao.
+      await registrador.registrarMuitos(
+        criadas.map((l) => l.id),
+        'criada',
+        transicaoId,
+      );
     } catch (error) {
       // Mesma corrida perdida de createBooking (INV-001): a violação da
       // EXCLUDE constraint não tem P-código dedicado no Prisma. O que **não**
@@ -752,8 +789,15 @@ export class CourtsService {
     companyId: string,
     turmaId: string,
     aPartirDe: Date,
+    registrador: RegistradorDeAcao,
   ): Promise<void> {
-    await tx.ocupacaoQuadra.updateMany({
+    const transicaoId = novaTransicao();
+    // `updateManyAndReturn` e nao `updateMany`: a trigger
+    // `ocupacao_cancelada_exige_evento` e `FOR EACH ROW` e exige um evento
+    // por linha cancelada — e `updateMany` devolve so a contagem, sem dizer
+    // QUAIS linhas tocou. Era o furo que a validacao cruzada apontou como
+    // "irrealizavel como escrito"; nao e, mas exige a variante que retorna.
+    const canceladas = await tx.ocupacaoQuadra.updateManyAndReturn({
       where: {
         companyId,
         origemTipo: 'TURMA',
@@ -761,8 +805,14 @@ export class CourtsService {
         statusPagamento: { not: 'cancelado' },
         data: { gte: aPartirDe },
       },
-      data: { statusPagamento: 'cancelado' },
+      data: { statusPagamento: 'cancelado', transicaoId },
+      select: { id: true },
     });
+    await registrador.registrarMuitos(
+      canceladas.map((l) => l.id),
+      'cancelada',
+      transicaoId,
+    );
   }
 
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
