@@ -90,15 +90,15 @@ model Empresa {
   ///
   /// **Vale para ENTRAR, nunca para expulsar** (INV-023a): baixar o limite
   /// nao tira ninguem de turma em que ja esta.
-  limiteTurmasPorAluno Int?         @map("limite_turmas_por_aluno")
+  limiteTurmasPorAluno Int? @map("limite_turmas_por_aluno")
 
   /// SPEC-024 — a versao do contrato do clube que esta valendo.
   /// `NULL` = o clube nao publicou contrato, e nesse caso so o termo da
   /// plataforma e exigido (REQ-005). E o estado de toda empresa existente
   /// no dia da migration.
-  contratoVersaoVigente Int?        @map("contrato_versao_vigente")
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
+  contratoVersaoVigente Int?     @map("contrato_versao_vigente")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   usuarios         Usuario[]
   convites         ConviteAluno[]
@@ -235,9 +235,9 @@ model Aluno {
   vinculo   VinculoAluno  @default(pendente)
   createdAt DateTime      @default(now()) @map("created_at")
 
-  usuario     Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  empresa     Empresa          @relation(fields: [companyId], references: [id])
-  nivel       Nivel?           @relation(fields: [nivelId], references: [id])
+  usuario     Usuario           @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa     Empresa           @relation(fields: [companyId], references: [id])
+  nivel       Nivel?            @relation(fields: [nivelId], references: [id])
   ocupacoes   OcupacaoQuadra[]
   turmaAlunos TurmaAluno[]
   avaliacoes  AvaliacaoDeAula[]
@@ -400,7 +400,7 @@ model OcupacaoQuadra {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  empresa     Empresa        @relation(fields: [companyId], references: [id])
+  empresa     Empresa           @relation(fields: [companyId], references: [id])
   /// DEF-022 (validação cruzada da SPEC-026, achado 3) — **FK COMPOSTA.**
   ///
   /// Era `references: [id]`, simples. O banco aceitava ocupação com
@@ -409,9 +409,9 @@ model OcupacaoQuadra {
   /// isso — mas a INV-054 já tinha ensinado que "não há caminho hoje" não é
   /// a mesma coisa que "o banco não deixa", e foi exatamente por confiar
   /// nisso que a SPEC-025 vazou nota de turma entre empresas.
-  quadra      Quadra         @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_quadra_fkey")
-  aluno       Aluno?         @relation(fields: [alunoId], references: [id])
-  pedido      PedidoReserva? @relation(fields: [pedidoId], references: [id])
+  quadra      Quadra            @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_quadra_fkey")
+  aluno       Aluno?            @relation(fields: [alunoId], references: [id])
+  pedido      PedidoReserva?    @relation(fields: [pedidoId], references: [id])
   // `onDelete: Restrict` declarado explicitamente para casar com o que a
   // migration 20260812000000_classes aplicou à mão no banco. Sem isso o
   // Prisma assume `SET NULL` (default de relação opcional) e acusa drift,
@@ -422,7 +422,7 @@ model OcupacaoQuadra {
   /// Mesmo padrao de `quadras.esporteRef`/`categoriaRef`: sem a empresa na
   /// chave, o banco aceitaria ocupacao de uma empresa apontando para turma
   /// de outra, e a media da turma agregaria nota alheia.
-  origemTurma Turma?         @relation(fields: [companyId, origemTurmaId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_origem_turma_fkey")
+  origemTurma Turma?            @relation(fields: [companyId, origemTurmaId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_origem_turma_fkey")
   avaliacoes  AvaliacaoDeAula[]
 
   presencas Presenca[]
@@ -475,12 +475,12 @@ model Turma {
   ocupacoes OcupacaoQuadra[]
   encontros TurmaEncontro[]
 
-  @@index([companyId])
-  @@index([quadraId])
   /// SPEC-025 / validacao cruzada — o alvo da FK composta de
   /// `ocupacoes_quadra`. Sem ele, o banco aceitava ocupacao de uma empresa
   /// apontando para turma de outra.
   @@unique([companyId, id], map: "turmas_company_id_id_key")
+  @@index([companyId])
+  @@index([quadraId])
   @@map("turmas")
 }
 
@@ -924,9 +924,23 @@ model AvaliacaoDeAula {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  empresa  Empresa        @relation(fields: [companyId], references: [id])
-  ocupacao OcupacaoQuadra @relation(fields: [ocupacaoId], references: [id], onDelete: Cascade)
-  aluno    Aluno          @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  // DRIFT FECHADO EM 2026-09-01, e **quem se ajusta e o schema, nao o banco** —
+  // mesma decisao de `presencas` (ver o comentario la, que a explica).
+  //
+  // A migration da SPEC-025 nomeou estas tres FKs `_aluno_fkey`,
+  // `_company_fkey` e `_ocupacao_fkey`; sem `map:` o Prisma queria o padrao
+  // dele (`_aluno_id_fkey`...) e `migrate diff` NUNCA fechava.
+  //
+  // O STATUS registrava isso como "drift pre-existente", sugerindo acidente
+  // no banco de producao. **Era falso, e o banco de DEV provou:** criado do
+  // zero das mesmas migrations, reproduziu os tres nomes identicos. A
+  // divergencia estava aqui, na fonte.
+  //
+  // O que custava mais que o cosmetico: drift permanente esconde drift novo,
+  // e `migrate diff` e o detector que as proximas dez specs vao usar.
+  empresa  Empresa        @relation(fields: [companyId], references: [id], map: "avaliacoes_de_aula_company_fkey")
+  ocupacao OcupacaoQuadra @relation(fields: [ocupacaoId], references: [id], onDelete: Cascade, map: "avaliacoes_de_aula_ocupacao_fkey")
+  aluno    Aluno          @relation(fields: [alunoId], references: [id], onDelete: Cascade, map: "avaliacoes_de_aula_aluno_fkey")
 
   @@unique([ocupacaoId, alunoId], map: "avaliacoes_de_aula_ocupacao_aluno_key")
   @@index([ocupacaoId])
