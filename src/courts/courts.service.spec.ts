@@ -870,6 +870,136 @@ describe('CourtsService', () => {
         }),
       );
     });
+
+    /**
+     * SPEC-041 — o corte temporal, a ordem por aba e o `AND` acumulado.
+     *
+     * As provas do **recorte em si** (fronteira das 21h00, fuso, partição)
+     * estão em `recorte-temporal.spec.ts`, contra o helper. Aqui é o que só a
+     * rota pode provar: que o recorte chega ao `where`, que o `where` é **o
+     * mesmo objeto** no `findMany` e no `count`, e que as condições empilham em
+     * vez de se apagarem.
+     */
+    function prepararLista() {
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(0);
+    }
+
+    // O mock devolve `any`, e o ESLint recusa acesso a `any` — com razão: é
+    // por aí que uma asserção passa a verificar uma propriedade que não
+    // existe mais. Estes dois tipam a leitura, sem fingir que o mock é o
+    // Prisma real.
+    type Argumentos = {
+      where: Prisma.OcupacaoQuadraWhereInput;
+      orderBy: Prisma.OcupacaoQuadraOrderByWithRelationInput[];
+    };
+
+    function argumentosDaBusca(
+      metodo: 'findMany' | 'count' = 'findMany',
+    ): Argumentos {
+      const chamadas = (prisma.ocupacaoQuadra[metodo] as jest.Mock).mock
+        .calls as Argumentos[][];
+      return chamadas[0][0];
+    }
+
+    function whereDoFindMany(): Prisma.OcupacaoQuadraWhereInput {
+      return argumentosDaBusca().where;
+    }
+
+    /** As condições empilhadas no `AND` (D8), já como lista. */
+    function condicoesDoAnd(): Prisma.OcupacaoQuadraWhereInput[] {
+      return (whereDoFindMany().AND ?? []) as Prisma.OcupacaoQuadraWhereInput[];
+    }
+
+    it('AC-004/INV-091: findMany e count recebem o MESMO objeto where', async () => {
+      prepararLista();
+
+      await service.listBookings('c1', { quando: 'futuras' }, 'a1');
+
+      const doFindMany = whereDoFindMany();
+      const doCount = argumentosDaBusca('count').where;
+
+      // Identidade referencial, não igualdade estrutural: dois objetos iguais
+      // hoje podem ser calculados com instantes diferentes amanhã, e é assim
+      // que a paginação passa a contar uma coisa e mostrar outra.
+      expect(doFindMany).toBe(doCount);
+    });
+
+    it('AC-002: o corte vai para o where, com as duas pernas do OR', async () => {
+      prepararLista();
+
+      await service.listBookings('c1', { quando: 'anteriores' }, 'a1');
+
+      const pernas = condicoesDoAnd()[0]
+        .OR as Prisma.OcupacaoQuadraWhereInput[];
+      expect(pernas).toHaveLength(2);
+      // A perna de outro dia não olha hora; a do dia corrente compara hora_fim.
+      expect(pernas[0].horaFim).toBeUndefined();
+      expect(pernas[1].horaFim).toHaveProperty('lte');
+    });
+
+    it('sem `quando`, o where não ganha corte nenhum (AC-001)', async () => {
+      prepararLista();
+
+      await service.listBookings('c1', {}, 'a1');
+
+      expect(whereDoFindMany()).toEqual({ companyId: 'c1', alunoId: 'a1' });
+    });
+
+    /**
+     * **D8, e o defeito que ele evita.** Antes da SPEC-041 o `where` era
+     * montado por spreads condicionais, e a chave `AND` era de quem escrevesse
+     * por último. Com três condições compostas possíveis — corte, status e
+     * "não cancelada" — um spread novo apagaria os anteriores em silêncio.
+     */
+    it('D8: corte, status e excluirCanceladas empilham no AND, sem se apagar', async () => {
+      prepararLista();
+
+      await service.listBookings(
+        'c1',
+        { quando: 'futuras', status: 'pago', excluirCanceladas: true },
+        'a1',
+      );
+
+      const condicoes = condicoesDoAnd();
+      expect(condicoes).toHaveLength(3);
+      expect(condicoes[0]).toHaveProperty('OR');
+      expect(condicoes[1]).toEqual({ statusPagamento: 'pago' });
+      expect(condicoes[2]).toEqual({ statusPagamento: { not: 'cancelado' } });
+    });
+
+    it('D8: `data` exata convive com o corte, em chaves diferentes', async () => {
+      prepararLista();
+
+      await service.listBookings(
+        'c1',
+        { quando: 'futuras', data: '2026-09-15' },
+        'a1',
+      );
+
+      expect(whereDoFindMany().data).toEqual(
+        new Date('2026-09-15T00:00:00.000Z'),
+      );
+      expect(condicoesDoAnd()).toHaveLength(1);
+    });
+
+    // AC-003/D7 — perguntas opostas, e direção uniforme em cada uma. A ordem
+    // mista sobrevive só no caso sem `quando`, que é a lista do Admin
+    // (LIM-041e).
+    it.each([
+      ['futuras', [{ data: 'asc' }, { horaInicio: 'asc' }, { id: 'asc' }]],
+      [
+        'anteriores',
+        [{ data: 'desc' }, { horaInicio: 'desc' }, { id: 'desc' }],
+      ],
+      [undefined, [{ data: 'desc' }, { horaInicio: 'asc' }, { id: 'asc' }]],
+    ] as const)('AC-003: ordem de `%s`', async (quando, esperada) => {
+      prepararLista();
+
+      await service.listBookings('c1', quando ? { quando } : {}, 'a1');
+
+      expect(argumentosDaBusca().orderBy).toEqual(esperada);
+    });
   });
 
   describe('cancelBooking', () => {
