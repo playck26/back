@@ -1,3 +1,8 @@
+// SPEC-041 — import **de tipo**, e só. `recorteTemporal` devolve um fragmento
+// de `where` tipado; nada do Prisma sobra em runtime, e este arquivo continua
+// sendo função pura testável sem banco.
+import type { Prisma } from '@prisma/client';
+
 // Prisma mapeia colunas @db.Date/@db.Time para JS Date — usamos uma data
 // fixa (1970-01-01) como parte "neutra" para colunas @db.Time, já que só a
 // hora importa (mesma convenção usada nas duas pontas: escrita e leitura).
@@ -98,6 +103,67 @@ export function agoraNoFusoDoClube(agora: Date = new Date()): {
 /** Minutos desde a meia-noite de uma coluna `@db.Time`. */
 export function minutosDaHora(hora: Date): number {
   return hora.getUTCHours() * 60 + hora.getUTCMinutes();
+}
+
+/**
+ * SPEC-041 — o **inverso** de `minutosDaHora`: minutos desde a meia-noite de
+ * volta para o `Date` ancorado em `1970-01-01Z` que as colunas `@db.Time` usam.
+ *
+ * Existia só a ida. A volta passou a ser necessária quando o corte temporal
+ * foi para dentro do `where` do Prisma: `agoraNoFusoDoClube` devolve
+ * **minutos**, e a coluna a comparar é `@db.Time` — sem esta função, o caminho
+ * mais curto é montar um `Date` do relógio do servidor, que é exatamente o
+ * defeito que o fuso explícito existe para impedir.
+ */
+export function horaDeMinutos(minutos: number): Date {
+  const hh = String(Math.floor(minutos / 60)).padStart(2, '0');
+  const mm = String(minutos % 60).padStart(2, '0');
+  return parseTimeOnly(`${hh}:${mm}`);
+}
+
+/**
+ * SPEC-041/D1 — **o corte entre o que já passou e o que está por vir.**
+ *
+ * ## O corte é pelo FIM, e isso foi decisão do Israel (D-I4)
+ *
+ * Reserva das 19h às 21h, consultada às 20h: a pessoa está **dentro da
+ * quadra**. Ela só vira "anterior" às 21h. A alternativa — cortar pelo início —
+ * mandaria para o histórico uma reserva em andamento.
+ *
+ * ## Por que duas pernas em `OR`, e não `data >= dia AND hora_fim > agora`
+ *
+ * A forma curta está **errada**, não só lenta: às 9h de hoje ela descartaria a
+ * reserva das 8h de **amanhã**, porque `08:00 > 09:00` é falso. O `hora_fim` só
+ * pode ser comparado dentro do mesmo dia; para os outros dias, quem decide é a
+ * `data` sozinha.
+ *
+ * ## As duas são complemento EXATO (INV-090)
+ *
+ * `hora_fim <= agora` de um lado, `hora_fim > agora` do outro. Nenhuma linha
+ * cai fora das duas, nenhuma cai nas duas — **e o instante que prova isso é o
+ * minuto redondo**: com `<` dos dois lados, uma reserva terminando exatamente
+ * agora sumiria das duas abas, e um teste feito um minuto antes e um minuto
+ * depois continuaria verde.
+ *
+ * O tipo do retorno é `Prisma.OcupacaoQuadraWhereInput` para que o `AND` do
+ * chamador seja tipado. É import **de tipo**: nada de Prisma sobra em runtime.
+ */
+export type RecorteTemporal = 'futuras' | 'anteriores';
+
+export function recorteTemporal(
+  quando: RecorteTemporal,
+  agora: Date = new Date(),
+): Prisma.OcupacaoQuadraWhereInput {
+  const { dia, minutos } = agoraNoFusoDoClube(agora);
+  const horaAgora = horaDeMinutos(minutos);
+
+  return quando === 'anteriores'
+    ? {
+        OR: [{ data: { lt: dia } }, { data: dia, horaFim: { lte: horaAgora } }],
+      }
+    : {
+        OR: [{ data: { gt: dia } }, { data: dia, horaFim: { gt: horaAgora } }],
+      };
 }
 
 /**

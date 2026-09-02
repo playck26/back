@@ -20,7 +20,39 @@ import {
   formatTimeOnly,
   parseDateOnly,
   parseTimeOnly,
+  recorteTemporal,
 } from './date-time.util';
+
+/**
+ * SPEC-041/D7 — **a ordem de cada aba, e por que a terceira ficou como estava.**
+ *
+ * São perguntas opostas: em `futuras` interessa **a próxima**; em `anteriores`,
+ * **a mais recente**. Cada uma com direção uniforme nos três campos — não é
+ * simetria estética, é o que permite a um único índice all-ASC servir as duas,
+ * a segunda por varredura para trás.
+ *
+ * `anteriores` segue o precedente que o projeto já firmou duas vezes para lista
+ * paginada de ocupação no passado: `avaliacao-de-aula.service.ts` e
+ * `presenca.service.ts`, os dois em `data desc, hora desc, id desc`.
+ *
+ * **O caso sem `quando` continua `desc/asc/asc`, e isso é deliberado.** É a
+ * única ordem mista do projeto e contradiz o próprio comentário que ela tinha
+ * — mas quem consome a rota sem `quando` é a lista do **Admin**, que não tem
+ * spec neste ciclo. Consertar aqui seria mudar uma tela de outro app sem
+ * pedido. Fica em LIM-041e, com dono.
+ */
+function ordemDaListagem(
+  quando?: 'futuras' | 'anteriores',
+): Prisma.OcupacaoQuadraOrderByWithRelationInput[] {
+  if (quando === 'futuras') {
+    return [{ data: 'asc' }, { horaInicio: 'asc' }, { id: 'asc' }];
+  }
+  if (quando === 'anteriores') {
+    return [{ data: 'desc' }, { horaInicio: 'desc' }, { id: 'desc' }];
+  }
+  // SPEC-027 — `id` como desempate. Ver LIM-041e sobre a direção mista.
+  return [{ data: 'desc' }, { horaInicio: 'asc' }, { id: 'asc' }];
+}
 import {
   OcupacaoPaginadaResponseDto,
   OcupacaoResponseDto,
@@ -559,36 +591,52 @@ export class CourtsService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
+    // SPEC-041/D8 — **as condições entram num `AND` acumulado, não por
+    // spread.**
+    //
+    // O ramo de status abaixo já ocupa a chave `AND`, e o corte temporal é a
+    // segunda condição composta desta rota. Dois spreads disputando `AND` se
+    // apagariam em silêncio — que é exatamente o defeito que o comentário do
+    // bloco de status documenta ter custado caro (`?status=pago&
+    // excluirCanceladas=true` devolvia pendente também).
+    //
+    // Com um array, uma condição nova nunca apaga a anterior: ela empilha.
+    const condicoes: Prisma.OcupacaoQuadraWhereInput[] = [];
+
+    // SPEC-041/AC-002 e INV-091 — o recorte é calculado **uma vez** e vai para
+    // o mesmo objeto `where` que serve o `findMany` e o `count`. Contar com um
+    // instante e listar com outro é como a paginação passa a mentir.
+    if (query.quando) {
+      condicoes.push(recorteTemporal(query.quando));
+    }
+
+    // SPEC-027 — **o filtro de canceladas saiu da tela e veio para cá.**
+    //
+    // O app do aluno filtrava `statusPagamento !== 'cancelado'` DEPOIS de
+    // receber a página. Sem paginação isso era só desperdício; com ela vira
+    // mentira: uma página de 20 mostraria 12 itens, e o rodapé diria "1–20 de
+    // 47". Quem pagina precisa contar exatamente o que mostra.
+    //
+    // **Os dois filtros vivem na MESMA chave `statusPagamento`**, e a primeira
+    // versão disto usava dois spreads — o segundo apagava o primeiro em
+    // silêncio, então `?status=pago&excluirCanceladas=true` devolvia tudo que
+    // não fosse cancelado, inclusive pendente.
+    //
+    // SPEC-041 — os dois viraram entradas do array acima, e é por isso que o
+    // corte temporal pôde entrar sem tocar nesta regra: **cada condição é uma
+    // linha, e linhas não se sobrescrevem.**
+    if (query.status) {
+      condicoes.push({ statusPagamento: query.status });
+    }
+    if (query.excluirCanceladas) {
+      condicoes.push({ statusPagamento: { not: 'cancelado' as const } });
+    }
+
     const where: Prisma.OcupacaoQuadraWhereInput = {
       companyId,
       ...(alunoIdScope ? { alunoId: alunoIdScope } : {}),
-      // SPEC-027 — **o filtro de canceladas saiu da tela e veio para cá.**
-      //
-      // O app do aluno filtrava `statusPagamento !== 'cancelado'` DEPOIS de
-      // receber a página. Sem paginação isso era só desperdício; com ela
-      // vira mentira: uma página de 20 mostraria 12 itens, e o rodapé diria
-      // "1–20 de 47". Quem pagina precisa contar exatamente o que mostra.
-      //
-      // **Os dois filtros vivem na MESMA chave `statusPagamento`**, e a
-      // primeira versão disto usava dois spreads — o segundo apagava o
-      // primeiro em silêncio, então `?status=pago&excluirCanceladas=true`
-      // devolvia tudo que não fosse cancelado, inclusive pendente. O
-      // docstring do DTO chegou a dizer "combina com `status`", o que era
-      // falso. Resolvido com `AND`, que é a única forma de os dois
-      // coexistirem.
-      ...(query.status && query.excluirCanceladas
-        ? {
-            AND: [
-              { statusPagamento: query.status },
-              { statusPagamento: { not: 'cancelado' as const } },
-            ],
-          }
-        : query.status
-          ? { statusPagamento: query.status }
-          : query.excluirCanceladas
-            ? { statusPagamento: { not: 'cancelado' as const } }
-            : {}),
       ...(query.data ? { data: parseDateOnly(query.data) } : {}),
+      ...(condicoes.length ? { AND: condicoes } : {}),
     };
 
     const [data, total] = await Promise.all([
@@ -596,8 +644,7 @@ export class CourtsService {
         where,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        // SPEC-027 — `id` como desempate; ver `avaliacao-de-aula.service.ts`.
-        orderBy: [{ data: 'desc' }, { horaInicio: 'asc' }, { id: 'asc' }],
+        orderBy: ordemDaListagem(query.quando),
       }),
       this.prisma.ocupacaoQuadra.count({ where }),
     ]);
