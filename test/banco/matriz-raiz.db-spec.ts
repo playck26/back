@@ -32,6 +32,7 @@ import { diasAtrasNoClube } from './hoje-no-clube-sql';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
+import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 
 jest.setTimeout(120_000);
 
@@ -235,10 +236,16 @@ describe('AC-000i/INV-029 — o PUT observa tudo que decide escrita depois da ra
   // A v10 falhava aqui: travava e lia no mesmo statement, então
   // `status_pagamento` ficava no snapshot de antes da espera pelo lock.
   it('aula é CANCELADA → 422 AULA_CANCELADA', async () => {
+    // SPEC-032/INV-064 — o cancelamento passa a exigir evento da mesma
+    // transicao. O helper faz o par; a corrida que este teste mede nao muda.
     const r = await respostaSobConcorrencia([ids.a1], (tb, aula) =>
-      tb.$executeRawUnsafe(
-        `UPDATE ocupacoes_quadra SET status_pagamento='cancelado' WHERE id='${aula}'`,
-      ),
+      cancelarOcupacaoNaFixture(tb, {
+        companyId: ids.empresa,
+        ocupacaoId: aula,
+        // O professor e o autor disponivel nesta fixture; o que a INV-062
+        // exige e que exista um, nao qual papel ele tem.
+        autorId: ids.uprof1,
+      }),
     );
     expect(r).toBe('422 AULA_CANCELADA');
   });
