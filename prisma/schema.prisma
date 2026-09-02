@@ -116,8 +116,9 @@ model Empresa {
   contratos        ContratoDaEmpresa[]
   avaliacoesDeAula AvaliacaoDeAula[]
 
-  presencas Presenca[]
-  chamadas  Chamada[]
+  presencas           Presenca[]
+  chamadas            Chamada[]
+  acaoAdministrativas AcaoAdministrativa[]
 
   @@map("empresas")
 }
@@ -150,15 +151,16 @@ model Usuario {
   createdAt               DateTime      @default(now()) @map("created_at")
   updatedAt               DateTime      @updatedAt @map("updated_at")
 
-  empresa                    Empresa?       @relation(fields: [companyId], references: [id])
+  empresa                    Empresa?             @relation(fields: [companyId], references: [id])
   refreshTokens              RefreshToken[]
   aluno                      Aluno?
   professor                  Professor?
-  convitesCriados            ConviteAluno[] @relation("ConviteCriadoPor")
-  presencasRegistradas       Presenca[]     @relation("PresencaRegistradaPor")
-  chamadasRegistradas        Chamada[]      @relation("ChamadaRegistradaPor")
-  imagensDeQuadraConfirmadas Quadra[]       @relation("QuadraImagemConfirmadaPor")
+  convitesCriados            ConviteAluno[]       @relation("ConviteCriadoPor")
+  presencasRegistradas       Presenca[]           @relation("PresencaRegistradaPor")
+  chamadasRegistradas        Chamada[]            @relation("ChamadaRegistradaPor")
+  imagensDeQuadraConfirmadas Quadra[]             @relation("QuadraImagemConfirmadaPor")
   aceites                    Aceite[]
+  acoesRegistradas           AcaoAdministrativa[] @relation("AcaoRegistradaPor")
 
   @@index([companyId])
   @@map("usuarios")
@@ -397,6 +399,16 @@ model OcupacaoQuadra {
   /// Mecanismo de idempotência anterior à SPEC-011, mantido para as linhas
   /// já criadas. Escrita nova deixa nulo e usa `pedidoId`.
   clientRequestId String?         @map("client_request_id")
+  /// SPEC-032/INV-064 — a IDENTIDADE DA TRANSICAO, trocada a cada mudanca de
+  /// estado. Nulavel porque as linhas anteriores a spec nunca tiveram uma
+  /// (LIM-032a): so entra na exigencia quando alguem cancelar.
+  ///
+  /// A versao anterior da invariante usava `criado_em >=
+  /// transaction_timestamp()` e caiu por dois caminhos: o timestamp e o
+  /// INICIO da transacao, nao a identidade dela (o evento de uma transacao
+  /// concorrente satisfazia a outra), e `cancelar -> reativar -> cancelar` na
+  /// mesma transacao passava com um evento so.
+  transicaoId     String?         @map("transicao_id") @db.Uuid
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
@@ -426,6 +438,7 @@ model OcupacaoQuadra {
   avaliacoes  AvaliacaoDeAula[]
 
   presencas Presenca[]
+  eventos   EventoDeOcupacao[]
   // Prisma exige unicidade do par `(id, origem_tipo)` para modelar 1-1, e
   // criar esse UNIQUE seria um índice redundante — `ocupacao_id` já é PK de
   // `chamadas`. Então aqui o tipo é lista e **o banco é que garante uma
@@ -433,6 +446,10 @@ model OcupacaoQuadra {
   chamadas  Chamada[]
 
   @@unique([id, origemTipo], map: "ocupacoes_quadra_id_origem_tipo_key")
+  /// SPEC-032 — alvo da FK composta de `eventos_de_ocupacao`. Redundante como
+  /// chave (`id` ja e PK); existe porque o Postgres nao infere alvo composto a
+  /// partir de PK simples. Mesmo truque de `quadras_company_id_id_key`.
+  @@unique([companyId, id], map: "ocupacoes_quadra_company_id_id_key")
   @@index([companyId, quadraId, data])
   @@map("ocupacoes_quadra")
 }
@@ -947,4 +964,86 @@ model AvaliacaoDeAula {
   @@index([companyId])
   @@index([alunoId])
   @@map("avaliacoes_de_aula")
+}
+
+// ==========================================================================
+// SPEC-032 — rastreabilidade de acao administrativa
+//
+// DUAS tabelas, e a cisao entre elas e o achado que reprovou a v1 da spec: a
+// ACAO e o gesto humano (uma), os EVENTOS sao os alvos tecnicos (N). A v1
+// dizia que o evento apontava por FK para UMA ocupacao E que criar 40
+// ocorrencias gerava UM evento — as duas coisas nao cabem juntas.
+// ==========================================================================
+
+enum TipoDeAcao {
+  reserva_criada
+  reserva_cancelada
+  pagamento_confirmado
+  turma_criada
+  turma_horario_editado
+  credito_lancado
+  credito_retirado
+
+  @@map("tipo_de_acao")
+}
+
+enum TipoDeEventoDeOcupacao {
+  criada
+  cancelada
+  reativada
+  pagamento_confirmado
+
+  @@map("tipo_de_evento_de_ocupacao")
+}
+
+/// O gesto humano. Uma por COMANDO LOGICO que escreve — **nao por
+/// requisicao**: uma requisicao que cancela ocorrencias de tres turmas gera
+/// TRES acoes, porque o agregado afetado e a turma. A matriz de identidade
+/// esta na INV-078 da spec, e ela existe porque "comando logico" sem criterio
+/// escrito era intuicao, nao regra.
+///
+/// **Append-only, imposto por trigger** (`acoes_append_only`) — nao por
+/// ausencia de rota, que foi o que reprovou a v1. E nao por `REVOKE`: tabela
+/// nova nao concede nada a PUBLIC e a aplicacao conecta como DONA do schema,
+/// entao o REVOKE seria inocuo (medido).
+model AcaoAdministrativa {
+  id        String     @id @default(uuid()) @db.Uuid
+  companyId String     @map("company_id") @db.Uuid
+  tipo      TipoDeAcao
+  /// A perna do AUTOR nao e composta, e e DE PROPOSITO (LIM-032f):
+  /// `usuarios.company_id` e NULO para `super_admin`, e uma FK composta
+  /// impediria o super admin de ser autor de qualquer coisa.
+  autorId   String     @map("autor_id") @db.Uuid
+  motivo    String?
+  criadoEm  DateTime   @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  empresa Empresa            @relation(fields: [companyId], references: [id], onDelete: Restrict, map: "acoes_empresa_fkey")
+  autor   Usuario            @relation("AcaoRegistradaPor", fields: [autorId], references: [id], onDelete: Restrict, map: "acoes_autor_fkey")
+  eventos EventoDeOcupacao[]
+
+  @@unique([companyId, id], map: "acoes_company_id_id_key")
+  @@index([companyId, criadoEm(sort: Desc)], map: "acoes_company_criado_em_idx")
+  @@map("acoes_administrativas")
+}
+
+/// O alvo tecnico. As duas FKs carregam a EMPRESA — a INV-054 ja ensinou que
+/// "nao ha caminho hoje" nao e a mesma coisa que "o banco nao deixa", e foi
+/// por confiar nisso que a SPEC-025 vazou nota de turma entre empresas.
+model EventoDeOcupacao {
+  id          String                 @id @default(uuid()) @db.Uuid
+  companyId   String                 @map("company_id") @db.Uuid
+  acaoId      String                 @map("acao_id") @db.Uuid
+  ocupacaoId  String                 @map("ocupacao_id") @db.Uuid
+  tipo        TipoDeEventoDeOcupacao
+  /// Casa com `ocupacoes_quadra.transicao_id` (INV-064). NOT NULL aqui porque
+  /// todo evento NASCE agora, diferente das ocupacoes ja existentes.
+  transicaoId String                 @map("transicao_id") @db.Uuid
+  criadoEm    DateTime               @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  acao     AcaoAdministrativa @relation(fields: [companyId, acaoId], references: [companyId, id], onDelete: Restrict, map: "eventos_acao_fkey")
+  ocupacao OcupacaoQuadra     @relation(fields: [companyId, ocupacaoId], references: [companyId, id], onDelete: Restrict, map: "eventos_ocupacao_fkey")
+
+  @@index([companyId, ocupacaoId, criadoEm(sort: Desc)], map: "eventos_ocupacao_idx")
+  @@index([companyId, acaoId], map: "eventos_acao_idx")
+  @@map("eventos_de_ocupacao")
 }
