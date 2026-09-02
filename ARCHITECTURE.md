@@ -697,6 +697,22 @@ corrente. O que mudou de verdade não foi a conversão, foi o **gate** em
 `date-time.util.ts`, que calcule "hoje" a partir do relógio do servidor.
 Documentar o defeito não o impede — foi o que este parágrafo provou.
 
+**E o gate não prova o que parece provar, o que a SPEC-041 obrigou a escrever
+aqui.** Ele varre bem — 224 arquivos, código sem comentários, com
+anti-vacuidade — mas **proíbe um token só**: `getUTCFullYear()`. Um
+`new Date().getTime()` passa batido, e é a forma mais natural de escrever uma
+comparação de "já passou". **Gate de proibição não prova obrigação — é
+categoria errada de mecanismo**, e ampliar o vocabulário não muda a categoria.
+Vale como rede contra uma família conhecida de defeitos, não como garantia de
+que toda comparação temporal usa o fuso do clube.
+
+A SPEC-041 acrescentou ao arquivo `horaDeMinutos` (o inverso de
+`minutosDaHora`, para levar o "agora" de volta ao formato `@db.Time` da coluna)
+e `recorteTemporal`, que devolve o fragmento de `where` pronto — corte pelo
+**fim** da ocupação, em duas pernas `OR`. A forma de duas pernas é correção, não
+estilo: `data >= dia AND hora_fim > agora` descartaria as manhãs dos dias
+futuros.
+
 O mesmo valeu para as fixtures: elas usavam `CURRENT_DATE` (data do Postgres,
 que roda em UTC) e **13 provas caíram** na hora da conversão, com
 `AULA_FUTURA`. Ver `test/banco/hoje-no-clube-sql.ts`.
@@ -811,6 +827,8 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | 1 | ~~Professor não tem identidade~~ — **fechado em 2026-08-22 (SPEC-013)**. O que sobra: professor só lê; não há chamada/presença, e não existe modelo para isso | Baixa — escopo declarado |
 | 2 | **Sem fuso horário configurável.** Constante `America/Sao_Paulo`, num arquivo só, com gate que impede um segundo lugar decidir (DEF-020). Funciona enquanto todas as empresas estiverem no mesmo fuso; vira defeito silencioso na primeira fora — e o lugar de virar campo da empresa é `date-time.util.ts` | Média — gatilho declarado |
 | 3 | **Formato antigo de `POST /bookings` ainda aceito**, para não quebrar frontend em produção durante o deploy. Condição de saída no DTO | Média — dívida datada |
+| 3b | **`excluirCanceladas` em `GET /bookings`, `deprecated` desde a SPEC-041.** Fica pela janela de skew entre o deploy do Back (DigitalOcean) e o do Cliente (Netlify), mais a aba que o aluno já deixou aberta. Emissor único, já removido; sai no ciclo seguinte ao deploy da Netlify. Condição de saída escrita no DTO | Baixa — dívida datada, emissor zerado |
+| 3c | **A lista de reservas do aluno não tem índice que a sustente.** Não existe nenhum índice com `aluno_id` em `ocupacoes_quadra`. Medido em 2026-09-02 e adiado por isso: 100 ocupações na tabela, 12 com aluno, 6 no maior histórico — nesse tamanho índice não muda plano. Desenho pronto em SPEC-041/LIM-041i; gatilho é a primeira empresa na casa dos milhares | Baixa hoje — cresce com o volume |
 | 4 | **`courts/` acumula 4 controllers e ~750 linhas de service.** Ainda coeso (tudo toca a linha do tempo), mas é o candidato natural a divisão | Média |
 | 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008). `presencas` é base para resolver, mas **não resolve** — remarcar exige estado além de presente/ausente/justificado | Média — adiado por decisão |
 | 6 | Cancelar parte de um bloco de reserva não é suportado (GAP-013) | Baixa |
@@ -936,7 +954,10 @@ neste código, com onde vê-los:
   rodapé mentir; e o `orderBy` termina em `{ id }`, porque `data +
   horaInicio` não é ordem total e sem desempate uma linha aparece em duas
   páginas e some de outra. **Filtro no cliente depois de paginar é sempre
-  defeito** — foi por isso que `GET /bookings` ganhou `excluirCanceladas`;
+  defeito** — foi por isso que `GET /bookings` ganhou `excluirCanceladas`.
+  **E ORDENAR no cliente depois de paginar é o mesmo defeito, achado só na
+  SPEC-041:** o app reordenava cada página que recebia, e a lista virava um
+  serrote que reiniciava a cada 20 itens. Quem pagina é quem ordena;
 - **Estado resolvido no servidor, não deduzido na tela** (SPEC-026/027/030):
   a chamada de uma aula sai como `futura | em_andamento | pendente | feita |
   legada | nao_houve | cancelada`, já comparada com o relógio do clube. A tela
