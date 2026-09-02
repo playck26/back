@@ -9,19 +9,6 @@ import { ClassesService } from './classes.service';
 import type { EncontroDaTurma } from './encontros';
 
 /**
- * SPEC-032 — dublê do registrador de acao. Ver `registrador-de-acao.spec.ts`
- * para a prova da preguica; aqui o que importa e que o servico o repassa.
- */
-function registradorFalso() {
-  return {
-    registrar: jest.fn().mockResolvedValue(undefined),
-    registrarMuitos: jest.fn().mockResolvedValue(undefined),
-    idDaAcao: null,
-  } as unknown as import('../common/auditoria/registrador-de-acao').RegistradorDeAcao;
-}
-
-
-/**
  * DEF-013 — **a transação de turma estoura o timeout do Prisma quando a
  * turma tem mais de um encontro.**
  *
@@ -224,7 +211,9 @@ function buildTxContado(
     },
     acaoAdministrativa: {
       create: jest.fn(() =>
-        ida('acaoAdministrativa.create', 'AcaoAdministrativa', { id: 'acao-1' }),
+        ida('acaoAdministrativa.create', 'AcaoAdministrativa', {
+          id: 'acao-1',
+        }),
       ),
     },
     eventoDeOcupacao: {
@@ -384,7 +373,11 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const { tx, idas } = buildTxContado();
       const service = buildClassesService(tx);
 
-      await service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1');
+      await service.create(
+        'c1',
+        { ...DTO_BASE, encontros: UM_ENCONTRO },
+        'autor-1',
+      );
 
       expect(idas.length).toBeLessThanOrEqual(tetoDaCriacao(UM_ENCONTRO));
     });
@@ -393,7 +386,11 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const { tx, idas } = buildTxContado();
       const service = buildClassesService(tx);
 
-      await service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS }, 'autor-1',);
+      await service.create(
+        'c1',
+        { ...DTO_BASE, encontros: DOIS_ENCONTROS },
+        'autor-1',
+      );
 
       expect(idas.length).toBeLessThanOrEqual(tetoDaCriacao(DOIS_ENCONTROS));
     });
@@ -406,16 +403,24 @@ describe('DEF-013 — orçamento da transação de turma', () => {
      */
     it('criar turma de 3 encontros custa o MESMO que de 1', async () => {
       const um = buildTxContado();
-      await buildClassesService(um.tx).create('c1', {
-        ...DTO_BASE,
-        encontros: UM_ENCONTRO,
-      }, 'autor-1',);
+      await buildClassesService(um.tx).create(
+        'c1',
+        {
+          ...DTO_BASE,
+          encontros: UM_ENCONTRO,
+        },
+        'autor-1',
+      );
 
       const tres = buildTxContado();
-      await buildClassesService(tres.tx).create('c1', {
-        ...DTO_BASE,
-        encontros: TRES_ENCONTROS,
-      }, 'autor-1',);
+      await buildClassesService(tres.tx).create(
+        'c1',
+        {
+          ...DTO_BASE,
+          encontros: TRES_ENCONTROS,
+        },
+        'autor-1',
+      );
 
       expect(tres.idas).toEqual(um.idas);
       expect(tres.idas.length).toBeLessThanOrEqual(tetoDaCriacao(UM_ENCONTRO));
@@ -430,7 +435,12 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const { tx, idas } = buildTxContado();
       const service = buildClassesService(tx);
 
-      await service.update('c1', 't1', { encontros: DOIS_ENCONTROS }, 'autor-1');
+      await service.update(
+        'c1',
+        't1',
+        { encontros: DOIS_ENCONTROS },
+        'autor-1',
+      );
 
       const diasDistintos = new Set(DOIS_ENCONTROS.map((e) => e.diaSemana))
         .size;
@@ -455,7 +465,11 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const service = buildClassesService(tx);
 
       await expect(
-        service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1',),
+        service.create(
+          'c1',
+          { ...DTO_BASE, encontros: UM_ENCONTRO },
+          'autor-1',
+        ),
       ).resolves.toBeDefined();
       expect(decorridoMs()).toBeLessThan(TIMEOUT_PADRAO_DO_PRISMA_MS);
     });
@@ -468,7 +482,11 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const service = buildClassesService(tx);
 
       await expect(
-        service.create('c1', { ...DTO_BASE, encontros: DOIS_ENCONTROS }, 'autor-1',),
+        service.create(
+          'c1',
+          { ...DTO_BASE, encontros: DOIS_ENCONTROS },
+          'autor-1',
+        ),
       ).resolves.toBeDefined();
     });
 
@@ -491,7 +509,11 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const service = buildClassesService(tx);
       // Uma passagem seca só para descobrir quantas idas o caminho custa
       // hoje; o teto abaixo é derivado dela, não chutado.
-      await service.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1');
+      await service.create(
+        'c1',
+        { ...DTO_BASE, encontros: UM_ENCONTRO },
+        'autor-1',
+      );
       const idasDoCaminho = idas.length;
 
       const apertado = buildTxContado({
@@ -502,7 +524,7 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       const outro = buildClassesService(apertado.tx);
 
       await expect(
-        outro.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1',),
+        outro.create('c1', { ...DTO_BASE, encontros: UM_ENCONTRO }, 'autor-1'),
       ).rejects.toMatchObject({ code: 'P2028' });
     });
   });

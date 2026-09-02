@@ -50,9 +50,7 @@ export default async function bootstrapRoleDeLimpeza(): Promise<void> {
     `);
     // A suíte conecta como dona do schema; para `SET LOCAL ROLE` funcionar,
     // ela precisa ser MEMBRO da role.
-    await prisma.$executeRawUnsafe(
-      `GRANT playck_test_cleanup TO CURRENT_USER`,
-    );
+    await prisma.$executeRawUnsafe(`GRANT playck_test_cleanup TO CURRENT_USER`);
     // E a role precisa poder apagar — depois do `SET ROLE` quem escreve é ela.
     await prisma.$executeRawUnsafe(
       `GRANT ALL ON ALL TABLES IN SCHEMA public TO playck_test_cleanup`,

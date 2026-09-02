@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { Prisma, TipoDeAcao, TipoDeEventoDeOcupacao } from '@prisma/client';
+import type {
+  Prisma,
+  TipoDeAcao,
+  TipoDeEventoDeOcupacao,
+} from '@prisma/client';
 
 /**
  * SPEC-032 — o registrador da ação administrativa.

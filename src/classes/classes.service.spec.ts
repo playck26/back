@@ -14,19 +14,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ClassesService } from './classes.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 
-/**
- * SPEC-032 — dublê do registrador de acao. Ver `registrador-de-acao.spec.ts`
- * para a prova da preguica; aqui o que importa e que o servico o repassa.
- */
-function registradorFalso() {
-  return {
-    registrar: jest.fn().mockResolvedValue(undefined),
-    registrarMuitos: jest.fn().mockResolvedValue(undefined),
-    idDaAcao: null,
-  } as unknown as import('../common/auditoria/registrador-de-acao').RegistradorDeAcao;
-}
-
-
 // TEST-004 (SPEC-003, fatia de turmas): unit tests de MOD-004 com Prisma e
 // CourtsService (MOD-005) mockados. A garantia física de INV-001 (sem
 // overbooking) já é provada por TEST-005/FIT-001 em MOD-005 — aqui só
@@ -152,10 +139,16 @@ describe('ClassesService', () => {
   describe('create', () => {
     it('rejeita horaFim <= horaInicio com 422 (AC-005)', async () => {
       await expect(
-        service.create('c1', {
-          ...dto,
-          encontros: [{ diaSemana: 2, horaInicio: '15:00', horaFim: '14:00' }],
-        }, 'autor-1',),
+        service.create(
+          'c1',
+          {
+            ...dto,
+            encontros: [
+              { diaSemana: 2, horaInicio: '15:00', horaFim: '14:00' },
+            ],
+          },
+          'autor-1',
+        ),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -165,20 +158,24 @@ describe('ClassesService', () => {
       // transação seria abrir transação para descobrir que não havia o que
       // gravar.
       await expect(
-        service.create('c1', { ...dto, encontros: [] }, 'autor-1',),
+        service.create('c1', { ...dto, encontros: [] }, 'autor-1'),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('AC-006 — encontros sobrepostos entre si são recusados antes de tocar o banco', async () => {
       await expect(
-        service.create('c1', {
-          ...dto,
-          encontros: [
-            { diaSemana: 2, horaInicio: '18:00', horaFim: '19:00' },
-            { diaSemana: 2, horaInicio: '18:30', horaFim: '19:30' },
-          ],
-        }, 'autor-1',),
+        service.create(
+          'c1',
+          {
+            ...dto,
+            encontros: [
+              { diaSemana: 2, horaInicio: '18:00', horaFim: '19:00' },
+              { diaSemana: 2, horaInicio: '18:30', horaFim: '19:30' },
+            ],
+          },
+          'autor-1',
+        ),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -294,14 +291,18 @@ describe('ClassesService', () => {
       // trocou por número. A janela é de 8 semanas, então 3 × 8 = 24.
       prontoParaCriar();
 
-      await service.create('c1', {
-        ...dto,
-        encontros: [
-          { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
-          { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
-          { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
-        ],
-      }, 'autor-1',);
+      await service.create(
+        'c1',
+        {
+          ...dto,
+          encontros: [
+            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+            { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
+          ],
+        },
+        'autor-1',
+      );
 
       expect(ocorrenciasRegistradas()).toHaveLength(24);
     });
@@ -311,13 +312,17 @@ describe('ClassesService', () => {
       // a hora do primeiro em todas. Passaria na contagem e estaria errado.
       prontoParaCriar();
 
-      await service.create('c1', {
-        ...dto,
-        encontros: [
-          { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
-          { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
-        ],
-      }, 'autor-1',);
+      await service.create(
+        'c1',
+        {
+          ...dto,
+          encontros: [
+            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+          ],
+        },
+        'autor-1',
+      );
 
       const porDia = new Map<number, Set<string>>();
       for (const o of ocorrenciasRegistradas()) {
@@ -339,13 +344,17 @@ describe('ClassesService', () => {
       // deixando a turma com metade da recorrência no ar.
       prontoParaCriar();
 
-      await service.create('c1', {
-        ...dto,
-        encontros: [
-          { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
-          { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
-        ],
-      }, 'autor-1',);
+      await service.create(
+        'c1',
+        {
+          ...dto,
+          encontros: [
+            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+          ],
+        },
+        'autor-1',
+      );
 
       expect(courtsServiceMock.registerClassOccupancy).toHaveBeenCalledTimes(1);
     });
@@ -357,13 +366,17 @@ describe('ClassesService', () => {
       );
 
       await expect(
-        service.create('c1', {
-          ...dto,
-          encontros: [
-            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
-            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
-          ],
-        }, 'autor-1',),
+        service.create(
+          'c1',
+          {
+            ...dto,
+            encontros: [
+              { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+              { diaSemana: 3, horaInicio: '18:00', horaFim: '19:30' },
+            ],
+          },
+          'autor-1',
+        ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
   });
@@ -446,15 +459,18 @@ describe('ClassesService', () => {
       it('de 2 para 3: cancela as futuras e gera 24', async () => {
         prontoParaEditar(DOIS);
 
-        await service.update('c1', 't1', {
-          encontros: [
-            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
-            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:00' },
-            { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
-          ],
-        },
-        'autor-1',
-      );
+        await service.update(
+          'c1',
+          't1',
+          {
+            encontros: [
+              { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+              { diaSemana: 3, horaInicio: '18:00', horaFim: '19:00' },
+              { diaSemana: 6, horaInicio: '09:00', horaFim: '10:00' },
+            ],
+          },
+          'autor-1',
+        );
 
         expect(
           courtsServiceMock.cancelFutureClassOccupancies,
@@ -465,11 +481,16 @@ describe('ClassesService', () => {
       it('REMOVENDO 1 de 2: sobra a janela do que ficou, e só ela', async () => {
         prontoParaEditar(DOIS);
 
-        await service.update('c1', 't1', {
-          encontros: [{ diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' }],
-        },
-        'autor-1',
-      );
+        await service.update(
+          'c1',
+          't1',
+          {
+            encontros: [
+              { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+            ],
+          },
+          'autor-1',
+        );
 
         const dias = new Set(
           ocorrenciasGeradas().map((o) => o.data.getUTCDay()),
@@ -485,11 +506,16 @@ describe('ClassesService', () => {
         // nenhum — sem erro em lugar nenhum.
         prontoParaEditar(DOIS);
 
-        await service.update('c1', 't1', {
-          encontros: [{ diaSemana: 5, horaInicio: '20:00', horaFim: '21:00' }],
-        },
-        'autor-1',
-      );
+        await service.update(
+          'c1',
+          't1',
+          {
+            encontros: [
+              { diaSemana: 5, horaInicio: '20:00', horaFim: '21:00' },
+            ],
+          },
+          'autor-1',
+        );
 
         const dias = new Set(
           ocorrenciasGeradas().map((o) => o.data.getUTCDay()),
@@ -558,11 +584,14 @@ describe('ClassesService', () => {
       tx.turma.update.mockResolvedValue({ id: 't1' });
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
 
-      await service.update('c1', 't1', {
-        encontros: [{ diaSemana: 2, horaInicio: '16:00', horaFim: '17:00' }],
-      },
-      'autor-1',
-    );
+      await service.update(
+        'c1',
+        't1',
+        {
+          encontros: [{ diaSemana: 2, horaInicio: '16:00', horaFim: '17:00' }],
+        },
+        'autor-1',
+      );
 
       expect(
         courtsServiceMock.cancelFutureClassOccupancies,
@@ -589,11 +618,10 @@ describe('ClassesService', () => {
       // registradores, nasceriam DUAS acoes para um `PATCH`, e o banco nao
       // reclamaria: a instancia unica e o mecanismo, e esta linha e o que o
       // prende.
-      const cancel = (
-        courtsServiceMock.cancelFutureClassOccupancies as jest.Mock
-      ).mock.calls[0];
-      const cria = (courtsServiceMock.registerClassOccupancy as jest.Mock).mock
-        .calls[0];
+      const cancel = courtsServiceMock.cancelFutureClassOccupancies.mock
+        .calls[0] as unknown[];
+      const cria = courtsServiceMock.registerClassOccupancy.mock
+        .calls[0] as unknown[];
       expect(cancel[4]).toBe(cria[5]);
     });
   });

@@ -40,15 +40,19 @@ function buildPrismaMock() {
       // SPEC-032: `createBooking` passou a LER a linha criada — o evento
       // aponta para `ocupacao.id`. Antes o retorno era ignorado, e o dublê
       // podia devolver `undefined`.
-      create: jest.fn().mockImplementation((args: { data: unknown }) =>
-        Promise.resolve({ id: 'oc-nova', ...(args?.data as object) }),
-      ),
+      create: jest
+        .fn()
+        .mockImplementation((args: { data: unknown }) =>
+          Promise.resolve({ id: 'oc-nova', ...(args?.data as object) }),
+        ),
       createMany: jest.fn(),
       // SPEC-032: o evento precisa do `id` de cada linha, entao as escritas
       // de turma usam as variantes que RETORNAM.
-      createManyAndReturn: jest.fn().mockImplementation((a: { data?: unknown[] }) =>
-        Promise.resolve((a?.data ?? []).map((_, i) => ({ id: `oc-${i}` }))),
-      ),
+      createManyAndReturn: jest
+        .fn()
+        .mockImplementation((a: { data?: unknown[] }) =>
+          Promise.resolve((a?.data ?? []).map((_, i) => ({ id: `oc-${i}` }))),
+        ),
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: 'oc-1' }]),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -363,11 +367,15 @@ describe('CourtsService', () => {
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
 
       await expect(
-        service.createBooking('c1', {
-          ...dto,
-          horaInicio: '15:00',
-          horaFim: '14:00',
-        }, 'autor-1'),
+        service.createBooking(
+          'c1',
+          {
+            ...dto,
+            horaInicio: '15:00',
+            horaFim: '14:00',
+          },
+          'autor-1',
+        ),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
     });
 
@@ -385,7 +393,12 @@ describe('CourtsService', () => {
         statusPagamento: 'pendente_pagamento',
       });
 
-      const result = await service.createBooking('c1', dto, 'autor-1', 'req-123');
+      const result = await service.createBooking(
+        'c1',
+        dto,
+        'autor-1',
+        'req-123',
+      );
 
       expect(comoReserva(result).id).toBe('o1');
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
@@ -404,7 +417,12 @@ describe('CourtsService', () => {
       );
 
       await expect(
-        service.createBooking('c1', { ...dto, alunoId: 'a1' }, 'autor-1', 'req-999'),
+        service.createBooking(
+          'c1',
+          { ...dto, alunoId: 'a1' },
+          'autor-1',
+          'req-999',
+        ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
@@ -416,9 +434,9 @@ describe('CourtsService', () => {
         origemTipo: 'TURMA',
       });
 
-      await expect(service.createBooking('c1', dto, 'autor-1')).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await expect(
+        service.createBooking('c1', dto, 'autor-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
     });
 
@@ -468,9 +486,9 @@ describe('CourtsService', () => {
         ),
       );
 
-      await expect(service.createBooking('c1', dto, 'autor-1')).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await expect(
+        service.createBooking('c1', dto, 'autor-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 
@@ -558,9 +576,9 @@ describe('CourtsService', () => {
 
     it('gera as ocupações via createMany numa única chamada quando não há conflito (NFR-002)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockResolvedValue([
-        { id: 'oc-0' }, { id: 'oc-1' },
-      ]);
+      (
+        prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock
+      ).mockResolvedValue([{ id: 'oc-0' }, { id: 'oc-1' }]);
 
       await service.registerClassOccupancy(
         prisma,
@@ -571,7 +589,9 @@ describe('CourtsService', () => {
         registradorFalso(),
       );
 
-      expect(prisma.ocupacaoQuadra.createManyAndReturn).toHaveBeenCalledTimes(1);
+      expect(prisma.ocupacaoQuadra.createManyAndReturn).toHaveBeenCalledTimes(
+        1,
+      );
       // SPEC-032: a linha ganhou `transicaoId` (o mesmo para todas — e UMA
       // transicao afetando N ocorrencias) e a chamada ganhou `select`, porque
       // o evento precisa do `id` de cada linha criada.
@@ -584,7 +604,7 @@ describe('CourtsService', () => {
           horaFim: ocorrencia.horaFim,
           origemTipo: 'TURMA',
           origemTurmaId: 't1',
-          transicaoId: expect.any(String) as unknown as string,
+          transicaoId: expect.any(String),
         })),
         select: { id: true },
       });
@@ -600,9 +620,9 @@ describe('CourtsService', () => {
      */
     it('julga todas as ocorrências numa consulta só (AC-001)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockResolvedValue([
-        { id: 'oc-0' }, { id: 'oc-1' },
-      ]);
+      (
+        prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock
+      ).mockResolvedValue([{ id: 'oc-0' }, { id: 'oc-1' }]);
 
       await service.registerClassOccupancy(
         prisma,
@@ -645,7 +665,9 @@ describe('CourtsService', () => {
 
     it('corrida perdida na constraint EXCLUDE durante createMany vira 409 (INV-001)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockRejectedValue(
+      (
+        prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock
+      ).mockRejectedValue(
         new Prisma.PrismaClientUnknownRequestError(
           'conflicting key value violates exclusion constraint "no_overlap_por_quadra"',
           { clientVersion: '6.19.3' },
@@ -672,7 +694,9 @@ describe('CourtsService', () => {
      */
     it('P2028 durante createMany NÃO vira 409 (DEF-013)', async () => {
       (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
-      (prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock).mockRejectedValue(
+      (
+        prisma.ocupacaoQuadra.createManyAndReturn as jest.Mock
+      ).mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError(
           'Transaction already closed: A query cannot be executed on an expired transaction.',
           {
@@ -790,12 +814,16 @@ describe('CourtsService', () => {
 
   describe('cancelFutureClassOccupancies', () => {
     it('marca como cancelado só as ocupações futuras de TURMA ainda não canceladas', async () => {
-      (prisma.ocupacaoQuadra.updateManyAndReturn as jest.Mock).mockResolvedValue([
-        { id: 'oc-0' }, { id: 'oc-1' }, { id: 'oc-2' },
-      ]);
+      (
+        prisma.ocupacaoQuadra.updateManyAndReturn as jest.Mock
+      ).mockResolvedValue([{ id: 'oc-0' }, { id: 'oc-1' }, { id: 'oc-2' }]);
 
       const aPartirDe = new Date('2026-08-20T00:00:00.000Z');
-      await service.cancelFutureClassOccupancies(prisma, 'c1', 't1', aPartirDe,
+      await service.cancelFutureClassOccupancies(
+        prisma,
+        'c1',
+        't1',
+        aPartirDe,
         registradorFalso(),
       );
 
@@ -811,7 +839,7 @@ describe('CourtsService', () => {
         // `select` porque o evento precisa do `id` de cada uma.
         data: {
           statusPagamento: 'cancelado',
-          transicaoId: expect.any(String) as unknown as string,
+          transicaoId: expect.any(String),
         },
         select: { id: true },
       });
@@ -848,9 +876,9 @@ describe('CourtsService', () => {
     it('lança 404 cross-tenant', async () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
-      await expect(service.cancelBooking('c1', 'o1', 'autor-1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.cancelBooking('c1', 'o1', 'autor-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     // SPEC-032/AC-002 — a prova que justifica o registrador PREGUICOSO.
@@ -884,18 +912,22 @@ describe('CourtsService', () => {
       expect(prisma.acaoAdministrativa.create).toHaveBeenCalledTimes(1);
       expect(prisma.eventoDeOcupacao.create).toHaveBeenCalledTimes(1);
 
-      const doUpdate = (prisma.ocupacaoQuadra.update as jest.Mock).mock
-        .calls[0][0] as { data: { transicaoId: string } };
-      const doEvento = (prisma.eventoDeOcupacao.create as jest.Mock).mock
-        .calls[0][0] as { data: { transicaoId: string; tipo: string } };
+      const chamadas = (m: unknown) =>
+        (m as jest.Mock).mock.calls as unknown[][];
+      const doUpdate = chamadas(prisma.ocupacaoQuadra.update)[0][0] as {
+        data: { transicaoId: string };
+      };
+      const doEvento = chamadas(prisma.eventoDeOcupacao.create)[0][0] as {
+        data: { transicaoId: string; tipo: string };
+      };
 
       // Se estes dois divergirem, a trigger recusa no COMMIT — e nenhum
       // teste de rota veria, porque o dublê nao tem trigger.
       expect(doEvento.data.transicaoId).toBe(doUpdate.data.transicaoId);
       expect(doEvento.data.tipo).toBe('cancelada');
-      expect(
-        (prisma.acaoAdministrativa.create as jest.Mock).mock.calls[0][0],
-      ).toMatchObject({ data: { tipo: 'reserva_cancelada', autorId: 'autor-1' } });
+      expect(chamadas(prisma.acaoAdministrativa.create)[0][0]).toMatchObject({
+        data: { tipo: 'reserva_cancelada', autorId: 'autor-1' },
+      });
     });
 
     it('marca status_pagamento como cancelado (AC-003)', async () => {
@@ -913,7 +945,7 @@ describe('CourtsService', () => {
         // a MESMA — e o par que a trigger confere no COMMIT.
         data: {
           statusPagamento: 'cancelado',
-          transicaoId: expect.any(String) as unknown as string,
+          transicaoId: expect.any(String),
         },
       });
     });
@@ -947,7 +979,7 @@ describe('CourtsService', () => {
         // a MESMA — e o par que a trigger confere no COMMIT.
         data: {
           statusPagamento: 'cancelado',
-          transicaoId: expect.any(String) as unknown as string,
+          transicaoId: expect.any(String),
         },
       });
     });
@@ -982,13 +1014,18 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
       });
 
-      const result = await service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1');
+      const result = await service.updatePaymentStatus(
+        'c1',
+        'o1',
+        'pago',
+        'autor-1',
+      );
 
       expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
         where: { id: 'o1' },
         data: {
           statusPagamento: 'pago',
-          transicaoId: expect.any(String) as unknown as string,
+          transicaoId: expect.any(String),
         },
       });
       expect(result.statusPagamento).toBe('pago');
@@ -1007,7 +1044,12 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
       });
 
-      const result = await service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1');
+      const result = await service.updatePaymentStatus(
+        'c1',
+        'o1',
+        'pago',
+        'autor-1',
+      );
 
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       expect(result.statusPagamento).toBe('pago');
@@ -1189,9 +1231,9 @@ describe('CourtsService', () => {
         alunoId: null,
       });
 
-      await expect(service.cancelBooking('c1', 'o1', 'autor-1')).rejects.toBeInstanceOf(
-        UnprocessableEntityException,
-      );
+      await expect(
+        service.cancelBooking('c1', 'o1', 'autor-1'),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
 
@@ -1204,7 +1246,12 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
       });
 
-      const r = await service.updatePaymentStatus('c1', 'o1', 'pago', 'autor-1');
+      const r = await service.updatePaymentStatus(
+        'c1',
+        'o1',
+        'pago',
+        'autor-1',
+      );
 
       expect(r.statusPagamento).toBe('pago');
     });
@@ -1216,7 +1263,9 @@ describe('CourtsService', () => {
         statusPagamento: 'cancelado',
       });
 
-      await expect(service.cancelBooking('c1', 'o1', 'autor-1')).resolves.toBeUndefined();
+      await expect(
+        service.cancelBooking('c1', 'o1', 'autor-1'),
+      ).resolves.toBeUndefined();
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
   });
@@ -1260,14 +1309,18 @@ describe('CourtsService', () => {
     it('AC-001/AC-003: 2 horas seguidas viram 1 reserva, com valor somado', async () => {
       prepararCriacao();
 
-      const r = (await service.createBooking('c1', {
-        quadraId: 'q1',
-        data: '2026-08-24',
-        slots: [
-          { horaInicio: '09:00', horaFim: '10:00' },
-          { horaInicio: '10:00', horaFim: '11:00' },
-        ],
-      }, 'autor-1')) as { reservas: unknown[] };
+      const r = (await service.createBooking(
+        'c1',
+        {
+          quadraId: 'q1',
+          data: '2026-08-24',
+          slots: [
+            { horaInicio: '09:00', horaFim: '10:00' },
+            { horaInicio: '10:00', horaFim: '11:00' },
+          ],
+        },
+        'autor-1',
+      )) as { reservas: unknown[] };
 
       expect(r.reservas).toHaveLength(1);
       expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(1);
@@ -1283,14 +1336,18 @@ describe('CourtsService', () => {
     it('AC-002: horas separadas viram 2 reservas independentes', async () => {
       prepararCriacao();
 
-      const r = (await service.createBooking('c1', {
-        quadraId: 'q1',
-        data: '2026-08-24',
-        slots: [
-          { horaInicio: '09:00', horaFim: '10:00' },
-          { horaInicio: '15:00', horaFim: '16:00' },
-        ],
-      }, 'autor-1')) as { reservas: unknown[] };
+      const r = (await service.createBooking(
+        'c1',
+        {
+          quadraId: 'q1',
+          data: '2026-08-24',
+          slots: [
+            { horaInicio: '09:00', horaFim: '10:00' },
+            { horaInicio: '15:00', horaFim: '16:00' },
+          ],
+        },
+        'autor-1',
+      )) as { reservas: unknown[] };
 
       expect(r.reservas).toHaveLength(2);
       expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(2);
@@ -1307,14 +1364,18 @@ describe('CourtsService', () => {
       });
 
       await expect(
-        service.createBooking('c1', {
-          quadraId: 'q1',
-          data: '2026-08-24',
-          slots: [
-            { horaInicio: '09:00', horaFim: '10:00' },
-            { horaInicio: '10:00', horaFim: '11:00' },
-          ],
-        }, 'autor-1'),
+        service.createBooking(
+          'c1',
+          {
+            quadraId: 'q1',
+            data: '2026-08-24',
+            slots: [
+              { horaInicio: '09:00', horaFim: '10:00' },
+              { horaInicio: '10:00', horaFim: '11:00' },
+            ],
+          },
+          'autor-1',
+        ),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
 
       expect(prisma.ocupacaoQuadra.create).not.toHaveBeenCalled();
@@ -1406,7 +1467,12 @@ describe('CourtsService', () => {
         slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
       });
 
-      const r = (await service.createBooking('c1', retry, 'autor-1', 'chave-1')) as {
+      const r = (await service.createBooking(
+        'c1',
+        retry,
+        'autor-1',
+        'chave-1',
+      )) as {
         reservas: { id: string }[];
       };
 
@@ -1526,12 +1592,16 @@ describe('CourtsService', () => {
     it('formato antigo continua funcionando e recebe objeto, não lista', async () => {
       prepararCriacao();
 
-      const r = await service.createBooking('c1', {
-        quadraId: 'q1',
-        data: '2026-08-24',
-        horaInicio: '09:00',
-        horaFim: '10:00',
-      }, 'autor-1');
+      const r = await service.createBooking(
+        'c1',
+        {
+          quadraId: 'q1',
+          data: '2026-08-24',
+          horaInicio: '09:00',
+          horaFim: '10:00',
+        },
+        'autor-1',
+      );
 
       expect(comoReserva(r).id).toBeDefined();
       expect((r as { reservas?: unknown[] }).reservas).toBeUndefined();

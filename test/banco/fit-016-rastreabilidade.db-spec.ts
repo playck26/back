@@ -133,7 +133,8 @@ describe('FIT-016 — append-only é do BANCO, não da ausência de rota (INV-06
        VALUES ('${ev}','${EMPRESA}','${acao}','${oc}','criada','${uuid()}')`,
     );
     await recusaPor(
-      () => q(`UPDATE eventos_de_ocupacao SET tipo='cancelada' WHERE id='${ev}'`),
+      () =>
+        q(`UPDATE eventos_de_ocupacao SET tipo='cancelada' WHERE id='${ev}'`),
       'append-only',
     );
     await recusaPor(
