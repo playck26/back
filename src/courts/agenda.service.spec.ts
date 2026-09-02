@@ -180,7 +180,42 @@ describe('AgendaService (SPEC-012)', () => {
         responsavel: 'Israel',
         statusPagamento: 'pendente_pagamento',
         valor: 160,
+        // SPEC-032/AC-009 — nulo e o estado normal de linha anterior a spec
+        // (LIM-032a): a tela mostra "sem historico", nao "criada por —".
+        criadaPor: null,
+        canceladaPor: null,
       });
+    });
+
+    // SPEC-032/AC-009 — as duas pontas, e a segunda tem regra propria.
+    it('resolve criadaPor e canceladaPor a partir dos eventos', async () => {
+      const { service } = build({
+        ocupacoes: [
+          {
+            ...base,
+            origemTipo: 'AVULSO',
+            aluno: { usuario: { nome: 'Israel' } },
+            origemTurma: null,
+            statusPagamento: 'cancelado',
+            // Em ordem cronologica, como a consulta pede. DOIS
+            // cancelamentos: o caso que a SPEC-035 (reativacao) torna real.
+            eventos: [
+              { tipo: 'criada', acao: { autor: { nome: 'Maria' } } },
+              { tipo: 'cancelada', acao: { autor: { nome: 'Gabriel' } } },
+              { tipo: 'reativada', acao: { autor: { nome: 'Maria' } } },
+              { tipo: 'cancelada', acao: { autor: { nome: 'Leandro' } } },
+            ],
+          },
+        ],
+      });
+
+      const itens = await service.detalheDoDia(COMPANY, '2026-08-24');
+
+      expect(itens[0].criadaPor).toBe('Maria');
+      // O ULTIMO cancelamento, nao o primeiro. Quem pergunta "quem cancelou
+      // isto?" quer o estado atual — trocar `at(-1)` por `at(0)` devolveria
+      // 'Gabriel', que cancelou uma vida passada desta reserva.
+      expect(itens[0].canceladaPor).toBe('Leandro');
     });
 
     // AC-004: ocupação de turma não tem `aluno_id` — quem responde por ela

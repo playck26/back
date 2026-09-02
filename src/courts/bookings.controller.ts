@@ -25,6 +25,8 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CourtsService } from './courts.service';
+import { AgendaService } from './agenda.service';
+import { EventoDeOcupacaoResponseDto } from './dto/evento-de-ocupacao-response.dto';
 import {
   OcupacaoPaginadaResponseDto,
   ReservasCriadasResponseDto,
@@ -42,7 +44,10 @@ import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('bookings')
 export class BookingsController {
-  constructor(private readonly courtsService: CourtsService) {}
+  constructor(
+    private readonly courtsService: CourtsService,
+    private readonly agenda: AgendaService,
+  ) {}
 
   @Post()
   @ApiCreatedResponse({ type: ReservasCriadasResponseDto })
@@ -110,6 +115,22 @@ export class BookingsController {
       user.sub,
       alunoIdScope,
     );
+  }
+
+  /**
+   * SPEC-032/CON-016 — quem fez o quê nesta reserva, e quando.
+   *
+   * `company_admin` apenas: e histórico administrativo, não informação de
+   * quem reservou. O aluno vê a própria reserva, não quem a operou.
+   */
+  @Get(':id/eventos')
+  @Roles('company_admin')
+  @ApiOkResponse({ type: [EventoDeOcupacaoResponseDto] })
+  eventos(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.agenda.eventosDaOcupacao(user.companyId as string, id);
   }
 
   private async resolveAlunoId(
