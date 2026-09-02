@@ -9,5 +9,6 @@
   "testRegex": ".db-spec.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
-  }
+  },
+  "globalSetup": "<rootDir>/banco/bootstrap-role-de-limpeza.ts"
 }

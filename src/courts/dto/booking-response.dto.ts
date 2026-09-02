@@ -155,6 +155,24 @@ export class ItemDaAgendaResponseDto {
 
   @ApiProperty({ type: Number, nullable: true, example: 120 })
   valor!: number | null;
+
+  /**
+   * SPEC-032/AC-009 — quem criou, e quem cancelou.
+   *
+   * **Nulo é o estado normal das linhas anteriores à spec** (LIM-032a): elas
+   * nasceram sem evento, e não há como inventar um. A tela mostra "sem
+   * histórico registrado", nunca "criada por —".
+   */
+  @ApiProperty({ type: String, nullable: true, example: 'Maria' })
+  criadaPor!: string | null;
+
+  /**
+   * O ÚLTIMO cancelamento, não o primeiro: com a reativação da SPEC-035 uma
+   * ocupação pode ser cancelada mais de uma vez, e quem pergunta "quem
+   * cancelou isto?" quer saber do estado atual.
+   */
+  @ApiProperty({ type: String, nullable: true, example: 'Gabriel' })
+  canceladaPor!: string | null;
 }
 
 /**

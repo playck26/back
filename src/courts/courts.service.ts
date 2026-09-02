@@ -10,6 +10,10 @@ import { StudentsService } from '../people/students.service';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  novaTransicao,
+  RegistradorDeAcao,
+} from '../common/auditoria/registrador-de-acao';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import {
   formatDateOnly,
@@ -314,6 +318,7 @@ export class CourtsService {
   async createBooking(
     companyId: string,
     dto: CreateBookingDto,
+    autorId: string,
     clientRequestId?: string,
   ) {
     const quadra = await this.buscarQuadraDaEmpresa(companyId, dto.quadraId);
@@ -408,25 +413,37 @@ export class CourtsService {
             })
           : null;
 
+        // SPEC-032/AC-001 e INV-078 — **UMA ação para o pedido inteiro**, N
+        // eventos. A identidade do comando lógico aqui é o PEDIDO, não o
+        // bloco: três blocos são um gesto do usuário, não três.
+        const registrador = new RegistradorDeAcao(
+          tx,
+          companyId,
+          autorId,
+          'reserva_criada',
+        );
+
         const resultado: OcupacaoParaResposta[] = [];
         for (const bloco of blocos) {
-          resultado.push(
-            await tx.ocupacaoQuadra.create({
-              data: {
-                companyId,
-                quadraId: dto.quadraId,
-                data: dataDate,
-                horaInicio: parseTimeOnly(bloco.horaInicio),
-                horaFim: parseTimeOnly(bloco.horaFim),
-                origemTipo: 'AVULSO',
-                alunoId: dto.alunoId,
-                // Congelado na criação (AC-004): reajustar o preço da
-                // quadra depois não mexe em reserva existente.
-                valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
-                pedidoId: pedido?.id,
-              },
-            }),
-          );
+          const transicaoId = novaTransicao();
+          const ocupacao = await tx.ocupacaoQuadra.create({
+            data: {
+              companyId,
+              quadraId: dto.quadraId,
+              data: dataDate,
+              horaInicio: parseTimeOnly(bloco.horaInicio),
+              horaFim: parseTimeOnly(bloco.horaFim),
+              origemTipo: 'AVULSO',
+              alunoId: dto.alunoId,
+              // Congelado na criação (AC-004): reajustar o preço da
+              // quadra depois não mexe em reserva existente.
+              valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
+              pedidoId: pedido?.id,
+              transicaoId,
+            },
+          });
+          await registrador.registrar(ocupacao.id, 'criada', transicaoId);
+          resultado.push(ocupacao);
         }
         return resultado;
       });
@@ -607,6 +624,7 @@ export class CourtsService {
     quadraId: string,
     turmaId: string,
     ocorrencias: { data: Date; horaInicio: Date; horaFim: Date }[],
+    registrador: RegistradorDeAcao,
   ): Promise<void> {
     // SPEC-010/INV-011 (AC-018): **todas** as ocorrências são validadas
     // antes de qualquer escrita. Hoje elas compartilham dia e hora, então
@@ -699,9 +717,32 @@ export class CourtsService {
       });
     }
 
+    // SPEC-032/TASK-005b — **A ORDENACAO MORA AQUI**, no dono final da
+    // escrita, e nao no chamador.
+    //
+    // `classes.service.ts` entregava a lista na ordem dos encontros, com um
+    // comentario afirmando que "a ordem nao importa: o EXCLUDE decide
+    // conflito por intervalo, nao por posicao". Isso e verdade para
+    // CORRETUDE e **falso para deadlock**: `createMany` vira um
+    // `INSERT ... VALUES` unico, o Postgres avalia as tuplas na ordem do
+    // array, e e essa ordem que decide quem espera quem na `EXCLUDE`.
+    //
+    // Duas turmas com encontros em ordens opostas na mesma quadra travam uma
+    // a outra e uma aborta com `40P01`. Ordenar no chamador deixaria o
+    // proximo chamador livre para errar — por isso e aqui.
+    const emOrdem = [...ocorrencias].sort(
+      (a, b) =>
+        a.data.getTime() - b.data.getTime() ||
+        a.horaInicio.getTime() - b.horaInicio.getTime(),
+    );
+
+    const transicaoId = novaTransicao();
     try {
-      await tx.ocupacaoQuadra.createMany({
-        data: ocorrencias.map((ocorrencia) => ({
+      // `createManyAndReturn` e nao `createMany`: o evento precisa do `id` de
+      // cada ocorrencia, e `createMany` devolve so a contagem. Continua sendo
+      // **uma** instrucao SQL (NFR-002).
+      const criadas = await tx.ocupacaoQuadra.createManyAndReturn({
+        data: emOrdem.map((ocorrencia) => ({
           companyId,
           quadraId,
           data: ocorrencia.data,
@@ -709,8 +750,21 @@ export class CourtsService {
           horaFim: ocorrencia.horaFim,
           origemTipo: 'TURMA' as const,
           origemTurmaId: turmaId,
+          transicaoId,
         })),
+        select: { id: true },
       });
+      // Uma acao por TURMA (INV-078), N eventos. O registrador vem de fora
+      // justamente para que editar o horario — que cancela as antigas e cria
+      // as novas — seja UM gesto com dois tipos de evento, e nao dois gestos.
+      // UMA instrucao para os N eventos — ver `registrarMuitos`. O laco
+      // custaria N idas ao banco dentro da transacao e quebraria o orcamento
+      // do DEF-013, que existe porque isso ja estourou P2028 em producao.
+      await registrador.registrarMuitos(
+        criadas.map((l) => l.id),
+        'criada',
+        transicaoId,
+      );
     } catch (error) {
       // Mesma corrida perdida de createBooking (INV-001): a violação da
       // EXCLUDE constraint não tem P-código dedicado no Prisma. O que **não**
@@ -735,8 +789,15 @@ export class CourtsService {
     companyId: string,
     turmaId: string,
     aPartirDe: Date,
+    registrador: RegistradorDeAcao,
   ): Promise<void> {
-    await tx.ocupacaoQuadra.updateMany({
+    const transicaoId = novaTransicao();
+    // `updateManyAndReturn` e nao `updateMany`: a trigger
+    // `ocupacao_cancelada_exige_evento` e `FOR EACH ROW` e exige um evento
+    // por linha cancelada — e `updateMany` devolve so a contagem, sem dizer
+    // QUAIS linhas tocou. Era o furo que a validacao cruzada apontou como
+    // "irrealizavel como escrito"; nao e, mas exige a variante que retorna.
+    const canceladas = await tx.ocupacaoQuadra.updateManyAndReturn({
       where: {
         companyId,
         origemTipo: 'TURMA',
@@ -744,47 +805,82 @@ export class CourtsService {
         statusPagamento: { not: 'cancelado' },
         data: { gte: aPartirDe },
       },
-      data: { statusPagamento: 'cancelado' },
+      data: { statusPagamento: 'cancelado', transicaoId },
+      select: { id: true },
     });
+    await registrador.registrarMuitos(
+      canceladas.map((l) => l.id),
+      'cancelada',
+      transicaoId,
+    );
   }
 
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
   // cancelar reserva onde `aluno_id` bate com o próprio — "dono da reserva
   // ou company_admin" (API_CONTRACTS.md CON-005.6).
+  /**
+   * SPEC-032/TASK-002 — **passou a rodar dentro de uma transação**, e isso
+   * não é refinamento: eram duas instruções soltas (`findFirst` + `update`),
+   * e a trigger `ocupacao_cancelada_exige_evento` exige o evento **no mesmo
+   * `COMMIT`** do cancelamento. Sem transação, não há mesmo COMMIT.
+   *
+   * A SPEC-033 depende deste mesmo passo para debitar e devolver crédito com
+   * segurança, e por isso ele está declarado lá como TASK-000.
+   */
   async cancelBooking(
     companyId: string,
     id: string,
+    autorId: string,
     alunoIdScope?: string,
   ): Promise<void> {
-    const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
-      where: { id, companyId },
-    });
-    if (!ocupacao) {
-      throw new NotFoundException();
-    }
-    if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
-      throw new ForbiddenException();
-    }
+    await this.prisma.$transaction(async (tx) => {
+      const ocupacao = await tx.ocupacaoQuadra.findFirst({
+        where: { id, companyId },
+      });
+      if (!ocupacao) {
+        throw new NotFoundException();
+      }
+      if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
+        throw new ForbiddenException();
+      }
 
-    // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
-    // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
-    // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
-    // esta rota apagaria a aula da agenda de todo mundo a partir de uma
-    // ação pensada para reserva individual.
-    this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+      // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
+      // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
+      // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
+      // esta rota apagaria a aula da agenda de todo mundo a partir de uma
+      // ação pensada para reserva individual.
+      this.assertOcupacaoAvulsa(ocupacao.origemTipo);
 
-    // Cancelar o que já está cancelado é idempotente: sem escrita, sem
-    // erro. Repetir a ação não é engano do usuário, é rede instável.
-    if (ocupacao.statusPagamento === 'cancelado') {
-      return;
-    }
+      // Cancelar o que já está cancelado é idempotente: sem escrita, sem
+      // erro. Repetir a ação não é engano do usuário, é rede instável.
+      //
+      // SPEC-032/AC-002: sair aqui não grava ação NEM evento — é por isso que
+      // o registrador é preguiçoso. Criá-lo antes gravaria uma ação vazia a
+      // cada retentativa de rede.
+      if (ocupacao.statusPagamento === 'cancelado') {
+        return;
+      }
 
-    // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
-    // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
-    // migration), então essa escrita sozinha já resolve.
-    await this.prisma.ocupacaoQuadra.update({
-      where: { id },
-      data: { statusPagamento: 'cancelado' },
+      const transicaoId = novaTransicao();
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        'reserva_cancelada',
+      );
+
+      // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
+      // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
+      // migration), então essa escrita sozinha já resolve.
+      await tx.ocupacaoQuadra.update({
+        where: { id },
+        data: { statusPagamento: 'cancelado', transicaoId },
+      });
+
+      // A ordem entre esta linha e o `update` acima **não importa**: a
+      // trigger é `DEFERRABLE INITIALLY DEFERRED` e só julga no COMMIT.
+      // Fosse imediata, gravar a ocupação antes do evento falharia sempre.
+      await registrador.registrar(id, 'cancelada', transicaoId);
     });
   }
 
@@ -801,6 +897,7 @@ export class CourtsService {
     companyId: string,
     id: string,
     status: 'pago' | 'cancelado',
+    autorId: string,
   ) {
     const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
       where: { id, companyId },
@@ -836,9 +933,29 @@ export class CourtsService {
       });
     }
 
-    const atualizada = await this.prisma.ocupacaoQuadra.update({
-      where: { id },
-      data: { statusPagamento: status },
+    // SPEC-032 — esta rota tambem CANCELA (`status = 'cancelado'`), entao ela
+    // dispara a trigger `ocupacao_cancelada_exige_evento` e precisa da mesma
+    // atomicidade que o `cancelBooking`. O `pago` nao dispara a trigger, mas
+    // grava evento pela mesma razao do resto: sem autor, `updated_at` responde
+    // "quando" e ninguem responde "quem".
+    const atualizada = await this.prisma.$transaction(async (tx) => {
+      const transicaoId = novaTransicao();
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        status === 'pago' ? 'pagamento_confirmado' : 'reserva_cancelada',
+      );
+      const linha = await tx.ocupacaoQuadra.update({
+        where: { id },
+        data: { statusPagamento: status, transicaoId },
+      });
+      await registrador.registrar(
+        id,
+        status === 'pago' ? 'pagamento_confirmado' : 'cancelada',
+        transicaoId,
+      );
+      return linha;
     });
     return this.toOcupacaoResponse(atualizada);
   }

@@ -13,6 +13,7 @@ import {
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
+import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { PrismaService } from '../prisma/prisma.service';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
@@ -115,7 +116,7 @@ export class ClassesService {
     });
   }
 
-  async create(companyId: string, dto: CreateClassDto) {
+  async create(companyId: string, dto: CreateClassDto, autorId: string) {
     // AC-003/005/006 — a lista inteira é julgada antes de qualquer escrita, e
     // a recusa é sempre da turma inteira. Ver `encontros.ts`.
     validarEncontros(dto.encontros);
@@ -155,12 +156,15 @@ export class ClassesService {
         include: { encontros: ORDEM_DOS_ENCONTROS },
       });
 
+      // SPEC-032/INV-078 — UMA acao por TURMA. Criar a turma e um gesto, e as
+      // N ocorrencias geradas sao N eventos dele.
       await this.courtsService.registerClassOccupancy(
         tx,
         companyId,
         dto.quadraId,
         criada.id,
         ocorrencias,
+        new RegistradorDeAcao(tx, companyId, autorId, 'turma_criada'),
       );
 
       return criada;
@@ -193,7 +197,12 @@ export class ClassesService {
     };
   }
 
-  async update(companyId: string, id: string, dto: UpdateClassDto) {
+  async update(
+    companyId: string,
+    id: string,
+    dto: UpdateClassDto,
+    autorId: string,
+  ) {
     const existente = await this.prisma.turma.findFirst({
       where: { id, companyId },
     });
@@ -283,11 +292,26 @@ export class ClassesService {
         // logo abaixo para regerar: são as duas metades da mesma operação, e
         // é por isso que as duas passaram a chamar a mesma função.
         const hojeUTC = hojeNoFusoDoClube();
+
+        // SPEC-032/D2 e INV-078 — **UM registrador para as duas metades.**
+        // Editar o horario cancela as antigas e cria as novas dentro do
+        // MESMO `$transaction`, a partir de UM `PATCH`. E uma acao
+        // (`turma_horario_editado`) com eventos `cancelada` e `criada`.
+        // Dois registradores aqui criariam duas acoes para um gesto — e o
+        // banco nao reclamaria, e por isso a instancia unica e o mecanismo.
+        const registrador = new RegistradorDeAcao(
+          tx,
+          companyId,
+          autorId,
+          'turma_horario_editado',
+        );
+
         await this.courtsService.cancelFutureClassOccupancies(
           tx,
           companyId,
           id,
           hojeUTC,
+          registrador,
         );
 
         await this.courtsService.registerClassOccupancy(
@@ -296,6 +320,7 @@ export class ClassesService {
           quadraId,
           id,
           this.ocorrenciasDosEncontros(encontros ?? []),
+          registrador,
         );
       }
 

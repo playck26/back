@@ -405,9 +405,20 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**17 tabelas e 10 enums** no `schema.prisma` (conferido em 2026-08-25, depois da
-SPEC-018:TASK-001 — que **não** criou tabela nem enum: só seis colunas de
-mídia, todas nulas).
+**26 tabelas e 13 enums** no `schema.prisma` (conferido por
+`grep -c '^model'` / `'^enum'` em **2026-09-02**, e batido contra o banco:
+27 tabelas com a `_prisma_migrations`).
+
+> **A planta dizia "17 tabelas e 10 enums, conferido em 2026-08-25", e estava
+> defasada em SEIS tabelas.** Quatro não eram desta spec —
+> `termos_da_plataforma`, `contratos_da_empresa` e `aceites` (SPEC-024) e
+> `avaliacoes_de_aula` (SPEC-025) entraram sem passar por aqui. As outras duas
+> são da SPEC-032.
+>
+> A regra do projeto é dura e existe por isto: *"mudança estrutural atualiza a
+> planta do repositório afetado no mesmo ciclo. Planta desatualizada é pior
+> que planta ausente, porque quem lê confia nela."* Corrigido de uma vez —
+> não só a parte que eu trouxe.
 
 | Tabela | Dono | Papel / quirk |
 |---|---|---|
@@ -426,6 +437,12 @@ mídia, todas nulas).
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
 | `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida` \| `nao_houve`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção; **`nao_houve` (SPEC-030) é a aula que não aconteceu** — cabeçalho sem nenhuma presença, e é o que tira o dia do vermelho no calendário sem mentir que a aula foi dada |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
+| `termos_da_plataforma` | MOD-009 | SPEC-024. O texto **da plataforma**, versionado. Versão publicada **nunca é editada** — publicar de novo cria versão nova, porque saber que alguém aceitou "a v1" não vale nada se a v1 não puder ser lida depois. A versão vigente é constante em código (`TERMO_VERSAO_VIGENTE`), não `MAX(versao)`: o portão roda em **toda** requisição autenticada, e um `MAX()` por requisição seria uma segunda ida ao banco para responder algo que só muda em deploy |
+| `contratos_da_empresa` | MOD-009 | SPEC-024. O contrato **do clube**, versionado do mesmo jeito. `ON DELETE RESTRICT` de propósito: apagar uma empresa não pode levar embora o registro de qual texto os alunos aceitaram |
+| `aceites` | MOD-009 | SPEC-024. **Append-only**, e é registro legal: guarda **qual versão** de cada texto a pessoa leu. Convive com `usuarios.termo_versao_aceita`/`contrato_versao_aceita`, que respondem "está em dia?" sem um `ORDER BY` por requisição — as duas verdades não divergem porque são escritas na mesma transação |
+| `avaliacoes_de_aula` | MOD-004 | SPEC-025. A nota do aluno sobre uma aula. FK **composta** para `ocupacoes_quadra` e para `alunos` carregando a empresa — sem isso o banco aceitaria a média de uma turma agregar nota alheia, que foi exatamente o vazamento que a validação cruzada achou |
+| `acoes_administrativas` | MOD-010 | **SPEC-032.** O **gesto humano**: uma por comando lógico que escreve. Append-only por trigger. A FK do autor **não** carrega a empresa, de propósito — `usuarios.company_id` é nulo para `super_admin`, e uma FK composta o impediria de ser autor de qualquer coisa (LIM-032f) |
+| `eventos_de_ocupacao` | MOD-010 | **SPEC-032.** O **alvo técnico**: N por ação, um por ocupação afetada. A cisão entre as duas existe porque um evento não pode apontar para 40 ocorrências ao mesmo tempo — a v1 da spec tentava, e foi reprovada por isso. `transicao_id` casa com o da ocupação e é o que a trigger confere no `COMMIT` |
 | `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
@@ -447,6 +464,45 @@ que são a garantia real):
 | `quadras_imagem_confirmada_por_fkey` (`ON DELETE RESTRICT`) | a confirmação vale por ter nome de gente: apagar a conta não pode apagar o autor da afirmação. Mesmo regime de `chamadas.registrada_por` |
 | `usuarios_foto_da_empresa_check`, `professores_foto_da_empresa_check`, `quadras_imagem_da_empresa_check`, `empresas_logo_da_empresa_check` (SPEC-018) | INV-030 por coluna de mídia: a chave gravada mora sob a empresa **da própria linha**. Pega chave adulterada no banco, que o prefixo e o escopo por token não pegam — os dois leem o mesmo token. O resto da gramática fica com `chave-de-midia.ts`, fonte única |
 | `usuarios_foto_da_empresa_check`, parte `company_id IS NOT NULL` | consequência declarada: **`super_admin` não tem foto de perfil.** A gramática da chave começa por `empresas/<company_id>/` e não representa foto de quem não tem empresa. **Decidido em 2026-08-25** (SPEC-018/LIM-005): é conta operacional e o SAdmin não tem tela de perfil. A rota devolve 403 `PERFIL_SEM_EMPRESA` antes de tocar o storage, para o caso nunca virar 500 vindo de constraint |
+
+### 3.1 Triggers — e são as primeiras do projeto
+
+Conferido: **nenhuma migration anterior à SPEC-032 cria `TRIGGER` ou
+`FUNCTION`.** Até aqui, toda invariante de banco era `CHECK`, `UNIQUE`, `FK`
+ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
+
+| Trigger | O quê |
+|---|---|
+| `acoes_append_only`, `eventos_append_only` | `BEFORE UPDATE OR DELETE` — recusam alteração e remoção nas duas tabelas de auditoria |
+| `ocupacao_cancelada_exige_evento` | `CONSTRAINT TRIGGER AFTER UPDATE ... DEFERRABLE INITIALLY DEFERRED` — a transição para `cancelado` exige evento **desta transição** |
+
+**Por que trigger e não `REVOKE`.** Foi a primeira ideia e é inócua: tabela
+nova no Postgres **não concede nada a `PUBLIC`**, e a aplicação conecta como
+**dona do schema**. Medido, não suposto.
+
+**Por que `DEFERRABLE INITIALLY DEFERRED`.** O evento aponta para a ocupação,
+então a ordem natural do código grava a ocupação primeiro. Trigger imediata
+falharia sempre. Diferida, só o `COMMIT` julga — e a ordem de escrita dentro
+da transação deixa de importar.
+
+**A consequência que morde quem escreve teste:** prova que isola casos por
+**rollback nunca alcança o `COMMIT`**, e passa verde sem ter perguntado nada.
+Aconteceu — quatro casos que deviam falhar passaram. Todo teste de INV-064
+força `SET CONSTRAINTS ... IMMEDIATE` antes de sair.
+
+**A válvula, e por que ela exige DUAS coisas.** A limpeza das suítes de banco
+precisa apagar as tabelas append-only. A trigger só abre com o GUC
+`playck.limpeza_append_only` **e** `current_user = 'playck_test_cleanup'` —
+uma role criada apenas no `globalSetup` do `jest-banco`. Só o GUC não bastava:
+`set_config` é chamável por qualquer código e o nome está na migration à
+vista, então seria uma **porta permanente que funcionaria em produção**.
+
+**Entrega em duas fases**, e não é preferência: o deploy do DigitalOcean
+aplica migration sozinho, e o contêiner antigo serve tráfego durante o deploy.
+A `expand` (tabelas, colunas, append-only) é segura junto com o código; a
+`contract` (só a `ocupacao_cancelada_exige_evento`) vai **depois** que o
+código que grava eventos estiver no ar. Junto, abriria uma janela em que
+**todo cancelamento de cliente vira 500**.
 
 ## 4. Estrutura de pastas
 
@@ -779,6 +835,8 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-006 | PaymentHandoff | `config_pagamento_empresa` | INV-007 |
 | MOD-007 | DashboardReporting | — (só leitura) | — |
 | MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030 a INV-033, INV-035 a INV-039, INV-042 a INV-044, INV-046 a INV-048 |
+| MOD-009 | TermosEAceites | `termos_da_plataforma`, `contratos_da_empresa`, `aceites` | SPEC-024. O portão do aceite roda no `JwtAuthGuard`, em toda requisição autenticada — e é por isso que a versão vigente é constante, não consulta |
+| MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;

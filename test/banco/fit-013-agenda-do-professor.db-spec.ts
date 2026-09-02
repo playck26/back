@@ -18,6 +18,7 @@ import { AgendaDoProfessorService } from '../../src/classes/agenda-do-professor.
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
+import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 
 jest.setTimeout(120_000);
 
@@ -326,9 +327,13 @@ describe('FIT-013 — o que NÃO é aula dele', () => {
       DIA_1,
       '18:00',
     );
-    await db.$executeRawUnsafe(
-      `UPDATE ocupacoes_quadra SET status_pagamento='cancelado' WHERE id='f0130000-0000-4000-8000-000000000131'`,
-    );
+    // SPEC-032/INV-064 — cancelar exige evento da mesma transicao, e isso
+    // vale para fixture tambem. Ver `cancelar-ocupacao.ts`.
+    await cancelarOcupacaoNaFixture(db, {
+      companyId: EMPRESA,
+      ocupacaoId: 'f0130000-0000-4000-8000-000000000131',
+      autorId: UPROF_A,
+    });
 
     expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([]);
   });

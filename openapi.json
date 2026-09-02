@@ -2203,6 +2203,44 @@
         ]
       }
     },
+    "/api/v1/bookings/{id}/eventos": {
+      "get": {
+        "operationId": "BookingsController_eventos",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventoDeOcupacaoResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "bookings"
+        ]
+      }
+    },
     "/api/v1/company-settings/horarios": {
       "get": {
         "operationId": "CompanySettingsController_listar",
@@ -6036,6 +6074,70 @@
           "total"
         ]
       },
+      "AutorDoEventoDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Maria"
+          }
+        },
+        "required": [
+          "id",
+          "nome"
+        ]
+      },
+      "EventoDeOcupacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "criada",
+              "cancelada",
+              "reativada",
+              "pagamento_confirmado"
+            ],
+            "description": "O efeito TÉCNICO sobre esta ocupação."
+          },
+          "em": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "acao": {
+            "type": "string",
+            "enum": [
+              "reserva_criada",
+              "reserva_cancelada",
+              "pagamento_confirmado",
+              "turma_criada",
+              "turma_horario_editado",
+              "credito_lancado",
+              "credito_retirado"
+            ],
+            "description": "O GESTO humano que provocou o evento."
+          },
+          "motivo": {
+            "type": "object",
+            "nullable": true,
+            "description": "Nota interna, e só existe em ação administrativa que a exige. Consumo e devolução não têm motivo — o motivo deles é a própria reserva."
+          },
+          "autor": {
+            "$ref": "#/components/schemas/AutorDoEventoDto"
+          }
+        },
+        "required": [
+          "tipo",
+          "em",
+          "acao",
+          "motivo",
+          "autor"
+        ]
+      },
       "QuadraComHorarioProprioResponseDto": {
         "type": "object",
         "properties": {
@@ -6144,6 +6246,16 @@
             "type": "number",
             "nullable": true,
             "example": 120
+          },
+          "criadaPor": {
+            "type": "string",
+            "nullable": true,
+            "example": "Maria"
+          },
+          "canceladaPor": {
+            "type": "string",
+            "nullable": true,
+            "example": "Gabriel"
           }
         },
         "required": [
@@ -6154,7 +6266,9 @@
           "origemTipo",
           "responsavel",
           "statusPagamento",
-          "valor"
+          "valor",
+          "criadaPor",
+          "canceladaPor"
         ]
       },
       "ImagemDaQuadraResponseDto": {

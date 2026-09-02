@@ -193,7 +193,7 @@ export class ClassesController {
   @Post()
   @ApiOkResponse({ type: TurmaResponseDto })
   create(@CurrentUser() user: AccessTokenPayload, @Body() dto: CreateClassDto) {
-    return this.classesService.create(user.companyId as string, dto);
+    return this.classesService.create(user.companyId as string, dto, user.sub);
   }
 
   @Get(':id')
@@ -212,7 +212,12 @@ export class ClassesController {
     @Param('id', UuidCanonicoPipe) id: string,
     @Body() dto: UpdateClassDto,
   ) {
-    return this.classesService.update(user.companyId as string, id, dto);
+    return this.classesService.update(
+      user.companyId as string,
+      id,
+      dto,
+      user.sub,
+    );
   }
 
   @Post(':id/students/:alunoId')
