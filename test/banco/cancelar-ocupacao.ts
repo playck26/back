@@ -29,6 +29,14 @@ import type { ClienteSql } from './limpar-empresa';
  * cancelamento: isso enfraqueceria a invariante justamente onde ela protege.
  * A fixture não precisa de exceção — precisa fazer o que o produto faz.
  */
+/**
+ * O cliente que sabe abrir transação. O `tx` que o Prisma entrega **não** tem
+ * `$transaction` — é essa a diferença que distingue os dois casos abaixo.
+ */
+interface ComTransacao {
+  $transaction<T>(fn: (tx: ClienteSql) => Promise<T>): Promise<T>;
+}
+
 export async function cancelarOcupacaoNaFixture(
   cliente: ClienteSql,
   params: {
@@ -37,6 +45,31 @@ export async function cancelarOcupacaoNaFixture(
     /** Quem cancelou. Toda ação administrativa tem autor (INV-062). */
     autorId: string;
   },
+): Promise<void> {
+  // **As três escritas TÊM de estar na mesma transação**, e o CI ensinou isso
+  // do jeito difícil.
+  //
+  // A trigger é `DEFERRABLE INITIALLY DEFERRED`: ela julga no `COMMIT`. Fora
+  // de uma transação explícita, o Postgres dá um commit por statement — então
+  // o `UPDATE` da ocupação **commita sozinho**, a trigger roda ali, e o evento
+  // ainda não existe. O erro é `cancelada sem evento desta transicao`, e ele
+  // não descreve um defeito do produto: descreve uma fixture em autocommit.
+  //
+  // Quem já veio dentro de um `tx` (o caso do `matriz-raiz`) não pode abrir
+  // outra: aninhar transação no Prisma não é suportado, e o `tx` não expõe
+  // `$transaction` — é isso que o teste abaixo detecta.
+  if ('$transaction' in cliente) {
+    await (cliente as unknown as ComTransacao).$transaction((tx) =>
+      escrever(tx, params),
+    );
+    return;
+  }
+  await escrever(cliente, params);
+}
+
+async function escrever(
+  cliente: ClienteSql,
+  params: { companyId: string; ocupacaoId: string; autorId: string },
 ): Promise<void> {
   const transicaoId = randomUUID();
   const acaoId = randomUUID();
