@@ -232,3 +232,31 @@ export async function ocorrenciasDaTurma(
   );
   return Number(r.n);
 }
+
+/** A ocorrência de índice `indice` de uma turma, em ordem de data. `1` é
+ *  a segunda semana — nunca "hoje", que a SPEC-042/DEF-020 tratam à parte. */
+export async function ocorrenciaDaTurma(
+  db: ClienteDeFit,
+  turmaId: string,
+  indice: number,
+): Promise<{ id: string; data: string }> {
+  return um(
+    db,
+    `SELECT id, to_char(data, 'YYYY-MM-DD') AS data FROM ocupacoes_quadra WHERE origem_turma_id='${turmaId}' ORDER BY data OFFSET ${indice} LIMIT 1`,
+  );
+}
+
+/** INV-064 por linha: ocorrências canceladas de uma turma SEM evento
+ *  `cancelada` da própria transição. Com `updateMany` no lugar de
+ *  `updateManyAndReturn` (a sabotagem 3 da SPEC-043) não há ids para
+ *  registrar — e a trigger DEFERRED derruba a transação no COMMIT. */
+export async function canceladasSemEvento(
+  db: ClienteDeFit,
+  turmaId: string,
+): Promise<number> {
+  const r = await um<{ n: number }>(
+    db,
+    `SELECT count(*)::int AS n FROM ocupacoes_quadra o WHERE o.origem_turma_id='${turmaId}' AND o.status_pagamento='cancelado' AND NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.ocupacao_id=o.id AND e.tipo='cancelada' AND e.transicao_id=o.transicao_id)`,
+  );
+  return Number(r.n);
+}

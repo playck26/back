@@ -13,7 +13,10 @@
  *   (c) duas turmas com `encontros[]` e conflito em UM dia — SPEC-019: a
  *       linha da tabela de provas que nunca rodou;
  *   (d) cancelar × re-reservar o mesmo slot, pelos três caminhos de
- *       cancelamento — SPEC-032/INV-064 (evento da transição) e SPEC-042.
+ *       cancelamento — SPEC-032/INV-064 (evento da transição) e SPEC-042;
+ *   (e) editar o horário de uma turma × reservar uma ocorrência futura dela
+ *       — o quarto caminho de cancelamento (`cancelFutureClassOccupancies`,
+ *       em massa), que a LIM-043a declarou fora até aqui.
  *
  * Cada par de requisições vai para um app diferente (`appA`/`appB`), cada
  * um com a própria pool — pelo mesmo motivo que o FIT-010 abre dois
@@ -36,10 +39,12 @@ import {
   QUADRA,
   QUADRA_TURMAS,
   ativasNoSlot,
+  canceladasSemEvento,
   dataFutura,
   eventoDeCancelamento,
   login,
   montarCenario,
+  ocorrenciaDaTurma,
   ocorrenciasDaTurma,
   ocupacao,
   turmasComNome,
@@ -310,4 +315,71 @@ describe('FIT-001 (d) — cancelar × re-reservar o mesmo slot (SPEC-032/INV-064
       expect(falhas).toEqual([]);
     },
   );
+});
+
+describe('FIT-001 (e) — editar o horário da turma × reservar uma ocorrência futura dela (LIM-043a)', () => {
+  it(`${ITERACOES} pares: PATCH 200, reserva 201|409, nunca 500, ≤ 1 ativa no slot, toda ocorrência cancelada tem evento da transição`, async () => {
+    const falhas: string[] = [];
+    for (let i = 0; i < ITERACOES; i++) {
+      // Dia 5 (sexta) e hora própria por iteração: o (c) ocupa os dias 1–3
+      // desta quadra nas mesmas horas; a edição move a turma para o dia 6.
+      const h = 8 + i;
+      const hora = (x: number) => `${String(x).padStart(2, '0')}:00`;
+      const criada = await post(appA, '/api/v1/classes', admin.accessToken, {
+        nome: `FIT-043 E ${i + 1}`,
+        quadraId: QUADRA_TURMAS,
+        encontros: [
+          { diaSemana: 5, horaInicio: hora(h), horaFim: hora(h + 1) },
+        ],
+        capacidade: 4,
+      });
+      if (criada.status !== 201) {
+        falhas.push(
+          `iteração ${i + 1}: setup devolveu ${criada.status}: ${criada.text.slice(0, 200)}`,
+        );
+        continue;
+      }
+      const turmaId = (criada.body as { id: string }).id;
+      const alvo = await ocorrenciaDaTurma(db, turmaId, 1);
+
+      const [rPatch, rNova] = await Promise.all([
+        request(appA.getHttpServer())
+          .patch(`/api/v1/classes/${turmaId}`)
+          .set('Authorization', `Bearer ${admin.accessToken}`)
+          .send({
+            encontros: [
+              { diaSemana: 6, horaInicio: hora(h), horaFim: hora(h + 1) },
+            ],
+          }),
+        post(appB, '/api/v1/bookings', admin.accessToken, {
+          quadraId: QUADRA_TURMAS,
+          data: alvo.data,
+          horaInicio: hora(h),
+          horaFim: hora(h + 1),
+          alunoId: ALUNO1,
+        }),
+      ]);
+
+      const ativas = await ativasNoSlot(db, QUADRA_TURMAS, alvo.data, hora(h));
+      const semEvento = await canceladasSemEvento(db, turmaId);
+
+      const problemas: string[] = [];
+      if (rPatch.status !== 200) {
+        problemas.push(`patch=${rPatch.status} [${rPatch.text.slice(0, 200)}]`);
+      }
+      if (rNova.status !== 201 && rNova.status !== 409) {
+        problemas.push(`nova=${rNova.status}${detalhe(rNova)}`);
+      }
+      if (ativas > 1) problemas.push(`ativas=${ativas}`);
+      if (semEvento > 0) {
+        problemas.push(
+          `${semEvento} ocorrência(s) cancelada(s) sem evento da transição (INV-064)`,
+        );
+      }
+      if (problemas.length) {
+        falhas.push(`iteração ${i + 1}: ${problemas.join(', ')}`);
+      }
+    }
+    expect(falhas).toEqual([]);
+  });
 });
