@@ -48,8 +48,23 @@ export interface ClienteSql {
  * que a lista incompleta já perdeu duas vezes neste arquivo.
  */
 interface ComTransacao {
-  $transaction<T>(fn: (tx: ClienteSql) => Promise<T>): Promise<T>;
+  $transaction<T>(
+    fn: (tx: ClienteSql) => Promise<T>,
+    opcoes?: { maxWait?: number; timeout?: number },
+  ): Promise<T>;
 }
+
+/**
+ * SPEC-043 — o canário `FIT-001 Neon` (run 33792486811) morreu AQUI, não
+ * no FIT: "Transaction not found ... old closed transaction". A transação
+ * interativa do Prisma expira em 5 s por padrão; são ~18 DELETEs mais os
+ * `SET ROLE`, e do runner do GitHub (EUA) à Neon (São Paulo) cada
+ * statement custa ~200 ms. No Postgres do CI, milissegundos; na Neon, a
+ * transação some no meio e o resto falha com esta mensagem. É o tipo de
+ * diferença que o canário existe para revelar — e por isso o timeout é
+ * explícito e generoso: a limpeza nunca é o que está em julgamento.
+ */
+const OPCOES_DA_TRANSACAO = { maxWait: 15_000, timeout: 60_000 };
 
 /**
  * As tabelas que a trigger de append-only protege (SPEC-032/INV-061).
@@ -152,5 +167,5 @@ export async function limparEmpresa(
       `DELETE FROM empresas WHERE id = $1::uuid`,
       companyId,
     );
-  });
+  }, OPCOES_DA_TRANSACAO);
 }
