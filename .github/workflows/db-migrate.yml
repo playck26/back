@@ -216,7 +216,7 @@ jobs:
           DIA_SEMANA_TESTE=3
           CLASS_RES=$(curl -s -X POST http://localhost:3000/api/v1/classes \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"nome\":\"Turma CI $RUN_ID\",\"quadraId\":\"$QUADRA_ID\",\"diaSemana\":$DIA_SEMANA_TESTE,\"horaInicio\":\"11:00\",\"horaFim\":\"12:00\",\"capacidade\":1}")
+            -d "{\"nome\":\"Turma CI $RUN_ID\",\"quadraId\":\"$QUADRA_ID\",\"encontros\":[{\"diaSemana\":$DIA_SEMANA_TESTE,\"horaInicio\":\"11:00\",\"horaFim\":\"12:00\"}],\"capacidade\":1}")
           echo "$CLASS_RES"
           echo "$CLASS_RES" | jq -e '.id and .alunosAlocados == 0'
           CLASS_ID=$(echo "$CLASS_RES" | jq -r '.id')
@@ -224,7 +224,7 @@ jobs:
           echo "--- criar 2ª turma na mesma quadra/dia/hora precisa ser 409, turma não criada (AC-001, NFR-001) ---"
           CLASS_CONFLICT_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/classes \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"nome\":\"Turma CI Conflito $RUN_ID\",\"quadraId\":\"$QUADRA_ID\",\"diaSemana\":$DIA_SEMANA_TESTE,\"horaInicio\":\"11:00\",\"horaFim\":\"12:00\",\"capacidade\":1}")
+            -d "{\"nome\":\"Turma CI Conflito $RUN_ID\",\"quadraId\":\"$QUADRA_ID\",\"encontros\":[{\"diaSemana\":$DIA_SEMANA_TESTE,\"horaInicio\":\"11:00\",\"horaFim\":\"12:00\"}],\"capacidade\":1}")
           [ "$CLASS_CONFLICT_RES" = "409" ] || (echo "esperado 409, veio $CLASS_CONFLICT_RES" && exit 1)
 
           echo "--- GET /classes/:id (detalhe com alocação) ---"
