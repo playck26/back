@@ -9,14 +9,29 @@ name: DB Migrate & Seed (manual)
 on:
   workflow_dispatch:
     inputs:
+      # SPEC-043/D-I9: `false` por padrão. O smoke e os FITs NÃO dependem
+      # mais do seed — num DEV recém-reconstruído, dispare com
+      # `run_seed=true` uma vez.
       run_seed:
-        description: "Rodar também o seed de desenvolvimento (empresa demo + admin + super_admin) e o smoke test (auth + MOD-002)?"
+        description: "Rodar o seed de desenvolvimento (empresa demo + admin + super_admin)? Só é preciso uma vez por banco."
+        type: boolean
+        default: false
+      # SPEC-043/REQ-005: smoke e FITs Neon independentes do seed. Com
+      # `false`, o job `gate` FALHA de propósito — badge verde tem de
+      # significar "rodou" (AC-010).
+      run_smoke:
+        description: "Rodar o smoke funcional e os canários FIT-001/FIT-002 contra o DEV?"
         type: boolean
         default: true
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    # SPEC-043: os jobs `fit-00x-neon` dependem SÓ da migration ter sido
+    # aplicada, não do smoke passar — um FIT verde não pode ficar refém de
+    # MOD-004 falhar depois dele (aconteceu cinco vezes em 03/09).
+    outputs:
+      migrado: ${{ steps.migrate.outcome }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +59,7 @@ jobs:
       # por sorte de reuso. E a ressalva documentada da Neon para Prisma
       # Migrate; seed e smoke continuam no pooler, que e o caso deles.
       - name: Prisma migrate deploy
+        id: migrate
         run: |
           export DATABASE_URL="${DATABASE_URL/-pooler/}"
           pnpm exec prisma migrate deploy
@@ -68,7 +84,7 @@ jobs:
       # pode depender de credencial de conta real. Passou a usar
       # `admin@playck-qa.demo`, que e a conta que o **proprio seed cria**.
       - name: Smoke test — auth + MOD-002 (companies) de ponta a ponta contra o Neon real
-        if: ${{ inputs.run_seed }}
+        if: ${{ inputs.run_smoke }}
         timeout-minutes: 10
         run: |
           set -e
@@ -617,3 +633,85 @@ jobs:
           SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
           SPACES_KEY: ci-spaces-key
           SPACES_SECRET: ci-spaces-secret
+
+  # SPEC-043/REQ-005 — os canários FIT contra o DEV, como JOBS: `conclusion`
+  # próprio em `gh run view --json jobs`, é o que o `evd.json` cita. Rodam as
+  # MESMAS suítes do `fit-critical` do CI, contra a Neon real — o que o
+  # Postgres do runner não reproduz (pooler em modo transação, latência,
+  # limites de conexão) só aparece aqui. Adicional, não substituto.
+  #
+  # `FIT_CANARIO_HOST` abre a trava `exigirBancoLocal` SÓ para o host exato
+  # do DEV (variável do repositório, não secret: é um hostname); o endpoint
+  # de produção é recusado no código, sempre.
+
+  fit-001-neon:
+    name: FIT-001 Neon
+    needs: migrate
+    if: ${{ always() && inputs.run_smoke && needs.migrate.outputs.migrado == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: FIT-001
+        run: pnpm run test:fit -- --testPathPattern fit-001
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
+          JWT_ACCESS_SECRET: fit-neon-access
+          JWT_REFRESH_SECRET: fit-neon-refresh
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
+  fit-002-neon:
+    name: FIT-002 Neon
+    needs: migrate
+    if: ${{ always() && inputs.run_smoke && needs.migrate.outputs.migrado == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: FIT-002
+        run: pnpm run test:fit -- --testPathPattern fit-002
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
+          JWT_ACCESS_SECRET: fit-neon-access
+          JWT_REFRESH_SECRET: fit-neon-refresh
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
+  # SPEC-043/AC-010 — badge verde com FIT pulado foi a causa raiz de 26 dias
+  # sem gate. Disparo sem smoke/FITs falha de propósito.
+  gate:
+    name: gate (smoke e FITs rodaram?)
+    needs: [migrate, fit-001-neon, fit-002-neon]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [ "${{ inputs.run_smoke }}" != "true" ]; then
+            echo "::error title=FITs pulados::Disparado com run_smoke=false. Migration aplicada, mas o gate NAO rodou - este workflow nao fica verde sem ele."
+            exit 1
+          fi
+          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}"; do
+            [ "$r" = "success" ] || { echo "::error::um canario FIT nao concluiu success ($r)"; exit 1; }
+          done
+          echo "migration, FIT-001 Neon e FIT-002 Neon: success"
