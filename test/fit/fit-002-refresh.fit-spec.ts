@@ -20,13 +20,15 @@ import { exigirBancoLocal } from '../banco/exigir-banco-local';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { subirAppReal } from './app-real';
 import {
-  ADMIN_EMAIL,
-  ADMIN_USUARIO,
-  EMPRESA,
+  idsDoCenario,
   login,
   montarCenario,
   type ClienteDeFit,
 } from './cenario';
+
+// Suíte 2: fixture própria, porque no canário Neon este arquivo roda em
+// PARALELO com o FIT-001 contra o mesmo banco (ver `cenario.ts`).
+const C = idsDoCenario(2);
 
 jest.setTimeout(300_000);
 exigirBancoLocal();
@@ -43,7 +45,7 @@ async function tokensDoUsuario(
   const [linha] = await cliente.$queryRawUnsafe<
     { total: number; vivos: number }[]
   >(
-    `SELECT count(*)::int AS total, count(*) FILTER (WHERE revoked_at IS NULL)::int AS vivos FROM refresh_tokens WHERE usuario_id='${ADMIN_USUARIO}'`,
+    `SELECT count(*)::int AS total, count(*) FILTER (WHERE revoked_at IS NULL)::int AS vivos FROM refresh_tokens WHERE usuario_id='${C.ADMIN_USUARIO}'`,
   );
   return { total: Number(linha.total), vivos: Number(linha.vivos) };
 }
@@ -55,14 +57,14 @@ function refresh(app: INestApplication<App>, cookieRefresh: string) {
 }
 
 beforeAll(async () => {
-  await limparEmpresa(db, EMPRESA);
-  await montarCenario(db);
+  await limparEmpresa(db, C.EMPRESA);
+  await montarCenario(db, C);
   [appA, appB] = await Promise.all([subirAppReal(), subirAppReal()]);
 });
 
 afterAll(async () => {
   await Promise.all([appA?.close(), appB?.close()]);
-  await limparEmpresa(db, EMPRESA);
+  await limparEmpresa(db, C.EMPRESA);
   await db.$disconnect();
 });
 
@@ -70,7 +72,7 @@ describe('FIT-002 — duas rotações simultâneas do mesmo refresh token', () =
   it(`${ITERACOES} pares: 200/401, exatamente um token novo, o antigo revogado`, async () => {
     const falhas: string[] = [];
     for (let i = 0; i < ITERACOES; i++) {
-      const sessao = await login(appA, ADMIN_EMAIL);
+      const sessao = await login(appA, C.ADMIN_EMAIL);
       const antes = await tokensDoUsuario(db);
 
       const [r1, r2] = await Promise.all([

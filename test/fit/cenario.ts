@@ -27,27 +27,84 @@ export interface ClienteDeFit {
   $queryRawUnsafe<T = unknown>(sql: string, ...valores: unknown[]): Promise<T>;
 }
 
-export const EMPRESA = 'f0430000-0000-4000-8000-000000000001';
-export const QUADRA = 'f0430000-0000-4000-8000-000000000002';
-export const QUADRA_TURMAS = 'f0430000-0000-4000-8000-000000000003';
-export const ADMIN_USUARIO = 'f0430000-0000-4000-8000-000000000010';
-export const ALUNO1_USUARIO = 'f0430000-0000-4000-8000-000000000011';
-export const ALUNO2_USUARIO = 'f0430000-0000-4000-8000-000000000012';
-export const ALUNO1 = 'f0430000-0000-4000-8000-000000000021';
-export const ALUNO2 = 'f0430000-0000-4000-8000-000000000022';
+/**
+ * **Uma fixture por suíte, e é por isso que os ids levam o número da suíte.**
+ * No `db-migrate.yml` os canários `FIT-001 Neon` e `FIT-002 Neon` são jobs
+ * PARALELOS contra o mesmo DEV (run 33793671991): com a mesma empresa nas
+ * duas, o `afterAll` do FIT-002 — mais curto — apagou a fixture no meio do
+ * FIT-001 (iteração 1 `500/500`, depois `404/404`, quadra inexistente). No
+ * CI não aparece: o `fit-critical` roda os dois arquivos em série. Isolar
+ * por id fecha o problema onde ele nasce, sem depender da ordem dos jobs.
+ */
+export interface IdsDoCenario {
+  EMPRESA: string;
+  QUADRA: string;
+  QUADRA_TURMAS: string;
+  ADMIN_USUARIO: string;
+  ALUNO1_USUARIO: string;
+  ALUNO2_USUARIO: string;
+  ALUNO1: string;
+  ALUNO2: string;
+  ADMIN_EMAIL: string;
+  ALUNO1_EMAIL: string;
+  ALUNO2_EMAIL: string;
+}
 
-export const ADMIN_EMAIL = 'fit043-admin@teste.local';
-export const ALUNO1_EMAIL = 'fit043-aluno1@teste.local';
-export const ALUNO2_EMAIL = 'fit043-aluno2@teste.local';
+export function idsDoCenario(suite: number): IdsDoCenario {
+  const base = `f043000${suite}-0000-4000-8000-0000000000`;
+  return {
+    EMPRESA: `${base}01`,
+    QUADRA: `${base}02`,
+    QUADRA_TURMAS: `${base}03`,
+    ADMIN_USUARIO: `${base}10`,
+    ALUNO1_USUARIO: `${base}11`,
+    ALUNO2_USUARIO: `${base}12`,
+    ALUNO1: `${base}21`,
+    ALUNO2: `${base}22`,
+    ADMIN_EMAIL: `fit043-${suite}-admin@teste.local`,
+    ALUNO1_EMAIL: `fit043-${suite}-aluno1@teste.local`,
+    ALUNO2_EMAIL: `fit043-${suite}-aluno2@teste.local`,
+  };
+}
+
+// Suíte 1 (FIT-001) por nome, para os helpers e o arquivo já escrito.
+const C1 = idsDoCenario(1);
+export const EMPRESA = C1.EMPRESA;
+export const QUADRA = C1.QUADRA;
+export const QUADRA_TURMAS = C1.QUADRA_TURMAS;
+export const ADMIN_USUARIO = C1.ADMIN_USUARIO;
+export const ALUNO1_USUARIO = C1.ALUNO1_USUARIO;
+export const ALUNO2_USUARIO = C1.ALUNO2_USUARIO;
+export const ALUNO1 = C1.ALUNO1;
+export const ALUNO2 = C1.ALUNO2;
+export const ADMIN_EMAIL = C1.ADMIN_EMAIL;
+export const ALUNO1_EMAIL = C1.ALUNO1_EMAIL;
+export const ALUNO2_EMAIL = C1.ALUNO2_EMAIL;
 export const SENHA = 'fit-043-senha-forte';
 
-export async function montarCenario(db: ClienteDeFit): Promise<void> {
+export async function montarCenario(
+  db: ClienteDeFit,
+  ids: IdsDoCenario = C1,
+): Promise<void> {
+  const {
+    EMPRESA,
+    QUADRA,
+    QUADRA_TURMAS,
+    ADMIN_USUARIO,
+    ALUNO1_USUARIO,
+    ALUNO2_USUARIO,
+    ALUNO1,
+    ALUNO2,
+    ADMIN_EMAIL,
+    ALUNO1_EMAIL,
+    ALUNO2_EMAIL,
+  } = ids;
   // Custo baixo de propósito: é fixture, não produção.
   const senhaHash = await bcrypt.hash(SENHA, 4);
   const q = (sql: string) => db.$executeRawUnsafe(sql);
 
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-043','fit-043',now())`,
+    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-043 ${EMPRESA}','fit-043-${EMPRESA}',now())`,
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
