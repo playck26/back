@@ -994,7 +994,9 @@ export class CourtsService {
     // por linha cancelada — e `updateMany` devolve so a contagem, sem dizer
     // QUAIS linhas tocou. Era o furo que a validacao cruzada apontou como
     // "irrealizavel como escrito"; nao e, mas exige a variante que retorna.
-    const canceladas = await tx.ocupacaoQuadra.updateManyAndReturn({
+    // SABOTAGEM 3 (SPEC-043) — NAO MERGEAR: `updateMany` nao devolve os ids,
+    // e sem ids nao ha evento por linha. O (e) do FIT-001 tem de cair.
+    const canceladas = await tx.ocupacaoQuadra.updateMany({
       where: {
         companyId,
         origemTipo: 'TURMA',
@@ -1003,13 +1005,9 @@ export class CourtsService {
         data: { gte: aPartirDe },
       },
       data: { statusPagamento: 'cancelado', transicaoId },
-      select: { id: true },
     });
-    await registrador.registrarMuitos(
-      canceladas.map((l) => l.id),
-      'cancelada',
-      transicaoId,
-    );
+    void canceladas;
+    await registrador.registrarMuitos([] as string[], 'cancelada', transicaoId);
   }
 
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
