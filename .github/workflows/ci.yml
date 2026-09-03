@@ -15,7 +15,10 @@ jobs:
     # job; não tem relação com o Neon de produção.
     services:
       postgres:
-        image: postgres:16
+        # SPEC-043/TASK-002: mesma versao maior da Neon (18.6). Com 16 aqui, a
+        # prova rodava contra uma coisa e a producao era outra -- a familia de
+        # defeito que ja apareceu 4x (STATUS 2026-09-01).
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: playck_ci
