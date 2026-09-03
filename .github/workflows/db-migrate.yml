@@ -34,8 +34,19 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
+      # Endpoint DIRETO (sem `-pooler`) para a migration, de proposito. O
+      # `migrate deploy` toma um advisory lock DE SESSAO (pg_advisory_lock);
+      # pelo pgbouncer da Neon em modo transacao, a sessao do servidor
+      # sobrevive ao cliente e o lock fica preso num backend idle do pool.
+      # Run 33780985071 (2026-09-03): P1002, "timed out trying to acquire a
+      # postgres advisory lock" — o lock estava com o backend do run
+      # ANTERIOR, idle havia 8 min. Os cinco runs verdes de antes passaram
+      # por sorte de reuso. E a ressalva documentada da Neon para Prisma
+      # Migrate; seed e smoke continuam no pooler, que e o caso deles.
       - name: Prisma migrate deploy
-        run: pnpm exec prisma migrate deploy
+        run: |
+          export DATABASE_URL="${DATABASE_URL/-pooler/}"
+          pnpm exec prisma migrate deploy
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
