@@ -89,6 +89,14 @@ export class BookingsController {
       user.companyId as string,
       query,
       alunoIdScope,
+      // SPEC-041/B1 — **os dois ids viajam separados, e é isso que impede o
+      // defeito.** `alunoIdScope` é `alunos.id` e autoriza; `user.sub` é
+      // `usuarios.id` e identifica o autor. `acoes_administrativas.autor_id`
+      // referencia `usuarios`, então é com este que ele se compara.
+      //
+      // Só para aluno: o gestor recebe `canceladaPorMim: null` por decisão —
+      // a pergunta dele é "quem foi?", e a agenda já responde.
+      user.role === 'aluno' ? user.sub : undefined,
     );
   }
 

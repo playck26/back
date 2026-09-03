@@ -1116,6 +1116,111 @@ describe('CourtsService', () => {
       expect(condicoesDoAnd()).toHaveLength(1);
     });
 
+    /**
+     * SPEC-041/AC-010 — **`canceladaPorMim`, e a fixture é metade da prova.**
+     *
+     * `alunos.id` e `usuarios.id` são uuids de tabelas diferentes, e as duas
+     * colunas são `@db.Uuid`. Uma fixture que usasse a MESMA string para os
+     * dois passaria com o código errado — que é justamente comparar
+     * `alunoIdScope` (autorização) com `autor_id` (identidade).
+     *
+     * Por isso os ids aqui são deliberadamente distintos, e o teste do meio
+     * é o que cai se alguém colapsar os dois parâmetros.
+     */
+    describe('canceladaPorMim (SPEC-041/Fase B)', () => {
+      const ALUNO = 'a1-aluno-id';
+      const USUARIO = 'u1-usuario-id';
+
+      function comEvento(autorId: string | null) {
+        (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+          {
+            id: 'o1',
+            companyId: 'c1',
+            quadraId: 'q1',
+            data: new Date('2026-09-15T00:00:00.000Z'),
+            horaInicio: new Date('1970-01-01T19:00:00.000Z'),
+            horaFim: new Date('1970-01-01T20:00:00.000Z'),
+            origemTipo: 'AVULSO',
+            alunoId: ALUNO,
+            statusPagamento: 'cancelado',
+            valor: 150,
+            eventos: autorId ? [{ acao: { autorId } }] : [],
+          },
+        ]);
+        (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(1);
+      }
+
+      const listar = () =>
+        service.listBookings('c1', {}, ALUNO, USUARIO) as Promise<{
+          data: { canceladaPorMim: boolean | null }[];
+        }>;
+
+      it('true quando o autor é o próprio usuário', async () => {
+        comEvento(USUARIO);
+        expect((await listar()).data[0].canceladaPorMim).toBe(true);
+      });
+
+      /**
+       * **O teste que pega o defeito.** Com a implementação errada —
+       * comparar `autor_id` com `alunoIdScope` — este caso continua
+       * devolvendo `false`, mas o de cima passa a devolver `false` também.
+       * É por isso que os dois precisam existir, e com ids distintos.
+       */
+      it('false quando foi outro autor', async () => {
+        comEvento('gestor-9');
+        expect((await listar()).data[0].canceladaPorMim).toBe(false);
+      });
+
+      it('null quando não há evento (LIM-041b: tudo antes da SPEC-032)', async () => {
+        comEvento(null);
+        expect((await listar()).data[0].canceladaPorMim).toBeNull();
+      });
+
+      it('null para o GESTOR, mesmo com evento — a pergunta dele é outra', async () => {
+        comEvento('gestor-9');
+        const r = (await service.listBookings('c1', {}, undefined)) as {
+          data: { canceladaPorMim: boolean | null }[];
+        };
+        expect(r.data[0].canceladaPorMim).toBeNull();
+      });
+
+      it('INV-092: o select busca só `acao.autorId` — nome não tem por onde entrar', async () => {
+        comEvento(USUARIO);
+        await listar();
+
+        const { include } = argumentosDaBusca() as unknown as {
+          include: { eventos: { select: unknown; where: unknown } };
+        };
+        expect(include.eventos.select).toEqual({
+          acao: { select: { autorId: true } },
+        });
+        expect(include.eventos.where).toEqual({ tipo: 'cancelada' });
+      });
+
+      it('INV-092: o payload não carrega autor, autorId nem autorNome', async () => {
+        comEvento(USUARIO);
+        const item = (await listar()).data[0] as Record<string, unknown>;
+
+        // Conjunto FECHADO de chaves. Procurar por um nome de fixture seria
+        // fraco: um segundo gestor vazando passaria verde.
+        expect(Object.keys(item).sort()).toEqual(
+          [
+            'alunoId',
+            'canceladaPorMim',
+            'companyId',
+            'data',
+            'horaFim',
+            'horaInicio',
+            'id',
+            'origemTipo',
+            'quadraId',
+            'statusPagamento',
+            'valor',
+          ].sort(),
+        );
+      });
+    });
+
     // AC-003/D7 — perguntas opostas, e direção uniforme em cada uma. A ordem
     // mista sobrevive só no caso sem `quando`, que é a lista do Admin
     // (LIM-041e).

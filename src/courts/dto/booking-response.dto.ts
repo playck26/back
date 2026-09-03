@@ -86,9 +86,51 @@ export class ReservasCriadasResponseDto {
   reservas!: OcupacaoResponseDto[];
 }
 
+/**
+ * SPEC-041/AC-011 — **o item da LISTAGEM tem DTO próprio, e a razão é dura.**
+ *
+ * `canceladaPorMim` responde *"fui eu que cancelei?"* — depende de **quem está
+ * pedindo**, não da ocupação. Isso o desqualifica do `OcupacaoResponseDto`, que
+ * é compartilhado por três rotas:
+ *
+ * | Rota | O que devolveria |
+ * |---|---|
+ * | `POST /bookings` | acabou de criar; não há cancelamento nenhum |
+ * | `PATCH .../payment-status` | **o pior caso** |
+ * | `GET /bookings` | o único onde a pergunta faz sentido |
+ *
+ * **O `PATCH` é o pior porque ele CANCELA.** Com `status: 'cancelado'` ele grava
+ * a ação com autor e devolve a ocupação; obrigado a preencher o campo por um
+ * mapper que não conhece o autor, devolveria `null` — que pela AC-010 significa
+ * *"não foi cancelada, ou não há histórico"*. Mentira gerada por um DTO
+ * compartilhado, três linhas depois de o histórico ter sido escrito.
+ *
+ * A validação cruzada mostrou que o `tsc` **quebraria o build** até o mapper
+ * produzir o campo — ou seja, o risco não é esquecer, é ser **empurrado** para
+ * o `null` fixo por ser o único jeito barato de compilar.
+ *
+ * Molde: `AulaAnteriorResponseDto`, que a SPEC-025 criou pelo mesmo motivo.
+ *
+ * **Serve os dois papéis.** `GET /bookings` é `company_admin` e `aluno`; o
+ * campo é "cancelada por quem está pedindo", bem definido nos dois — e para o
+ * gestor a resposta é sempre `null`, por decisão (ver a matriz da spec).
+ */
+export class ItemDaListaDeReservasDto extends OcupacaoResponseDto {
+  @ApiProperty({
+    type: Boolean,
+    nullable: true,
+    description:
+      'Foi quem está pedindo que cancelou? `true` = eu, `false` = outra ' +
+      'pessoa, `null` = não foi cancelada, não há evento registrado ' +
+      '(anterior à SPEC-032), ou quem pede é o gestor. **Nunca traz nome, id ' +
+      'ou objeto do autor** (INV-092).',
+  })
+  canceladaPorMim!: boolean | null;
+}
+
 export class OcupacaoPaginadaResponseDto {
-  @ApiProperty({ type: [OcupacaoResponseDto] })
-  data!: OcupacaoResponseDto[];
+  @ApiProperty({ type: [ItemDaListaDeReservasDto] })
+  data!: ItemDaListaDeReservasDto[];
 
   @ApiProperty({ type: Number, example: 1 })
   page!: number;

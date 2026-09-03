@@ -42,6 +42,42 @@ import {
  * spec neste ciclo. Consertar aqui seria mudar uma tela de outro app sem
  * pedido. Fica em LIM-041e, com dono.
  */
+/**
+ * SPEC-041/AC-010 — **"fui eu que cancelei?", e os três estados são de
+ * propósito.**
+ *
+ * | Devolve | Quando |
+ * |---|---|
+ * | `true` | o autor do cancelamento é quem está pedindo |
+ * | `false` | foi outra pessoa — a tela dirá "Cancelada pelo clube" |
+ * | `null` | não foi cancelada, **ou** não há evento, **ou** quem pede é o gestor |
+ *
+ * **`null` significa "não sei responder", e a tela cala nos três casos.** Um
+ * deles é o estado normal de quase toda linha antiga: as canceladas antes da
+ * SPEC-032 não têm evento (LIM-041b), e inventar autor para elas seria o mesmo
+ * erro do "criada por —" que a SPEC-032 recusou.
+ *
+ * **O gestor recebe `null` por decisão, não por limitação.** A pergunta dele
+ * não é "fui eu?", é "quem foi?" — e para isso já existe a agenda com o
+ * histórico completo. Um booleano ali diria "não fui eu" sem dizer quem foi,
+ * que é pior que não dizer nada. Ver a matriz de falha e autoridade da spec.
+ *
+ * **Não engole falha.** Se a consulta de auditoria quebrar, o erro sobe: `null`
+ * já significa "não há registro", e usá-lo para "não consegui ler o registro"
+ * faria a tela afirmar com confiança uma coisa que ela não sabe.
+ */
+function quemCancelou(
+  eventos: { acao: { autorId: string } }[],
+  usuarioIdAtual: string | undefined,
+): boolean | null {
+  if (!usuarioIdAtual) return null;
+  const ultimo = eventos[0];
+  if (!ultimo) return null;
+  // `usuarios.id` contra `usuarios.id`. Ver o docstring de `listBookings`
+  // sobre por que isto NÃO pode ser `alunoIdScope`.
+  return ultimo.acao.autorId === usuarioIdAtual;
+}
+
 function ordemDaListagem(
   quando?: 'futuras' | 'anteriores',
 ): Prisma.OcupacaoQuadraOrderByWithRelationInput[] {
@@ -623,10 +659,29 @@ export class CourtsService {
     return quadra;
   }
 
+  /**
+   * SPEC-041/B1 — **dois ids de pessoa, e eles NÃO são intercambiáveis.**
+   *
+   * | Parâmetro | Que tabela | Para quê |
+   * |---|---|---|
+   * | `alunoIdScope` | `alunos.id` | **autoriza** — limita as linhas ao próprio aluno |
+   * | `usuarioIdAtual` | `usuarios.id` | **identifica** — decide "fui eu que cancelei?" |
+   *
+   * **A armadilha que a validação cruzada apontou:** `acoes_administrativas.
+   * autor_id` referencia `usuarios.id`, e quem fosse implementar
+   * `canceladaPorMim` aqui dentro tinha **um único id de pessoa à mão** — o
+   * `alunoIdScope`, que é de outra tabela. As duas colunas são `@db.Uuid`,
+   * então TypeScript e Postgres aceitam a comparação **calados**, e ela é
+   * sempre falsa: o aluno leria *"Cancelada pelo clube"* justamente na reserva
+   * que ele mesmo cancelou.
+   *
+   * Colapsar os dois num parâmetro só é o próximo defeito da mesma família.
+   */
   async listBookings(
     companyId: string,
     query: ListBookingsQueryDto,
     alunoIdScope?: string,
+    usuarioIdAtual?: string,
   ): Promise<OcupacaoPaginadaResponseDto> {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
@@ -679,18 +734,39 @@ export class CourtsService {
       ...(condicoes.length ? { AND: condicoes } : {}),
     };
 
+    // SPEC-041/AC-010 — **`autorId` escalar, e nada mais.**
+    //
+    // A relação com `usuarios` NÃO é atravessada: não há `autor: { nome }` no
+    // `select`, porque `acoes_administrativas.autor_id` já é a coluna que
+    // interessa. É o que sustenta a INV-092 por construção — o nome não tem
+    // por onde chegar ao payload, nem por descuido de um `select` amplo.
+    //
+    // `take: 1` com `criadoEm desc` porque a pergunta é sobre o cancelamento
+    // ATUAL. Reativar (SPEC-035) vai produzir uma segunda transição, e aí o
+    // último é o que vale.
     const [data, total] = await Promise.all([
       this.prisma.ocupacaoQuadra.findMany({
         where,
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: ordemDaListagem(query.quando),
+        include: {
+          eventos: {
+            where: { tipo: 'cancelada' },
+            orderBy: { criadoEm: 'desc' },
+            take: 1,
+            select: { acao: { select: { autorId: true } } },
+          },
+        },
       }),
       this.prisma.ocupacaoQuadra.count({ where }),
     ]);
 
     return {
-      data: data.map((ocupacao) => this.toOcupacaoResponse(ocupacao)),
+      data: data.map((ocupacao) => ({
+        ...this.toOcupacaoResponse(ocupacao),
+        canceladaPorMim: quemCancelou(ocupacao.eventos, usuarioIdAtual),
+      })),
       page,
       pageSize,
       total,
