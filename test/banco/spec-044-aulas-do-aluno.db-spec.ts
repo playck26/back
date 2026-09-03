@@ -89,8 +89,14 @@ async function montar(): Promise<void> {
     );
   }
   // Reserva avulsa do mesmo aluno: a rota é de AULAS, e ela não pode entrar.
+  //
+  // `valor` NÃO é opcional aqui: o CHECK `ocupacoes_valor_por_origem` exige
+  // `valor IS NOT NULL` quando `origem_tipo = 'AVULSO'` e `valor IS NULL`
+  // quando é `'TURMA'` — foi ele que derrubou a primeira versão desta
+  // fixture no CI (run 33819047182, `23514`). As de turma acima ficam sem
+  // `valor` pelo mesmo motivo, e não por esquecimento.
   await q(
-    `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,status_pagamento,updated_at) VALUES ('${AVULSA}','${EMPRESA}','${QUADRA}','${HOJE}','20:00','21:00','AVULSO','${ALUNO}','pendente_pagamento',now())`,
+    `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,valor,status_pagamento,updated_at) VALUES ('${AVULSA}','${EMPRESA}','${QUADRA}','${HOJE}','20:00','21:00','AVULSO','${ALUNO}',80,'pendente_pagamento',now())`,
   );
   // A aula da tarde não aconteceu — `naoRealizada` tem de vir `true` só nela.
   await q(
