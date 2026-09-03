@@ -462,9 +462,23 @@ export class ClassesService {
         statusPagamento: { not: 'cancelado' },
         data: { gte: hojeUTC },
       },
-      include: {
-        origemTurma: true,
-        quadra: true,
+      // SPEC-044 — `select`, e não `include`. Com `include: { origemTurma:
+      // true, quadra: true }` cada ocorrência trazia a turma e a quadra
+      // INTEIRAS, e o `map` abaixo usa **um** campo de cada. Medido em
+      // produção em 2026-09-03: 55 ocorrências carregavam as mesmas 4 turmas
+      // 55 vezes, com todas as colunas, do banco até a serialização.
+      //
+      // A lista de campos é exatamente a que o `map` consome — acrescentar
+      // campo aqui sem usar embaixo é reabrir o mesmo buraco em miniatura.
+      select: {
+        id: true,
+        origemTurmaId: true,
+        quadraId: true,
+        data: true,
+        horaInicio: true,
+        horaFim: true,
+        origemTurma: { select: { nome: true } },
+        quadra: { select: { nome: true } },
         // SPEC-030 / achado 2 — o aluno precisa saber que a aula não
         // aconteceu. Sem isto ela aparecia como aula normal em "Próximas" e
         // sumia das "Anteriores" no dia seguinte (o filtro da avaliação),
