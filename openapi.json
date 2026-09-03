@@ -2140,6 +2140,16 @@
             }
           },
           {
+            "name": "referenciaTemporal",
+            "required": false,
+            "in": "query",
+            "description": "Instante que o servidor usou na 1ª página desta travessia. Reenviado nas seguintes para a fronteira não andar entre elas. Omitido = agora.",
+            "schema": {
+              "example": "2026-09-15T23:00:00.000Z",
+              "type": "string"
+            }
+          },
+          {
             "name": "data",
             "required": false,
             "in": "query",
@@ -6151,13 +6161,19 @@
           "total": {
             "type": "number",
             "example": 240
+          },
+          "referenciaTemporal": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-09-15T23:00:00.000Z"
           }
         },
         "required": [
           "data",
           "page",
           "pageSize",
-          "total"
+          "total",
+          "referenciaTemporal"
         ]
       },
       "AutorDoEventoDto": {

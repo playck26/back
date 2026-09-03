@@ -140,6 +140,18 @@ export class OcupacaoPaginadaResponseDto {
 
   @ApiProperty({ type: Number, example: 240 })
   total!: number;
+
+  /**
+   * SPEC-041/AC-016 — o instante que ESTA resposta usou para cortar passado de
+   * futuro. O cliente o reenvia nas páginas seguintes; ver o docstring do
+   * parâmetro homônimo em `ListBookingsQueryDto`.
+   *
+   * Sempre presente, mesmo sem `quando`: devolvê-lo condicionalmente faria o
+   * cliente ter de saber quando esperar o campo, e esse é o tipo de regra que
+   * a tela deduz errado.
+   */
+  @ApiProperty({ format: 'date-time', example: '2026-09-15T23:00:00.000Z' })
+  referenciaTemporal!: string;
 }
 
 /**

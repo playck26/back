@@ -698,11 +698,26 @@ export class CourtsService {
     // Com um array, uma condição nova nunca apaga a anterior: ela empilha.
     const condicoes: Prisma.OcupacaoQuadraWhereInput[] = [];
 
-    // SPEC-041/AC-002 e INV-091 — o recorte é calculado **uma vez** e vai para
-    // o mesmo objeto `where` que serve o `findMany` e o `count`. Contar com um
-    // instante e listar com outro é como a paginação passa a mentir.
+    // SPEC-041/AC-016 — **o instante é capturado UMA vez, aqui.**
+    //
+    // Da 2ª página em diante ele vem do cliente, que o recebeu na 1ª. É o que
+    // impede a fronteira de andar no meio de uma travessia: às 20h59 a reserva
+    // que termina às 21h é a primeira da lista, e sem congelar o instante ela
+    // sai do conjunto na página 2, empurrando todos os outros uma posição.
+    //
+    // `new Date(...)` de string ISO é seguro aqui — o DTO já validou o
+    // formato. O que ele NÃO valida é plausibilidade, e não precisa: um valor
+    // forjado só reordena as próprias reservas de quem pediu, e não afrouxa
+    // regra nenhuma (as guardas da SPEC-042 leem o relógio do servidor).
+    const referenciaTemporal = query.referenciaTemporal
+      ? new Date(query.referenciaTemporal)
+      : new Date();
+
+    // INV-091 — o recorte é calculado uma vez e vai para o mesmo objeto
+    // `where` que serve o `findMany` e o `count`. Contar com um instante e
+    // listar com outro é como a paginação passa a mentir.
     if (query.quando) {
-      condicoes.push(recorteTemporal(query.quando));
+      condicoes.push(recorteTemporal(query.quando, referenciaTemporal));
     }
 
     // SPEC-027 — **o filtro de canceladas saiu da tela e veio para cá.**
@@ -770,6 +785,7 @@ export class CourtsService {
       page,
       pageSize,
       total,
+      referenciaTemporal: referenciaTemporal.toISOString(),
     };
   }
 

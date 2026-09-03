@@ -1117,6 +1117,106 @@ describe('CourtsService', () => {
     });
 
     /**
+     * SPEC-041/AC-016 — **a fronteira não pode andar no meio de uma
+     * travessia.**
+     *
+     * Este era o ATAQUE 1 da 1ª validação cruzada, o único achado que o
+     * validador chamou de bloqueante, e a única LIM que a Fase A aceitou.
+     */
+    describe('referência temporal congelada (Fase B)', () => {
+      const AS_20H59 = '2026-09-15T23:59:00.000Z';
+
+      function corteUsado() {
+        const [primeira] = condicoesDoAnd() as {
+          OR: { horaFim?: { gt?: Date } }[];
+        }[];
+        return primeira.OR[1].horaFim!.gt!;
+      }
+
+      beforeEach(prepararLista);
+
+      it('sem referência, a resposta devolve o instante que usou', async () => {
+        const r = (await service.listBookings('c1', { quando: 'futuras' })) as {
+          referenciaTemporal: string;
+        };
+        // Sempre presente, mesmo sem `quando`: devolver condicionalmente faria
+        // a tela ter de saber quando esperar o campo.
+        expect(Date.parse(r.referenciaTemporal)).not.toBeNaN();
+      });
+
+      it('com referência, o corte usa ELA e não o relógio', async () => {
+        await service.listBookings('c1', {
+          quando: 'futuras',
+          referenciaTemporal: AS_20H59,
+        });
+
+        // 20h59 em São Paulo. Se o corte usasse `new Date()`, esta asserção
+        // só passaria por acaso, no minuto certo de um dia certo.
+        expect(corteUsado()).toEqual(parseTimeOnly('20:59'));
+      });
+
+      /**
+       * **O relógio TEM de andar entre as duas chamadas, senão a prova é
+       * decorativa.**
+       *
+       * O corte tem granularidade de minuto. Duas chamadas no mesmo minuto
+       * produzem o mesmo corte **mesmo com o defeito** — a primeira versão
+       * deste teste passava com e sem a correção. Aqui o tempo avança de
+       * 20h59 para 21h00 entre as páginas, que é exatamente o cenário do
+       * ATAQUE 1.
+       */
+      it('a página 2 vê a MESMA fronteira, mesmo com o relógio andando', async () => {
+        jest.useFakeTimers().setSystemTime(new Date(AS_20H59));
+
+        const p1 = (await service.listBookings('c1', {
+          quando: 'futuras',
+          page: 1,
+        })) as { referenciaTemporal: string };
+        const dePagina1 = corteUsado();
+
+        // A fronteira atravessa: o aluno rolou para a página 2 um minuto
+        // depois, e a reserva que terminava às 21h saiu do conjunto.
+        jest.setSystemTime(new Date('2026-09-16T00:00:00.000Z'));
+        (prisma.ocupacaoQuadra.findMany as jest.Mock).mockClear();
+
+        await service.listBookings('c1', {
+          quando: 'futuras',
+          page: 2,
+          referenciaTemporal: p1.referenciaTemporal,
+        });
+
+        expect(corteUsado()).toEqual(dePagina1);
+        expect(dePagina1).toEqual(parseTimeOnly('20:59'));
+        jest.useRealTimers();
+      });
+
+      it('SEM reenviar a referência, a fronteira anda — o defeito que a B5 fecha', async () => {
+        // O contraponto. Sem ele, uma implementação que ignorasse a
+        // referência e sempre usasse o relógio passaria no teste de cima
+        // quando as duas chamadas caíssem no mesmo minuto.
+        jest.useFakeTimers().setSystemTime(new Date(AS_20H59));
+        await service.listBookings('c1', { quando: 'futuras', page: 1 });
+        const dePagina1 = corteUsado();
+
+        jest.setSystemTime(new Date('2026-09-16T00:00:00.000Z'));
+        (prisma.ocupacaoQuadra.findMany as jest.Mock).mockClear();
+        await service.listBookings('c1', { quando: 'futuras', page: 2 });
+
+        expect(corteUsado()).not.toEqual(dePagina1);
+        jest.useRealTimers();
+      });
+
+      it('a referência devolvida é a que foi pedida, para o cliente reenviar', async () => {
+        const r = (await service.listBookings('c1', {
+          quando: 'anteriores',
+          referenciaTemporal: AS_20H59,
+        })) as { referenciaTemporal: string };
+
+        expect(r.referenciaTemporal).toBe(AS_20H59);
+      });
+    });
+
+    /**
      * SPEC-041/AC-010 — **`canceladaPorMim`, e a fixture é metade da prova.**
      *
      * `alunos.id` e `usuarios.id` são uuids de tabelas diferentes, e as duas
