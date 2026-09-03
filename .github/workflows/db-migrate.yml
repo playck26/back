@@ -624,7 +624,8 @@ jobs:
           # razao: aqui elas so precisam EXISTIR, nada neste passo fala com
           # o bucket.
           #
-          # Achado em 2026-09-03: este passo NAO rodava desde 2026-08-23.
+          # Achado em 2026-09-03: este passo NAO rodava desde 2026-08-08 (os dois
+          # runs de 23/08 ja tinham o smoke SKIPPED -- ver AUDITORIA-2026-09-03).
           # Os runs verdes de 29 e 30/08 foram disparados sem seed, com o
           # smoke SKIPPED — o workflow ficava verde sem executar o gate.
           SPACES_REGION: nyc3
