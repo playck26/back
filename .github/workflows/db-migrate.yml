@@ -217,6 +217,16 @@ jobs:
           DELETE FROM pedidos_reserva WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM usuarios WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID';
+          -- Usuarios de teste de execucoes anteriores que morreram antes do cleanup
+          -- final (em 2026-09-03 eram 17: aluno-ci-*, aluno-ci-2-*, aluno-app-ci-*,
+          -- convite-ci-*). Os do run ATUAL ja existem neste ponto (o admin
+          -- ci-$RUN_ID foi criado em MOD-002) e ficam de fora. Ordem: o que os
+          -- referencia com RESTRICT primeiro (eventos -> acoes), depois alunos,
+          -- depois usuarios (refresh_tokens vai em cascata).
+          DELETE FROM eventos_de_ocupacao WHERE acao_id IN (SELECT id FROM acoes_administrativas WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo'));
+          DELETE FROM acoes_administrativas WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
+          DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
+          DELETE FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo';
           ALTER TABLE eventos_de_ocupacao ENABLE TRIGGER eventos_append_only;
           ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
           COMMIT;
