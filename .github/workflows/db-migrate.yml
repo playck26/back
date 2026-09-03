@@ -61,6 +61,13 @@ jobs:
         timeout-minutes: 10
         run: |
           set -e
+          # SPEC-042: aluno nao cria nem cancela reserva no passado. As datas
+          # do trecho de aluno sao calculadas no dia do run, nao fixas — e a
+          # janela do cleanup acompanha, senao a reserva de hoje+7 vira
+          # residuo permanente. As datas FIXAS do trecho de admin (FIT-001 em
+          # 2026-09-01..20, reserva em 2026-08-25) continuam: admin pode.
+          ALUNO_DATA=$(date -u -d '+7 days' +%F)
+          CLEAN_ATE=$(date -u -d '+120 days' +%F)
           pnpm run build
           JWT_ACCESS_SECRET=ci-smoke-access JWT_REFRESH_SECRET=ci-smoke-refresh PORT=3000 node dist/main.js &
           APP_PID=$!
@@ -159,10 +166,10 @@ jobs:
           ALTER TABLE acoes_administrativas DISABLE TRIGGER acoes_append_only;
           DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
-             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30')
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
           DELETE FROM acoes_administrativas a WHERE NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id);
-          DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
+          DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE';
           DELETE FROM turma_alunos WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM ocupacoes_quadra WHERE origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM turmas WHERE nome LIKE 'Turma CI %';
@@ -310,6 +317,24 @@ jobs:
           echo "$ALUNO_LOGIN_RES" | jq -e '.usuario.role == "aluno"'
           ALUNO_TOKEN=$(echo "$ALUNO_LOGIN_RES" | jq -r '.accessToken')
 
+          echo "--- SPEC-024: aluno novo tem termo pendente; sem aceitar, toda rota responde 403 ACEITE_PENDENTE ---"
+          PENDENTES_RES=$(curl -s http://localhost:3000/api/v1/me/aceites/pendentes -H "Authorization: Bearer $ALUNO_TOKEN")
+          echo "$PENDENTES_RES"
+          TERMO_VERSAO=$(echo "$PENDENTES_RES" | jq -r '.termo.versao')
+          # `contrato` e null na empresa demo (o seed nao publica contrato); so o termo.
+          curl -s -X POST http://localhost:3000/api/v1/me/aceites \
+            -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"termo\":$TERMO_VERSAO}" | jq -e '.aindaPendente == false'
+
+          echo "--- SPEC-021: o auto-cadastro nasce com vinculo=pendente; reservar responde 403 VINCULO_PENDENTE ate o admin aprovar ---"
+          ALUNO_APP_ID=$(curl -s "http://localhost:3000/api/v1/students?vinculo=pendente&pageSize=100" -H "Authorization: Bearer $ACCESS_TOKEN" \
+            | jq -r --arg email "$ALUNO_EMAIL" '.data[] | select(.email == $email) | .id')
+          [ -n "$ALUNO_APP_ID" ] || (echo "aluno auto-cadastrado nao apareceu em /students?vinculo=pendente" && exit 1)
+          APROVAR_CODE=$(curl -s -o /tmp/aprovar.json -w '%{http_code}' -X POST "http://localhost:3000/api/v1/students/$ALUNO_APP_ID/aprovar" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          cat /tmp/aprovar.json; echo
+          [ "$APROVAR_CODE" = "200" ] || (echo "aprovar vinculo: esperado 200, veio $APROVAR_CODE" && exit 1)
+
           echo "--- aluno lê quadras (CON-005.1, leitura aberta a aluno) ---"
           curl -s http://localhost:3000/api/v1/courts -H "Authorization: Bearer $ALUNO_TOKEN" | jq -e '.total >= 1'
 
@@ -322,7 +347,7 @@ jobs:
           echo "--- aluno reserva quadra para si mesmo, sem informar alunoId (REQ-005) ---"
           ALUNO_BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-26\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\"}")
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$ALUNO_DATA\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\"}")
           echo "$ALUNO_BOOKING_RES"
           echo "$ALUNO_BOOKING_RES" | jq -e '.alunoId and .origemTipo == "AVULSO"'
           ALUNO_BOOKING_ID=$(echo "$ALUNO_BOOKING_RES" | jq -r '.id')
@@ -331,7 +356,7 @@ jobs:
           echo "--- aluno tentando informar alunoId de outro aluno é ignorado, servidor força o próprio id do token (REQ-005) ---"
           OUTRO_BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-26\",\"horaInicio\":\"10:00\",\"horaFim\":\"11:00\",\"alunoId\":\"$STUDENT_ID\"}")
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$ALUNO_DATA\",\"horaInicio\":\"10:00\",\"horaFim\":\"11:00\",\"alunoId\":\"$STUDENT_ID\"}")
           echo "$OUTRO_BOOKING_RES" | jq -e ".alunoId == \"$ALUNO_PROPRIO_ID\""
           OUTRO_BOOKING_ID=$(echo "$OUTRO_BOOKING_RES" | jq -r '.id')
 
@@ -506,7 +531,7 @@ jobs:
           ALTER TABLE acoes_administrativas DISABLE TRIGGER acoes_append_only;
           DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
-             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30')
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id = '$CLASS_ID');
           DELETE FROM eventos_de_ocupacao WHERE company_id = '$COMPANY_ID';
           DELETE FROM acoes_administrativas a
@@ -521,7 +546,7 @@ jobs:
           DELETE FROM turma_alunos WHERE turma_id = '$CLASS_ID';
           DELETE FROM ocupacoes_quadra WHERE origem_turma_id = '$CLASS_ID';
           DELETE FROM turmas WHERE id = '$CLASS_ID';
-          DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
+          DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE';
           DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email = 'aluno-ci-$RUN_ID@playck-tests.demo';
           DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo');
