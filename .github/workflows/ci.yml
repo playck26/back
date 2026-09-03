@@ -146,7 +146,15 @@ jobs:
           SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
         run: |
           if [ -z "$SPACES_KEY" ]; then
-            echo "::warning title=FIT-006 não rodou::Os secrets SPACES_* não estão configurados neste repositório. As 13 provas contra o bucket real ficam sem gate — rode 'pnpm run test:bucket' à mão antes de publicar mudança em src/storage/."
+            # SPEC-043/REQ-007: sem os secrets, o job só pode ficar verde em
+            # PR de FORK (que nunca os recebe). Em push para `main` ou em PR do
+            # próprio repositório, secret ausente é configuração quebrada — e
+            # um gate que fica verde sem rodar foi a causa raiz da SPEC-043.
+            if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+              echo "::error title=FIT-006 não rodou::Os secrets SPACES_* não estão configurados neste repositório. Sem eles as 13 provas contra o bucket real não têm gate — configure os secrets; este job não fica verde sem rodar."
+              exit 1
+            fi
+            echo "::warning title=FIT-006 não rodou::PR de fork não recebe os secrets SPACES_*; as provas contra o bucket real rodam no merge."
             exit 0
           fi
           pnpm run test:bucket

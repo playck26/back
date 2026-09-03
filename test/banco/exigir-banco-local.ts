@@ -13,6 +13,10 @@
  * A trava é chata de propósito: falha ANTES de abrir conexão, e a mensagem
  * diz o comando certo. Nenhuma suíte de banco deve rodar sem passar por ela.
  */
+// Id do endpoint Neon de produção (`ep-bitter-cake-ac2vk5uy`). Está aqui
+// de propósito, como denylist: nenhuma variável de ambiente abre esta porta.
+const ENDPOINT_DE_PRODUCAO = 'bitter-cake';
+
 const HOSTS_PERMITIDOS = new Set([
   'localhost',
   '127.0.0.1',
@@ -38,6 +42,21 @@ export function exigirBancoLocal(): void {
     throw new Error('DATABASE_URL não é uma URL válida.');
   }
 
+  // SPEC-043 — o canário Neon (`db-migrate.yml`, jobs `fit-00x-neon`) roda
+  // as suítes FIT contra o banco de DEV, e só contra ele. A permissão é
+  // explícita e por host exato: a variável `FIT_CANARIO_HOST` precisa ser
+  // IGUAL ao hostname da URL. E o endpoint de PRODUÇÃO é recusado sempre,
+  // mesmo que alguém aponte a variável para ele — a trava original existe
+  // porque estas suítes apagam empresa inteira.
+  if (host.includes(ENDPOINT_DE_PRODUCAO)) {
+    throw new Error(
+      `Suíte de banco recusou rodar contra "${host}": é o endpoint de PRODUÇÃO.`,
+    );
+  }
+  const canario = process.env.FIT_CANARIO_HOST;
+  if (canario && canario === host) {
+    return;
+  }
   if (!HOSTS_PERMITIDOS.has(host)) {
     throw new Error(
       `Suíte de banco recusou rodar contra "${host}". Estas suítes ESCREVEM ` +
