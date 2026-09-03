@@ -898,7 +898,7 @@ do statement e só a linha travada é reavaliada (EvalPlanQual) — as demais
 relações do `JOIN` ficam no snapshot de antes da espera. Detalhe em
 `DATA_MODEL.md`, seção "Concorrência".
 
-**Quatro runners de teste, e a diferença entre eles é o que cada um consegue
+**Cinco runners de teste, e a diferença entre eles é o que cada um consegue
 reprovar:** `pnpm test` (unit, Prisma mockado), `pnpm test:e2e` (Supertest,
 também mockado), **`pnpm test:banco`** — suítes que exigem Postgres real,
 que o CI sobe como serviço. Mock não tem lock, snapshot nem constraint;
@@ -909,6 +909,23 @@ estado proibido e exige que o banco recuse. A SPEC-018:TASK-001 acrescentou
 `colunas-de-midia.db-spec.ts`, o mesmo ensaio para as seis colunas de mídia —
 **12 dos seus 14 testes ficam vermelhos** quando as constraints são
 derrubadas, e os 2 que sobrevivem são justamente os dois casos felizes.
+
+**`pnpm run test:fit`** (`test/fit/*.fit-spec.ts`, SPEC-043, 2026-09-03) é o
+**gate de concorrência como check de PR**. Sobe a aplicação REAL — `AppModule`
+sem dublê de `PrismaService`, `configurarApp` do `main.ts` — em **dois apps**
+(duas pools, pelo mesmo motivo que o FIT-010 abre dois `PrismaClient`) e
+dispara pares de requisições HTTP concorrentes contra o Postgres 18 do
+runner. FIT-001 prova quatro cenários (mesmo slot; blocos não contíguos com
+conflito parcial; `encontros[]` com conflito num dia; cancelar × re-reservar
+pelos três caminhos) e FIT-002 a rotação do refresh token, com o estado final
+lido no banco. Roda no job **`fit-critical`** do `ci.yml`, em **toda** PR, sem
+detector de paths; o ruleset de `main` exige o check no `head_sha` exato. O
+FIT-001 em bash do `db-migrate.yml` ficou 26 dias sem rodar
+(`AUDITORIA-2026-09-03-FIT-001.md`); o runner novo achou no primeiro run o
+**DEF-023** (deadlock `40P01` entre duas reservas virava `500`). A trava
+`exigirBancoLocal` continua valendo: só `localhost` — ou, para o canário
+`FIT-00x Neon` do `db-migrate.yml`, o host exato de `FIT_CANARIO_HOST`, nunca
+o endpoint de produção, que é recusado no código.
 
 E **`pnpm run test:bucket`** (FIT-006), que fala com o **bucket real**. Exige
 as 6 variáveis `SPACES_*` e só escreve sob um prefixo próprio. É o único

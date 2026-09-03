@@ -22,6 +22,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:banco": "jest --config ./test/jest-banco.json --runInBand",
+    "test:fit": "jest --config ./test/jest-fit.json --runInBand",
     "test:bucket": "jest --config ./test/jest-bucket.json --runInBand",
     "openapi:export": "ts-node -r tsconfig-paths/register src/openapi-export.ts",
     "prisma:generate": "prisma generate",
