@@ -145,11 +145,30 @@ jobs:
           QUADRA_ID=$(echo "$COURTS_RES" | jq -r '.data[0].id')
 
           echo "--- limpando reservas/turmas de teste residuais de execuções anteriores (idempotência do smoke test) ---"
+          # SPEC-032: `eventos_de_ocupacao` referencia a ocupacao e a acao com
+          # ON DELETE RESTRICT, e as duas tabelas de auditoria sao append-only
+          # por trigger. A valvula da trigger exige a role `playck_test_cleanup`,
+          # que so existe no banco de testes do CI — nao no Neon. Aqui o caminho
+          # e o do DONO das tabelas (o mesmo usuario que roda as migrations):
+          # desligar as duas triggers, apagar na ordem evento -> acao ->
+          # ocupacao, religar. Tudo numa transacao: se um DELETE falhar, o
+          # rollback religa as triggers junto. So faz sentido contra DEV.
           cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+          BEGIN;
+          ALTER TABLE eventos_de_ocupacao DISABLE TRIGGER eventos_append_only;
+          ALTER TABLE acoes_administrativas DISABLE TRIGGER acoes_append_only;
+          DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30')
+                OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
+          DELETE FROM acoes_administrativas a WHERE NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id);
           DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30';
           DELETE FROM turma_alunos WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM ocupacoes_quadra WHERE origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM turmas WHERE nome LIKE 'Turma CI %';
+          ALTER TABLE eventos_de_ocupacao ENABLE TRIGGER eventos_append_only;
+          ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
+          COMMIT;
           SQL
 
           echo "--- GET /courts/:id/availability ---"
@@ -468,7 +487,22 @@ jobs:
           kill $APP_PID
 
           echo "--- limpando dado de teste criado pelo smoke test ---"
+          # Mesmo desenho do cleanup inicial (SPEC-032): eventos -> acoes antes
+          # de ocupacoes, usuarios e empresa, que eles referenciam com RESTRICT.
+          # Triggers append-only desligadas pelo dono, dentro da transacao.
           cat <<SQL | pnpm exec prisma db execute --stdin --schema prisma/schema.prisma
+          BEGIN;
+          ALTER TABLE eventos_de_ocupacao DISABLE TRIGGER eventos_append_only;
+          ALTER TABLE acoes_administrativas DISABLE TRIGGER acoes_append_only;
+          DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '2026-09-30')
+                OR origem_turma_id = '$CLASS_ID');
+          DELETE FROM eventos_de_ocupacao WHERE company_id = '$COMPANY_ID';
+          DELETE FROM acoes_administrativas a
+           WHERE a.company_id = '$COMPANY_ID'
+              OR a.autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%-$RUN_ID@playck-tests.demo' OR email = 'ci-$RUN_ID@playck-tests.demo')
+              OR NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id);
           DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
           DELETE FROM convites_aluno WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
@@ -484,6 +518,9 @@ jobs:
           DELETE FROM usuarios WHERE email = 'aluno-ci-2-$RUN_ID@playck-tests.demo';
           DELETE FROM alunos WHERE usuario_id = (SELECT id FROM usuarios WHERE email = 'aluno-app-ci-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email = 'aluno-app-ci-$RUN_ID@playck-tests.demo';
+          ALTER TABLE eventos_de_ocupacao ENABLE TRIGGER eventos_append_only;
+          ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
+          COMMIT;
           SQL
 
           echo "Smoke test OK — auth (com FIT-002) + MOD-002 + MOD-003 + MOD-004 (turmas) + MOD-005 (com FIT-001, aberto a aluno) + MOD-006 (pagamento manual) + MOD-007 (dashboard) funcionam de ponta a ponta contra o Neon."
