@@ -509,92 +509,110 @@ export class CourtsService {
       }
     }
 
-    try {
-      // Tudo ou nada (AC-005): um pedido de 3 blocos com 1 inválido não
-      // pode deixar 2 criados. A transação também cobre o pedido em si —
-      // sem ela, uma falha no meio deixaria a chave de idempotência
-      // gravada sem as reservas correspondentes.
-      const criadas = await this.prisma.$transaction(async (tx) => {
-        const pedido = clientRequestId
-          ? await tx.pedidoReserva.create({
-              data: { companyId, clientRequestId, fingerprint },
-            })
-          : null;
+    // DEF-023 — achado pelo FIT-001 (a) da SPEC-043 (run 33790414789, CI em
+    // postgres:18): duas criações concorrentes do mesmo slot podem terminar
+    // em DEADLOCK (`40P01`) em vez de violação da EXCLUDE. A transação
+    // escreve ocupação, ação administrativa e evento (SPEC-032), e as duas
+    // se esperam em ordem cruzada; o Postgres aborta UMA. A abortada é
+    // "corrida perdida" — mas quando ela procura o conflito, a vencedora
+    // ainda não commitou: nada visível, e o erro cru virava **500** para o
+    // aluno. Uma segunda tentativa resolve os dois desfechos possíveis: a
+    // vencedora já commitou (409 limpo, pela pré-checagem ou pela EXCLUDE)
+    // ou ela também abortou (a segunda tentativa ganha o slot). Duas
+    // tentativas, não N: se a segunda também perde sem conflito visível, o
+    // erro sobe cru — 409 sem conflito seria mentira (DEF-013).
+    for (let tentativa = 1; ; tentativa++) {
+      try {
+        // Tudo ou nada (AC-005): um pedido de 3 blocos com 1 inválido não
+        // pode deixar 2 criados. A transação também cobre o pedido em si —
+        // sem ela, uma falha no meio deixaria a chave de idempotência
+        // gravada sem as reservas correspondentes.
+        const criadas = await this.prisma.$transaction(async (tx) => {
+          const pedido = clientRequestId
+            ? await tx.pedidoReserva.create({
+                data: { companyId, clientRequestId, fingerprint },
+              })
+            : null;
 
-        // SPEC-032/AC-001 e INV-078 — **UMA ação para o pedido inteiro**, N
-        // eventos. A identidade do comando lógico aqui é o PEDIDO, não o
-        // bloco: três blocos são um gesto do usuário, não três.
-        const registrador = new RegistradorDeAcao(
-          tx,
-          companyId,
-          autorId,
-          'reserva_criada',
-        );
-
-        const resultado: OcupacaoParaResposta[] = [];
-        for (const bloco of blocos) {
-          const transicaoId = novaTransicao();
-          const ocupacao = await tx.ocupacaoQuadra.create({
-            data: {
-              companyId,
-              quadraId: dto.quadraId,
-              data: dataDate,
-              horaInicio: parseTimeOnly(bloco.horaInicio),
-              horaFim: parseTimeOnly(bloco.horaFim),
-              origemTipo: 'AVULSO',
-              alunoId: dto.alunoId,
-              // Congelado na criação (AC-004): reajustar o preço da
-              // quadra depois não mexe em reserva existente.
-              valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
-              pedidoId: pedido?.id,
-              transicaoId,
-            },
-          });
-          await registrador.registrar(ocupacao.id, 'criada', transicaoId);
-          resultado.push(ocupacao);
-        }
-        return resultado;
-      });
-
-      return this.responderReservas(criadas, formatoAntigo);
-    } catch (error) {
-      // A constraint EXCLUDE (INV-001) e os índices únicos não têm código
-      // Prisma dedicado — a violação de EXCLUDE (23P01) chega como
-      // PrismaClientUnknownRequestError. Depois dos pré-checks acima, só
-      // pode ser corrida: outra requisição ganhou o slot ou a mesma chave.
-      // **Só pode** — desde que o erro seja de dado. Transação expirada e
-      // conexão caída não são corrida, e virar 409 aqui faria a reserva do
-      // aluno mentir do mesmo jeito que a da turma (DEF-013).
-      if (ehCorridaPerdida(error)) {
-        if (clientRequestId) {
-          const jaFeito = await this.pedidoJaAtendido(
+          // SPEC-032/AC-001 e INV-078 — **UMA ação para o pedido inteiro**, N
+          // eventos. A identidade do comando lógico aqui é o PEDIDO, não o
+          // bloco: três blocos são um gesto do usuário, não três.
+          const registrador = new RegistradorDeAcao(
+            tx,
             companyId,
-            clientRequestId,
-            fingerprint,
+            autorId,
+            'reserva_criada',
           );
-          if (jaFeito) {
-            return this.responderReservas(jaFeito, formatoAntigo);
-          }
-        }
 
-        for (const bloco of blocos) {
-          const conflito = await this.findConflito(
-            companyId,
-            dto.quadraId,
-            dataDate,
-            parseTimeOnly(bloco.horaInicio),
-            parseTimeOnly(bloco.horaFim),
-          );
-          if (conflito) {
-            throw new ConflictException({
-              message: `Conflito de horário em ${bloco.horaInicio}–${bloco.horaFim} (INV-001)`,
-              bloco: `${bloco.horaInicio}-${bloco.horaFim}`,
-              conflictWith: conflito,
+          const resultado: OcupacaoParaResposta[] = [];
+          for (const bloco of blocos) {
+            const transicaoId = novaTransicao();
+            const ocupacao = await tx.ocupacaoQuadra.create({
+              data: {
+                companyId,
+                quadraId: dto.quadraId,
+                data: dataDate,
+                horaInicio: parseTimeOnly(bloco.horaInicio),
+                horaFim: parseTimeOnly(bloco.horaFim),
+                origemTipo: 'AVULSO',
+                alunoId: dto.alunoId,
+                // Congelado na criação (AC-004): reajustar o preço da
+                // quadra depois não mexe em reserva existente.
+                valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
+                pedidoId: pedido?.id,
+                transicaoId,
+              },
             });
+            await registrador.registrar(ocupacao.id, 'criada', transicaoId);
+            resultado.push(ocupacao);
+          }
+          return resultado;
+        });
+
+        return this.responderReservas(criadas, formatoAntigo);
+      } catch (error) {
+        // A constraint EXCLUDE (INV-001) e os índices únicos não têm código
+        // Prisma dedicado — a violação de EXCLUDE (23P01) chega como
+        // PrismaClientUnknownRequestError. Depois dos pré-checks acima, só
+        // pode ser corrida: outra requisição ganhou o slot ou a mesma chave.
+        // **Só pode** — desde que o erro seja de dado. Transação expirada e
+        // conexão caída não são corrida, e virar 409 aqui faria a reserva do
+        // aluno mentir do mesmo jeito que a da turma (DEF-013).
+        if (ehCorridaPerdida(error)) {
+          if (clientRequestId) {
+            const jaFeito = await this.pedidoJaAtendido(
+              companyId,
+              clientRequestId,
+              fingerprint,
+            );
+            if (jaFeito) {
+              return this.responderReservas(jaFeito, formatoAntigo);
+            }
+          }
+
+          for (const bloco of blocos) {
+            const conflito = await this.findConflito(
+              companyId,
+              dto.quadraId,
+              dataDate,
+              parseTimeOnly(bloco.horaInicio),
+              parseTimeOnly(bloco.horaFim),
+            );
+            if (conflito) {
+              throw new ConflictException({
+                message: `Conflito de horário em ${bloco.horaInicio}–${bloco.horaFim} (INV-001)`,
+                bloco: `${bloco.horaInicio}-${bloco.horaFim}`,
+                conflictWith: conflito,
+              });
+            }
+          }
+          // Corrida perdida e NENHUM conflito visível: é o deadlock acima.
+          if (tentativa === 1) {
+            continue;
           }
         }
+        throw error;
       }
-      throw error;
     }
   }
 
