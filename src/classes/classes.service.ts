@@ -470,19 +470,10 @@ export class ClassesService {
       //
       // A lista de campos é exatamente a que o `map` consome — acrescentar
       // campo aqui sem usar embaixo é reabrir o mesmo buraco em miniatura.
-      select: {
-        id: true,
-        origemTurmaId: true,
-        quadraId: true,
-        data: true,
-        horaInicio: true,
-        horaFim: true,
-        origemTurma: { select: { nome: true } },
-        quadra: { select: { nome: true } },
-        // SPEC-030 / achado 2 — o aluno precisa saber que a aula não
-        // aconteceu. Sem isto ela aparecia como aula normal em "Próximas" e
-        // sumia das "Anteriores" no dia seguinte (o filtro da avaliação),
-        // sem nunca dizer o que houve.
+      // SABOTAGEM (SPEC-044/AC-004) -- NAO MERGEAR: volta o include.
+      include: {
+        origemTurma: true,
+        quadra: true,
         chamadas: { select: { completude: true } },
       },
       orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
