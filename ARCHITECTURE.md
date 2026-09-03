@@ -963,6 +963,13 @@ neste código, com onde vê-los:
   horaInicio` não é ordem total e sem desempate uma linha aparece em duas
   páginas e some de outra. **Filtro no cliente depois de paginar é sempre
   defeito** — foi por isso que `GET /bookings` ganhou `excluirCanceladas`.
+  **SPEC-041/Fase B acrescentou uma terceira: quando o CONJUNTO depende do
+  relógio, o instante viaja com a paginação.** A lista de reservas é cortada
+  entre passado e futuro, e essa fronteira anda sozinha — às 20h59 um item está
+  na página 1, às 21h00 ele saiu, e todos os outros deslizam uma posição. O
+  servidor devolve o instante que usou (`referenciaTemporal`) e o cliente o
+  reenvia. Trocar de aba ou filtro começa um novo, porque aí o conjunto mudou de
+  propósito.
   **E ORDENAR no cliente depois de paginar é o mesmo defeito, achado só na
   SPEC-041:** o app reordenava cada página que recebia, e a lista virava um
   serrote que reiniciava a cada 20 itens. Quem pagina é quem ordena;
