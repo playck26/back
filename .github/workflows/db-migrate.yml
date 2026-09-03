@@ -66,7 +66,10 @@ jobs:
           # janela do cleanup acompanha, senao a reserva de hoje+7 vira
           # residuo permanente. As datas FIXAS do trecho de admin (FIT-001 em
           # 2026-09-01..20, reserva em 2026-08-25) continuam: admin pode.
-          ALUNO_DATA=$(date -u -d '+7 days' +%F)
+          # +30 e nao +7: o FIT-001 reserva 2026-09-01..20 as 10h, e a segunda
+          # reserva do aluno e 10:00-11:00 — em hoje+7 (dentro da janela) dava
+          # 409 contra o FIT-001, nao contra o que o passo testa. (Run 33780058433.)
+          ALUNO_DATA=$(date -u -d '+30 days' +%F)
           CLEAN_ATE=$(date -u -d '+120 days' +%F)
           pnpm run build
           JWT_ACCESS_SECRET=ci-smoke-access JWT_REFRESH_SECRET=ci-smoke-refresh PORT=3000 node dist/main.js &
