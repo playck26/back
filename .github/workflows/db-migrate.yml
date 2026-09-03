@@ -287,12 +287,22 @@ jobs:
             | jq -e '.ocupacaoQuadrasPct >= 0'
           echo "MOD-007 OK — dashboard agrega alunos ativos + ocupação de turma + ocupação de quadra contra o Neon."
 
+          echo "--- SPEC-009: admin liga o auto-cadastro da empresa demo (o seed cria com permiteAutoCadastro=false) ---"
+          # Sem isto o register-aluno abaixo responde a MESMA recusa de slug
+          # inexistente (desenho da SPEC-009: nao vazar se a empresa existe).
+          curl -s -X PATCH http://localhost:3000/api/v1/me/company \
+            -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d '{"permiteAutoCadastro":true}' | jq -e '.permiteAutoCadastro == true'
+
           echo "--- SPEC-005: registra e loga como aluno via self-service (register-aluno) ---"
-          DEMO_COMPANY_ID=$(echo "$ME_RES" | jq -r '.companyId')
+          # SPEC-009/REQ-001: a empresa e identificada pelo SLUG do link publico,
+          # nao pelo companyId. O slug do seed e fixo (prisma/seed.ts).
           ALUNO_EMAIL="aluno-app-ci-$RUN_ID@playck-tests.demo"
-          curl -s -X POST http://localhost:3000/api/v1/auth/register-aluno \
+          REG_CODE=$(curl -s -o /tmp/register-aluno.json -w '%{http_code}' -X POST http://localhost:3000/api/v1/auth/register-aluno \
             -H "Content-Type: application/json" \
-            -d "{\"email\":\"$ALUNO_EMAIL\",\"senha\":\"senha-forte-123\",\"nome\":\"Aluno App CI\",\"companyId\":\"$DEMO_COMPANY_ID\"}" > /dev/null
+            -d "{\"email\":\"$ALUNO_EMAIL\",\"senha\":\"senha-forte-123\",\"nome\":\"Aluno App CI\",\"empresaSlug\":\"playck-qa-demo\"}")
+          cat /tmp/register-aluno.json; echo
+          [ "$REG_CODE" = "201" ] || (echo "register-aluno: esperado 201, veio $REG_CODE" && exit 1)
 
           ALUNO_LOGIN_RES=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
             -H "Content-Type: application/json" \
