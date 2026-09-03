@@ -62,6 +62,15 @@ function codigos(...respostas: { status: number }[]): number[] {
   return respostas.map((r) => r.status).sort((x, y) => x - y);
 }
 
+/** Corpo das respostas que não são 201/409 — um 500 sem corpo custa um
+ *  ciclo de CI inteiro só para saber o que foi. */
+function detalhe(...respostas: { status: number; text: string }[]): string {
+  return respostas
+    .filter((r) => r.status !== 201 && r.status !== 409)
+    .map((r) => ` [${r.status}: ${r.text.slice(0, 300)}]`)
+    .join('');
+}
+
 function post(
   app: INestApplication<App>,
   rota: string,
@@ -108,7 +117,7 @@ describe('FIT-001 (a) — duas criações AVULSO do mesmo slot', () => {
       const par = codigos(r1, r2);
       if (par[0] !== 201 || par[1] !== 409 || ativas !== 1) {
         falhas.push(
-          `iteração ${i + 1}: ${r1.status}/${r2.status}, ativas=${ativas}`,
+          `iteração ${i + 1}: ${r1.status}/${r2.status}, ativas=${ativas}${detalhe(r1, r2)}`,
         );
       }
     }
@@ -159,7 +168,7 @@ describe('FIT-001 (b) — pedido de múltiplos blocos com conflito parcial (SPEC
         bloco1 !== esperadoBloco1
       ) {
         falhas.push(
-          `iteração ${i + 1}: pedido=${rPedido.status} avulsa=${rAvulsa.status} bloco10-11=${bloco1} (esperado ${esperadoBloco1}) bloco12-13=${bloco2}`,
+          `iteração ${i + 1}: pedido=${rPedido.status} avulsa=${rAvulsa.status} bloco10-11=${bloco1} (esperado ${esperadoBloco1}) bloco12-13=${bloco2}${detalhe(rPedido, rAvulsa)}`,
         );
       }
     }
@@ -211,7 +220,7 @@ describe('FIT-001 (c) — duas turmas com `encontros[]` e conflito em um dia só
         ocorrenciasVencedora === 0
       ) {
         falhas.push(
-          `iteração ${i + 1}: ${r1.status}/${r2.status}, perdedora: turmas=${turmasPerdedora} ocorrências=${ocorrenciasPerdedora}; vencedora: ocorrências=${ocorrenciasVencedora}`,
+          `iteração ${i + 1}: ${r1.status}/${r2.status}, perdedora: turmas=${turmasPerdedora} ocorrências=${ocorrenciasPerdedora}; vencedora: ocorrências=${ocorrenciasVencedora}${detalhe(r1, r2)}`,
         );
       }
     }
@@ -289,7 +298,7 @@ describe('FIT-001 (d) — cancelar × re-reservar o mesmo slot (SPEC-032/INV-064
         if (rCancel.status !== codigoCancel)
           problemas.push(`cancel=${rCancel.status}`);
         if (rNova.status !== 201 && rNova.status !== 409)
-          problemas.push(`nova=${rNova.status}`);
+          problemas.push(`nova=${rNova.status}${detalhe(rNova)}`);
         if (ativas > 1) problemas.push(`ativas=${ativas}`);
         if (!cancelada) problemas.push(`X ficou ${linhaX.status_pagamento}`);
         if (evento !== 1)
