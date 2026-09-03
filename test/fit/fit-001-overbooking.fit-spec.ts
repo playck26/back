@@ -124,17 +124,21 @@ describe('FIT-001 (b) — pedido de múltiplos blocos com conflito parcial (SPEC
       const pedido = {
         quadraId: QUADRA,
         data,
+        // NÃO contíguos, de propósito: a SPEC-011 funde blocos contíguos numa
+        // ocupação só (10–11 + 11–12 = uma linha 10–12), e aí "linha parcial"
+        // não existe para ser provada. Com 10–11 e 12–13 o pedido são DUAS
+        // linhas, e é a segunda que não pode sobrar quando ele perde.
         slots: [
           { horaInicio: '10:00', horaFim: '11:00' },
-          { horaInicio: '11:00', horaFim: '12:00' },
+          { horaInicio: '12:00', horaFim: '13:00' },
         ],
         alunoId: ALUNO1,
       };
       const avulsa = {
         quadraId: QUADRA,
         data,
-        horaInicio: '11:00',
-        horaFim: '12:00',
+        horaInicio: '12:00',
+        horaFim: '13:00',
         alunoId: ALUNO2,
       };
       const [rPedido, rAvulsa] = await Promise.all([
@@ -143,8 +147,8 @@ describe('FIT-001 (b) — pedido de múltiplos blocos com conflito parcial (SPEC
       ]);
       const par = codigos(rPedido, rAvulsa);
       const bloco1 = await ativasNoSlot(db, QUADRA, data, '10:00');
-      const bloco2 = await ativasNoSlot(db, QUADRA, data, '11:00');
-      // O slot disputado (11–12) tem exatamente uma ocupação, sempre. O
+      const bloco2 = await ativasNoSlot(db, QUADRA, data, '12:00');
+      // O slot disputado (12–13) tem exatamente uma ocupação, sempre. O
       // bloco não disputado (10–11) só existe se o PEDIDO venceu — uma linha
       // órfã do pedido perdedor é o defeito que este cenário existe para pegar.
       const esperadoBloco1 = rPedido.status === 201 ? 1 : 0;
@@ -155,7 +159,7 @@ describe('FIT-001 (b) — pedido de múltiplos blocos com conflito parcial (SPEC
         bloco1 !== esperadoBloco1
       ) {
         falhas.push(
-          `iteração ${i + 1}: pedido=${rPedido.status} avulsa=${rAvulsa.status} bloco10-11=${bloco1} (esperado ${esperadoBloco1}) bloco11-12=${bloco2}`,
+          `iteração ${i + 1}: pedido=${rPedido.status} avulsa=${rAvulsa.status} bloco10-11=${bloco1} (esperado ${esperadoBloco1}) bloco12-13=${bloco2}`,
         );
       }
     }
