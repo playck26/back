@@ -623,6 +623,53 @@ describe('CourtsService', () => {
         service.createBooking('c1', dto, 'autor-1'),
       ).rejects.toBeInstanceOf(ConflictException);
     });
+
+    // DEF-023 — achado pelo FIT-001 (a) da SPEC-043 no CI (run 33790414789):
+    // a perdedora de um deadlock não enxerga a vencedora, que ainda não
+    // commitou, e o erro cru virava 500. Estes dois testes fixam o
+    // contrato da segunda tentativa: uma, e só uma.
+    function deadlock() {
+      return new Prisma.PrismaClientUnknownRequestError(
+        'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+        { clientVersion: '6.19.3' },
+      );
+    }
+
+    it('DEF-023: deadlock (40P01) sem conflito visível tenta de novo — e a segunda tentativa vence', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      // Pré-checagem e busca pós-corrida: nada visível — a vencedora ainda
+      // não commitou. Sem a segunda tentativa, isto era 500.
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.create as jest.Mock)
+        .mockRejectedValueOnce(deadlock())
+        .mockResolvedValueOnce({
+          id: 'o1',
+          companyId: 'c1',
+          quadraId: 'q1',
+          data: new Date('2026-09-14T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+          horaFim: new Date('1970-01-01T15:00:00.000Z'),
+          origemTipo: 'AVULSO',
+          alunoId: 'a1',
+          statusPagamento: 'pendente_pagamento',
+        });
+
+      const resultado = await service.createBooking('c1', dto, 'autor-1');
+
+      expect(resultado).toBeDefined();
+      expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('DEF-023: perdeu DUAS vezes sem conflito visível — o erro sobe cru, não vira 409 mentiroso', async () => {
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.ocupacaoQuadra.create as jest.Mock).mockRejectedValue(deadlock());
+
+      await expect(
+        service.createBooking('c1', dto, 'autor-1'),
+      ).rejects.toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
+      expect(prisma.ocupacaoQuadra.create).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('registerClassOccupancy', () => {
