@@ -491,3 +491,19 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SEED_ADMIN_SENHA: ${{ secrets.SEED_ADMIN_SENHA }}
           SEED_SUPER_ADMIN_SENHA: ${{ secrets.SEED_SUPER_ADMIN_SENHA }}
+          # SPEC-017/ADR-015: o StorageModule valida as seis variaveis do
+          # Spaces no BOOT, e sem elas `node dist/main.js` morre antes de
+          # abrir a porta — o smoke inteiro (e o FIT-001 dentro dele) vira
+          # `curl: exit 7`. Mesmos valores-placebo do ci.yml, pela mesma
+          # razao: aqui elas so precisam EXISTIR, nada neste passo fala com
+          # o bucket.
+          #
+          # Achado em 2026-09-03: este passo NAO rodava desde 2026-08-23.
+          # Os runs verdes de 29 e 30/08 foram disparados sem seed, com o
+          # smoke SKIPPED — o workflow ficava verde sem executar o gate.
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
