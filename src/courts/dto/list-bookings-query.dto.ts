@@ -88,6 +88,46 @@ export class ListBookingsQueryDto {
   @IsBoolean()
   excluirCanceladas?: boolean;
 
+  /**
+   * SPEC-041/AC-016 — **o instante congelado de uma travessia de lista.**
+   *
+   * ## O defeito que ela fecha
+   *
+   * O corte temporal move sozinho. São 20h59, o aluno abre `Reservas` e a
+   * reserva que termina às 21h é a primeira da lista. Às 21h00 ele pede a
+   * página 2 — a fronteira andou, aquele item saiu do conjunto, **e todos os
+   * outros deslizam uma posição**. O primeiro item da página 2 nunca é
+   * mostrado. Em `anteriores` é o inverso: um item entra e outro aparece duas
+   * vezes.
+   *
+   * A primeira página não a envia; a resposta devolve o instante que o
+   * servidor usou; as páginas seguintes reenviam o mesmo. Trocar de aba ou de
+   * filtro começa uma referência nova, porque aí o conjunto mudou de propósito.
+   *
+   * ## Vem do cliente, e isso NÃO dá poder a ninguém
+   *
+   * Um valor forjado só muda **em qual aba as próprias reservas do requisitante
+   * aparecem** — o `where` continua preso a `company_id` e, para aluno, a
+   * `aluno_id`. Nada de outra empresa ou de outro aluno entra por aqui.
+   *
+   * E não afrouxa regra nenhuma: as guardas da SPEC-042 (não reservar nem
+   * cancelar no passado) leem o **relógio do servidor**, não este parâmetro.
+   * Mandar "amanhã" faz uma reserva de ontem aparecer em `Reservas`; tentar
+   * cancelá-la continua dando 409.
+   *
+   * Por isso é um `date-time` simples, sem assinatura: assinar protegeria algo
+   * que não precisa de proteção, ao custo de uma chave para guardar.
+   */
+  @ApiPropertyOptional({
+    example: '2026-09-15T23:00:00.000Z',
+    description:
+      'Instante que o servidor usou na 1ª página desta travessia. Reenviado ' +
+      'nas seguintes para a fronteira não andar entre elas. Omitido = agora.',
+  })
+  @IsOptional()
+  @IsDateString()
+  referenciaTemporal?: string;
+
   @ApiPropertyOptional({ example: '2026-08-20' })
   @IsOptional()
   @IsDateString()

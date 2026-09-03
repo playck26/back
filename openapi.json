@@ -2140,6 +2140,16 @@
             }
           },
           {
+            "name": "referenciaTemporal",
+            "required": false,
+            "in": "query",
+            "description": "Instante que o servidor usou na 1ª página desta travessia. Reenviado nas seguintes para a fronteira não andar entre elas. Omitido = agora.",
+            "schema": {
+              "example": "2026-09-15T23:00:00.000Z",
+              "type": "string"
+            }
+          },
+          {
             "name": "data",
             "required": false,
             "in": "query",
@@ -6059,13 +6069,85 @@
           "reservas"
         ]
       },
+      "ItemDaListaDeReservasDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "origemTipo": {
+            "type": "string",
+            "enum": [
+              "AVULSO",
+              "TURMA"
+            ]
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "statusPagamento": {
+            "type": "string",
+            "enum": [
+              "pendente_pagamento",
+              "pago",
+              "cancelado"
+            ]
+          },
+          "valor": {
+            "type": "number",
+            "nullable": true,
+            "example": 120
+          },
+          "canceladaPorMim": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "Foi quem está pedindo que cancelou? `true` = eu, `false` = outra pessoa, `null` = não foi cancelada, não há evento registrado (anterior à SPEC-032), ou quem pede é o gestor. **Nunca traz nome, id ou objeto do autor** (INV-092)."
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "quadraId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "origemTipo",
+          "alunoId",
+          "statusPagamento",
+          "valor",
+          "canceladaPorMim"
+        ]
+      },
       "OcupacaoPaginadaResponseDto": {
         "type": "object",
         "properties": {
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/OcupacaoResponseDto"
+              "$ref": "#/components/schemas/ItemDaListaDeReservasDto"
             }
           },
           "page": {
@@ -6079,13 +6161,19 @@
           "total": {
             "type": "number",
             "example": 240
+          },
+          "referenciaTemporal": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-09-15T23:00:00.000Z"
           }
         },
         "required": [
           "data",
           "page",
           "pageSize",
-          "total"
+          "total",
+          "referenciaTemporal"
         ]
       },
       "AutorDoEventoDto": {

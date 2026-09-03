@@ -1116,6 +1116,211 @@ describe('CourtsService', () => {
       expect(condicoesDoAnd()).toHaveLength(1);
     });
 
+    /**
+     * SPEC-041/AC-016 — **a fronteira não pode andar no meio de uma
+     * travessia.**
+     *
+     * Este era o ATAQUE 1 da 1ª validação cruzada, o único achado que o
+     * validador chamou de bloqueante, e a única LIM que a Fase A aceitou.
+     */
+    describe('referência temporal congelada (Fase B)', () => {
+      const AS_20H59 = '2026-09-15T23:59:00.000Z';
+
+      function corteUsado() {
+        const [primeira] = condicoesDoAnd() as {
+          OR: { horaFim?: { gt?: Date } }[];
+        }[];
+        return primeira.OR[1].horaFim!.gt!;
+      }
+
+      beforeEach(prepararLista);
+
+      it('sem referência, a resposta devolve o instante que usou', async () => {
+        const r = (await service.listBookings('c1', { quando: 'futuras' })) as {
+          referenciaTemporal: string;
+        };
+        // Sempre presente, mesmo sem `quando`: devolver condicionalmente faria
+        // a tela ter de saber quando esperar o campo.
+        expect(Date.parse(r.referenciaTemporal)).not.toBeNaN();
+      });
+
+      it('com referência, o corte usa ELA e não o relógio', async () => {
+        await service.listBookings('c1', {
+          quando: 'futuras',
+          referenciaTemporal: AS_20H59,
+        });
+
+        // 20h59 em São Paulo. Se o corte usasse `new Date()`, esta asserção
+        // só passaria por acaso, no minuto certo de um dia certo.
+        expect(corteUsado()).toEqual(parseTimeOnly('20:59'));
+      });
+
+      /**
+       * **O relógio TEM de andar entre as duas chamadas, senão a prova é
+       * decorativa.**
+       *
+       * O corte tem granularidade de minuto. Duas chamadas no mesmo minuto
+       * produzem o mesmo corte **mesmo com o defeito** — a primeira versão
+       * deste teste passava com e sem a correção. Aqui o tempo avança de
+       * 20h59 para 21h00 entre as páginas, que é exatamente o cenário do
+       * ATAQUE 1.
+       */
+      it('a página 2 vê a MESMA fronteira, mesmo com o relógio andando', async () => {
+        jest.useFakeTimers().setSystemTime(new Date(AS_20H59));
+
+        const p1 = (await service.listBookings('c1', {
+          quando: 'futuras',
+          page: 1,
+        })) as { referenciaTemporal: string };
+        const dePagina1 = corteUsado();
+
+        // A fronteira atravessa: o aluno rolou para a página 2 um minuto
+        // depois, e a reserva que terminava às 21h saiu do conjunto.
+        jest.setSystemTime(new Date('2026-09-16T00:00:00.000Z'));
+        (prisma.ocupacaoQuadra.findMany as jest.Mock).mockClear();
+
+        await service.listBookings('c1', {
+          quando: 'futuras',
+          page: 2,
+          referenciaTemporal: p1.referenciaTemporal,
+        });
+
+        expect(corteUsado()).toEqual(dePagina1);
+        expect(dePagina1).toEqual(parseTimeOnly('20:59'));
+        jest.useRealTimers();
+      });
+
+      it('SEM reenviar a referência, a fronteira anda — o defeito que a B5 fecha', async () => {
+        // O contraponto. Sem ele, uma implementação que ignorasse a
+        // referência e sempre usasse o relógio passaria no teste de cima
+        // quando as duas chamadas caíssem no mesmo minuto.
+        jest.useFakeTimers().setSystemTime(new Date(AS_20H59));
+        await service.listBookings('c1', { quando: 'futuras', page: 1 });
+        const dePagina1 = corteUsado();
+
+        jest.setSystemTime(new Date('2026-09-16T00:00:00.000Z'));
+        (prisma.ocupacaoQuadra.findMany as jest.Mock).mockClear();
+        await service.listBookings('c1', { quando: 'futuras', page: 2 });
+
+        expect(corteUsado()).not.toEqual(dePagina1);
+        jest.useRealTimers();
+      });
+
+      it('a referência devolvida é a que foi pedida, para o cliente reenviar', async () => {
+        const r = (await service.listBookings('c1', {
+          quando: 'anteriores',
+          referenciaTemporal: AS_20H59,
+        })) as { referenciaTemporal: string };
+
+        expect(r.referenciaTemporal).toBe(AS_20H59);
+      });
+    });
+
+    /**
+     * SPEC-041/AC-010 — **`canceladaPorMim`, e a fixture é metade da prova.**
+     *
+     * `alunos.id` e `usuarios.id` são uuids de tabelas diferentes, e as duas
+     * colunas são `@db.Uuid`. Uma fixture que usasse a MESMA string para os
+     * dois passaria com o código errado — que é justamente comparar
+     * `alunoIdScope` (autorização) com `autor_id` (identidade).
+     *
+     * Por isso os ids aqui são deliberadamente distintos, e o teste do meio
+     * é o que cai se alguém colapsar os dois parâmetros.
+     */
+    describe('canceladaPorMim (SPEC-041/Fase B)', () => {
+      const ALUNO = 'a1-aluno-id';
+      const USUARIO = 'u1-usuario-id';
+
+      function comEvento(autorId: string | null) {
+        (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+          {
+            id: 'o1',
+            companyId: 'c1',
+            quadraId: 'q1',
+            data: new Date('2026-09-15T00:00:00.000Z'),
+            horaInicio: new Date('1970-01-01T19:00:00.000Z'),
+            horaFim: new Date('1970-01-01T20:00:00.000Z'),
+            origemTipo: 'AVULSO',
+            alunoId: ALUNO,
+            statusPagamento: 'cancelado',
+            valor: 150,
+            eventos: autorId ? [{ acao: { autorId } }] : [],
+          },
+        ]);
+        (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(1);
+      }
+
+      const listar = () =>
+        service.listBookings('c1', {}, ALUNO, USUARIO) as Promise<{
+          data: { canceladaPorMim: boolean | null }[];
+        }>;
+
+      it('true quando o autor é o próprio usuário', async () => {
+        comEvento(USUARIO);
+        expect((await listar()).data[0].canceladaPorMim).toBe(true);
+      });
+
+      /**
+       * **O teste que pega o defeito.** Com a implementação errada —
+       * comparar `autor_id` com `alunoIdScope` — este caso continua
+       * devolvendo `false`, mas o de cima passa a devolver `false` também.
+       * É por isso que os dois precisam existir, e com ids distintos.
+       */
+      it('false quando foi outro autor', async () => {
+        comEvento('gestor-9');
+        expect((await listar()).data[0].canceladaPorMim).toBe(false);
+      });
+
+      it('null quando não há evento (LIM-041b: tudo antes da SPEC-032)', async () => {
+        comEvento(null);
+        expect((await listar()).data[0].canceladaPorMim).toBeNull();
+      });
+
+      it('null para o GESTOR, mesmo com evento — a pergunta dele é outra', async () => {
+        comEvento('gestor-9');
+        const r = (await service.listBookings('c1', {}, undefined)) as {
+          data: { canceladaPorMim: boolean | null }[];
+        };
+        expect(r.data[0].canceladaPorMim).toBeNull();
+      });
+
+      it('INV-092: o select busca só `acao.autorId` — nome não tem por onde entrar', async () => {
+        comEvento(USUARIO);
+        await listar();
+
+        const { include } = argumentosDaBusca() as unknown as {
+          include: { eventos: { select: unknown; where: unknown } };
+        };
+        expect(include.eventos.select).toEqual({
+          acao: { select: { autorId: true } },
+        });
+        expect(include.eventos.where).toEqual({ tipo: 'cancelada' });
+      });
+
+      it('INV-092: o payload não carrega autor, autorId nem autorNome', async () => {
+        comEvento(USUARIO);
+        const item = (await listar()).data[0] as Record<string, unknown>;
+
+        // Conjunto FECHADO de chaves. Procurar por um nome de fixture seria
+        // fraco: um segundo gestor vazando passaria verde.
+        expect(Object.keys(item).sort()).toEqual(
+          [
+            'alunoId',
+            'canceladaPorMim',
+            'companyId',
+            'data',
+            'horaFim',
+            'horaInicio',
+            'id',
+            'origemTipo',
+            'quadraId',
+            'statusPagamento',
+            'valor',
+          ].sort(),
+        );
+      });
+    });
+
     // AC-003/D7 — perguntas opostas, e direção uniforme em cada uma. A ordem
     // mista sobrevive só no caso sem `quando`, que é a lista do Admin
     // (LIM-041e).
