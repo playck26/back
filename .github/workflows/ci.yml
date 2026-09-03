@@ -150,3 +150,56 @@ jobs:
             exit 0
           fi
           pnpm run test:bucket
+
+  # SPEC-043 — o gate de concorrência como CHECK DE PR, em toda PR, sem
+  # detector de paths. Antes ele morava num passo condicional de um workflow
+  # manual e ficou 26 dias sem rodar com cinco badges verdes
+  # (AUDITORIA-2026-09-03-FIT-001.md). Job próprio para que `skipped` não
+  # exista: ou roda e conclui, ou o check falta — e o ruleset de `main`
+  # exige `fit-critical` no `head_sha` exato da PR.
+  #
+  # Postgres do runner na mesma versão maior da Neon: preserva `EXCLUDE`,
+  # locks, transações e triggers `DEFERRABLE`. O que ele NÃO reproduz —
+  # pooler em modo transação, latência, limites de conexão — fica com o
+  # canário `FIT-001 Neon` do `db-migrate.yml`, que é adicional, não
+  # substituto.
+  fit-critical:
+    name: fit-critical
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: playck_fit
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5433/playck_fit?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma migrate deploy
+      # FIT-001 (a–d) e FIT-002 vivem em `test/fit/*.fit-spec.ts`; o nome
+      # do passo é o que o `evd.yaml` cita (`step: FIT-001/FIT-002`).
+      - name: FIT-001/FIT-002
+        run: pnpm run test:fit
+        env:
+          JWT_ACCESS_SECRET: fit-access-secret
+          JWT_REFRESH_SECRET: fit-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
