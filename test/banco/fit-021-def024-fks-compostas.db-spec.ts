@@ -172,6 +172,8 @@ describe('FIT-021 — DEF-024 fase 1: a empresa entra na chave', () => {
     await aceitaOParCerto(
       `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em) VALUES (gen_random_uuid(),'${EMPRESA_A}','reserva_cancelada','${SUPER}',now())`,
     );
-    await q(`DELETE FROM usuarios WHERE id = '${SUPER}'`).catch(() => undefined);
+    await q(`DELETE FROM usuarios WHERE id = '${SUPER}'`).catch(
+      () => undefined,
+    );
   });
 });
