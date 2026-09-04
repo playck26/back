@@ -39,6 +39,14 @@ const ALUNO_B = 'f0240000-0000-4000-8000-00000000003b';
 const OCUPACAO_A = 'f0240000-0000-4000-8000-00000000004a';
 const OCUPACAO_B = 'f0240000-0000-4000-8000-00000000004b';
 const CHAMADA_PROF = 'f0240000-0000-4000-8000-00000000005a';
+// Para a presenca: ela exige ocorrencia de TURMA (FK composta com
+// `origem_tipo`) e uma chamada. Sem esses dois validos, o `INSERT` morre
+// numa FK que nao e a que esta em julgamento.
+const TURMA_A = 'f0240000-0000-4000-8000-00000000006a';
+const OCUPACAO_TURMA_A = 'f0240000-0000-4000-8000-00000000007a';
+// Usuario da empresa B SEM aluno: `alunos_usuario_id_key` e UNIQUE, entao
+// reaproveitar o USUARIO_B faria o `INSERT` cair no 23505 antes da FK.
+const USUARIO_B_LIVRE = 'f0240000-0000-4000-8000-00000000008b';
 
 const db = new PrismaClient();
 const q = (sql: string) => db.$executeRawUnsafe(sql);
@@ -111,6 +119,21 @@ async function montar(): Promise<void> {
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${CHAMADA_PROF}','def024-prof@teste.local','x','P','company_admin','${EMPRESA_A}',now())`,
   );
+  // Turma, ocorrência de TURMA e chamada, todas da empresa A: é o cenário
+  // mínimo em que a única coisa errada do `INSERT` de presença é o aluno.
+  await q(
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_A}','${EMPRESA_A}','T','${QUADRA_A}',20,'ativa')`,
+  );
+  await q(
+    `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at) VALUES ('${OCUPACAO_TURMA_A}','${EMPRESA_A}','${QUADRA_A}',CURRENT_DATE + 1,'11:00','12:00','TURMA','${TURMA_A}','pendente_pagamento',now())`,
+  );
+  await q(
+    `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,completude,updated_at) VALUES ('${OCUPACAO_TURMA_A}','TURMA','${EMPRESA_A}','${CHAMADA_PROF}','parcial',now())`,
+  );
+  // Usuário da empresa B sem aluno vinculado.
+  await q(
+    `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${USUARIO_B_LIVRE}','def024-b-livre@teste.local','x','U','aluno','${EMPRESA_B}',now())`,
+  );
 }
 
 beforeAll(async () => {
@@ -141,19 +164,31 @@ describe('FIT-021 — DEF-024 fase 1: a empresa entra na chave', () => {
     );
   });
 
+  /**
+   * **A primeira versão deste caso caiu no CI, e caiu pelo motivo certo.**
+   * Eu usei a ocorrência AVULSA com `origem_tipo = 'TURMA'`, então o
+   * `presencas_ocupacao_fkey` disparava antes — e o `recusaPelaFK` recusou
+   * dar o teste por bom, que é exatamente para isso que ele exige o nome da
+   * constraint. Sem essa exigência, o caso teria passado verde provando nada.
+   */
   it('presencas não registra aluno de outra empresa', async () => {
-    // A presença precisa de chamada e de ocorrência de TURMA; para isolar a
-    // FK do aluno, basta que o `INSERT` chegue nela — e ele chega, porque a
-    // FK do aluno é conferida junto com as outras.
     await recusaPelaFK(
-      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_A}','TURMA','${ALUNO_B}','presente','${CHAMADA_PROF}',now())`,
+      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_TURMA_A}','TURMA','${ALUNO_B}','presente','${CHAMADA_PROF}',now())`,
       'presencas_aluno_fkey',
+    );
+    await aceitaOParCerto(
+      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_TURMA_A}','TURMA','${ALUNO_A}','presente','${CHAMADA_PROF}',now())`,
     );
   });
 
+  /**
+   * Mesmo caso, mesma lição: a primeira versão usava o `USUARIO_B`, que **já
+   * tem** aluno — e `alunos_usuario_id_key` é UNIQUE, então o `INSERT` morria
+   * em `23505` antes de chegar na chave estrangeira. Daí o `USUARIO_B_LIVRE`.
+   */
   it('alunos não aponta para usuário de outra empresa', async () => {
     await recusaPelaFK(
-      `INSERT INTO alunos (id,usuario_id,company_id,vinculo) VALUES (gen_random_uuid(),'${USUARIO_B}','${EMPRESA_A}','aprovado')`,
+      `INSERT INTO alunos (id,usuario_id,company_id,vinculo) VALUES (gen_random_uuid(),'${USUARIO_B_LIVRE}','${EMPRESA_A}','aprovado')`,
       'alunos_usuario_fkey',
     );
   });
