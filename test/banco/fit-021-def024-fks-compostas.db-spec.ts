@@ -127,8 +127,17 @@ async function montar(): Promise<void> {
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at) VALUES ('${OCUPACAO_TURMA_A}','${EMPRESA_A}','${QUADRA_A}',CURRENT_DATE + 1,'11:00','12:00','TURMA','${TURMA_A}','pendente_pagamento',now())`,
   );
+  // `desconhecida`, e nao um valor inventado: o enum tem `completa`,
+  // `desconhecida` e `nao_houve`, e o CHECK `chamadas_completude_esperados`
+  // exige `esperados` nulo nos dois ultimos. `nao_houve` nao serviria aqui —
+  // ele afirma que a aula NAO aconteceu, e entao nao pode haver presenca
+  // (INV-030a), que e justamente o que este arquivo insere.
+  //
+  // A primeira versao usava `'parcial'`, que nao existe. O CI recusou os
+  // CINCO casos de uma vez, no `beforeAll` — e e o mesmo tropeco que o
+  // comentario do FIT-014 documenta, uma linha antes de eu o repetir.
   await q(
-    `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,completude,updated_at) VALUES ('${OCUPACAO_TURMA_A}','TURMA','${EMPRESA_A}','${CHAMADA_PROF}','parcial',now())`,
+    `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,completude,updated_at) VALUES ('${OCUPACAO_TURMA_A}','TURMA','${EMPRESA_A}','${CHAMADA_PROF}','desconhecida',now())`,
   );
   // Usuário da empresa B sem aluno vinculado.
   await q(
