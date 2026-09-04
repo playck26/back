@@ -162,6 +162,10 @@ model Usuario {
   aceites                    Aceite[]
   acoesRegistradas           AcaoAdministrativa[] @relation("AcaoRegistradaPor")
 
+  /// DEF-024 fase 1 — alvo da FK composta de `alunos`. `company_id` aqui e
+  /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
+  /// e legitimo; como `id` e PK, ele nunca falha por duplicata.
+  @@unique([companyId, id], map: "usuarios_company_id_id_key")
   @@index([companyId])
   @@map("usuarios")
 }
@@ -237,7 +241,11 @@ model Aluno {
   vinculo   VinculoAluno  @default(pendente)
   createdAt DateTime      @default(now()) @map("created_at")
 
-  usuario     Usuario           @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// DEF-024 fase 1 — IDENTIDADE, nao autoria: a LIM-032f protege o autor
+  /// `super_admin` (que tem `company_id` nulo), e um super admin nunca e
+  /// aluno. Sem a empresa na chave, a ficha de um aluno da empresa A podia
+  /// apontar para o usuario da B.
+  usuario     Usuario           @relation(fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, map: "alunos_usuario_fkey")
   empresa     Empresa           @relation(fields: [companyId], references: [id])
   nivel       Nivel?            @relation(fields: [nivelId], references: [id])
   ocupacoes   OcupacaoQuadra[]
@@ -245,6 +253,18 @@ model Aluno {
   avaliacoes  AvaliacaoDeAula[]
   presencas   Presenca[]
 
+  /// DEF-024 fase 1 — alvo das FKs compostas de `presencas` e
+  /// `avaliacoes_de_aula`. `id` ja e PK, entao este UNIQUE nunca falha por
+  /// duplicata: ele existe so para o `REFERENCES` de duas colunas ter onde se
+  /// apoiar. Mesmo papel do `quadras_company_id_id_key` (DEF-022).
+  @@unique([companyId, id], map: "alunos_company_id_id_key")
+  /// Este segundo UNIQUE existe por exigencia do PRISMA, nao do dominio: o
+  /// lado definidor de uma relacao 1:1 precisa de unique sobre os campos da
+  /// relacao. Ele e IMPLICADO pelo `alunos_usuario_id_key`, que ja existe —
+  /// se `usuario_id` e unico, `(company_id, usuario_id)` tambem e. Fica
+  /// documentado para ninguem procurar a regra de negocio que ele exprime:
+  /// nao ha nenhuma.
+  @@unique([companyId, usuarioId], map: "alunos_company_id_usuario_id_key")
   @@index([companyId])
   @@map("alunos")
 }
@@ -654,7 +674,9 @@ model Presenca {
   // ocorrencia cascateia para as duas tabelas na mesma instrucao — Restrict
   // e checado na hora e abortaria; NoAction e checado no fim.
   chamada     Chamada        @relation(fields: [ocupacaoId], references: [ocupacaoId], onDelete: NoAction, map: "presencas_chamada_fkey")
-  aluno       Aluno          @relation(fields: [alunoId], references: [id], onDelete: Restrict)
+  /// DEF-024 fase 1 — era a FK que a SPEC-031 apontou: a v3 dela dizia
+  /// nascer "no molde de `presencas`", e o molde nao carregava a empresa.
+  aluno       Aluno          @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "presencas_aluno_fkey")
   registrante Usuario        @relation("PresencaRegistradaPor", fields: [registradoPor], references: [id], onDelete: Restrict)
 
   // INV-015: um aluno tem no maximo um registro por aula.
@@ -956,8 +978,9 @@ model AvaliacaoDeAula {
   // O que custava mais que o cosmetico: drift permanente esconde drift novo,
   // e `migrate diff` e o detector que as proximas dez specs vao usar.
   empresa  Empresa        @relation(fields: [companyId], references: [id], map: "avaliacoes_de_aula_company_fkey")
-  ocupacao OcupacaoQuadra @relation(fields: [ocupacaoId], references: [id], onDelete: Cascade, map: "avaliacoes_de_aula_ocupacao_fkey")
-  aluno    Aluno          @relation(fields: [alunoId], references: [id], onDelete: Cascade, map: "avaliacoes_de_aula_aluno_fkey")
+  /// DEF-024 fase 1 — as duas passam a carregar a empresa.
+  ocupacao OcupacaoQuadra @relation(fields: [companyId, ocupacaoId], references: [companyId, id], onDelete: Cascade, map: "avaliacoes_de_aula_ocupacao_fkey")
+  aluno    Aluno          @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Cascade, map: "avaliacoes_de_aula_aluno_fkey")
 
   @@unique([ocupacaoId, alunoId], map: "avaliacoes_de_aula_ocupacao_aluno_key")
   @@index([ocupacaoId])
