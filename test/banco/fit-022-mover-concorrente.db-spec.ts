@@ -16,7 +16,7 @@
  * só, as transações podem sair da mesma conexão e serializar por acidente,
  * provando nada.
  */
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { CourtsService } from '../../src/courts/courts.service';
@@ -36,6 +36,7 @@ const ALUNO = 'f0220000-0000-4000-8000-000000000004';
 const ADMIN = 'f0220000-0000-4000-8000-000000000005';
 const A = 'f0220000-0000-4000-8000-00000000000a';
 const B = 'f0220000-0000-4000-8000-00000000000b';
+const ESPORTE = 'f0220000-0000-4000-8000-000000000006';
 const DATA = '2026-10-05';
 
 const dbA = new PrismaClient();
@@ -68,38 +69,87 @@ function servico(db: PrismaClient): CourtsService {
 const servicoA = servico(dbA);
 const servicoB = servico(dbB);
 
+/**
+ * **Uma instrucao por chamada** — o idioma do resto da suite (`fit-010`,
+ * `fit-021`). `$executeRawUnsafe` do Prisma manda por prepared statement, e
+ * o Postgres recusa varias instrucoes numa string so por esse caminho. A
+ * versao anterior deste arquivo era o unico multi-statement do repositorio.
+ */
+const q = (sql: string) => semear.$executeRawUnsafe(sql);
+
 async function semearFixture() {
   await limparEmpresa(semear, EMPRESA);
-  await semear.$executeRawUnsafe(`
-    INSERT INTO empresas (id, nome, created_at, updated_at)
-    VALUES ('${EMPRESA}', 'Empresa FIT-022', now(), now());
 
-    INSERT INTO quadras (id, company_id, nome, preco_hora, status, created_at, updated_at)
-    VALUES ('${QUADRA}', '${EMPRESA}', 'Quadra FIT-022', 100, 'ativa', now(), now());
+  // `empresas.slug` e NOT NULL + UNIQUE desde a 20260822000000_account_onboarding,
+  // e nao tem default.
+  await q(
+    `INSERT INTO empresas (id, nome, slug, created_at, updated_at)
+     VALUES ('${EMPRESA}', 'Empresa FIT-022', 'fit-022-mover', now(), now())`,
+  );
 
-    -- Expediente largo: o teste julga concorrência, não INV-011. Um dia
-    -- fechado faria as duas transações morrerem em 422 antes do UPDATE.
-    INSERT INTO horarios_funcionamento
-      (id, company_id, quadra_id, dia_semana, fechado, hora_inicio, hora_fim, created_at, updated_at)
-    SELECT gen_random_uuid(), '${EMPRESA}', '${QUADRA}', d, false, '06:00', '23:00', now(), now()
-      FROM generate_series(0, 6) AS d;
+  // `quadras.esporte_id` virou NOT NULL na SPEC-020 (migration _contract), e a
+  // FK e COMPOSTA — `(company_id, esporte_id) -> esportes_de_quadra(company_id,
+  // id)`. Um uuid solto nao serve: a linha do esporte tem de existir antes.
+  // `limparEmpresa` ja apaga `esportes_de_quadra`, entao nao vaza.
+  await q(
+    `INSERT INTO esportes_de_quadra (id, company_id, nome, ordem, created_at)
+     VALUES ('${ESPORTE}', '${EMPRESA}', 'Tenis', 1, now())`,
+  );
 
-    INSERT INTO usuarios (id, company_id, nome, email, senha_hash, role, status, created_at, updated_at)
-    VALUES ('${USUARIO}', '${EMPRESA}', 'Aluno FIT-022', 'aluno-fit022@x.test', 'x', 'aluno', 'ativo', now(), now()),
-           ('${ADMIN}', '${EMPRESA}', 'Admin FIT-022', 'admin-fit022@x.test', 'x', 'company_admin', 'ativo', now(), now());
+  // **`quadras` nao tem `updated_at`** — nunca teve, e o CREATE TABLE de
+  // 20260811000000_courts so declara `created_at`. O mesmo vale para `alunos`,
+  // abaixo. Citar a coluna custa 42703 e derruba os tres testes no `beforeAll`.
+  await q(
+    `INSERT INTO quadras
+       (id, company_id, nome, preco_hora, status, esporte_id, created_at)
+     VALUES ('${QUADRA}', '${EMPRESA}', 'Quadra FIT-022', 100, 'ativa',
+             '${ESPORTE}', now())`,
+  );
 
-    INSERT INTO alunos (id, company_id, usuario_id, status, vinculo, created_at, updated_at)
-    VALUES ('${ALUNO}', '${EMPRESA}', '${USUARIO}', 'ativo', 'aprovado', now(), now());
-  `);
+  // Expediente largo: o teste julga concorrência, não INV-011. Um dia
+  // fechado faria as duas transações morrerem em 422 antes do UPDATE.
+  await q(
+    `INSERT INTO horarios_funcionamento
+       (id, company_id, quadra_id, dia_semana, fechado, hora_inicio, hora_fim,
+        created_at, updated_at)
+     SELECT gen_random_uuid(), '${EMPRESA}', '${QUADRA}', d, false,
+            '06:00', '23:00', now(), now()
+       FROM generate_series(0, 6) AS d`,
+  );
+
+  await q(
+    `INSERT INTO usuarios
+       (id, company_id, nome, email, senha_hash, role, status, created_at, updated_at)
+     VALUES ('${USUARIO}', '${EMPRESA}', 'Aluno FIT-022', 'aluno-fit022@x.test',
+             'x', 'aluno', 'ativo', now(), now()),
+            ('${ADMIN}', '${EMPRESA}', 'Admin FIT-022', 'admin-fit022@x.test',
+             'x', 'company_admin', 'ativo', now(), now())`,
+  );
+
+  await q(
+    `INSERT INTO alunos (id, company_id, usuario_id, status, vinculo, created_at)
+     VALUES ('${ALUNO}', '${EMPRESA}', '${USUARIO}', 'ativo', 'aprovado', now())`,
+  );
 }
 
-/** Duas reservas AVULSAS, em horas diferentes, na mesma quadra. */
+/**
+ * Duas reservas AVULSAS, em horas diferentes, na mesma quadra.
+ *
+ * **A limpeza passa por `limparEmpresa`, e nao por `DELETE` cru.**
+ * `eventos_de_ocupacao` e `acoes_administrativas` sao append-only
+ * (SPEC-032/INV-061): a trigger `append_only_com_valvula_de_teste` levanta
+ * `23514` em qualquer `DELETE` que nao venha com o GUC **e** a role
+ * `playck_test_cleanup`. Um `DELETE` cru aqui passaria despercebido no
+ * primeiro caso (nenhuma linha ainda, trigger `FOR EACH ROW` nao dispara) e
+ * quebraria do segundo em diante, ja com `moveBooking` tendo registrado a
+ * acao — exatamente o AC-020, que re-semeia doze vezes.
+ *
+ * `limparEmpresa` e quem sabe abrir a valvula, entao re-semeamos a fixture
+ * inteira. Custa alguns DELETEs a mais por rodada, contra localhost.
+ */
 async function semearDuasReservas(horaA: string, horaB: string) {
-  await semear.$executeRawUnsafe(`
-    DELETE FROM eventos_de_ocupacao WHERE company_id = '${EMPRESA}';
-    DELETE FROM acoes_administrativas WHERE company_id = '${EMPRESA}';
-    DELETE FROM ocupacoes_quadra WHERE company_id = '${EMPRESA}';
-
+  await semearFixture();
+  await q(`
     INSERT INTO ocupacoes_quadra
       (id, company_id, quadra_id, data, hora_inicio, hora_fim, origem_tipo,
        aluno_id, status_pagamento, valor, created_at, updated_at)
@@ -107,7 +157,7 @@ async function semearDuasReservas(horaA: string, horaB: string) {
       ('${A}', '${EMPRESA}', '${QUADRA}', '${DATA}', '${horaA}', '${horaA.slice(0, 2)}:59:59', 'AVULSO',
        '${ALUNO}', 'pendente_pagamento', 100, now(), now()),
       ('${B}', '${EMPRESA}', '${QUADRA}', '${DATA}', '${horaB}', '${horaB.slice(0, 2)}:59:59', 'AVULSO',
-       '${ALUNO}', 'pendente_pagamento', 100, now(), now());
+       '${ALUNO}', 'pendente_pagamento', 100, now(), now())
   `);
 }
 
@@ -234,8 +284,15 @@ describe('FIT-022 — mover sob concorrência (SPEC-034/REQ-007)', () => {
       .mockImplementation((...args: unknown[]) => {
         if (primeira) {
           primeira = false;
-          const e = new Error('deadlock detected') as Error & { code?: string };
-          e.code = 'P2034';
+          // **Tem de ser um `PrismaClientKnownRequestError` de verdade.**
+          // `ehCorridaPerdida` (courts.service.ts:140) decide por
+          // `instanceof`, nao por `.code`: um `Error` cru com `code =
+          // 'P2034'` falha nos DOIS `instanceof` e o retry nunca aconteceria
+          // — o teste passaria a afirmar o contrario do que quer provar.
+          const e = new Prisma.PrismaClientKnownRequestError(
+            'deadlock detected',
+            { code: 'P2034', clientVersion: Prisma.prismaVersion.client },
+          );
           return Promise.reject(e);
         }
         return original(...args);
