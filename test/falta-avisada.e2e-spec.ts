@@ -65,6 +65,20 @@ describe('SPEC-031 — rotas de falta avisada (REQ-006)', () => {
     return t.accessToken;
   };
 
+  const comoProfessor = async () => {
+    const t = await loginAndGetTokens(
+      app,
+      prisma,
+      await buildUsuarioAtivo({
+        id: 'p1',
+        email: 'prof@empresa.demo',
+        role: 'professor',
+      }),
+    );
+    prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: false });
+    return t.accessToken;
+  };
+
   it('POST responde 204 e chega ao serviço com os params na ORDEM certa', async () => {
     const token = await comoAluno();
 
@@ -128,6 +142,46 @@ describe('SPEC-031 — rotas de falta avisada (REQ-006)', () => {
     await chamar(app.getHttpServer(), token).expect(403);
     expect(prisma.tx.faltaAvisada.createMany).not.toHaveBeenCalled();
     expect(prisma.tx.faltaAvisada.deleteMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * LIM-031g — **o mecanismo é o `@Roles('aluno')`, não o prefixo `/me/`.**
+   * O prefixo é convenção de leitura; ele não decide nada. O professor tem a
+   * sua própria visão da falta (a chamada), e criar uma pelo aluno seria
+   * registrar aviso que o aluno não deu.
+   */
+  it('POST de professor leva 403 — o prefixo /me/ não é o mecanismo', async () => {
+    const token = await comoProfessor();
+    await request(app.getHttpServer())
+      .post(ROTA)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
+    expect(prisma.tx.faltaAvisada.createMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * D19, o escopo da rota — o `404` chega ao HTTP como `404`.
+   *
+   * **Que a ocorrência de OUTRA turma seja inalcançável está provado no
+   * `fit-018-019`, contra os predicados reais.** Aqui se prova só a metade
+   * que é desta camada: quando a consulta não acha, o cliente vê `404` — e
+   * não `500`, que é o que uma exceção não mapeada viraria.
+   */
+  it('ocorrência que não é desta turma leva 404, e nada é escrito', async () => {
+    const token = await comoAluno();
+    // Os quatro predicados do D19 não casam: nenhuma linha volta.
+    prisma.tx.$queryRaw.mockImplementation((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        strings.join('').includes('FROM alunos') ? [{ id: 'aluno-1' }] : [],
+      ),
+    );
+
+    await request(app.getHttpServer())
+      .post(ROTA)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+
+    expect(prisma.tx.faltaAvisada.createMany).not.toHaveBeenCalled();
   });
 
   it.each([
