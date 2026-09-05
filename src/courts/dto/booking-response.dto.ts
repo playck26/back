@@ -197,6 +197,18 @@ export class ItemDaAgendaResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 
+  /**
+   * SPEC-034 — **a quadra por ID, porque `quadraNome` nao identifica quadra.**
+   *
+   * `quadras.nome` nao tem `@unique` no schema, e nada impede duas quadras da
+   * mesma empresa com o mesmo nome. A grade da semana filtrava por
+   * `quadraNome` porque era o unico campo que tinha, e a validacao cruzada
+   * reproduziu o efeito: escolher a quadra A mostrava reserva da quadra B
+   * homonima. O nome continua aqui, para EXIBIR; quem IDENTIFICA e este.
+   */
+  @ApiProperty({ type: String, format: 'uuid' })
+  quadraId!: string;
+
   @ApiProperty({ type: String, example: 'Quadra 1' })
   quadraNome!: string;
 

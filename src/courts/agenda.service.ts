@@ -311,6 +311,7 @@ export class AgendaService {
   private mapearItem(o: OcupacaoDoItem): ItemDoDia {
     return {
       id: o.id,
+      quadraId: o.quadraId,
       quadraNome: o.quadra.nome,
       horaInicio: formatTimeOnly(o.horaInicio),
       horaFim: formatTimeOnly(o.horaFim),

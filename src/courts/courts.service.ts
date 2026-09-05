@@ -1367,14 +1367,31 @@ export class CourtsService {
           }
           destinoDaTentativa = destino;
 
-          // Quadra da empresa e ativa — a FK composta impede empresa alheia,
-          // mas não impede quadra inativa, que sai da agenda.
-          await this.buscarQuadraDaEmpresa(companyId, destino.quadraId);
+          // **Quadra da empresa E ATIVA — agora o código faz o que a frase
+          // sempre prometeu.** A FK composta impede empresa alheia; ela não
+          // impede quadra inativa, e `buscarQuadraDaEmpresa` não filtrava
+          // `status`: mover para uma quadra inativa respondia 200 e sumia com
+          // a reserva da agenda, que não mostra quadra inativa.
+          //
+          // **E as duas leituras usam `tx`, não `this.prisma`.** Fora da
+          // transação elas pegam OUTRA conexão do pool enquanto esta segura o
+          // `FOR UPDATE` — com N movimentações concorrentes e pool de N, cada
+          // uma espera por uma conexão que só sai quando outra terminar, e
+          // ninguém termina. Medido: com `connection_limit=2`, seis
+          // movimentações para destinos DISTINTOS davam 0/6 em ~5,1 s
+          // (`P2024`); com `tx`, 6/6 em 114 ms. O parâmetro `tx?` de
+          // `resolverParaData` existia para isto desde sempre e nenhum
+          // chamador usava.
+          const quadraDestino = await tx.quadra.findFirst({
+            where: { id: destino.quadraId, companyId, status: 'ativa' },
+          });
+          if (!quadraDestino) throw new NotFoundException();
 
           const horarioDoDia = await this.horarios.resolverParaData(
             companyId,
             destino.quadraId,
             destino.data,
+            tx,
           );
           if (
             !this.horarios.dentroDoExpediente(

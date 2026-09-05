@@ -6469,6 +6469,10 @@
             "type": "string",
             "format": "uuid"
           },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
           "quadraNome": {
             "type": "string",
             "example": "Quadra 1"
@@ -6523,6 +6527,7 @@
         },
         "required": [
           "id",
+          "quadraId",
           "quadraNome",
           "horaInicio",
           "horaFim",
