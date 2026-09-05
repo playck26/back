@@ -788,9 +788,16 @@ export class PresencaService {
       //
       // Continua travando SÓ `turmas`: raiz única é o que garante ordem de
       // aquisição única (INV-029) e, portanto, ausência de deadlock. E não
-      // faz falta travar a ocorrência, porque **todo caminho que cancela
-      // ocorrência de TURMA passa por este mesmo lock** — são DOIS, desde a
-      // SPEC-034:
+      // faz falta travar a ocorrência, porque **todo caminho que CANCELA
+      // ocorrência de TURMA passa por este mesmo lock**.
+      //
+      // **Este parágrafo é a fonte única da afirmação.** Ele já foi contado de
+      // três jeitos ao mesmo tempo — "DOIS" aqui, "três/o quarto" em
+      // `classes.service.ts`, "um quinto" duas linhas abaixo —, e a validação
+      // cruzada de 2026-09-05 apontou a contradição. A causa era usar a
+      // palavra "caminho" para DOIS conjuntos diferentes. Separados:
+      //
+      // **Cancelam, e por isso passam por este lock — são 2:**
       //
       //   1. `cancelFutureClassOccupancies`, chamado de dentro do
       //      `ClassesService.update`, que trava esta linha antes;
@@ -798,13 +805,17 @@ export class PresencaService {
       //      que **começa** por `turmas FOR UPDATE` exatamente para manter
       //      esta afirmação verdadeira.
       //
-      // Os outros dois escritores de `ocupacoes_quadra` (`cancelBooking`,
-      // `updatePaymentStatus`) recusam ocorrência de turma com
-      // `OCUPACAO_DE_TURMA`, e `moveBooking` (SPEC-034/TASK-003) faz o mesmo.
+      // **Escrevem em `ocupacoes_quadra` mas RECUSAM ocorrência de turma com
+      // `OCUPACAO_DE_TURMA` — são 3:** `cancelBooking`, `updatePaymentStatus`
+      // e `moveBooking` (SPEC-034/TASK-003). Não precisam do lock justamente
+      // porque recusam.
       //
-      // **Quem escrever um quinto caminho tem de vir por aqui.** A validação
-      // cruzada da SPEC-034 v1 pegou exatamente isso: a spec criava uma rota
-      // nova sem o lock e tornava este parágrafo falso em silêncio.
+      // **Quem escrever um caminho novo que cancele ocorrência de turma tem
+      // de vir por aqui** — sem número, porque o número é o que envelhece. A
+      // validação cruzada da SPEC-034 v1 pegou exatamente isso: a spec criava
+      // uma rota nova sem o lock e tornava este parágrafo falso em silêncio.
+      // O FIT-023 (SPEC-034/AC-016) é o teste que quebra no dia em que
+      // alguém remover o `FOR UPDATE` do passo 0a.
 
       const ocupacao = await this.travarEValidarOcorrencia(
         tx,
