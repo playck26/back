@@ -46,6 +46,7 @@ import { HorarioFuncionamentoService } from '../../src/courts/horario-funcioname
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 
 jest.setTimeout(300_000);
 
@@ -93,6 +94,7 @@ function classes(c: PrismaClient) {
     c as unknown as PrismaService,
     cs,
     {} as unknown as StudentsService,
+    new ConfigOperacaoService(c as unknown as PrismaService),
   );
   return { svc, cs };
 }

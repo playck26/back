@@ -13,6 +13,7 @@ import type { StudentsService } from '../people/students.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClassesService } from './classes.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 
 // TEST-004 (SPEC-003, fatia de turmas): unit tests de MOD-004 com Prisma e
 // CourtsService (MOD-005) mockados. A garantia física de INV-001 (sem
@@ -29,6 +30,12 @@ interface TxMock {
     create: jest.Mock;
     delete: jest.Mock;
   };
+  // SPEC-031/TASK-005: a remocao passou a ler a configuracao e a ocorrencia
+  // pelo MESMO `tx`, e a gravar acao + evento de matricula.
+  configOperacaoEmpresa: { findUnique: jest.Mock };
+  ocupacaoQuadra: { findFirst: jest.Mock };
+  acaoAdministrativa: { create: jest.Mock };
+  eventoDeMatricula: { create: jest.Mock };
 }
 
 function buildMocks() {
@@ -36,6 +43,14 @@ function buildMocks() {
     turma: { create: jest.fn(), update: jest.fn() },
     $queryRaw: jest.fn(),
     aluno: { findFirst: jest.fn() },
+    // Padrao: empresa sem prazo configurado e sem ocorrencia a frente — a
+    // remocao passa, que e o comportamento de hoje.
+    configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
+    ocupacaoQuadra: { findFirst: jest.fn().mockResolvedValue(null) },
+    acaoAdministrativa: {
+      create: jest.fn().mockResolvedValue({ id: 'acao-1' }),
+    },
+    eventoDeMatricula: { create: jest.fn() },
     turmaAluno: {
       findFirst: jest.fn(),
       count: jest.fn(),
@@ -133,7 +148,12 @@ describe('ClassesService', () => {
     courtsService = built.courtsService;
     courtsServiceMock = built.courtsServiceMock;
     studentsService = buildStudentsMock();
-    service = new ClassesService(prisma, courtsService, studentsService);
+    service = new ClassesService(
+      prisma,
+      courtsService,
+      studentsService,
+      new ConfigOperacaoService(prisma),
+    );
   });
 
   describe('create', () => {
@@ -392,7 +412,7 @@ describe('ClassesService', () => {
     };
 
     it('lança 404 se a turma não é da empresa', async () => {
-      (prisma.turma.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue(null);
 
       await expect(
         service.update('c1', 't1', { nome: 'Nova' }, 'autor-1'),
@@ -415,7 +435,7 @@ describe('ClassesService', () => {
           horaFim: Date;
         }[],
       ) {
-        (prisma.turma.findFirst as jest.Mock)
+        (prisma.turma.findFirst as unknown as jest.Mock)
           .mockResolvedValueOnce(existente)
           .mockResolvedValueOnce({
             ...existente,
@@ -537,7 +557,7 @@ describe('ClassesService', () => {
     });
 
     it('atualização sem mudança de horário não regenera ocupações', async () => {
-      (prisma.turma.findFirst as jest.Mock)
+      (prisma.turma.findFirst as unknown as jest.Mock)
         .mockResolvedValueOnce(existente) // check de existência
         .mockResolvedValueOnce({
           // findOne no final do update
@@ -565,7 +585,7 @@ describe('ClassesService', () => {
     });
 
     it('mudança de horário cancela ocupações futuras e gera novas (NFR-001)', async () => {
-      (prisma.turma.findFirst as jest.Mock)
+      (prisma.turma.findFirst as unknown as jest.Mock)
         .mockResolvedValueOnce(existente)
         .mockResolvedValueOnce({
           ...existente,
@@ -710,31 +730,39 @@ describe('ClassesService', () => {
 
   describe('removeStudent', () => {
     it('lança 404 se a turma não é da empresa', async () => {
-      (prisma.turma.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.removeStudent('c1', 't1', 'a1'),
+        service.removeStudent('c1', 't1', 'a1', 'u1', 'company_admin'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('lança 404 se o aluno não está alocado na turma', async () => {
-      (prisma.turma.findFirst as jest.Mock).mockResolvedValue({ id: 't1' });
-      (prisma.turmaAluno.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue({
+        id: 't1',
+      });
+      (prisma.turmaAluno.findFirst as unknown as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       await expect(
-        service.removeStudent('c1', 't1', 'a1'),
+        service.removeStudent('c1', 't1', 'a1', 'u1', 'company_admin'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('remove a alocação (REQ-005)', async () => {
-      (prisma.turma.findFirst as jest.Mock).mockResolvedValue({ id: 't1' });
-      (prisma.turmaAluno.findFirst as jest.Mock).mockResolvedValue({
+      (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue({
+        id: 't1',
+      });
+      (prisma.turmaAluno.findFirst as unknown as jest.Mock).mockResolvedValue({
         id: 'ta1',
       });
 
-      await service.removeStudent('c1', 't1', 'a1');
+      await service.removeStudent('c1', 't1', 'a1', 'u1', 'company_admin');
 
-      expect(prisma.turmaAluno.delete).toHaveBeenCalledWith({
+      expect(
+        prisma.turmaAluno.delete as unknown as jest.Mock,
+      ).toHaveBeenCalledWith({
         where: { id: 'ta1' },
       });
     });
@@ -883,6 +911,7 @@ describe('ClassesService — visao do professor (SPEC-013)', () => {
       prisma,
       built.courtsService,
       buildStudentsMock(),
+      new ConfigOperacaoService(prisma),
     );
   });
 
@@ -914,7 +943,7 @@ describe('ClassesService — visao do professor (SPEC-013)', () => {
   // professor descobriria a grade dos colegas por tentativa e erro.
   it('turma de colega devolve 404, nao 403', async () => {
     (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
-    (prisma.turma.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue(null);
 
     await expect(
       service.myTeachingClassDetail('c1', 'u9', 't-do-colega'),
@@ -925,7 +954,7 @@ describe('ClassesService — visao do professor (SPEC-013)', () => {
   // financeira nem o contato de ninguem.
   it('detalhe traz nome e nivel do aluno, e nada de contato ou dinheiro', async () => {
     (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
-    (prisma.turma.findFirst as jest.Mock).mockResolvedValue({
+    (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue({
       id: 't1',
       nome: 'Infantil A',
       diaSemana: 2,
@@ -959,5 +988,146 @@ describe('ClassesService — visao do professor (SPEC-013)', () => {
     ]);
     expect(JSON.stringify(res)).not.toMatch(/11999999999/);
     expect(JSON.stringify(res)).not.toMatch(/valor|pagamento|preco/i);
+  });
+});
+
+/**
+ * SPEC-031/TASK-005 — a remoção administrativa: **passa pela política e deixa
+ * rastro.**
+ *
+ * Relógio fixo, nunca relativo — a fixture escolhe o instante, e não a hora em
+ * que o CI roda.
+ */
+describe('removeStudent — SPEC-031 (D12, AC-013b, AC-014b)', () => {
+  const AGORA = new Date('2026-10-05T15:00:00.000Z'); // 12:00 no clube
+  const DIA = new Date('2026-10-05T00:00:00.000Z');
+  const hora = (h: number) => new Date(Date.UTC(1970, 0, 1, h, 0, 0, 0));
+
+  let prisma: PrismaService;
+  // As leituras novas (`ocorrenciaRelevante`, a configuracao) e as escritas de
+  // auditoria acontecem por `tx`, nao por `prisma` — e o `buildMocks` so
+  // delega `turmaAluno`. Armar aqui e o mesmo padrao do resto do arquivo.
+  let tx: TxMock;
+  let service: ClassesService;
+
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(AGORA);
+    const built = buildMocks();
+    prisma = built.prisma;
+    tx = built.tx;
+    service = new ClassesService(
+      prisma,
+      built.courtsService,
+      buildStudentsMock(),
+      new ConfigOperacaoService(prisma),
+    );
+    (prisma.turma.findFirst as unknown as jest.Mock).mockResolvedValue({
+      id: 't1',
+    });
+    (prisma.turmaAluno.findFirst as unknown as jest.Mock).mockResolvedValue({
+      id: 'ta1',
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const comAula = (inicio: number, fim: number) =>
+    tx.ocupacaoQuadra.findFirst.mockResolvedValue({
+      id: 'o1',
+      data: DIA,
+      horaInicio: hora(inicio),
+      horaFim: hora(fim),
+    });
+
+  /**
+   * AC-013b — **o gestor não ignora o início da aula.** É o AC que a v2 da
+   * spec não tinha, e por isso o bloqueante 1 existiu: ela dizia ao mesmo
+   * tempo que o gestor cancela "a qualquer momento" e que ninguém cancela
+   * depois do início.
+   */
+  it('AC-013b: aula EM ANDAMENTO recusa, mesmo para o gestor', async () => {
+    comAula(11, 13); // começou às 11h, agora são 12h
+
+    await expect(
+      service.removeStudent('c1', 't1', 'a1', 'u1', 'company_admin'),
+    ).rejects.toMatchObject({
+      response: { code: 'PRAZO_DE_CANCELAMENTO' },
+    });
+    expect(
+      prisma.turmaAluno.delete as unknown as jest.Mock,
+    ).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AC-013 — e **ignora a antecedência mínima**: com prazo de 2h e a aula
+   * daqui a 10 minutos, o gestor passa. É o `SEM_PRAZO` do INV-066 em ação —
+   * ele entra na função, não em volta dela.
+   */
+  it('AC-013: gestor passa a 10min do inicio, com prazo de 2h configurado', async () => {
+    tx.configOperacaoEmpresa.findUnique.mockResolvedValue({
+      prazoCancelamentoAulaHoras: 2,
+      prazoCancelamentoReservaHoras: null,
+    });
+    comAula(12, 13); // começa ao meio-dia; agora é meio-dia em ponto
+
+    // Meio-dia em ponto é `minutos === 0` → recusa por D5b, não por prazo.
+    await expect(
+      service.removeStudent('c1', 't1', 'a1', 'u1', 'company_admin'),
+    ).rejects.toMatchObject({ response: { code: 'PRAZO_DE_CANCELAMENTO' } });
+
+    // Dez minutos antes: dentro do prazo de 2h, e o gestor passa assim mesmo.
+    comAula(13, 14);
+    jest.setSystemTime(new Date('2026-10-05T15:50:00.000Z')); // 12:50
+    await service.removeStudent('c1', 't1', 'a1', 'u1', 'company_admin');
+    expect(prisma.turmaAluno.delete as unknown as jest.Mock).toHaveBeenCalled();
+  });
+
+  /**
+   * AC-014b — a prova consulta as **duas** tabelas. `autor_id` sozinho não
+   * responde *quem* foi removido *de onde*, e foi por isso que o veredito da
+   * v4 chamou o AC-014b anterior de não realizável.
+   */
+  it('AC-014b: grava a acao COM autor e o evento de matricula', async () => {
+    await service.removeStudent('c1', 't1', 'a1', 'u-gestor', 'company_admin');
+
+    expect(tx.acaoAdministrativa.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          companyId: 'c1',
+          tipo: 'turma_aluno_removido',
+          autorId: 'u-gestor',
+        }),
+      }),
+    );
+    expect(tx.eventoDeMatricula.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          companyId: 'c1',
+          acaoId: 'acao-1',
+          turmaId: 't1',
+          alunoId: 'a1',
+        }),
+      }),
+    );
+  });
+
+  /**
+   * D21 — o alvo técnico é uma MATRÍCULA. Gravar um `eventoDeOcupacao` aqui
+   * exigiria inventar um `ocupacaoId`, e auditoria semanticamente falsa é
+   * pior que auditoria ausente.
+   */
+  it('D21: o evento e de MATRICULA — nao carrega ocupacaoId', async () => {
+    await service.removeStudent('c1', 't1', 'a1', 'u-gestor', 'company_admin');
+
+    const chamadas = tx.eventoDeMatricula.create.mock.calls as Array<
+      [{ data: Record<string, unknown> }]
+    >;
+    const chamada = chamadas[0][0];
+    // Inventar um `ocupacaoId` produziria auditoria semanticamente falsa, que
+    // e pior que auditoria ausente: remover um aluno nao muda ocupacao nenhuma.
+    expect(chamada.data).not.toHaveProperty('ocupacaoId');
+    expect(chamada.data).not.toHaveProperty('transicaoId');
   });
 });

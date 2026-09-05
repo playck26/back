@@ -51,6 +51,7 @@ import { ChamadaNaoHouveResponseDto } from './dto/me-response.dto';
 import { FrequenciaDaTurmaResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
+import type { PapelDoAutor } from '../company-settings/prazo-de-cancelamento';
 
 // Escopo desta spec (SPEC-003, fatia de turmas): UI só existe em `admin`
 // (TASK-006) — guard restrito a company_admin. CON-004.1 documenta
@@ -274,6 +275,13 @@ export class ClassesController {
       user.companyId as string,
       id,
       alunoId,
+      // AC-014b: a remoção deixa de ser anônima. `user.sub` é `usuarios.id`,
+      // que é o alvo de `acoes_administrativas.autor_id`.
+      user.sub,
+      // AC-013c: **o papel é PARÂMETRO** (D12). Tirar esta linha faz o
+      // caminho administrativo deixar de passar pela política, e o AC-013b
+      // cai — é a sabotagem que prova que a cobertura não é afirmação.
+      user.role as PapelDoAutor,
     );
   }
 }

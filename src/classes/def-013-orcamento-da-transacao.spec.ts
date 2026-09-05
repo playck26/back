@@ -7,6 +7,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { parseTimeOnly } from '../courts/date-time.util';
 import { ClassesService } from './classes.service';
 import type { EncontroDaTurma } from './encontros';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 
 /**
  * DEF-013 — **a transação de turma estoura o timeout do Prisma quando a
@@ -326,9 +327,12 @@ function buildClassesService(tx: Prisma.TransactionClient) {
       resolver: jest.fn(() => ({ imagemUrl: null })),
     } as unknown as ImagemDaQuadraService,
   );
-  return new ClassesService(prisma, courts, {
-    exigirVinculoAprovado: jest.fn(),
-  } as unknown as StudentsService);
+  return new ClassesService(
+    prisma,
+    courts,
+    { exigirVinculoAprovado: jest.fn() } as unknown as StudentsService,
+    new ConfigOperacaoService(prisma),
+  );
 }
 
 const DTO_BASE = {

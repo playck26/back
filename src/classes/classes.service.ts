@@ -15,6 +15,12 @@ import {
 import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import {
+  avaliarSaidaDeTurma,
+  type PapelDoAutor,
+} from '../company-settings/prazo-de-cancelamento';
+import { ocorrenciaRelevante } from './ocorrencia-relevante';
 import { PrismaService } from '../prisma/prisma.service';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
@@ -66,6 +72,9 @@ export class ClassesService {
     // SPEC-009/INV-010: a regra de vínculo é de MOD-003; aqui só se
     // pergunta a ela.
     private readonly studentsService: StudentsService,
+    // SPEC-031/TASK-005: a remoção administrativa passa pela mesma política
+    // do aluno (D12) e lê a configuração pelo mesmo `tx` (D16, passo 4).
+    private readonly operacao: ConfigOperacaoService,
   ) {}
 
   async list(companyId: string, query: PaginationQueryDto) {
@@ -377,12 +386,39 @@ export class ClassesService {
     });
   }
 
+  /**
+   * SPEC-031/TASK-005 — a remoção administrativa: **passa pela política e
+   * deixa rastro.**
+   *
+   * ## O gestor é PARÂMETRO, não exceção (D12)
+   *
+   * `papelDoAutor` entra na assinatura porque um `if (papel === 'aluno')`
+   * dentro do serviço do aluno seria a falácia do *"garantido por não existir
+   * rota"* — este projeto já reprovou duas specs por ela. No dia em que
+   * aparecer um terceiro caminho, ele não passaria pela regra.
+   *
+   * E o gestor **não pula** `avaliarSaidaDeTurma`: entra nela com
+   * `SEM_PRAZO`, herdando a recusa de `minutos <= 0` (AC-010b) sem herdar a
+   * antecedência do clube (AC-013). A v2 da spec dizia "nunca é barrado por
+   * prazo" **e** mandava não chamar a função — juntas, as duas deixavam o
+   * gestor cancelar aula já iniciada.
+   *
+   * ## E deixa rastro (AC-014b) — hoje a remoção é ANÔNIMA
+   *
+   * Ação `turma_aluno_removido` com `autor_id`, **e** a linha de
+   * `eventos_de_matricula` com `turma_id` + `aluno_id`. As duas: `autor_id`
+   * sozinho não responde *quem* foi removido *de onde*, e foi por isso que o
+   * veredito da v4 chamou o AC-014b anterior de não realizável.
+   */
   async removeStudent(
     companyId: string,
     turmaId: string,
     alunoId: string,
+    autorId: string,
+    papelDoAutor: PapelDoAutor,
   ): Promise<void> {
     await this.assertTurmaDaEmpresa(companyId, turmaId);
+    const agora = new Date();
 
     // SPEC-015/AC-000i (v9, BLOQ-1 da 7ª rodada) — o par do lock que
     // `PresencaService.salvarChamada` passou a pegar. Sem este lado, o de
@@ -416,6 +452,40 @@ export class ClassesService {
       if (!alocacao) {
         throw new NotFoundException();
       }
+
+      // SPEC-031/D16, passos 3 a 5 — dentro da MESMA transação, e o passo 4
+      // sem `FOR UPDATE`. Ver `MatriculaDoAlunoService.sair`.
+      const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+      const veredicto = avaliarSaidaDeTurma({
+        papelDoAutor,
+        agora,
+        ocorrenciaRelevante: await ocorrenciaRelevante(
+          tx,
+          companyId,
+          turmaId,
+          agora,
+        ),
+        prazo: prazos.aula,
+      });
+      if (!veredicto.permitido) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: veredicto.code,
+          message:
+            'Esta aula já começou. Remover o aluno agora não desfaz a presença dele.',
+        });
+      }
+
+      // AC-014b — passo 6. Antes do DELETE porque a ação descreve o gesto, e
+      // o gesto é este; depois dele, um erro no registro deixaria a remoção
+      // feita e sem rastro.
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        'turma_aluno_removido',
+      );
+      await registrador.registrarMatricula(turmaId, alunoId);
 
       await tx.turmaAluno.delete({ where: { id: alocacao.id } });
     });
