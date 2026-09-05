@@ -226,14 +226,34 @@ async function semearBase() {
   );
 }
 
-/** Uma ocorrência HOJE, começando em `hhmm` (fuso do clube). */
+/**
+ * Uma ocorrência HOJE, começando em `hhmm` (fuso do clube).
+ *
+ * **`TIME` dá a volta, e isso já derrubou treze testes de uma vez.** A versão
+ * original desta linha era `TIME '<hh:mm>' + INTERVAL '50 minutes'`: às 23h10
+ * isso vira `00:00`, o range fica invertido, e o `EXCLUDE
+ * no_overlap_por_quadra` recusa com `22000: range lower bound must be less
+ * than or equal to range upper bound`. Aqui era latente — `hhmm` é sempre
+ * `agora ± 2 minutos`, então só quebraria numa run entre 23h10 e 23h59 BRT.
+ * O `LEAST` corta no fim do dia operando sobre *timestamp*, onde não existe
+ * volta. (Achado ao consertar o mesmo defeito no `fit-018-019`, em 2026-09-05,
+ * depois de a CI pegá-lo lá.)
+ *
+ * **O que este conserto NÃO resolve, e fica declarado:** entre 23h58 e 00h02
+ * o deslocamento de minutos cruza a meia-noite e `data` continua sendo *hoje*,
+ * então a ocorrência cai no dia errado. Corrigir isso exige mudar junto o
+ * `jaPassouDe`, que compara só hora-do-dia — é conserto de outra natureza, e
+ * fazer metade dele em silêncio seria pior do que dizer onde ele para.
+ */
 async function novaOcorrencia(hhmm: string, quadra = QUADRA): Promise<string> {
   const [r] = await semear.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra
       (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
     VALUES (gen_random_uuid(),'${EMPRESA}','${quadra}',
             (now() AT TIME ZONE 'America/Sao_Paulo')::date,
-            TIME '${hhmm}', TIME '${hhmm}' + INTERVAL '50 minutes',
+            TIME '${hhmm}',
+            LEAST(DATE '2000-01-01' + TIME '${hhmm}' + INTERVAL '50 minutes',
+                  DATE '2000-01-01' + INTERVAL '23 hours 59 minutes')::time,
             'TURMA','${TURMA}','pendente_pagamento',now())
     RETURNING id`);
   return r.id;

@@ -50,12 +50,63 @@ const faltasA = svc(dbA);
 const faltasB = svc(dbB);
 const presencas = new PresencaService(semear as unknown as PrismaService);
 
-/** `HH:MM` no fuso do clube, deslocado de `n` minutos a partir de agora. */
-async function minutoDoClube(n: number): Promise<string> {
-  const [r] = await semear.$queryRawUnsafe<{ hhmm: string }[]>(
-    `SELECT to_char((now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${n} minutes','HH24:MI') AS hhmm`,
-  );
-  return r.hhmm;
+/**
+ * **A hora sozinha não basta, e a CI provou isso.**
+ *
+ * A primeira versão montava a ocorrência com `data = hoje` e
+ * `hora_fim = TIME '<hh:mm>' + INTERVAL '50 minutes'`. `TIME` **dá a volta**:
+ * `23:10 + 50min` é `00:00`, não `24:00` — o range fica invertido e o
+ * `EXCLUDE no_overlap_por_quadra` recusa com `22000: range lower bound must be
+ * less than or equal to range upper bound`.
+ *
+ * Rodando às 18h30 local, `+240min` dava 22h30 e passava. A CI rodou às 19h10
+ * e quebrou os treze casos de uma vez. **O teste dependia da hora do dia em
+ * que era executado**, que é o defeito que eu tinha acabado de criticar num
+ * teste de fronteira de prazo.
+ *
+ * Aqui data, início e fim saem do **mesmo timestamp**, então a data rola junto
+ * com a hora; e o fim é cortado no fim do dia por `LEAST` sobre *timestamps*,
+ * onde não existe volta. Nenhum caso usa `hora_fim` — só o `EXCLUDE` usa.
+ */
+async function ocorrenciaEmMinutos(
+  n: number,
+  turmaId = TURMA,
+  status = 'pendente_pagamento',
+): Promise<string> {
+  const [r] = await semear.$queryRawUnsafe<{ id: string }[]>(`
+    WITH t AS (
+      SELECT (now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${n} minutes' AS ini
+    ), j AS (
+      SELECT ini,
+             LEAST(ini + INTERVAL '50 minutes',
+                   date_trunc('day', ini) + INTERVAL '23 hours 59 minutes') AS fim
+        FROM t
+    )
+    INSERT INTO ocupacoes_quadra
+      (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
+    SELECT gen_random_uuid(),'${EMPRESA}','${QUADRA}',
+           ini::date, ini::time, fim::time,
+           'TURMA','${turmaId}','${status}',now()
+      FROM j
+    RETURNING id`);
+  return r.id;
+}
+
+/** Aproxima a aula: move data, início e fim **juntos**, pelo mesmo motivo. */
+async function moverOcorrencia(id: string, n: number): Promise<void> {
+  await q(`
+    WITH t AS (
+      SELECT (now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${n} minutes' AS ini
+    ), j AS (
+      SELECT ini,
+             LEAST(ini + INTERVAL '50 minutes',
+                   date_trunc('day', ini) + INTERVAL '23 hours 59 minutes') AS fim
+        FROM t
+    )
+    UPDATE ocupacoes_quadra o
+       SET data = j.ini::date, hora_inicio = j.ini::time, hora_fim = j.fim::time
+      FROM j
+     WHERE o.id = '${id}'`);
 }
 
 async function semearFixture() {
@@ -97,23 +148,6 @@ async function semearFixture() {
   );
 }
 
-/** Uma ocorrência de TURMA, hoje, começando em `hhmm`. */
-async function ocorrencia(
-  hhmm: string,
-  turmaId = TURMA,
-  status = 'pendente_pagamento',
-): Promise<string> {
-  const [r] = await semear.$queryRawUnsafe<{ id: string }[]>(`
-    INSERT INTO ocupacoes_quadra
-      (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
-    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',
-            (now() AT TIME ZONE 'America/Sao_Paulo')::date,
-            TIME '${hhmm}', TIME '${hhmm}' + INTERVAL '50 minutes',
-            'TURMA','${turmaId}','${status}',now())
-    RETURNING id`);
-  return r.id;
-}
-
 const contaFaltas = (ocupacaoId: string) =>
   semear.faltaAvisada.count({ where: { ocupacaoId } });
 
@@ -144,7 +178,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * que garante a linha única é o índice `faltas_unica`, não o lock.
    */
   it('AC-017: dois POST SIMULTANEOS, duas conexoes, UMA linha', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
 
     const r = await Promise.allSettled([
       faltasA.avisar(EMPRESA, UALUNO, TURMA, aula),
@@ -157,7 +191,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
   });
 
   it('AC-017b: DELETE repetido devolve o mesmo sucesso, mesmo sem linha', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
 
     // Sem nunca ter avisado.
     await faltasA.retirar(EMPRESA, UALUNO, TURMA, aula);
@@ -195,7 +229,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * responsabilidades numa constraint só enfraqueceria uma delas.
    */
   it('FIT-018: company_id de A com ocupacao de B devolve 23503', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
     const outraEmpresa = 'f0180000-0000-4000-8000-0000000000bb';
     await q(
       `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${outraEmpresa}','Outra','outra-f018',now())`,
@@ -218,7 +252,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * passariam.
    */
   it('AC-016: aluno NAO matriculado leva 404, e nenhuma linha nasce', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
 
     expect(
       await codigoDe(() => faltasA.avisar(EMPRESA, UFORA, TURMA, aula)),
@@ -231,7 +265,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * URL da turma A alcançaria a ocorrência da turma B.
    */
   it('AC-016: a ocorrencia de OUTRA turma nao e alcancavel pela URL desta', async () => {
-    const aulaDaOutra = await ocorrencia(await minutoDoClube(240), OUTRA_TURMA);
+    const aulaDaOutra = await ocorrenciaEmMinutos(240, OUTRA_TURMA);
 
     expect(
       await codigoDe(() => faltasA.avisar(EMPRESA, UALUNO, TURMA, aulaDaOutra)),
@@ -254,7 +288,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
     });
 
     it('AC-016b: POST dentro do prazo recusa com PRAZO_DE_CANCELAMENTO', async () => {
-      const aula = await ocorrencia(await minutoDoClube(60)); // 1h < 2h
+      const aula = await ocorrenciaEmMinutos(60); // 1h < 2h
 
       expect(
         await codigoDe(() => faltasA.avisar(EMPRESA, UALUNO, TURMA, aula)),
@@ -263,20 +297,18 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
     });
 
     it('AC-016b: fora do prazo, aceita', async () => {
-      const aula = await ocorrencia(await minutoDoClube(180)); // 3h > 2h
+      const aula = await ocorrenciaEmMinutos(180); // 3h > 2h
       await faltasA.avisar(EMPRESA, UALUNO, TURMA, aula);
       expect(await contaFaltas(aula)).toBe(1);
     });
 
     it('AC-016c: DELETE dentro do prazo recusa com o MESMO codigo', async () => {
       // Avisa com folga...
-      const aula = await ocorrencia(await minutoDoClube(180));
+      const aula = await ocorrenciaEmMinutos(180);
       await faltasA.avisar(EMPRESA, UALUNO, TURMA, aula);
 
-      // ...e a aula "chega perto": move o início para daqui a 1h.
-      await q(
-        `UPDATE ocupacoes_quadra SET hora_inicio = TIME '${await minutoDoClube(60)}' WHERE id = '${aula}'`,
-      );
+      // ...e a aula "chega perto": move para daqui a 1h.
+      await moverOcorrencia(aula, 60);
 
       expect(
         await codigoDe(() => faltasA.retirar(EMPRESA, UALUNO, TURMA, aula)),
@@ -293,7 +325,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * aconteceu, aconteceu.
    */
   it('AC-018b/c: cancelada recusa os dois verbos, e o aviso SOBREVIVE', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
     await faltasA.avisar(EMPRESA, UALUNO, TURMA, aula);
 
     // **Cancelar por `UPDATE` cru não passa** — a trigger da INV-064 recusa, e
@@ -324,7 +356,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
   });
 
   it('AC-019: sem aviso, a chamada marca false', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
     const chamada = await presencas.chamada(EMPRESA, UPROF, aula);
     expect(chamada.alunos.find((a) => a.alunoId === ALUNO)?.faltaAvisada).toBe(
       false,
@@ -338,7 +370,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * "aula não existe", e o aluno veria a tela errada para o problema errado.
    */
   it('usuario com papel aluno e SEM linha em alunos leva 403', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
     const orfao = 'f0180000-0000-4000-8000-0000000000aa';
     await q(
       `INSERT INTO usuarios (id,company_id,nome,email,senha_hash,role,status,updated_at) VALUES ('${orfao}','${EMPRESA}','Orfao','orfao-f018@x.test','x','aluno','ativo',now())`,
@@ -351,7 +383,7 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
   });
 
   it('AC-018: avisar NAO desmatricula', async () => {
-    const aula = await ocorrencia(await minutoDoClube(240));
+    const aula = await ocorrenciaEmMinutos(240);
     await faltasA.avisar(EMPRESA, UALUNO, TURMA, aula);
 
     expect(
