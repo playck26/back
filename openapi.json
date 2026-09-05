@@ -3695,6 +3695,85 @@
         ]
       }
     },
+    "/api/v1/me/classes/{turmaId}/aulas/{ocupacaoId}/falta": {
+      "post": {
+        "operationId": "MeClassesController_avisarFalta",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "Aluno não matriculado na turma, ou a ocorrência não é desta turma. Os dois respondem igual: a URL da turma A não pode revelar a ocorrência da B."
+          },
+          "409": {
+            "description": "Ocorrência cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo de antecedência (`PRAZO_DE_CANCELAMENTO`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "delete": {
+        "operationId": "MeClassesController_retirarFalta",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "Ocorrência cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`) — simétrico ao `POST`, por decisão (D23)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/me/teacher/classes": {
       "get": {
         "operationId": "MeTeacherClassesController_minhasTurmas",
@@ -7968,13 +8047,17 @@
           },
           "naTurmaHoje": {
             "type": "boolean"
+          },
+          "faltaAvisada": {
+            "type": "boolean"
           }
         },
         "required": [
           "alunoId",
           "nome",
           "status",
-          "naTurmaHoje"
+          "naTurmaHoje",
+          "faltaAvisada"
         ]
       },
       "ChamadaResponseDto": {

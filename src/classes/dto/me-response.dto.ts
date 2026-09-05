@@ -162,6 +162,22 @@ export class LinhaDaChamadaResponseDto {
    */
   @ApiProperty({ type: Boolean })
   naTurmaHoje!: boolean;
+
+  /**
+   * SPEC-031/AC-019 — **o aluno avisou que ia faltar.**
+   *
+   * O professor vê isto antes de lançar a chamada: falta avisada e falta sem
+   * aviso são a mesma marcação hoje, e é justamente a diferença que a
+   * SPEC-031 existe para tornar visível.
+   *
+   * **Continua `true` em aula cancelada** (D14). O `GET` devolve a ocorrência
+   * cancelada com a lista inteira, e o aviso pertence ali: ele é a resposta
+   * para *"eu avisei, por que fui cobrado?"* — e esta é a única tela onde a
+   * pergunta aparece. Esconder ali seria destruir o registro na hora em que
+   * ele importa.
+   */
+  @ApiProperty({ type: Boolean })
+  faltaAvisada!: boolean;
 }
 
 export class ChamadaResponseDto {

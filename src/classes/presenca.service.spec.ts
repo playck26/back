@@ -20,6 +20,8 @@ import { PresencaService } from './presenca.service';
 interface TxMock {
   presenca: { findMany: jest.Mock; upsert: jest.Mock };
   chamada: { findUnique: jest.Mock; upsert: jest.Mock };
+  // SPEC-031/AC-019: a chamada passou a marcar quem avisou falta.
+  faltaAvisada: { findMany: jest.Mock };
   turmaAluno: { findMany: jest.Mock };
   $queryRaw: jest.Mock;
 }
@@ -51,6 +53,7 @@ function buildMocks() {
   let statement = 0;
   const tx: TxMock = {
     presenca: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn() },
+    faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: {
       findUnique: jest.fn().mockResolvedValue(null),
       upsert: jest.fn(),
@@ -85,6 +88,7 @@ function buildMocks() {
     turmaAluno: { findMany: jest.fn() },
     presenca: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: { findUnique: jest.fn().mockResolvedValue(null) },
+    faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn((cb: (tx: TxMock) => unknown) => cb(tx)),
   };
   // A matrícula lida DENTRO da transação é a mesma que o teste arma em

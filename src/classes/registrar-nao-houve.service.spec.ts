@@ -51,6 +51,8 @@ interface ArgsDoUpsert {
 interface TxMock {
   presenca: { count: jest.Mock };
   chamada: { upsert: jest.Mock<Promise<unknown>, [ArgsDoUpsert]> };
+  // SPEC-031/AC-019.
+  faltaAvisada: { findMany: jest.Mock };
   $queryRaw: jest.Mock;
 }
 
@@ -104,6 +106,7 @@ function buildMocks() {
   let statement = 0;
   const tx: TxMock = {
     presenca: { count: jest.fn().mockResolvedValue(0) },
+    faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: {
       upsert: jest.fn().mockResolvedValue({
         ocupacaoId: 'oc1',
@@ -520,6 +523,7 @@ describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => 
       },
       presenca: { findMany: jest.fn().mockResolvedValue(presencas) },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+      faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
       chamada: {
         findUnique: jest
           .fn()
@@ -621,6 +625,7 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
         upsert: jest.fn(),
         count: jest.fn().mockResolvedValue(0),
       },
+      faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
       chamada: {
         findUnique: jest.fn().mockResolvedValue(cabecalho),
         upsert: upsertDoCabecalho,
@@ -648,6 +653,7 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
       presenca: { findMany: jest.fn().mockResolvedValue([]) },
       turmaAluno: { findMany: jest.fn().mockResolvedValue(MATRICULADOS) },
       chamada: { findUnique: jest.fn().mockResolvedValue(cabecalho) },
+      faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
     } as unknown as PrismaService;
     return { service: new PresencaService(prisma), upsertDoCabecalho };

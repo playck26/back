@@ -32,6 +32,12 @@ export interface TxMock {
     deleteMany: jest.Mock;
   };
   quadra: { findMany: jest.Mock };
+  // SPEC-031/REQ-006: a falta avisada trava `alunos` e a ocorrência por SQL
+  // cru — o mock precisa de `$queryRaw` porque a rota não usa o modelo.
+  $queryRaw: jest.Mock;
+  turmaAluno: { findFirst: jest.Mock };
+  faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
+  configOperacaoEmpresa: { findUnique: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -113,6 +119,32 @@ export function buildPrismaMock(): PrismaMock {
       deleteMany: jest.fn(),
     },
     quadra: { findMany: jest.fn().mockResolvedValue([]) },
+    // Padrão da falta avisada: aluno existe, está matriculado, a ocorrência
+    // é de turma e não está cancelada. Quem testa a recusa sobrescreve.
+    //
+    // `$queryRaw` é um mock só, e as duas consultas da rota passam por ele —
+    // por isso ele decide pela FORMA da query, não pela ordem. Ordem daria um
+    // teste que passa por acaso quando a implementação reordenar.
+    $queryRaw: jest.fn((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        strings.join('').includes('FROM alunos')
+          ? [{ id: 'aluno-1' }]
+          : [
+              {
+                id: 'oc-1',
+                status_pagamento: 'pendente_pagamento',
+                data: new Date('2099-01-01T00:00:00.000Z'),
+                hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
+              },
+            ],
+      ),
+    ),
+    turmaAluno: { findFirst: jest.fn().mockResolvedValue({ id: 'm1' }) },
+    faltaAvisada: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
   };
 
   const mock: PrismaMock = {
