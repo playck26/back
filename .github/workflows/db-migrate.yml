@@ -194,17 +194,17 @@ jobs:
           BEGIN;
           ALTER TABLE eventos_de_ocupacao DISABLE TRIGGER eventos_append_only;
           ALTER TABLE acoes_administrativas DISABLE TRIGGER acoes_append_only;
-          # SPEC-031/D22/9: a TERCEIRA da familia. Corrigir so um bloco deixaria
-          # o fluxo funcional verde e o cleanup final abortando.
+          -- SPEC-031/D22/9: a TERCEIRA da familia. Corrigir so um bloco deixaria
+          -- o fluxo funcional verde e o cleanup final abortando.
           ALTER TABLE eventos_de_matricula DISABLE TRIGGER eventos_matricula_append_only;
           DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
-          # SPEC-031/D22/2b: `faltas_avisadas` antes dos TRES pais dela
-          # (`ocupacoes_quadra`, `alunos`, `empresas`) -- as quatro FKs sao
-          # RESTRICT. E `eventos_de_matricula` antes de `acoes`, `turmas` e
-          # `alunos`, pelo mesmo motivo (D21).
+          -- SPEC-031/D22/2b: `faltas_avisadas` antes dos TRES pais dela
+          -- (`ocupacoes_quadra`, `alunos`, `empresas`) -- as quatro FKs sao
+          -- RESTRICT. E `eventos_de_matricula` antes de `acoes`, `turmas` e
+          -- `alunos`, pelo mesmo motivo (D21).
           DELETE FROM faltas_avisadas WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
@@ -212,9 +212,9 @@ jobs:
           DELETE FROM faltas_avisadas WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM eventos_de_matricula WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM eventos_de_matricula WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
-          # SPEC-031/D22/10: a acao passou a ter DOIS filhos. Olhar so
-          # `eventos_de_ocupacao` apagaria acao que `eventos_de_matricula` ainda
-          # referencia -- 23503 no proprio DELETE.
+          -- SPEC-031/D22/10: a acao passou a ter DOIS filhos. Olhar so
+          -- `eventos_de_ocupacao` apagaria acao que `eventos_de_matricula` ainda
+          -- referencia -- 23503 no proprio DELETE.
           DELETE FROM acoes_administrativas a WHERE NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id)
                                                 AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id);
           DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE';
@@ -227,8 +227,8 @@ jobs:
           -- neste ponto e fica de fora.
           DELETE FROM horarios_funcionamento WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM config_pagamento_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
-          # SPEC-031/D22/1b: company-scoped com FK RESTRICT. Sem esta linha o
-          # `DELETE FROM empresas` abaixo recebe 23503.
+          -- SPEC-031/D22/1b: company-scoped com FK RESTRICT. Sem esta linha o
+          -- `DELETE FROM empresas` abaixo recebe 23503.
           DELETE FROM config_operacao_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM contratos_da_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM categorias_de_quadra WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
@@ -605,15 +605,15 @@ jobs:
           BEGIN;
           ALTER TABLE eventos_de_ocupacao DISABLE TRIGGER eventos_append_only;
           ALTER TABLE acoes_administrativas DISABLE TRIGGER acoes_append_only;
-          # SPEC-031/D22/9: a TERCEIRA da familia. Corrigir so um bloco deixaria
-          # o fluxo funcional verde e o cleanup final abortando.
+          -- SPEC-031/D22/9: a TERCEIRA da familia. Corrigir so um bloco deixaria
+          -- o fluxo funcional verde e o cleanup final abortando.
           ALTER TABLE eventos_de_matricula DISABLE TRIGGER eventos_matricula_append_only;
           DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id = '$CLASS_ID');
           DELETE FROM eventos_de_ocupacao WHERE company_id = '$COMPANY_ID';
-          # SPEC-031/D22/2b e D21 -- antes dos pais, como no bloco de cima.
+          -- SPEC-031/D22/2b e D21 -- antes dos pais, como no bloco de cima.
           DELETE FROM faltas_avisadas WHERE company_id = '$COMPANY_ID';
           DELETE FROM faltas_avisadas WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
@@ -635,7 +635,7 @@ jobs:
           -- Run 33781437034: o smoke inteiro passou e caiu AQUI, no ultimo DELETE.
           DELETE FROM horarios_funcionamento WHERE company_id = '$COMPANY_ID';
           DELETE FROM config_pagamento_empresa WHERE company_id = '$COMPANY_ID';
-          # SPEC-031/D22/1b: antes do `DELETE FROM empresas` logo abaixo.
+          -- SPEC-031/D22/1b: antes do `DELETE FROM empresas` logo abaixo.
           DELETE FROM config_operacao_empresa WHERE company_id = '$COMPANY_ID';
           DELETE FROM contratos_da_empresa WHERE company_id = '$COMPANY_ID';
           DELETE FROM categorias_de_quadra WHERE company_id = '$COMPANY_ID';
