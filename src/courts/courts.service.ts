@@ -98,6 +98,7 @@ import { DisponibilidadeResponseDto } from './dto/horarios-response.dto';
 import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { CreateCourtDto } from './dto/create-court.dto';
 import type { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import type { MoveBookingDto } from './dto/move-booking.dto';
 import type { UpdateCourtDto } from './dto/update-court.dto';
 import type { QuadraResponseDto } from './dto/quadra-response.dto';
 
@@ -1012,6 +1013,35 @@ export class CourtsService {
     );
   }
 
+  /**
+   * SPEC-034/TASK-004 — cancelar **uma** ocorrência de turma.
+   *
+   * **Só a escrita. Quem decide é o `ClassesService`**, porque a decisão
+   * depende de segurar `turmas FOR UPDATE` — e `ocupacoes_quadra` é de
+   * MOD-005, que é quem escreve nela (`TARGET_ARCHITECTURE.md`, ownership).
+   * Mesma divisão de `cancelFutureClassOccupancies`, logo acima.
+   *
+   * A trigger `ocupacao_cancelada_exige_evento` cobre este caminho sem
+   * mudança: ela não filtra por `origem_tipo`, e já exige o evento com o
+   * `transicao_id` casado no `COMMIT` (INV-064).
+   */
+  async cancelOneClassOccurrence(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    ocupacaoId: string,
+    registrador: RegistradorDeAcao,
+  ): Promise<void> {
+    const transicaoId = novaTransicao();
+    await tx.ocupacaoQuadra.update({
+      where: { id: ocupacaoId },
+      // Só o status e a transição. `valor` é nulo em ocupação de turma
+      // (CHECK `ocupacoes_valor_por_origem`) e continua nulo — cancelar não
+      // é o momento de descobrir preço.
+      data: { statusPagamento: 'cancelado', transicaoId },
+    });
+    await registrador.registrar(ocupacaoId, 'cancelada', transicaoId);
+  }
+
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
   // cancelar reserva onde `aluno_id` bate com o próprio — "dono da reserva
   // ou company_admin" (API_CONTRACTS.md CON-005.6).
@@ -1190,6 +1220,277 @@ export class CourtsService {
    * condição escrita duas vezes: a regra é uma, e regra duplicada
    * diverge no primeiro ajuste.
    */
+  /**
+   * SPEC-034/TASK-003 — **mover** uma reserva avulsa.
+   *
+   * ### A ordem aqui é o mecanismo, e cada passo tem um achado atrás
+   *
+   * **1. Trava, DEPOIS compõe (D6).** Dois `PATCH` parciais concorrentes
+   * sobre o mesmo `id` — um mandando `{horaInicio,horaFim}`, outro
+   * `{quadraId}` — compunham destinos diferentes a partir da mesma leitura
+   * antiga, e o estado final podia violar o expediente que **nenhuma das
+   * duas transações chegou a avaliar**. Compor a partir da linha travada
+   * elimina a classe: a segunda transação lê o resultado da primeira.
+   *
+   * **2. Origem, terminal, passado — nesta ordem.** Ocupação de turma se
+   * ajusta pela turma; cancelada é estado terminal; e **reserva que já
+   * começou não se move** (D5). Esta última fecha o bypass do crédito: sem
+   * ela, mover às 20h a reserva das 19h para amanhã a faz "não ter começado",
+   * e o cancelamento seguinte devolveria crédito de quadra usada — exatamente
+   * o que a SPEC-031 existe para impedir. Mover **para** o passado continua
+   * permitido; é fechar caixa (SPEC-042/D-I5).
+   *
+   * **3. Expediente antes do conflito (INV-011).** Responder "conflito" para
+   * quem moveu para fora do expediente mentiria sobre o motivo — mesmo
+   * raciocínio do `createBooking`.
+   *
+   * **4. A pré-checagem não é a garantia.** Quem recusa sobreposição é a
+   * `EXCLUDE no_overlap_por_quadra`, que vale para `UPDATE` tanto quanto para
+   * `INSERT`. A pré-checagem existe para dar `conflictWith` a quem perdeu.
+   *
+   * ### O retry, e por que ele existe de verdade
+   *
+   * **Duas reservas movidas para o mesmo slot livre entram em espera
+   * circular.** As duas pré-checagens passam — o destino está vazio quando
+   * cada uma olha — e os dois `UPDATE` se esperam. `40P01` reproduzido em
+   * PostgreSQL 18.4 na validação cruzada, sem remover pré-checagem e sem
+   * injetar nada.
+   *
+   * Duas tentativas, não N: se a segunda também perde sem conflito visível, o
+   * erro sobe cru — `409` sem conflito seria mentira (DEF-013).
+   */
+  /**
+   * SPEC-034/AC-020 — **quantas retentativas o `moveBooking` já fez.**
+   *
+   * Existe porque "exatamente uma retentativa" não é aferível de fora: a
+   * resposta de uma transação que perdeu e refez é idêntica à de uma que
+   * ganhou de primeira. Sem este contador, o FIT-022b provaria "não deu 500",
+   * que é metade do critério.
+   *
+   * **Não é só andaime de teste.** É a métrica que diz quantas vezes o
+   * caminho de mover encostou no deadlock em produção — e o DEF-023 existiu
+   * porque ninguém tinha esse número quando o `40P01` apareceu.
+   */
+  private _retentativasDeMover = 0;
+
+  get retentativasDeMover(): number {
+    return this._retentativasDeMover;
+  }
+
+  async moveBooking(
+    companyId: string,
+    id: string,
+    dto: MoveBookingDto,
+    autorId: string,
+  ) {
+    if (
+      dto.data === undefined &&
+      dto.horaInicio === undefined &&
+      dto.horaFim === undefined &&
+      dto.quadraId === undefined
+    ) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'NADA_A_MOVER',
+        message: 'Informe ao menos um de: data, horaInicio, horaFim, quadraId.',
+      });
+    }
+
+    // O destino e composto DENTRO da transacao, a partir da linha travada.
+    // O `catch` precisa dele para perguntar ao banco "quem ganhou?" — e essa
+    // pergunta e a diferenca entre responder 409 e responder 500.
+    let destinoDaTentativa:
+      | { quadraId: string; data: Date; horaInicio: Date; horaFim: Date }
+      | undefined;
+
+    for (let tentativa = 1; ; tentativa += 1) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          // `FOR UPDATE` não é expressável no query builder do Prisma —
+          // raw necessária, mesmo idioma de `classes.service.ts:335`.
+          const linhas = await tx.$queryRaw<
+            {
+              id: string;
+              quadra_id: string;
+              data: Date;
+              hora_inicio: Date;
+              hora_fim: Date;
+              origem_tipo: 'AVULSO' | 'TURMA';
+              status_pagamento: string;
+            }[]
+          >`
+            SELECT id, quadra_id, data, hora_inicio, hora_fim,
+                   origem_tipo, status_pagamento
+              FROM ocupacoes_quadra
+             WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
+             FOR UPDATE
+          `;
+          const atual = linhas[0];
+          if (!atual) throw new NotFoundException();
+
+          this.assertOcupacaoAvulsa(atual.origem_tipo);
+
+          if (atual.status_pagamento === 'cancelado') {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'OCUPACAO_CANCELADA',
+              message: 'Reserva cancelada não pode ser movida.',
+            });
+          }
+
+          // D5/AC-010b — o corte é pelo INÍCIO da reserva de origem, o mesmo
+          // predicado do `cancelBooking` (SPEC-042/INV-094). Usar outro aqui
+          // criaria duas regras temporais divergentes para o mesmo fato.
+          if (aulaJaComecou(atual.data, atual.hora_inicio)) {
+            throw new ConflictException({
+              statusCode: 409,
+              code: 'PRAZO_DE_CANCELAMENTO',
+              message: 'Esta reserva já começou e não pode mais ser movida.',
+            });
+          }
+
+          const destino = {
+            quadraId: dto.quadraId ?? atual.quadra_id,
+            data: dto.data ? parseDateOnly(dto.data) : atual.data,
+            horaInicio: dto.horaInicio
+              ? parseTimeOnly(dto.horaInicio)
+              : atual.hora_inicio,
+            horaFim: dto.horaFim ? parseTimeOnly(dto.horaFim) : atual.hora_fim,
+          };
+
+          if (destino.horaFim <= destino.horaInicio) {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'INTERVALO_INVALIDO',
+              message: 'horaFim deve ser maior que horaInicio.',
+            });
+          }
+          destinoDaTentativa = destino;
+
+          // **Quadra da empresa E ATIVA — agora o código faz o que a frase
+          // sempre prometeu.** A FK composta impede empresa alheia; ela não
+          // impede quadra inativa, e `buscarQuadraDaEmpresa` não filtrava
+          // `status`: mover para uma quadra inativa respondia 200 e sumia com
+          // a reserva da agenda, que não mostra quadra inativa.
+          //
+          // **E as duas leituras usam `tx`, não `this.prisma`.** Fora da
+          // transação elas pegam OUTRA conexão do pool enquanto esta segura o
+          // `FOR UPDATE` — com N movimentações concorrentes e pool de N, cada
+          // uma espera por uma conexão que só sai quando outra terminar, e
+          // ninguém termina. Medido: com `connection_limit=2`, seis
+          // movimentações para destinos DISTINTOS davam 0/6 em ~5,1 s
+          // (`P2024`); com `tx`, 6/6 em 114 ms. O parâmetro `tx?` de
+          // `resolverParaData` existia para isto desde sempre e nenhum
+          // chamador usava.
+          const quadraDestino = await tx.quadra.findFirst({
+            where: { id: destino.quadraId, companyId, status: 'ativa' },
+          });
+          if (!quadraDestino) throw new NotFoundException();
+
+          const horarioDoDia = await this.horarios.resolverParaData(
+            companyId,
+            destino.quadraId,
+            destino.data,
+            tx,
+          );
+          if (
+            !this.horarios.dentroDoExpediente(
+              horarioDoDia,
+              destino.horaInicio,
+              destino.horaFim,
+            )
+          ) {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'FORA_DO_EXPEDIENTE',
+              message:
+                'O horário de destino está fora do funcionamento da quadra.',
+            });
+          }
+
+          // A própria linha não conflita consigo mesma.
+          const conflito = await tx.ocupacaoQuadra.findFirst({
+            where: {
+              companyId,
+              quadraId: destino.quadraId,
+              data: destino.data,
+              id: { not: id },
+              statusPagamento: { not: 'cancelado' },
+              horaInicio: { lt: destino.horaFim },
+              horaFim: { gt: destino.horaInicio },
+            },
+          });
+          if (conflito) {
+            throw new ConflictException({
+              message: 'Conflito de horário no destino (INV-001)',
+              conflictWith: this.toConflictWith(conflito),
+            });
+          }
+
+          const transicaoId = novaTransicao();
+          const registrador = new RegistradorDeAcao(
+            tx,
+            companyId,
+            autorId,
+            'reserva_movida',
+          );
+          const movida = await tx.ocupacaoQuadra.update({
+            where: { id },
+            // `alunoId`, `valor` e `statusPagamento` ficam de fora **de
+            // propósito** (REQ-002): mover não é recontratar.
+            data: {
+              quadraId: destino.quadraId,
+              data: destino.data,
+              horaInicio: destino.horaInicio,
+              horaFim: destino.horaFim,
+              transicaoId,
+            },
+          });
+          await registrador.registrar(id, 'movida', transicaoId);
+          return this.toOcupacaoResponse(movida);
+        });
+      } catch (error) {
+        if (ehCorridaPerdida(error)) {
+          // **Mesma disciplina do `createBooking` (linhas 573-612), e ela
+          // faltava aqui.** Corrida perdida com o conflito JA VISIVEL e 409
+          // em QUALQUER tentativa: alguem ganhou o slot, e mandar o gestor
+          // investigar um 500 seria mentir sobre o que aconteceu.
+          //
+          // O FIT-022 pegou isto na PRIMEIRA execucao em CI, e o caminho e o
+          // do deadlock: no `40P01` o Postgres aborta uma das transacoes
+          // ANTES de a outra commitar. A 2a tentativa entao passa no
+          // pre-check (o vencedor ainda nao esta la), esbarra na `EXCLUDE`
+          // quando ele commita, e — sem esta traducao — o `23P01` subia cru
+          // como 500. Localmente o escalonador nao produzia o ciclo e o
+          // teste passava; no CI, produziu.
+          if (destinoDaTentativa) {
+            const conflito = await this.findConflito(
+              companyId,
+              destinoDaTentativa.quadraId,
+              destinoDaTentativa.data,
+              destinoDaTentativa.horaInicio,
+              destinoDaTentativa.horaFim,
+              id,
+            );
+            if (conflito) {
+              throw new ConflictException({
+                message: 'Conflito de horário no destino (INV-001)',
+                conflictWith: conflito,
+              });
+            }
+          }
+          // Corrida perdida e NENHUM conflito visivel: e o deadlock. Uma
+          // retentativa, como antes.
+          if (tentativa === 1) {
+            this._retentativasDeMover += 1;
+            continue;
+          }
+        }
+        throw error;
+      }
+    }
+  }
+
   private assertOcupacaoAvulsa(origemTipo: 'AVULSO' | 'TURMA') {
     if (origemTipo === 'TURMA') {
       throw new UnprocessableEntityException({
@@ -1234,12 +1535,17 @@ export class CourtsService {
     data: Date,
     horaInicio: Date,
     horaFim: Date,
+    // `moveBooking` precisa excluir a PROPRIA linha: ela ainda ocupa a
+    // origem, e sem isto toda mudanca de horario acharia "conflito" consigo
+    // mesma. `createBooking` nao passa nada, e nada muda para ele.
+    excetoId?: string,
   ): Promise<ConflitoDetectado | null> {
     const conflito = await this.prisma.ocupacaoQuadra.findFirst({
       where: {
         companyId,
         quadraId,
         data,
+        ...(excetoId ? { id: { not: excetoId } } : {}),
         statusPagamento: { not: 'cancelado' },
         horaInicio: { lt: horaFim },
         horaFim: { gt: horaInicio },

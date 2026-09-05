@@ -6,10 +6,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { AgendaService } from './agenda.service';
 import {
+  DiaComItensResponseDto,
   DiaDaAgendaResponseDto,
   ItemDaAgendaResponseDto,
 } from './dto/booking-response.dto';
-import { AgendaQueryDto } from './dto/agenda-query.dto';
+import { AgendaQueryDto, SemanaDaAgendaQueryDto } from './dto/agenda-query.dto';
 import { DataDaAgendaParamDto } from './dto/data-do-calendario.dto';
 import { mesCorrenteNoFusoDoClube } from './date-time.util';
 
@@ -39,6 +40,24 @@ export class AgendaController {
     // decisão que ninguém tomou).
     const mes = query.mes ?? mesCorrenteNoFusoDoClube();
     return this.agenda.resumoDoMes(user.companyId as string, mes);
+  }
+
+  /**
+   * SPEC-034/CON-034.1 — os sete dias, com o detalhe de cada um.
+   *
+   * **DECLARADA ANTES DE `@Get(':data')`, E ISSO É O MECANISMO (D9).** O Nest
+   * casa as rotas na ordem de declaração: com `:data` antes, `semana` seria
+   * lido como uma data, cairia no `DataDoCalendarioConstraint` e voltaria
+   * `422` — uma rota inexistente que responde erro de validação. O AC-003
+   * prova isto, e a sabotagem dele é justamente trocar as duas de lugar.
+   */
+  @Get('semana')
+  @ApiOkResponse({ type: [DiaComItensResponseDto] })
+  semana(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: SemanaDaAgendaQueryDto,
+  ) {
+    return this.agenda.semanaDe(user.companyId as string, query.inicio);
   }
 
   /**

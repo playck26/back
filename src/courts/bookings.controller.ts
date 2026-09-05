@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Headers,
   Param,
+  Patch,
   Post,
   Query,
   UnprocessableEntityException,
@@ -29,10 +30,12 @@ import { AgendaService } from './agenda.service';
 import { EventoDeOcupacaoResponseDto } from './dto/evento-de-ocupacao-response.dto';
 import {
   OcupacaoPaginadaResponseDto,
+  OcupacaoResponseDto,
   ReservasCriadasResponseDto,
 } from './dto/booking-response.dto';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { MoveBookingDto } from './dto/move-booking.dto';
 
 // CON-005.4/005.5/005.6 (SPEC-005): `company_admin` reserva/lista/cancela
 // para qualquer aluno da empresa (comportamento original de SPEC-004);
@@ -97,6 +100,29 @@ export class BookingsController {
       // Só para aluno: o gestor recebe `canceladaPorMim: null` por decisão —
       // a pergunta dele é "quem foi?", e a agenda já responde.
       user.role === 'aluno' ? user.sub : undefined,
+    );
+  }
+
+  /**
+   * SPEC-034/CON-034.2 — **mover** uma reserva avulsa.
+   *
+   * `company_admin` apenas (D4): mover é corrigir lançamento, trabalho de
+   * operação. O aluno com reserva errada cancela e refaz — e é por isso que
+   * não há `alunoIdScope` aqui.
+   */
+  @Patch(':id')
+  @ApiOkResponse({ type: OcupacaoResponseDto })
+  @Roles('company_admin')
+  move(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Body() dto: MoveBookingDto,
+  ) {
+    return this.courtsService.moveBooking(
+      user.companyId as string,
+      id,
+      dto,
+      user.sub,
     );
   }
 

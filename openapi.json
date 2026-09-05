@@ -2199,6 +2199,51 @@
         ]
       }
     },
+    "/api/v1/bookings/{id}": {
+      "patch": {
+        "operationId": "BookingsController_move",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveBookingDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcupacaoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "bookings"
+        ]
+      }
+    },
     "/api/v1/bookings/{id}/cancel": {
       "post": {
         "operationId": "BookingsController_cancel",
@@ -2349,6 +2394,46 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/DiaDaAgendaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "agenda"
+        ]
+      }
+    },
+    "/api/v1/agenda/semana": {
+      "get": {
+        "operationId": "AgendaController_semana",
+        "parameters": [
+          {
+            "name": "inicio",
+            "required": true,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-06",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DiaComItensResponseDto"
                   }
                 }
               }
@@ -3083,6 +3168,52 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
+    "/api/v1/classes/{turmaId}/ocorrencias/{ocupacaoId}/cancel": {
+      "post": {
+        "operationId": "ClassesController_cancelarOcorrencia",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelarOcorrenciaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
           }
         },
         "security": [
@@ -6176,6 +6307,28 @@
           "referenciaTemporal"
         ]
       },
+      "MoveBookingDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "example": "2026-09-10",
+            "description": "AAAA-MM-DD"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "AutorDoEventoDto": {
         "type": "object",
         "properties": {
@@ -6201,6 +6354,7 @@
             "enum": [
               "criada",
               "cancelada",
+              "movida",
               "reativada",
               "pagamento_confirmado"
             ],
@@ -6215,6 +6369,8 @@
             "enum": [
               "reserva_criada",
               "reserva_cancelada",
+              "reserva_movida",
+              "aula_cancelada",
               "pagamento_confirmado",
               "turma_criada",
               "turma_horario_editado",
@@ -6313,6 +6469,10 @@
             "type": "string",
             "format": "uuid"
           },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
           "quadraNome": {
             "type": "string",
             "example": "Quadra 1"
@@ -6331,6 +6491,11 @@
               "AVULSO",
               "TURMA"
             ]
+          },
+          "origemTurmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
           },
           "responsavel": {
             "type": "string",
@@ -6362,15 +6527,40 @@
         },
         "required": [
           "id",
+          "quadraId",
           "quadraNome",
           "horaInicio",
           "horaFim",
           "origemTipo",
+          "origemTurmaId",
           "responsavel",
           "statusPagamento",
           "valor",
           "criadaPor",
           "canceladaPor"
+        ]
+      },
+      "DiaComItensResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "example": "2026-09-06"
+          },
+          "fechado": {
+            "type": "boolean"
+          },
+          "itens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemDaAgendaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "data",
+          "fechado",
+          "itens"
         ]
       },
       "ImagemDaQuadraResponseDto": {
@@ -6984,6 +7174,20 @@
           "status",
           "alunosAlocados",
           "alunos"
+        ]
+      },
+      "CancelarOcorrenciaDto": {
+        "type": "object",
+        "properties": {
+          "motivo": {
+            "type": "string",
+            "example": "Quadra interditada para manutenção",
+            "minLength": 3,
+            "maxLength": 280
+          }
+        },
+        "required": [
+          "motivo"
         ]
       },
       "UpdateClassDto": {

@@ -175,9 +175,39 @@ export class DiaDaAgendaResponseDto {
   fechado!: boolean;
 }
 
+/**
+ * SPEC-034/CON-034.1 — um dia da semana, com o detalhe dentro.
+ *
+ * `total`/`pendentes` do `DiaDaAgendaResponseDto` NÃO entram: quem tem os
+ * itens conta sozinho, e dois caminhos para o mesmo número é como as
+ * contagens deste projeto passaram a divergir.
+ */
+export class DiaComItensResponseDto {
+  @ApiProperty({ type: String, example: '2026-09-06' })
+  data!: string;
+
+  @ApiProperty({ type: Boolean })
+  fechado!: boolean;
+
+  @ApiProperty({ type: () => [ItemDaAgendaResponseDto] })
+  itens!: ItemDaAgendaResponseDto[];
+}
+
 export class ItemDaAgendaResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
+
+  /**
+   * SPEC-034 — **a quadra por ID, porque `quadraNome` nao identifica quadra.**
+   *
+   * `quadras.nome` nao tem `@unique` no schema, e nada impede duas quadras da
+   * mesma empresa com o mesmo nome. A grade da semana filtrava por
+   * `quadraNome` porque era o unico campo que tinha, e a validacao cruzada
+   * reproduziu o efeito: escolher a quadra A mostrava reserva da quadra B
+   * homonima. O nome continua aqui, para EXIBIR; quem IDENTIFICA e este.
+   */
+  @ApiProperty({ type: String, format: 'uuid' })
+  quadraId!: string;
 
   @ApiProperty({ type: String, example: 'Quadra 1' })
   quadraNome!: string;
@@ -190,6 +220,20 @@ export class ItemDaAgendaResponseDto {
 
   @ApiProperty({ type: String, enum: ['AVULSO', 'TURMA'] })
   origemTipo!: 'AVULSO' | 'TURMA';
+
+  /**
+   * SPEC-034 — a turma de origem, quando `origemTipo` e `TURMA`.
+   *
+   * **Entrou porque a rota de cancelar ocorrencia precisa dela na URL**
+   * (`/classes/:turmaId/ocorrencias/:ocupacaoId/cancel`), e o item da agenda
+   * nao a carregava: a tela sabia QUE era uma aula e nao DE QUAL turma.
+   * Achado montando a TASK-008 -- e o tipo de buraco que so aparece quando
+   * alguem tenta usar o contrato.
+   *
+   * Nulo em ocupacao `AVULSO`, e e assim que a tela decide qual acao oferecer.
+   */
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  origemTurmaId!: string | null;
 
   /**
    * SPEC-012/AC-004 — **a turma, quando a ocupação é de turma; o aluno,

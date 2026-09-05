@@ -35,6 +35,7 @@ import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { AvaliacoesDaTurmaResponseDto } from './dto/avaliacao-de-aula.dto';
+import { CancelarOcorrenciaDto } from './dto/cancelar-ocorrencia.dto';
 import { ClassesService } from './classes.service';
 import { PresencaService } from './presenca.service';
 import {
@@ -203,6 +204,33 @@ export class ClassesController {
     @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.classesService.findOne(user.companyId as string, id);
+  }
+
+  /**
+   * SPEC-034/CON-034.3 — cancelar **uma** ocorrência de turma.
+   *
+   * `company_admin` apenas (D4). O aluno cancelar a própria participação numa
+   * aula continua fora (GAP-008): outro ator, outra regra.
+   *
+   * `204` e não `200`: não há corpo útil — a ocorrência sai da agenda, e é
+   * isso que o cliente vai reler.
+   */
+  @Post(':turmaId/ocorrencias/:ocupacaoId/cancel')
+  @ApiNoContentResponse()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  cancelarOcorrencia(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+    @Body() dto: CancelarOcorrenciaDto,
+  ) {
+    return this.classesService.cancelarOcorrencia(
+      user.companyId as string,
+      turmaId,
+      ocupacaoId,
+      dto.motivo,
+      user.sub,
+    );
   }
 
   @Patch(':id')

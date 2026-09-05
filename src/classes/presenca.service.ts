@@ -788,11 +788,23 @@ export class PresencaService {
       //
       // Continua travando SÓ `turmas`: raiz única é o que garante ordem de
       // aquisição única (INV-029) e, portanto, ausência de deadlock. E não
-      // faz falta travar a ocorrência — o único caminho que cancela
-      // ocorrência de TURMA é `cancelFutureClassOccupancies`, chamado de
-      // dentro do `ClassesService.update`, que trava esta mesma linha
-      // antes. Os outros dois (`cancelBooking`, `updatePaymentStatus`)
-      // recusam ocorrência de turma com `OCUPACAO_DE_TURMA`.
+      // faz falta travar a ocorrência, porque **todo caminho que cancela
+      // ocorrência de TURMA passa por este mesmo lock** — são DOIS, desde a
+      // SPEC-034:
+      //
+      //   1. `cancelFutureClassOccupancies`, chamado de dentro do
+      //      `ClassesService.update`, que trava esta linha antes;
+      //   2. `ClassesService.cancelarOcorrencia` (SPEC-034/TASK-004, D12),
+      //      que **começa** por `turmas FOR UPDATE` exatamente para manter
+      //      esta afirmação verdadeira.
+      //
+      // Os outros dois escritores de `ocupacoes_quadra` (`cancelBooking`,
+      // `updatePaymentStatus`) recusam ocorrência de turma com
+      // `OCUPACAO_DE_TURMA`, e `moveBooking` (SPEC-034/TASK-003) faz o mesmo.
+      //
+      // **Quem escrever um quinto caminho tem de vir por aqui.** A validação
+      // cruzada da SPEC-034 v1 pegou exatamente isso: a spec criava uma rota
+      // nova sem o lock e tornava este parágrafo falso em silêncio.
 
       const ocupacao = await this.travarEValidarOcorrencia(
         tx,

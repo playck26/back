@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  aulaJaComecou,
   formatDateOnly,
   formatTimeOnly,
   gerarDatasSemanaisFuturas,
@@ -703,5 +704,102 @@ export class ClassesService {
         nivelNome: vinculo.aluno.nivel?.nome ?? null,
       })),
     };
+  }
+  /**
+   * SPEC-034/TASK-004 — cancelar UMA ocorrência de turma.
+   *
+   * ### Este é o QUARTO caminho que põe ocupação de `TURMA` em `cancelado`
+   *
+   * `presenca.service.ts` afirma, num comentário, que travar só `turmas`
+   * basta **porque** os caminhos são três e todos passam por esse lock. Este
+   * método é o quarto, e é por isso que ele **começa** por
+   * `turmas FOR UPDATE` (D12) — sem isso a afirmação vira falsa e
+   * `salvarChamada` passa a poder gravar chamada numa aula recém-cancelada.
+   *
+   * ### A ordem dentro da transação
+   *
+   * **1. Trava a turma.** Nível 1 do INV-029, a raiz única.
+   *
+   * **2. Relê a ocorrência em statement NOVO**, com o lock na mão — é o
+   * padrão que `presenca.service.ts:789` documenta com o caso do
+   * `bloq9-snapshot`: um `JOIN` anterior ao lock devolveu
+   * `pendente_pagamento` com o banco já em `cancelado`.
+   *
+   * **3. Idempotência ANTES do corte temporal.** Cancelar o que já está
+   * cancelado devolve sucesso sem escrever — inclusive depois de a aula ter
+   * começado. Uma retentativa de rede de um cancelamento que deu certo não
+   * pode virar erro porque o relógio andou; é o mesmo raciocínio que o
+   * `cancelBooking` já documenta.
+   *
+   * **4. Aula iniciada não se cancela** (D11). Cancelar é prospectivo: diz
+   * que a aula **não vai** acontecer. Depois do início o assunto é
+   * retrospectivo e tem dono — o `nao-houve` da SPEC-030, do professor.
+   * Sem esse corte, cancelar uma aula de ontem com chamada e avaliação
+   * lançadas seria reescrever o passado, liberando a quadra e deixando
+   * presença e nota valendo (`LIM-034e`).
+   */
+  async cancelarOcorrencia(
+    companyId: string,
+    turmaId: string,
+    ocupacaoId: string,
+    motivo: string,
+    autorId: string,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // Raiz de lock única (INV-029). Raw porque `FOR UPDATE` não é
+      // expressável no query builder do Prisma.
+      const turmas = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM turmas
+        WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+        FOR UPDATE
+      `;
+      if (turmas.length === 0) throw new NotFoundException();
+
+      // Statement novo, com o lock na mão. Os QUATRO predicados importam:
+      // sem `origemTurmaId`, a URL da turma A alcançaria a ocorrência da B.
+      const ocupacao = await tx.ocupacaoQuadra.findFirst({
+        where: {
+          id: ocupacaoId,
+          companyId,
+          origemTipo: 'TURMA',
+          origemTurmaId: turmaId,
+        },
+        select: {
+          id: true,
+          data: true,
+          horaInicio: true,
+          statusPagamento: true,
+        },
+      });
+      if (!ocupacao) throw new NotFoundException();
+
+      // Idempotente, e ANTES do corte de propósito.
+      if (ocupacao.statusPagamento === 'cancelado') return;
+
+      if (aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'PRAZO_DE_CANCELAMENTO',
+          message:
+            'Esta aula já começou. Para registrar que ela não aconteceu, use a chamada.',
+        });
+      }
+
+      // Preguiçoso (SPEC-032): a saída idempotente acima não grava ação
+      // nenhuma, e é essa a razão de o registrador nascer aqui embaixo.
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        'aula_cancelada',
+        motivo,
+      );
+      await this.courtsService.cancelOneClassOccurrence(
+        tx,
+        companyId,
+        ocupacao.id,
+        registrador,
+      );
+    });
   }
 }
