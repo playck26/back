@@ -1075,12 +1075,59 @@ export class CourtsService {
   ): Promise<void> {
     const agora = new Date();
     await this.prisma.$transaction(async (tx) => {
-      const ocupacao = await tx.ocupacaoQuadra.findFirst({
-        where: { id, companyId },
-      });
-      if (!ocupacao) {
+      /**
+       * **A leitura TRAVA a linha, e isso foi defeito reproduzido.**
+       *
+       * Até 2026-09-05 este `SELECT` era um `findFirst` sem lock, e a
+       * validação cruzada da SPEC-031 montou a corrida em PostgreSQL 18.4,
+       * com duas conexões:
+       *
+       * 1. `cancelBooking` lê uma reserva **futura**, sem travá-la;
+       * 2. `moveBooking` move a mesma reserva para uma data **passada**, e
+       *    commita — ele sempre travou (`courts.service.ts`, `moveBooking`);
+       * 3. o cancelamento decide com o horário **velho**, passa no corte
+       *    temporal e escreve. **Uma reserva já consumida termina cancelada.**
+       *
+       * Em execução sequencial nada disso acontece: mover primeiro impede
+       * cancelar, cancelar primeiro impede mover. **É a corrida que abre a
+       * janela**, e por isso dois controles sequenciais passavam enquanto o
+       * defeito existia — ler, decidir e escrever precisavam ser um ato só.
+       *
+       * `FOR UPDATE` e não `findFirst`: o lock não é expressável no query
+       * builder do Prisma, mesmo idioma de `moveBooking` e de
+       * `classes.service.ts:335`.
+       */
+      const travadas = await tx.$queryRaw<
+        {
+          id: string;
+          company_id: string;
+          aluno_id: string | null;
+          origem_tipo: 'AVULSO' | 'TURMA';
+          status_pagamento: StatusPagamento;
+          data: Date;
+          hora_inicio: Date;
+        }[]
+      >`
+        SELECT id, company_id, aluno_id, origem_tipo, status_pagamento,
+               data, hora_inicio
+          FROM ocupacoes_quadra
+         WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
+         FOR UPDATE
+      `;
+      const bruta = travadas[0];
+      if (!bruta) {
         throw new NotFoundException();
       }
+      // Mesma forma que o resto do método já esperava, agora vinda da linha
+      // travada em vez de uma leitura solta.
+      const ocupacao = {
+        id: bruta.id,
+        alunoId: bruta.aluno_id,
+        origemTipo: bruta.origem_tipo,
+        statusPagamento: bruta.status_pagamento,
+        data: bruta.data,
+        horaInicio: bruta.hora_inicio,
+      };
       if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
         throw new ForbiddenException();
       }
@@ -1103,41 +1150,52 @@ export class CourtsService {
       }
 
       /**
-       * SPEC-042/INV-094 — **o aluno não cancela o que já começou.**
+       * **Ninguém cancela o que já começou — e "ninguém" passou a incluir o
+       * gestor.**
        *
-       * Decisão do Israel (D-I5): o horário foi consumido, a quadra ficou
-       * ocupada, e cancelar depois é apagar uma cobrança legítima. O gestor
-       * continua podendo — ele precisa corrigir lançamento errado, e é por
-       * isso que a guarda olha `alunoIdScope`, que só existe para aluno.
+       * ## O corte, e de quem ele vale
+       *
+       * SPEC-042/INV-094, decisão do Israel (D-I5): o horário foi consumido,
+       * a quadra ficou ocupada, e cancelar depois é apagar uma cobrança
+       * legítima. **Até a SPEC-031 isso valia só para o aluno** — a guarda
+       * era `if (alunoIdScope && ...)`, e `alunoIdScope` é `undefined` para o
+       * gestor: `undefined` funcionava como papel administrativo, **por
+       * omissão e sem nome**.
+       *
+       * A SPEC-031/D17 revoga a metade que dizia *"o gestor continua podendo,
+       * ele precisa corrigir lançamento errado"*. O papel virou valor de
+       * entrada, e o gestor entra na política com `SEM_PRAZO`: herda o corte
+       * de `minutos <= 0` (D5b) **sem** herdar a antecedência do clube
+       * (AC-013). Corrigir lançamento errado passa a ter outro caminho, e não
+       * este — com a SPEC-033 vindo, cancelar quadra já usada e receber o
+       * dinheiro de volta é abuso.
+       *
+       * É a única mudança de comportamento que esta spec impõe a quem nunca
+       * configurou nada (AC-003).
+       *
+       * ## Duas coisas que a posição desta guarda carrega
        *
        * **Depois da saída idempotente, de propósito.** Uma retentativa de
        * rede de um cancelamento que já deu certo tem de continuar devolvendo
        * sucesso; posta antes, ela passaria a devolver erro pelo simples fato
        * de o horário ter chegado nesse meio-tempo.
        *
-       * O corte é pelo **início**, não pelo fim — diferente do corte das abas
-       * (SPEC-041/D-I4), e não é incoerência: lá a pergunta é "onde isto
-       * aparece", aqui é "ainda dá para desfazer". Uma reserva das 19h às 21h
-       * consultada às 20h continua na aba `Reservas` **e** já não é
-       * cancelável, porque a pessoa está na quadra.
-       */
-      /**
-       * SPEC-031/D17 — **e agora o gestor também não cancela o que já
-       * começou.**
+       * **E depois da linha TRAVADA.** Decidir sobre uma leitura sem lock foi
+       * defeito reproduzido (ver o `FOR UPDATE` acima e o FIT-024): o
+       * `moveBooking` empurrava a reserva para o passado entre a leitura e a
+       * escrita, e o cancelamento decidia com o horário velho.
        *
-       * A guarda anterior era `if (alunoIdScope && ...)`, e `alunoIdScope` é
-       * `undefined` para o gestor: **`undefined` funcionava como papel
-       * administrativo, por omissão e sem nome.** O papel virou valor de
-       * entrada, e o gestor entra na política com `SEM_PRAZO` — herdando o
-       * corte de `minutos <= 0` (D5b) sem herdar a antecedência do clube.
+       * ## O corte é pelo INÍCIO, não pelo fim
        *
-       * **É a única mudança de comportamento que esta spec impõe a quem nunca
-       * configurou nada** (AC-003), e é deliberada: com a SPEC-033 vindo,
-       * cancelar uma quadra que já foi usada e receber o dinheiro de volta é
-       * abuso.
+       * Diferente do corte das abas (SPEC-041/D-I4), e não é incoerência: lá
+       * a pergunta é "onde isto aparece", aqui é "ainda dá para desfazer".
+       * Uma reserva das 19h às 21h consultada às 20h continua na aba
+       * `Reservas` **e** já não é cancelável, porque a pessoa está na quadra.
        *
-       * O código sai de `RESERVA_JA_COMECOU` para `PRAZO_DE_CANCELAMENTO`
-       * (AC-007/AC-010b). Não precisa de passo de rollout: `grep` nos três
+       * ## O código de erro
+       *
+       * `RESERVA_JA_COMECOU` deu lugar a `PRAZO_DE_CANCELAMENTO`
+       * (AC-007/AC-010b). Não precisou de passo de rollout: `grep` nos três
        * frontends não acha o código antigo em lugar nenhum — só o `back` o
        * conhecia.
        */

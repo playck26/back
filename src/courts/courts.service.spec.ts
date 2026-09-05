@@ -77,6 +77,12 @@ function buildPrismaMock() {
     // `tx`. Padrao `null` = empresa sem prazo, que e o estado de hoje — e
     // nele so o corte de `minutos <= 0` (D5b) age.
     configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
+    // SPEC-031 — `cancelBooking` passou a ler a ocupacao com
+    // `SELECT ... FOR UPDATE` (raw), depois de a validacao cruzada reproduzir
+    // a corrida com `moveBooking`. O duble **delega ao `findFirst`** para os
+    // testes continuarem armando um lugar so — mesmo desenho de
+    // `buildMocks` em `classes.service.spec.ts`.
+    $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   } as unknown as PrismaService;
 }
@@ -167,6 +173,33 @@ describe('CourtsService', () => {
     (prisma.$transaction as unknown as jest.Mock).mockImplementation(
       (cb: (tx: PrismaService) => unknown) => cb(prisma),
     );
+    // O raw devolve a MESMA linha que `findFirst` devolveria, em snake_case,
+    // dentro de um array — que e a forma do `SELECT ... FOR UPDATE`.
+    (prisma.$queryRaw as unknown as jest.Mock).mockImplementation(async () => {
+      const linha = (await (
+        prisma.ocupacaoQuadra.findFirst as unknown as jest.Mock
+      )()) as {
+        id: string;
+        alunoId: string | null;
+        origemTipo: string;
+        statusPagamento: string;
+        data: Date;
+        horaInicio: Date;
+      } | null;
+      return linha
+        ? [
+            {
+              id: linha.id,
+              company_id: 'c1',
+              aluno_id: linha.alunoId ?? null,
+              origem_tipo: linha.origemTipo,
+              status_pagamento: linha.statusPagamento,
+              data: linha.data,
+              hora_inicio: linha.horaInicio,
+            },
+          ]
+        : [];
+    });
     studentsService = buildStudentsMock();
     horarios = buildHorariosMock();
     // SPEC-018/TASK-005: o resolvedor de imagem entra como dublê. Estes
