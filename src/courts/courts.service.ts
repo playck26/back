@@ -15,6 +15,12 @@ import {
   RegistradorDeAcao,
 } from '../common/auditoria/registrador-de-acao';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import {
+  avaliarCancelamentoDeReserva,
+  type PapelDoAutor,
+} from '../company-settings/prazo-de-cancelamento';
+import { antecedenciaEmMinutos } from '../classes/ocorrencia-relevante';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -178,6 +184,8 @@ export class CourtsService {
     // caminhos de leitura chamam o mesmo `resolver()` em vez de repetirem a
     // conferência da chave — repetida, uma delas ficaria para trás.
     private readonly imagens: ImagemDaQuadraService,
+    // SPEC-031/D17: o segundo verbo do AC-013 passa pela mesma política.
+    private readonly operacao: ConfigOperacaoService,
   ) {}
 
   /**
@@ -1058,8 +1066,14 @@ export class CourtsService {
     companyId: string,
     id: string,
     autorId: string,
+    // SPEC-031/D17 — **obrigatório e ANTES do opcional**, de propósito: assim
+    // o `tsc --noEmit`, que já é gate do CI, recusa toda chamada que não o
+    // passe. `alunoIdScope` continua sendo escopo de autorização; ele deixa de
+    // ser, também, o papel.
+    papelDoAutor: PapelDoAutor,
     alunoIdScope?: string,
   ): Promise<void> {
+    const agora = new Date();
     await this.prisma.$transaction(async (tx) => {
       const ocupacao = await tx.ocupacaoQuadra.findFirst({
         where: { id, companyId },
@@ -1107,11 +1121,50 @@ export class CourtsService {
        * consultada às 20h continua na aba `Reservas` **e** já não é
        * cancelável, porque a pessoa está na quadra.
        */
-      if (alunoIdScope && aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+      /**
+       * SPEC-031/D17 — **e agora o gestor também não cancela o que já
+       * começou.**
+       *
+       * A guarda anterior era `if (alunoIdScope && ...)`, e `alunoIdScope` é
+       * `undefined` para o gestor: **`undefined` funcionava como papel
+       * administrativo, por omissão e sem nome.** O papel virou valor de
+       * entrada, e o gestor entra na política com `SEM_PRAZO` — herdando o
+       * corte de `minutos <= 0` (D5b) sem herdar a antecedência do clube.
+       *
+       * **É a única mudança de comportamento que esta spec impõe a quem nunca
+       * configurou nada** (AC-003), e é deliberada: com a SPEC-033 vindo,
+       * cancelar uma quadra que já foi usada e receber o dinheiro de volta é
+       * abuso.
+       *
+       * O código sai de `RESERVA_JA_COMECOU` para `PRAZO_DE_CANCELAMENTO`
+       * (AC-007/AC-010b). Não precisa de passo de rollout: `grep` nos três
+       * frontends não acha o código antigo em lugar nenhum — só o `back` o
+       * conhecia.
+       */
+      const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+      const veredicto = avaliarCancelamentoDeReserva({
+        papelDoAutor,
+        agora,
+        ocorrenciaRelevante: {
+          tipo: 'MINUTOS',
+          minutos: antecedenciaEmMinutos(
+            ocupacao.data,
+            ocupacao.horaInicio,
+            agora,
+          ),
+        },
+        // O prazo da RESERVA, não o da aula — são dois campos por decisão
+        // (REQ-001), e trocá-los faria o clube configurar um e ver o outro.
+        prazo: prazos.reserva,
+      });
+      if (!veredicto.permitido) {
         throw new ConflictException({
           statusCode: 409,
-          code: 'RESERVA_JA_COMECOU',
-          message: 'Esta reserva já começou e não pode mais ser cancelada.',
+          code: veredicto.code,
+          message:
+            prazos.reserva.regra === 'HORAS'
+              ? `Esta reserva exige ${prazos.reserva.horas}h de antecedência para cancelar.`
+              : 'Esta reserva já começou e não pode mais ser cancelada.',
         });
       }
 

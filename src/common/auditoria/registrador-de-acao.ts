@@ -89,6 +89,43 @@ export class RegistradorDeAcao {
   }
 
   /**
+   * SPEC-031/D21 — o efeito sobre uma **MATRÍCULA**, não sobre uma ocupação.
+   *
+   * `registrar` não serve aqui, e a razão não é de forma: remover um aluno de
+   * uma turma **não muda ocupação nenhuma**, então não há `ocupacaoId` honesto
+   * para preencher — e inventar um produziria auditoria semanticamente falsa,
+   * que é pior que auditoria ausente. Também não há `transicaoId`: ele existe
+   * para casar com `ocupacoes_quadra.transicao_id`, que a trigger
+   * `ocupacao_cancelada_exige_evento` confere no `COMMIT` (INV-064), e aqui
+   * não há ocupação para casar.
+   *
+   * A ação continua sendo criada **preguiçosamente**, pela mesma razão de
+   * `registrar`: gesto sem efeito não cria ação.
+   */
+  async registrarMatricula(turmaId: string, alunoId: string): Promise<void> {
+    this.acaoId ??= (
+      await this.tx.acaoAdministrativa.create({
+        data: {
+          companyId: this.companyId,
+          tipo: this.tipo,
+          autorId: this.autorId,
+          motivo: this.motivo ?? null,
+        },
+        select: { id: true },
+      })
+    ).id;
+
+    await this.tx.eventoDeMatricula.create({
+      data: {
+        companyId: this.companyId,
+        acaoId: this.acaoId,
+        turmaId,
+        alunoId,
+      },
+    });
+  }
+
+  /**
    * N eventos em **uma** instrução, para os caminhos de turma.
    *
    * **Não é otimização — é orçamento.** O DEF-013 existe porque a transação

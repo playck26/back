@@ -24,6 +24,7 @@ import { HorarioFuncionamentoService } from '../../src/courts/horario-funcioname
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 
 jest.setTimeout(180_000);
 
@@ -63,6 +64,7 @@ function servico(db: PrismaClient): CourtsService {
         throw new Error('moveBooking nao deve resolver imagem de quadra');
       },
     } as unknown as ImagemDaQuadraService,
+    new ConfigOperacaoService(db as unknown as PrismaService),
   );
 }
 

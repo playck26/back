@@ -3,6 +3,7 @@ import { TeachersService } from '../people/teachers.service';
 import { CourtsService } from '../courts/courts.service';
 import { CompaniesService } from '../companies/companies.service';
 import { COLUNAS_DE_MIDIA } from './colunas-de-midia';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 
 /**
  * SPEC-018/TASK-008 — **INV-041: `inativo` nunca enfileira exclusão de
@@ -166,6 +167,7 @@ describe('INV-041 — inativar preserva a mídia (AC-012)', () => {
       {} as never,
       {} as never,
       imagens as never,
+      new ConfigOperacaoService(prisma as never),
     );
 
     await service.update('c1', 'q1', { status: 'inativa' } as never);

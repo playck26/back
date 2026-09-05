@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CourtsService } from './courts.service';
 import { plainToInstance } from 'class-transformer';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 
 // TEST-005 (SPEC-004): unit tests de MOD-005 com Prisma mockado. FIT-001
 // (concorrência real, INV-001) exige banco vivo — validado à parte via
@@ -72,6 +73,10 @@ function buildPrismaMock() {
     eventoDeOcupacao: {
       create: jest.fn(),
     },
+    // SPEC-031/D17: `cancelBooking` passou a ler a configuracao pelo mesmo
+    // `tx`. Padrao `null` = empresa sem prazo, que e o estado de hoje — e
+    // nele so o corte de `minutos <= 0` (D5b) age.
+    configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(),
   } as unknown as PrismaService;
 }
@@ -171,7 +176,13 @@ describe('CourtsService', () => {
     imagens = {
       resolver: jest.fn(() => ({ imagemUrl: null })),
     } as unknown as ImagemDaQuadraService;
-    service = new CourtsService(prisma, studentsService, horarios, imagens);
+    service = new CourtsService(
+      prisma,
+      studentsService,
+      horarios,
+      imagens,
+      new ConfigOperacaoService(prisma),
+    );
   });
 
   describe('create/list/update', () => {
@@ -1392,7 +1403,7 @@ describe('CourtsService', () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        service.cancelBooking('c1', 'o1', 'autor-1'),
+        service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -1404,7 +1415,7 @@ describe('CourtsService', () => {
         statusPagamento: 'cancelado',
       });
 
-      await service.cancelBooking('c1', 'o1', 'autor-1');
+      await service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin');
 
       // Nem escrita de estado, nem rastro. Criar a acao ao ENTRAR no caso de
       // uso gravaria uma linha vazia a cada retentativa de rede — e a
@@ -1419,10 +1430,15 @@ describe('CourtsService', () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
+        // SPEC-031/D17: o corte temporal passou a valer para os DOIS papeis,
+        // entao a fixture precisa de horario. Antes, a guarda so rodava
+        // quando havia `alunoIdScope`, e o caminho do gestor nunca a tocava.
+        data: new Date('2099-01-01T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T10:00:00.000Z'),
       });
       (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
 
-      await service.cancelBooking('c1', 'o1', 'autor-1');
+      await service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin');
 
       expect(prisma.acaoAdministrativa.create).toHaveBeenCalledTimes(1);
       expect(prisma.eventoDeOcupacao.create).toHaveBeenCalledTimes(1);
@@ -1449,10 +1465,15 @@ describe('CourtsService', () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
+        // SPEC-031/D17: o corte temporal passou a valer para os DOIS papeis,
+        // entao a fixture precisa de horario. Antes, a guarda so rodava
+        // quando havia `alunoIdScope`, e o caminho do gestor nunca a tocava.
+        data: new Date('2099-01-01T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T10:00:00.000Z'),
       });
       (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
 
-      await service.cancelBooking('c1', 'o1', 'autor-1');
+      await service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin');
 
       expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
         where: { id: 'o1' },
@@ -1473,7 +1494,7 @@ describe('CourtsService', () => {
       });
 
       await expect(
-        service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
+        service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
@@ -1494,7 +1515,7 @@ describe('CourtsService', () => {
       });
       (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
 
-      await service.cancelBooking('c1', 'o1', 'autor-1', 'a1');
+      await service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1');
 
       expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
         where: { id: 'o1' },
@@ -1543,9 +1564,9 @@ describe('CourtsService', () => {
         );
 
         await expect(
-          service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
+          service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1'),
         ).rejects.toMatchObject({
-          response: { code: 'RESERVA_JA_COMECOU' },
+          response: { code: 'PRAZO_DE_CANCELAMENTO' },
         });
         expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       });
@@ -1559,8 +1580,10 @@ describe('CourtsService', () => {
         );
 
         await expect(
-          service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
-        ).rejects.toMatchObject({ response: { code: 'RESERVA_JA_COMECOU' } });
+          service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1'),
+        ).rejects.toMatchObject({
+          response: { code: 'PRAZO_DE_CANCELAMENTO' },
+        });
       });
 
       it('ALUNO: reserva que ainda não começou hoje continua cancelável', async () => {
@@ -1568,20 +1591,60 @@ describe('CourtsService', () => {
           ocupacaoDe('2026-09-15', '21:00'),
         );
 
-        await service.cancelBooking('c1', 'o1', 'autor-1', 'a1');
+        await service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1');
 
         expect(prisma.ocupacaoQuadra.update).toHaveBeenCalled();
       });
 
-      it('GESTOR: cancela reserva passada — precisa corrigir lançamento errado', async () => {
+      /**
+       * **Este teste afirmava o contrário até a SPEC-031, e a mudança é
+       * deliberada.**
+       *
+       * A SPEC-042 deixava o gestor cancelar reserva já iniciada porque *"ele
+       * precisa corrigir lançamento errado"*. O D5b da SPEC-031 revoga isso, e
+       * a razão só passou a existir agora: **com a SPEC-033 vindo, cancelar
+       * uma quadra que já foi usada e receber o dinheiro de volta é abuso.**
+       *
+       * O gestor continua ignorando a ANTECEDÊNCIA mínima (AC-013) — o que
+       * ele deixa de ignorar é o INÍCIO. Corrigir lançamento errado passa a
+       * ter outro caminho, e não este.
+       */
+      it('GESTOR: SPEC-031/D5b — nao cancela mais reserva ja iniciada', async () => {
         (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
           ocupacaoDe('2026-09-14', '19:00'),
         );
 
-        // Sem `alunoIdScope` = é gestor. Mesmo sinal que a rota já usava para
-        // decidir escopo; nenhuma assinatura mudou.
-        await service.cancelBooking('c1', 'o1', 'autor-1');
+        await expect(
+          service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
+        ).rejects.toMatchObject({
+          response: { code: 'PRAZO_DE_CANCELAMENTO' },
+        });
+        expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+      });
 
+      /**
+       * AC-013 — e o gestor **continua** ignorando a antecedência mínima:
+       * com prazo de 2h configurado e a reserva daqui a 30 minutos, ele passa
+       * onde o aluno seria barrado.
+       */
+      it('AC-013: gestor ignora a antecedencia minima, e o aluno nao', async () => {
+        (
+          prisma.configOperacaoEmpresa.findUnique as jest.Mock
+        ).mockResolvedValue({
+          prazoCancelamentoAulaHoras: null,
+          prazoCancelamentoReservaHoras: 2,
+        });
+        (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(
+          ocupacaoDe('2026-09-15', '20:30'), // agora e 20:00 nesta suite
+        );
+
+        await expect(
+          service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1'),
+        ).rejects.toMatchObject({
+          response: { code: 'PRAZO_DE_CANCELAMENTO' },
+        });
+
+        await service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin');
         expect(prisma.ocupacaoQuadra.update).toHaveBeenCalled();
       });
 
@@ -1595,7 +1658,7 @@ describe('CourtsService', () => {
         });
 
         await expect(
-          service.cancelBooking('c1', 'o1', 'autor-1', 'a1'),
+          service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1'),
         ).resolves.toBeUndefined();
         expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       });
@@ -1849,7 +1912,7 @@ describe('CourtsService', () => {
       });
 
       await expect(
-        service.cancelBooking('c1', 'o1', 'autor-1'),
+        service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
@@ -1881,7 +1944,7 @@ describe('CourtsService', () => {
       });
 
       await expect(
-        service.cancelBooking('c1', 'o1', 'autor-1'),
+        service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
       ).resolves.toBeUndefined();
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });

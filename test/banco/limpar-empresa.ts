@@ -77,6 +77,10 @@ const OPCOES_DA_TRANSACAO = { maxWait: 15_000, timeout: 60_000 };
 const APPEND_ONLY: ReadonlySet<string> = new Set([
   'eventos_de_ocupacao',
   'acoes_administrativas',
+  // SPEC-031/D22/1: `eventos_de_matricula` e a TERCEIRA da familia. Estar em
+  // `TABELAS_DA_EMPRESA` NAO poe aqui — sao conjuntos diferentes, e foi o
+  // primeiro item da lista de quinze justamente porque isso ja passou batido.
+  'eventos_de_matricula',
 ]);
 
 /**
@@ -94,8 +98,16 @@ export const TABELAS_DA_EMPRESA = [
   // SPEC-032: ANTES de `ocupacoes_quadra` e de `acoes_administrativas` — o
   // evento aponta para as duas por FK composta, com RESTRICT nas duas.
   'eventos_de_ocupacao',
+  // SPEC-031/D18: ANTES dos TRES pais — `ocupacoes_quadra`, `alunos` e
+  // `empresas` —, porque as quatro FKs dela sao RESTRICT. Quatro rodadas de
+  // validacao acharam um pai faltando, um por vez, por listar em vez de
+  // ordenar.
+  'faltas_avisadas',
   'ocupacoes_quadra',
   'pedidos_reserva',
+  // SPEC-031/D21: ANTES de `turmas`, `alunos` e `acoes_administrativas` — tem
+  // FK RESTRICT para as tres.
+  'eventos_de_matricula',
   'turmas',
   'alunos',
   'professores',
@@ -107,6 +119,10 @@ export const TABELAS_DA_EMPRESA = [
   'niveis',
   'convites_aluno',
   'config_pagamento_empresa',
+  // SPEC-031/D22/1b: company-scoped com FK RESTRICT para `empresas`. Sem ela
+  // os TRES caminhos de limpeza recebem `23503` no `DELETE FROM empresas` —
+  // e ela nao estava em nenhum deles.
+  'config_operacao_empresa',
   // SPEC-024: ANTES de `usuarios` nao importa (a FK e para `empresas`), mas
   // antes da empresa importa — `contratos_da_empresa` tem ON DELETE RESTRICT
   // de proposito: apagar uma empresa nao pode levar embora o registro de qual

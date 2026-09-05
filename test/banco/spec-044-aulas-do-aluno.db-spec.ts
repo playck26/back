@@ -19,6 +19,7 @@ import type { CourtsService } from '../../src/courts/courts.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 
 jest.setTimeout(120_000);
 exigirBancoLocal();
@@ -40,6 +41,7 @@ const service = new ClassesService(
   db as unknown as PrismaService,
   {} as CourtsService,
   {} as StudentsService,
+  new ConfigOperacaoService(db as unknown as PrismaService),
 );
 
 /** `AAAA-MM-DD` em UTC, `dias` à frente — as ocorrências têm de ser futuras

@@ -36,6 +36,7 @@ import {
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { MoveBookingDto } from './dto/move-booking.dto';
+import type { PapelDoAutor } from '../company-settings/prazo-de-cancelamento';
 
 // CON-005.4/005.5/005.6 (SPEC-005): `company_admin` reserva/lista/cancela
 // para qualquer aluno da empresa (comportamento original de SPEC-004);
@@ -150,6 +151,9 @@ export class BookingsController {
       // gestor deixaria buraco onde a pergunta "quem cancelou isto?" e mais
       // provavel — quem le decide o papel pelo `role` do autor.
       user.sub,
+      // SPEC-031/D17: o papel é EXPLÍCITO. Antes, `alunoIdScope === undefined`
+      // funcionava como "é o gestor" — por omissão e sem nome.
+      user.role as PapelDoAutor,
       alunoIdScope,
     );
   }

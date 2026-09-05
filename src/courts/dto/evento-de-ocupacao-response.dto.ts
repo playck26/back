@@ -47,6 +47,12 @@ export class EventoDeOcupacaoResponseDto {
       'turma_horario_editado',
       'credito_lancado',
       'credito_retirado',
+      // SPEC-031/D21: o gestor tirou o aluno da turma. **Nunca aparece neste
+      // schema em resposta** — o alvo tecnico dele e uma MATRICULA
+      // (`eventos_de_matricula`), nao uma ocupacao. Entra porque o enum
+      // publicado tem de espelhar `TipoDeAcao` INTEIRO: foi o guarda do
+      // DEF-016 que apontou a divergencia no mesmo commit que criou o valor.
+      'turma_aluno_removido',
     ],
     description: 'O GESTO humano que provocou o evento.',
   })

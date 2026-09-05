@@ -1600,6 +1600,32 @@
         ]
       }
     },
+    "/api/v1/me/company/operacao": {
+      "get": {
+        "operationId": "MeCompanyController_operacaoDaMinhaEmpresa",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOperacaoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/me/company": {
       "get": {
         "operationId": "MeCompanyController_minhaEmpresa",
@@ -2355,6 +2381,66 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResultadoDeHorariosResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "company-settings"
+        ]
+      }
+    },
+    "/api/v1/company-settings/operacao": {
+      "get": {
+        "operationId": "CompanySettingsController_lerOperacao",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOperacaoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "company-settings"
+        ]
+      },
+      "put": {
+        "operationId": "CompanySettingsController_definirOperacao",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinirConfigOperacaoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOperacaoResponseDto"
                 }
               }
             }
@@ -5627,6 +5713,25 @@
           "logoUrl"
         ]
       },
+      "ConfigOperacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "prazoCancelamentoAulaHoras": {
+            "type": "number",
+            "nullable": true,
+            "example": 2
+          },
+          "prazoCancelamentoReservaHoras": {
+            "type": "number",
+            "nullable": true,
+            "example": 4
+          }
+        },
+        "required": [
+          "prazoCancelamentoAulaHoras",
+          "prazoCancelamentoReservaHoras"
+        ]
+      },
       "MinhaEmpresaResponseDto": {
         "type": "object",
         "properties": {
@@ -6375,7 +6480,8 @@
               "turma_criada",
               "turma_horario_editado",
               "credito_lancado",
-              "credito_retirado"
+              "credito_retirado",
+              "turma_aluno_removido"
             ],
             "description": "O GESTO humano que provocou o evento."
           },
@@ -6434,6 +6540,29 @@
         "required": [
           "padrao",
           "quadrasComHorarioProprio"
+        ]
+      },
+      "DefinirConfigOperacaoDto": {
+        "type": "object",
+        "properties": {
+          "prazoCancelamentoAulaHoras": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "example": 2,
+            "description": "Com quantas horas de antecedência o aluno pode sair de uma aula. `null` = sem antecedência mínima. **Não é \"sem limite\"**: depois que a aula começou ninguém cancela, nem com `null` (D5b)."
+          },
+          "prazoCancelamentoReservaHoras": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "example": 4,
+            "description": "Com quantas horas de antecedência o aluno pode cancelar uma reserva avulsa. `null` = sem antecedência mínima."
+          }
+        },
+        "required": [
+          "prazoCancelamentoAulaHoras",
+          "prazoCancelamentoReservaHoras"
         ]
       },
       "DiaDaAgendaResponseDto": {

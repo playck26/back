@@ -17,6 +17,8 @@ import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { PrismaService } from '../prisma/prisma.service';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { UpdateMinhaEmpresaDto } from './dto/update-minha-empresa.dto';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { ConfigOperacaoResponseDto } from '../company-settings/dto/config-operacao.dto';
 
 /**
  * DEF-003 — a empresa precisa saber o próprio `slug` para divulgar o link
@@ -39,7 +41,26 @@ export class MeCompanyController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logos: LogoDaEmpresaService,
+    private readonly operacao: ConfigOperacaoService,
   ) {}
+
+  /**
+   * SPEC-031/AC-004 — o aluno le o prazo por uma rota PROPRIA.
+   *
+   * **E o campo NAO entra em `GET /me/company` (AC-005).** Aquele 200 ja
+   * existe e e cacheado em modulo no cliente; um back antigo responderia 200
+   * sem o campo, e a tela nao teria como distinguir "empresa sem prazo" de
+   * "back ainda nao atualizado". Rota nova responde **404 no back antigo**, e
+   * e esse 404 que o rollout usa como sinal de versao.
+   */
+  @Get('operacao')
+  @ApiOkResponse({ type: ConfigOperacaoResponseDto })
+  @Roles('company_admin', 'aluno', 'professor')
+  operacaoDaMinhaEmpresa(
+    @CurrentUser() user: AccessTokenPayload,
+  ): Promise<ConfigOperacaoResponseDto> {
+    return this.operacao.ler(user.companyId as string);
+  }
 
   @Get()
   @ApiOkResponse({ type: MinhaEmpresaResponseDto })
