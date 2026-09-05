@@ -1013,6 +1013,35 @@ export class CourtsService {
     );
   }
 
+  /**
+   * SPEC-034/TASK-004 — cancelar **uma** ocorrência de turma.
+   *
+   * **Só a escrita. Quem decide é o `ClassesService`**, porque a decisão
+   * depende de segurar `turmas FOR UPDATE` — e `ocupacoes_quadra` é de
+   * MOD-005, que é quem escreve nela (`TARGET_ARCHITECTURE.md`, ownership).
+   * Mesma divisão de `cancelFutureClassOccupancies`, logo acima.
+   *
+   * A trigger `ocupacao_cancelada_exige_evento` cobre este caminho sem
+   * mudança: ela não filtra por `origem_tipo`, e já exige o evento com o
+   * `transicao_id` casado no `COMMIT` (INV-064).
+   */
+  async cancelOneClassOccurrence(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    ocupacaoId: string,
+    registrador: RegistradorDeAcao,
+  ): Promise<void> {
+    const transicaoId = novaTransicao();
+    await tx.ocupacaoQuadra.update({
+      where: { id: ocupacaoId },
+      // Só o status e a transição. `valor` é nulo em ocupação de turma
+      // (CHECK `ocupacoes_valor_por_origem`) e continua nulo — cancelar não
+      // é o momento de descobrir preço.
+      data: { statusPagamento: 'cancelado', transicaoId },
+    });
+    await registrador.registrar(ocupacaoId, 'cancelada', transicaoId);
+  }
+
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
   // cancelar reserva onde `aluno_id` bate com o próprio — "dono da reserva
   // ou company_admin" (API_CONTRACTS.md CON-005.6).

@@ -19,10 +19,17 @@ export class AutorDoEventoDto {
 
 export class EventoDeOcupacaoResponseDto {
   @ApiProperty({
-    enum: ['criada', 'cancelada', 'reativada', 'pagamento_confirmado'],
+    enum: [
+      'criada',
+      'cancelada',
+      'movida',
+      'reativada',
+      'pagamento_confirmado',
+    ],
     description: 'O efeito TÉCNICO sobre esta ocupação.',
   })
-  tipo!: 'criada' | 'cancelada' | 'reativada' | 'pagamento_confirmado';
+  tipo!:
+    'criada' | 'cancelada' | 'movida' | 'reativada' | 'pagamento_confirmado';
 
   @ApiProperty({ format: 'date-time' })
   em!: string;
@@ -31,6 +38,10 @@ export class EventoDeOcupacaoResponseDto {
     enum: [
       'reserva_criada',
       'reserva_cancelada',
+      // SPEC-034: mover uma reserva e cancelar uma ocorrência de turma são
+      // gestos próprios — nenhum dos dois cabia em `reserva_cancelada`.
+      'reserva_movida',
+      'aula_cancelada',
       'pagamento_confirmado',
       'turma_criada',
       'turma_horario_editado',

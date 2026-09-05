@@ -1,11 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsOptional,
-  IsString,
-  IsUUID,
-  Matches,
-  Validate,
-} from 'class-validator';
+import { IsOptional, IsString, Matches, Validate } from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 import { DataDoCalendarioConstraint } from './data-do-calendario.dto';
 
 const HORA_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -42,6 +37,6 @@ export class MoveBookingDto {
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
-  @IsUUID()
+  @UuidNoCorpo()
   quadraId?: string;
 }

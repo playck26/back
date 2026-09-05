@@ -29,6 +29,12 @@ import type {
  * | cancelar reserva | a ocupação |
  * | criar ou editar turma | a turma |
  * | cancelar ocorrências de N turmas | **uma por turma** |
+ * | **mover** uma reserva (SPEC-034) | a ocupação — uma ação, um evento |
+ * | **cancelar UMA ocorrência** de turma (SPEC-034) | a ocupação, não a turma: o gesto é sobre aquela aula |
+ *
+ * *(As duas últimas entraram com a SPEC-034. A validação cruzada dela achou
+ * esta matriz desatualizada e apontou o risco: um documento que se declara
+ * completo e não está é pior que um que não se declara.)*
  *
  * O registrador prova "nenhuma ação vazia"; **ele não prova unicidade** —
  * dois registradores no mesmo gesto criariam duas ações e o banco não
