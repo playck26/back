@@ -1296,6 +1296,13 @@ export class CourtsService {
       });
     }
 
+    // O destino e composto DENTRO da transacao, a partir da linha travada.
+    // O `catch` precisa dele para perguntar ao banco "quem ganhou?" — e essa
+    // pergunta e a diferenca entre responder 409 e responder 500.
+    let destinoDaTentativa:
+      | { quadraId: string; data: Date; horaInicio: Date; horaFim: Date }
+      | undefined;
+
     for (let tentativa = 1; ; tentativa += 1) {
       try {
         return await this.prisma.$transaction(async (tx) => {
@@ -1358,6 +1365,7 @@ export class CourtsService {
               message: 'horaFim deve ser maior que horaInicio.',
             });
           }
+          destinoDaTentativa = destino;
 
           // Quadra da empresa e ativa — a FK composta impede empresa alheia,
           // mas não impede quadra inativa, que sai da agenda.
@@ -1425,9 +1433,41 @@ export class CourtsService {
           return this.toOcupacaoResponse(movida);
         });
       } catch (error) {
-        if (tentativa === 1 && ehCorridaPerdida(error)) {
-          this._retentativasDeMover += 1;
-          continue;
+        if (ehCorridaPerdida(error)) {
+          // **Mesma disciplina do `createBooking` (linhas 573-612), e ela
+          // faltava aqui.** Corrida perdida com o conflito JA VISIVEL e 409
+          // em QUALQUER tentativa: alguem ganhou o slot, e mandar o gestor
+          // investigar um 500 seria mentir sobre o que aconteceu.
+          //
+          // O FIT-022 pegou isto na PRIMEIRA execucao em CI, e o caminho e o
+          // do deadlock: no `40P01` o Postgres aborta uma das transacoes
+          // ANTES de a outra commitar. A 2a tentativa entao passa no
+          // pre-check (o vencedor ainda nao esta la), esbarra na `EXCLUDE`
+          // quando ele commita, e — sem esta traducao — o `23P01` subia cru
+          // como 500. Localmente o escalonador nao produzia o ciclo e o
+          // teste passava; no CI, produziu.
+          if (destinoDaTentativa) {
+            const conflito = await this.findConflito(
+              companyId,
+              destinoDaTentativa.quadraId,
+              destinoDaTentativa.data,
+              destinoDaTentativa.horaInicio,
+              destinoDaTentativa.horaFim,
+              id,
+            );
+            if (conflito) {
+              throw new ConflictException({
+                message: 'Conflito de horário no destino (INV-001)',
+                conflictWith: conflito,
+              });
+            }
+          }
+          // Corrida perdida e NENHUM conflito visivel: e o deadlock. Uma
+          // retentativa, como antes.
+          if (tentativa === 1) {
+            this._retentativasDeMover += 1;
+            continue;
+          }
         }
         throw error;
       }
@@ -1478,12 +1518,17 @@ export class CourtsService {
     data: Date,
     horaInicio: Date,
     horaFim: Date,
+    // `moveBooking` precisa excluir a PROPRIA linha: ela ainda ocupa a
+    // origem, e sem isto toda mudanca de horario acharia "conflito" consigo
+    // mesma. `createBooking` nao passa nada, e nada muda para ele.
+    excetoId?: string,
   ): Promise<ConflitoDetectado | null> {
     const conflito = await this.prisma.ocupacaoQuadra.findFirst({
       where: {
         companyId,
         quadraId,
         data,
+        ...(excetoId ? { id: { not: excetoId } } : {}),
         statusPagamento: { not: 'cancelado' },
         horaInicio: { lt: horaFim },
         horaFim: { gt: horaInicio },
