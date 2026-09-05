@@ -128,6 +128,29 @@ export type VeredictoDeSaida =
 export function avaliarSaidaDeTurma(
   entrada: EntradaDeSaidaDeTurma,
 ): VeredictoDeSaida {
+  return avaliar(entrada);
+}
+
+/**
+ * SPEC-031/D17 — **o AC-013 tem DOIS verbos**, e este é o segundo.
+ *
+ * A v3 da spec fechou "remover da turma" e seguiu afirmando o AC-013 inteiro,
+ * que fala de *cancelar e desmatricular*. O segundo verbo continuava aberto, e
+ * a guarda de hoje é literalmente condicional ao aluno — `alunoIdScope`
+ * funcionando como papel administrativo **por omissão e sem nome**.
+ *
+ * Delega ao mesmo `avaliar`: o INV-066 é implementado **uma vez**. Dois nomes
+ * porque os dois caminhos são chamados de lugares diferentes e a assinatura
+ * documenta qual prazo cada um usa — o da aula ou o da reserva.
+ */
+export function avaliarCancelamentoDeReserva(
+  entrada: EntradaDeSaidaDeTurma,
+): VeredictoDeSaida {
+  return avaliar(entrada);
+}
+
+/** O mecanismo, num lugar só. Ver o docstring de `avaliarSaidaDeTurma`. */
+function avaliar(entrada: EntradaDeSaidaDeTurma): VeredictoDeSaida {
   const prazoEfetivo: PrazoDeCancelamento =
     entrada.papelDoAutor === 'company_admin'
       ? { regra: 'SEM_PRAZO' }

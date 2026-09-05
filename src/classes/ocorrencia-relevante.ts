@@ -44,6 +44,25 @@ import type { Antecedencia } from '../company-settings/prazo-de-cancelamento';
  * pegaria — ele procura `getUTCFullYear()` (INV-069), e nenhuma soma de tipos
  * SQL se parece com isso.
  */
+/**
+ * A antecedência até um instante `data` + `horaInicio`, em minutos.
+ *
+ * Exportada porque **dois caminhos precisam da mesma conta**: a ocorrência de
+ * turma (aqui) e a reserva avulsa (`cancelBooking`). Duplicá-la seria duplicar
+ * também a chance de somar `date` com `time` num dos dois — ver o bloco acima.
+ *
+ * Fica **negativa** depois do início, e é isso que faz `podeCancelar` recusar.
+ */
+export function antecedenciaEmMinutos(
+  data: Date,
+  horaInicio: Date,
+  agora: Date,
+): number {
+  const agoraLocal = agoraNoFusoDoClube(agora);
+  const diaEmMinutos = (data.getTime() - agoraLocal.dia.getTime()) / 60_000;
+  return diaEmMinutos + minutosDaHora(horaInicio) - agoraLocal.minutos;
+}
+
 export async function ocorrenciaRelevante(
   tx: Prisma.TransactionClient,
   companyId: string,
@@ -76,10 +95,12 @@ export async function ocorrenciaRelevante(
 
   // A antecedência é sobre o INÍCIO — o `hora_fim` acima serviu só para
   // escolher QUAL ocorrência. Durante a aula isto é negativo, de propósito.
-  const diaEmMinutos =
-    (ocorrencia.data.getTime() - agoraLocal.dia.getTime()) / 60_000;
-  const minutos =
-    diaEmMinutos + minutosDaHora(ocorrencia.horaInicio) - agoraLocal.minutos;
-
-  return { tipo: 'MINUTOS', minutos };
+  return {
+    tipo: 'MINUTOS',
+    minutos: antecedenciaEmMinutos(
+      ocorrencia.data,
+      ocorrencia.horaInicio,
+      agora,
+    ),
+  };
 }

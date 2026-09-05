@@ -85,6 +85,7 @@ function courts(c: PrismaClient): CourtsService {
         throw new Error('cancelar ocorrencia nao resolve imagem');
       },
     } as unknown as ImagemDaQuadraService,
+    new ConfigOperacaoService(c as unknown as PrismaService),
   );
 }
 

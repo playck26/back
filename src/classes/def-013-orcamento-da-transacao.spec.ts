@@ -326,6 +326,7 @@ function buildClassesService(tx: Prisma.TransactionClient) {
     {
       resolver: jest.fn(() => ({ imagemUrl: null })),
     } as unknown as ImagemDaQuadraService,
+    new ConfigOperacaoService(prisma),
   );
   return new ClassesService(
     prisma,
