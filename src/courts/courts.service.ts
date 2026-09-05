@@ -98,6 +98,7 @@ import { DisponibilidadeResponseDto } from './dto/horarios-response.dto';
 import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { CreateCourtDto } from './dto/create-court.dto';
 import type { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import type { MoveBookingDto } from './dto/move-booking.dto';
 import type { UpdateCourtDto } from './dto/update-court.dto';
 import type { QuadraResponseDto } from './dto/quadra-response.dto';
 
@@ -1190,6 +1191,201 @@ export class CourtsService {
    * condição escrita duas vezes: a regra é uma, e regra duplicada
    * diverge no primeiro ajuste.
    */
+  /**
+   * SPEC-034/TASK-003 — **mover** uma reserva avulsa.
+   *
+   * ### A ordem aqui é o mecanismo, e cada passo tem um achado atrás
+   *
+   * **1. Trava, DEPOIS compõe (D6).** Dois `PATCH` parciais concorrentes
+   * sobre o mesmo `id` — um mandando `{horaInicio,horaFim}`, outro
+   * `{quadraId}` — compunham destinos diferentes a partir da mesma leitura
+   * antiga, e o estado final podia violar o expediente que **nenhuma das
+   * duas transações chegou a avaliar**. Compor a partir da linha travada
+   * elimina a classe: a segunda transação lê o resultado da primeira.
+   *
+   * **2. Origem, terminal, passado — nesta ordem.** Ocupação de turma se
+   * ajusta pela turma; cancelada é estado terminal; e **reserva que já
+   * começou não se move** (D5). Esta última fecha o bypass do crédito: sem
+   * ela, mover às 20h a reserva das 19h para amanhã a faz "não ter começado",
+   * e o cancelamento seguinte devolveria crédito de quadra usada — exatamente
+   * o que a SPEC-031 existe para impedir. Mover **para** o passado continua
+   * permitido; é fechar caixa (SPEC-042/D-I5).
+   *
+   * **3. Expediente antes do conflito (INV-011).** Responder "conflito" para
+   * quem moveu para fora do expediente mentiria sobre o motivo — mesmo
+   * raciocínio do `createBooking`.
+   *
+   * **4. A pré-checagem não é a garantia.** Quem recusa sobreposição é a
+   * `EXCLUDE no_overlap_por_quadra`, que vale para `UPDATE` tanto quanto para
+   * `INSERT`. A pré-checagem existe para dar `conflictWith` a quem perdeu.
+   *
+   * ### O retry, e por que ele existe de verdade
+   *
+   * **Duas reservas movidas para o mesmo slot livre entram em espera
+   * circular.** As duas pré-checagens passam — o destino está vazio quando
+   * cada uma olha — e os dois `UPDATE` se esperam. `40P01` reproduzido em
+   * PostgreSQL 18.4 na validação cruzada, sem remover pré-checagem e sem
+   * injetar nada.
+   *
+   * Duas tentativas, não N: se a segunda também perde sem conflito visível, o
+   * erro sobe cru — `409` sem conflito seria mentira (DEF-013).
+   */
+  async moveBooking(
+    companyId: string,
+    id: string,
+    dto: MoveBookingDto,
+    autorId: string,
+  ) {
+    if (
+      dto.data === undefined &&
+      dto.horaInicio === undefined &&
+      dto.horaFim === undefined &&
+      dto.quadraId === undefined
+    ) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'NADA_A_MOVER',
+        message: 'Informe ao menos um de: data, horaInicio, horaFim, quadraId.',
+      });
+    }
+
+    for (let tentativa = 1; ; tentativa += 1) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          // `FOR UPDATE` não é expressável no query builder do Prisma —
+          // raw necessária, mesmo idioma de `classes.service.ts:335`.
+          const linhas = await tx.$queryRaw<
+            {
+              id: string;
+              quadra_id: string;
+              data: Date;
+              hora_inicio: Date;
+              hora_fim: Date;
+              origem_tipo: 'AVULSO' | 'TURMA';
+              status_pagamento: string;
+            }[]
+          >`
+            SELECT id, quadra_id, data, hora_inicio, hora_fim,
+                   origem_tipo, status_pagamento
+              FROM ocupacoes_quadra
+             WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
+             FOR UPDATE
+          `;
+          const atual = linhas[0];
+          if (!atual) throw new NotFoundException();
+
+          this.assertOcupacaoAvulsa(atual.origem_tipo);
+
+          if (atual.status_pagamento === 'cancelado') {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'OCUPACAO_CANCELADA',
+              message: 'Reserva cancelada não pode ser movida.',
+            });
+          }
+
+          // D5/AC-010b — o corte é pelo INÍCIO da reserva de origem, o mesmo
+          // predicado do `cancelBooking` (SPEC-042/INV-094). Usar outro aqui
+          // criaria duas regras temporais divergentes para o mesmo fato.
+          if (aulaJaComecou(atual.data, atual.hora_inicio)) {
+            throw new ConflictException({
+              statusCode: 409,
+              code: 'PRAZO_DE_CANCELAMENTO',
+              message: 'Esta reserva já começou e não pode mais ser movida.',
+            });
+          }
+
+          const destino = {
+            quadraId: dto.quadraId ?? atual.quadra_id,
+            data: dto.data ? parseDateOnly(dto.data) : atual.data,
+            horaInicio: dto.horaInicio
+              ? parseTimeOnly(dto.horaInicio)
+              : atual.hora_inicio,
+            horaFim: dto.horaFim ? parseTimeOnly(dto.horaFim) : atual.hora_fim,
+          };
+
+          if (destino.horaFim <= destino.horaInicio) {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'INTERVALO_INVALIDO',
+              message: 'horaFim deve ser maior que horaInicio.',
+            });
+          }
+
+          // Quadra da empresa e ativa — a FK composta impede empresa alheia,
+          // mas não impede quadra inativa, que sai da agenda.
+          await this.buscarQuadraDaEmpresa(companyId, destino.quadraId);
+
+          const horarioDoDia = await this.horarios.resolverParaData(
+            companyId,
+            destino.quadraId,
+            destino.data,
+          );
+          if (
+            !this.horarios.dentroDoExpediente(
+              horarioDoDia,
+              destino.horaInicio,
+              destino.horaFim,
+            )
+          ) {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'FORA_DO_EXPEDIENTE',
+              message:
+                'O horário de destino está fora do funcionamento da quadra.',
+            });
+          }
+
+          // A própria linha não conflita consigo mesma.
+          const conflito = await tx.ocupacaoQuadra.findFirst({
+            where: {
+              companyId,
+              quadraId: destino.quadraId,
+              data: destino.data,
+              id: { not: id },
+              statusPagamento: { not: 'cancelado' },
+              horaInicio: { lt: destino.horaFim },
+              horaFim: { gt: destino.horaInicio },
+            },
+          });
+          if (conflito) {
+            throw new ConflictException({
+              message: 'Conflito de horário no destino (INV-001)',
+              conflictWith: this.toConflictWith(conflito),
+            });
+          }
+
+          const transicaoId = novaTransicao();
+          const registrador = new RegistradorDeAcao(
+            tx,
+            companyId,
+            autorId,
+            'reserva_movida',
+          );
+          const movida = await tx.ocupacaoQuadra.update({
+            where: { id },
+            // `alunoId`, `valor` e `statusPagamento` ficam de fora **de
+            // propósito** (REQ-002): mover não é recontratar.
+            data: {
+              quadraId: destino.quadraId,
+              data: destino.data,
+              horaInicio: destino.horaInicio,
+              horaFim: destino.horaFim,
+              transicaoId,
+            },
+          });
+          await registrador.registrar(id, 'movida', transicaoId);
+          return this.toOcupacaoResponse(movida);
+        });
+      } catch (error) {
+        if (tentativa === 1 && ehCorridaPerdida(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   private assertOcupacaoAvulsa(origemTipo: 'AVULSO' | 'TURMA') {
     if (origemTipo === 'TURMA') {
       throw new UnprocessableEntityException({
