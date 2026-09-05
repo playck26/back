@@ -239,6 +239,8 @@ describe('FIT-020 — DELETE /falta x cancelamento (SPEC-031/D19)', () => {
 
     let liberar!: () => void;
     const mesaPosta = new Promise<void>((r) => (liberar = r));
+    let jaSegura!: () => void;
+    const cancelamentoAplicado = new Promise<void>((r) => (jaSegura = r));
 
     // O cancelamento abre e SEGURA — a ocupação fica travada por ele.
     const cancelamento = dbCancel.$transaction(
@@ -248,10 +250,21 @@ describe('FIT-020 — DELETE /falta x cancelamento (SPEC-031/D19)', () => {
           ocupacaoId: aula,
           autorId: UPROF,
         });
+        // **O sinal vem de DENTRO da transação, depois do `UPDATE`.** Só aqui
+        // a linha está de fato travada.
+        jaSegura();
         await mesaPosta;
       },
       { timeout: 60_000, maxWait: 60_000 },
     );
+
+    // **A terceira vez que esta mesma corrida me pega.** Soltar os dois juntos
+    // e esperar pela espera não ordena nada: o `DELETE` pode pegar o lock
+    // primeiro e terminar com `204` — que é a OUTRA ordem, e é válida. Passou
+    // na minha máquina e caiu na CI, onde o escalonamento é outro.
+    //
+    // Ordenar por lock exige esperar o lock existir. Não há atalho.
+    await cancelamentoAplicado;
 
     // O DELETE chega e trava no `FOR UPDATE` da ocupação.
     const remocao = codigoDe(faltas.retirar(EMPRESA, UALUNO, TURMA, aula));
