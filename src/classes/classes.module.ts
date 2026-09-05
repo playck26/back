@@ -12,9 +12,15 @@ import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { MeTeacherAgendaController } from './me-teacher-agenda.controller';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { PresencaService } from './presenca.service';
+import { CompanySettingsModule } from '../company-settings/company-settings.module';
 
 @Module({
-  imports: [CourtsModule, PeopleModule, FrequenciaModule],
+  imports: [
+    CompanySettingsModule,
+    CourtsModule,
+    PeopleModule,
+    FrequenciaModule,
+  ],
   controllers: [
     ClassesController,
     MeClassesController,

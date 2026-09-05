@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 
 /**
  * SPEC-023 — as provas de o aluno entrar e sair de turma sozinho.
@@ -31,6 +32,8 @@ interface TxMock {
     delete: jest.Mock;
   };
   ocupacaoQuadra: { findFirst: jest.Mock };
+  // SPEC-031/D16, passo 4: a configuracao e lida pelo MESMO `tx`.
+  configOperacaoEmpresa: { findUnique: jest.Mock };
 }
 
 const EMPRESA = 'e0000000-0000-4000-8000-000000000001';
@@ -38,6 +41,15 @@ const TURMA = 'a0000000-0000-4000-8000-000000000002';
 const USUARIO = 'u0000000-0000-4000-8000-000000000003';
 
 function montar(opcoes?: {
+  /** SPEC-031: `undefined` = empresa sem configuracao; numero = prazo em horas. */
+  prazoAulaHoras?: number;
+  /** SPEC-031: a ocorrencia relevante que o banco devolve, ou `null`. */
+  ocorrencia?: {
+    id: string;
+    data: Date;
+    horaInicio: Date;
+    horaFim: Date;
+  } | null;
   vinculo?: string;
   statusDaTurma?: string;
   capacidade?: number;
@@ -70,6 +82,18 @@ function montar(opcoes?: {
           : [],
       ),
     aluno: { findFirst: jest.fn() },
+    // Padrao: empresa SEM configuracao — que e o estado da maioria hoje, e o
+    // ramo em que a regra `AULA_HOJE` do rollout passo 1 continua valendo.
+    configOperacaoEmpresa: {
+      findUnique: jest.fn().mockResolvedValue(
+        o.prazoAulaHoras === undefined
+          ? null
+          : {
+              prazoCancelamentoAulaHoras: o.prazoAulaHoras,
+              prazoCancelamentoReservaHoras: null,
+            },
+      ),
+    },
     empresa: {
       findUniqueOrThrow: jest
         .fn()
@@ -95,7 +119,13 @@ function montar(opcoes?: {
     ocupacaoQuadra: {
       findFirst: jest
         .fn()
-        .mockResolvedValue(o.temAulaHoje ? { id: 'ocupacao-1' } : null),
+        .mockResolvedValue(
+          o.ocorrencia !== undefined
+            ? o.ocorrencia
+            : o.temAulaHoje
+              ? { id: 'ocupacao-1' }
+              : null,
+        ),
     },
   };
 
@@ -108,7 +138,16 @@ function montar(opcoes?: {
     $transaction: jest.fn((cb: (t: TxMock) => unknown) => cb(tx)),
   } as unknown as PrismaService;
 
-  return { service: new MatriculaDoAlunoService(prisma), tx };
+  // SPEC-031/TASK-004: o servico passou a ler a configuracao de operacao pelo
+  // MESMO `tx` (D16, passo 4). O real sobre o prisma mockado basta — o mock ja
+  // devolve `null` por padrao, que e "empresa sem configuracao".
+  return {
+    service: new MatriculaDoAlunoService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ),
+    tx,
+  };
 }
 
 async function codigoDoErro(promessa: Promise<unknown>) {
@@ -310,10 +349,10 @@ describe('disponíveis', () => {
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
 
-    const [turma] = await new MatriculaDoAlunoService(prisma).disponiveis(
-      EMPRESA,
-      USUARIO,
-    );
+    const [turma] = await new MatriculaDoAlunoService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ).disponiveis(EMPRESA, USUARIO);
 
     // Some com ela e a pessoa vai perguntar no WhatsApp por que a turma das
     // 18h sumiu.
@@ -352,10 +391,10 @@ describe('disponíveis', () => {
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
 
-    const [turma] = await new MatriculaDoAlunoService(prisma).disponiveis(
-      EMPRESA,
-      USUARIO,
-    );
+    const [turma] = await new MatriculaDoAlunoService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ).disponiveis(EMPRESA, USUARIO);
 
     expect(turma.motivo).toBe('ALUNO_NAO_APROVADO');
     expect(turma.podeEntrar).toBe(false);
@@ -369,5 +408,128 @@ describe('o que estas provas não provam', () => {
     await expect(
       service.entrar(EMPRESA, USUARIO, TURMA),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+/**
+ * SPEC-031/REQ-003 — o ramo NOVO: empresa **com** prazo configurado.
+ *
+ * O relógio é fixo e a ocorrência é construída em cima dele. Nunca relativo:
+ * um teste que soma horas ao `Date.now()` real muda de resposta conforme a
+ * hora em que o CI roda, e este projeto já perdeu um dia com isso — o
+ * `fit-005` quebrava às 00:03 de Brasília.
+ */
+describe('sair — com prazo configurado (SPEC-031)', () => {
+  const AGORA = new Date('2026-10-05T15:00:00.000Z'); // 12:00 no fuso do clube
+  const DIA = new Date('2026-10-05T00:00:00.000Z');
+  /** `hh:mm` do clube como o Prisma devolve `@db.Time`: epoch + hora. */
+  const hora = (h: number, m = 0) => new Date(Date.UTC(1970, 0, 1, h, m, 0, 0));
+
+  const ocorrenciaAs = (h: number, m = 0) => ({
+    id: 'ocorrencia-1',
+    data: DIA,
+    horaInicio: hora(h, m),
+    horaFim: hora(h + 1, m),
+  });
+
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(AGORA);
+  });
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it('AC-006: dentro do prazo recusa com PRAZO_DE_CANCELAMENTO', async () => {
+    // Prazo 2h; a aula começa às 13h e agora são 12h → 60 minutos.
+    const { service, tx } = montar({
+      jaAlocado: true,
+      prazoAulaHoras: 2,
+      ocorrencia: ocorrenciaAs(13),
+    });
+
+    await expect(
+      codigoDoErro(service.sair(EMPRESA, USUARIO, TURMA)),
+    ).resolves.toBe('PRAZO_DE_CANCELAMENTO');
+    expect(tx.turmaAluno.delete).not.toHaveBeenCalled();
+  });
+
+  it('fora do prazo, sai', async () => {
+    // Aula às 18h, agora 12h → 360 minutos, e o prazo pede 120.
+    const { service, tx } = montar({
+      jaAlocado: true,
+      prazoAulaHoras: 2,
+      ocorrencia: ocorrenciaAs(18),
+    });
+
+    await service.sair(EMPRESA, USUARIO, TURMA);
+    expect(tx.turmaAluno.delete).toHaveBeenCalled();
+  });
+
+  it('AC-009: EXATAMENTE no limite, sai', async () => {
+    // Aula às 14h, agora 12h → 120 minutos, e o prazo pede 120.
+    const { service, tx } = montar({
+      jaAlocado: true,
+      prazoAulaHoras: 2,
+      ocorrencia: ocorrenciaAs(14),
+    });
+
+    await service.sair(EMPRESA, USUARIO, TURMA);
+    expect(tx.turmaAluno.delete).toHaveBeenCalled();
+  });
+
+  /**
+   * D15 — a aula **em andamento** vence a da semana seguinte, e a antecedência
+   * dela é negativa. É o caso que a v2 da spec deixava passar: lido como
+   * "próxima ocorrência estritamente futura", o aluno sairia durante a aula.
+   */
+  /**
+   * **A escolha dos números aqui é o teste.** Aula das 11h às 13h, agora 12h,
+   * prazo de 1h: a antecedência correta é **−60**, e recusa. Se alguém tornar
+   * a antecedência positiva (um `Math.abs`, um `início − agora` invertido),
+   * vira **+60**, que é `>= 60` e **passa** — o teste fica vermelho.
+   *
+   * A primeira versão deste caso usava prazo de 2h, e aí `|−60| = 60 < 120`
+   * recusava dos dois jeitos: passava com o defeito injetado. Teste de
+   * concorrência ou de sinal precisa de números que separem as hipóteses.
+   */
+  it('AC-010b: aula EM ANDAMENTO recusa — e o SINAL da antecedencia importa', async () => {
+    const { service, tx } = montar({
+      jaAlocado: true,
+      prazoAulaHoras: 1,
+      ocorrencia: { ...ocorrenciaAs(11), horaFim: hora(13) },
+    });
+
+    await expect(
+      codigoDoErro(service.sair(EMPRESA, USUARIO, TURMA)),
+    ).resolves.toBe('PRAZO_DE_CANCELAMENTO');
+    expect(tx.turmaAluno.delete).not.toHaveBeenCalled();
+  });
+
+  it('AC-010: sem ocorrencia futura, sai mesmo com prazo', async () => {
+    const { service, tx } = montar({
+      jaAlocado: true,
+      prazoAulaHoras: 2,
+      ocorrencia: null,
+    });
+
+    await service.sair(EMPRESA, USUARIO, TURMA);
+    expect(tx.turmaAluno.delete).toHaveBeenCalled();
+  });
+
+  /**
+   * D16, passo 4: a configuração é lida pelo **mesmo `tx`**, e **sem
+   * `FOR UPDATE`**. Ler por outra conexão segurando o lock da turma é o
+   * defeito que a SPEC-034 pagou caro; travar a configuração faria toda saída
+   * de turma serializar contra toda outra da mesma empresa.
+   */
+  it('D16: a configuracao e lida pelo mesmo tx', async () => {
+    const { service, tx } = montar({
+      jaAlocado: true,
+      prazoAulaHoras: 2,
+      ocorrencia: ocorrenciaAs(18),
+    });
+
+    await service.sair(EMPRESA, USUARIO, TURMA);
+    expect(tx.configOperacaoEmpresa.findUnique).toHaveBeenCalled();
   });
 });

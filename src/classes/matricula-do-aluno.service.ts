@@ -6,6 +6,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
+import { ocorrenciaRelevante } from './ocorrencia-relevante';
 
 /**
  * SPEC-023 — **o aluno entra e sai de turma sozinho.**
@@ -22,7 +25,10 @@ import { hojeNoFusoDoClube } from '../courts/date-time.util';
  */
 @Injectable()
 export class MatriculaDoAlunoService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly operacao: ConfigOperacaoService,
+  ) {}
 
   /**
    * Resolve o aluno a partir do usuário do token.
@@ -218,15 +224,41 @@ export class MatriculaDoAlunoService {
   }
 
   /**
-   * REQ-004 — sair, exceto no dia da aula.
+   * SPEC-031/REQ-003 — sair da turma, com o prazo que o clube configurou.
    *
-   * O `FOR UPDATE` aqui não é sobre capacidade: é o par do lock que
-   * `PresencaService.salvarChamada` pega. Sem este lado, o de lá não trava
-   * nada — quem não pede lock não respeita lock. Foi o cenário 5 do
-   * `bloq7-concorrencia.ts`, e vale igual para a saída do aluno.
+   * **Substitui a regra `AULA_HOJE` da SPEC-023.** O `FOR UPDATE` continua
+   * sendo o par do lock que `PresencaService.salvarChamada` pega: sem este
+   * lado, o de lá não trava nada — quem não pede lock não respeita lock.
+   *
+   * ## A sequência do D16, e ela é dentro da MESMA transação
+   *
+   * | # | Passo |
+   * |---|---|
+   * | 1 | `turmas … FOR UPDATE` |
+   * | 2 | conferir matrícula — 404 antes de qualquer regra |
+   * | 3 | `ocorrenciaRelevante(tx, …)`, **depois** do lock |
+   * | 4 | ler a configuração pelo mesmo `tx`, **sem `FOR UPDATE`** |
+   * | 5 | `avaliarSaidaDeTurma(…)` |
+   * | 7 | `DELETE turma_alunos` |
+   *
+   * *(O passo 6 — registrar a ação administrativa — é do caminho do GESTOR,
+   * TASK-005. O aluno saindo por conta própria não gera ação administrativa.)*
+   *
+   * **Ler a ocorrência FORA do bloco seria decidir sobre a grade antiga:** o
+   * gestor edita o horário da turma, `cancelFutureClassOccupancies` cancela as
+   * futuras em massa, e a política já leu.
+   *
+   * **O passo 4 não leva `FOR UPDATE` de propósito.** O `SELECT` dentro da
+   * transação já dá a garantia que importa — vale o prazo commitado antes
+   * desta leitura; um `PUT /operacao` que commite depois vale para a próxima
+   * operação. Travar a configuração faria toda saída de turma serializar
+   * contra toda outra saída da mesma empresa.
    */
   async sair(companyId: string, usuarioId: string, turmaId: string) {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
+    // Injetado uma vez e usado nos passos 3 e 5: duas leituras de relógio na
+    // mesma decisão poderiam cair em minutos diferentes.
+    const agora = new Date();
 
     await this.prisma.$transaction(async (tx) => {
       const turmaRows = await tx.$queryRaw<{ id: string }[]>`
@@ -247,27 +279,67 @@ export class MatriculaDoAlunoService {
         throw new NotFoundException();
       }
 
-      // A ocupação da quadra é a fonte da verdade sobre "tem aula hoje":
-      // ela é o encontro já materializado numa data real. Perguntar ao
-      // `dia_semana` do encontro exigiria aritmética de calendário e daria
-      // a resposta errada quando a ocupação foi cancelada.
-      const aulaHoje = await tx.ocupacaoQuadra.findFirst({
-        where: {
-          companyId,
-          origemTipo: 'TURMA',
-          origemTurmaId: turmaId,
-          statusPagamento: { not: 'cancelado' },
-          data: hojeNoFusoDoClube(),
-        },
-        select: { id: true },
-      });
-      if (aulaHoje) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'AULA_HOJE',
-          message:
-            'Esta turma tem aula hoje. Você pode sair a partir de amanhã, ou falar com o clube.',
+      const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+
+      /**
+       * **Rollout passo 1 (D11): empresa SEM prazo configurado continua na
+       * regra de hoje, e com o código de hoje.**
+       *
+       * O passo 1 manda "emitir os dois códigos conforme a configuração", e
+       * esta é a leitura que mantém o cliente antigo funcionando: quem nunca
+       * configurou nada não vê mudança nenhuma de comportamento nem de
+       * código. Quem configurou entra na regra nova.
+       *
+       * O passo 3 apaga este bloco inteiro, e aí a AC-003 passa a valer para
+       * todos — empresa sem configuração deixa de exigir antecedência, e só o
+       * corte de `minutos <= 0` (D5b) permanece.
+       *
+       * **Esta é uma leitura do rollout, não uma citação dele.** A spec diz
+       * "os dois códigos conforme a configuração" e não diz qual em qual
+       * caso; escolhi a que não muda nada para quem não configurou, que é a
+       * reversível. Se a intenção era outra, o lugar de corrigir é aqui.
+       */
+      if (prazos.aula.regra === 'SEM_PRAZO') {
+        const aulaHoje = await tx.ocupacaoQuadra.findFirst({
+          where: {
+            companyId,
+            origemTipo: 'TURMA',
+            origemTurmaId: turmaId,
+            statusPagamento: { not: 'cancelado' },
+            data: hojeNoFusoDoClube(agora),
+          },
+          select: { id: true },
         });
+        if (aulaHoje) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'AULA_HOJE',
+            message:
+              'Esta turma tem aula hoje. Você pode sair a partir de amanhã, ou falar com o clube.',
+          });
+        }
+      } else {
+        const veredicto = avaliarSaidaDeTurma({
+          papelDoAutor: 'aluno',
+          agora,
+          ocorrenciaRelevante: await ocorrenciaRelevante(
+            tx,
+            companyId,
+            turmaId,
+            agora,
+          ),
+          prazo: prazos.aula,
+        });
+        if (!veredicto.permitido) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: veredicto.code,
+            // AC-006: dizer QUANTAS horas o clube exige. "Fora do prazo" sem
+            // o número obriga o aluno a descobrir por tentativa.
+            message: `Esta turma exige ${prazos.aula.horas}h de antecedência para sair.`,
+            horasExigidas: prazos.aula.horas,
+          });
+        }
       }
 
       await tx.turmaAluno.delete({ where: { id: alocacao.id } });

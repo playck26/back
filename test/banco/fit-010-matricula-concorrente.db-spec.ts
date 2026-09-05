@@ -20,6 +20,7 @@ import { exigirBancoLocal } from './exigir-banco-local';
 import { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 
 jest.setTimeout(120_000);
 
@@ -38,8 +39,14 @@ const dbA = new PrismaClient();
 const dbB = new PrismaClient();
 const semear = new PrismaClient();
 
-const servicoA = new MatriculaDoAlunoService(dbA as unknown as PrismaService);
-const servicoB = new MatriculaDoAlunoService(dbB as unknown as PrismaService);
+const servicoA = new MatriculaDoAlunoService(
+  dbA as unknown as PrismaService,
+  new ConfigOperacaoService(dbA as unknown as PrismaService),
+);
+const servicoB = new MatriculaDoAlunoService(
+  dbB as unknown as PrismaService,
+  new ConfigOperacaoService(dbB as unknown as PrismaService),
+);
 
 /**
  * Fixture em SQL cru, como os outros `db-spec` deste diretório. Não é
