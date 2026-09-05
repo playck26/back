@@ -226,6 +226,14 @@ jobs:
           -- com a empresa tem FK RESTRICT para ela; a do run ATUAL ja existe
           -- neste ponto e fica de fora.
           DELETE FROM horarios_funcionamento WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
+          -- SPEC-031/D22/2d: `quadras` ANTES de `esportes_de_quadra` e
+          -- `categorias_de_quadra` -- `quadras_esporte_fkey` e RESTRICT. Hoje e
+          -- no-op: `POST /companies` cria empresa, esportes, horarios e admin, e
+          -- NENHUMA quadra, entao a empresa CI nunca tem uma. **O risco e
+          -- latente, nao ativo** -- medido: com quadra, os DOIS blocos abortam em
+          -- `23001`; sem quadra, os dois chegam a COMMIT. Fica aqui para o dia em
+          -- que algum passo do smoke criar quadra sob a empresa do run.
+          DELETE FROM quadras WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM config_pagamento_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-031/D22/1b: company-scoped com FK RESTRICT. Sem esta linha o
           -- `DELETE FROM empresas` abaixo recebe 23503.
@@ -634,6 +642,9 @@ jobs:
           -- config, contrato, catalogos e niveis quando houver) tem FK RESTRICT.
           -- Run 33781437034: o smoke inteiro passou e caiu AQUI, no ultimo DELETE.
           DELETE FROM horarios_funcionamento WHERE company_id = '$COMPANY_ID';
+          -- SPEC-031/D22/2d: idem ao bloco de cima. No-op hoje, e a rede para o
+          -- dia em que deixar de ser.
+          DELETE FROM quadras WHERE company_id = '$COMPANY_ID';
           DELETE FROM config_pagamento_empresa WHERE company_id = '$COMPANY_ID';
           -- SPEC-031/D22/1b: antes do `DELETE FROM empresas` logo abaixo.
           DELETE FROM config_operacao_empresa WHERE company_id = '$COMPANY_ID';
