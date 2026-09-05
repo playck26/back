@@ -1,5 +1,6 @@
 /**
- * SPEC-031/REQ-006 — **FIT-025: a falta avisada, contra Postgres real.**
+ * SPEC-031/REQ-006 — **FIT-018 e FIT-019: a falta avisada, contra Postgres
+ * real.** A corrida com o cancelamento é o FIT-020, em arquivo próprio.
  *
  * Metade destes casos depende de **constraint**, não de código: a FK composta
  * com `origem_tipo` que recusa falta em reserva avulsa, e o índice
@@ -23,17 +24,17 @@ jest.setTimeout(180_000);
 
 exigirBancoLocal();
 
-const EMPRESA = 'f0250000-0000-4000-8000-000000000001';
-const QUADRA = 'f0250000-0000-4000-8000-000000000002';
-const ESPORTE = 'f0250000-0000-4000-8000-000000000003';
-const TURMA = 'f0250000-0000-4000-8000-000000000004';
-const OUTRA_TURMA = 'f0250000-0000-4000-8000-000000000005';
-const UPROF = 'f0250000-0000-4000-8000-000000000006';
-const PROF = 'f0250000-0000-4000-8000-000000000007';
-const UALUNO = 'f0250000-0000-4000-8000-000000000008';
-const ALUNO = 'f0250000-0000-4000-8000-000000000009';
-const UFORA = 'f0250000-0000-4000-8000-00000000000e';
-const AFORA = 'f0250000-0000-4000-8000-00000000000f';
+const EMPRESA = 'f0180000-0000-4000-8000-000000000001';
+const QUADRA = 'f0180000-0000-4000-8000-000000000002';
+const ESPORTE = 'f0180000-0000-4000-8000-000000000003';
+const TURMA = 'f0180000-0000-4000-8000-000000000004';
+const OUTRA_TURMA = 'f0180000-0000-4000-8000-000000000005';
+const UPROF = 'f0180000-0000-4000-8000-000000000006';
+const PROF = 'f0180000-0000-4000-8000-000000000007';
+const UALUNO = 'f0180000-0000-4000-8000-000000000008';
+const ALUNO = 'f0180000-0000-4000-8000-000000000009';
+const UFORA = 'f0180000-0000-4000-8000-00000000000e';
+const AFORA = 'f0180000-0000-4000-8000-00000000000f';
 
 const dbA = new PrismaClient();
 const dbB = new PrismaClient();
@@ -60,7 +61,7 @@ async function minutoDoClube(n: number): Promise<string> {
 async function semearFixture() {
   await limparEmpresa(semear, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-025','fit-025',now())`,
+    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-018','fit-018',now())`,
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
@@ -70,9 +71,9 @@ async function semearFixture() {
   );
   await q(
     `INSERT INTO usuarios (id,company_id,nome,email,senha_hash,role,status,updated_at) VALUES
-       ('${UPROF}','${EMPRESA}','P','prof-f025@x.test','x','professor','ativo',now()),
-       ('${UALUNO}','${EMPRESA}','A','aluno-f025@x.test','x','aluno','ativo',now()),
-       ('${UFORA}','${EMPRESA}','F','fora-f025@x.test','x','aluno','ativo',now())`,
+       ('${UPROF}','${EMPRESA}','P','prof-f018@x.test','x','professor','ativo',now()),
+       ('${UALUNO}','${EMPRESA}','A','aluno-f018@x.test','x','aluno','ativo',now()),
+       ('${UFORA}','${EMPRESA}','F','fora-f018@x.test','x','aluno','ativo',now())`,
   );
   await q(
     `INSERT INTO professores (id,company_id,nome,usuario_id) VALUES ('${PROF}','${EMPRESA}','P','${UPROF}')`,
@@ -83,7 +84,7 @@ async function semearFixture() {
        ('${AFORA}','${EMPRESA}','${UFORA}','ativo','aprovado')`,
   );
   for (const [id, nome] of [
-    [TURMA, 'Turma FIT-025'],
+    [TURMA, 'Turma FIT-018'],
     [OUTRA_TURMA, 'Outra'],
   ] as const) {
     await q(
@@ -137,7 +138,7 @@ afterAll(async () => {
   ]);
 });
 
-describe('FIT-025 — a falta avisada (SPEC-031/REQ-006)', () => {
+describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
   /**
    * AC-017 — **a idempotência é do BANCO.** Dois `POST` de duas conexões, e o
    * que garante a linha única é o índice `faltas_unica`, não o lock.
@@ -184,6 +185,31 @@ describe('FIT-025 — a falta avisada (SPEC-031/REQ-006)', () => {
          VALUES (gen_random_uuid(),'${EMPRESA}','${r.id}','${ALUNO}',now())`,
       ),
     ).rejects.toThrow();
+  });
+
+  /**
+   * FIT-018, o tenant do D18 — `company_id` de A com ocupação de B devolve
+   * `23503`. **É a FK composta `(company_id, ocupacao_id)` que faz isso**, e
+   * ela existe separada da FK de `origem_tipo` porque `ocupacoes_quadra` não
+   * tem `UNIQUE (company_id, id, origem_tipo)`: juntar as duas
+   * responsabilidades numa constraint só enfraqueceria uma delas.
+   */
+  it('FIT-018: company_id de A com ocupacao de B devolve 23503', async () => {
+    const aula = await ocorrencia(await minutoDoClube(240));
+    const outraEmpresa = 'f0180000-0000-4000-8000-0000000000bb';
+    await q(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${outraEmpresa}','Outra','outra-f018',now())`,
+    );
+
+    // A ocupação é da EMPRESA; a falta se diz de `outraEmpresa`.
+    await expect(
+      q(
+        `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at)
+         VALUES (gen_random_uuid(),'${outraEmpresa}','${aula}','${ALUNO}',now())`,
+      ),
+    ).rejects.toThrow(/23503/);
+
+    await q(`DELETE FROM empresas WHERE id = '${outraEmpresa}'`);
   });
 
   /**
@@ -313,9 +339,9 @@ describe('FIT-025 — a falta avisada (SPEC-031/REQ-006)', () => {
    */
   it('usuario com papel aluno e SEM linha em alunos leva 403', async () => {
     const aula = await ocorrencia(await minutoDoClube(240));
-    const orfao = 'f0250000-0000-4000-8000-0000000000aa';
+    const orfao = 'f0180000-0000-4000-8000-0000000000aa';
     await q(
-      `INSERT INTO usuarios (id,company_id,nome,email,senha_hash,role,status,updated_at) VALUES ('${orfao}','${EMPRESA}','Orfao','orfao-f025@x.test','x','aluno','ativo',now())`,
+      `INSERT INTO usuarios (id,company_id,nome,email,senha_hash,role,status,updated_at) VALUES ('${orfao}','${EMPRESA}','Orfao','orfao-f018@x.test','x','aluno','ativo',now())`,
     );
 
     expect(
