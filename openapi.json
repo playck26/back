@@ -6375,7 +6375,8 @@
               "turma_criada",
               "turma_horario_editado",
               "credito_lancado",
-              "credito_retirado"
+              "credito_retirado",
+              "turma_aluno_removido"
             ],
             "description": "O GESTO humano que provocou o evento."
           },

@@ -113,12 +113,14 @@ model Empresa {
   ocupacoes        OcupacaoQuadra[]
   turmas           Turma[]
   configPagamento  ConfigPagamentoEmpresa?
+  configOperacao   ConfigOperacaoEmpresa?
   contratos        ContratoDaEmpresa[]
   avaliacoesDeAula AvaliacaoDeAula[]
 
   presencas           Presenca[]
   chamadas            Chamada[]
   acaoAdministrativas AcaoAdministrativa[]
+  faltasAvisadas      FaltaAvisada[]
 
   @@map("empresas")
 }
@@ -245,13 +247,15 @@ model Aluno {
   /// `super_admin` (que tem `company_id` nulo), e um super admin nunca e
   /// aluno. Sem a empresa na chave, a ficha de um aluno da empresa A podia
   /// apontar para o usuario da B.
-  usuario     Usuario           @relation(fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, map: "alunos_usuario_fkey")
-  empresa     Empresa           @relation(fields: [companyId], references: [id])
-  nivel       Nivel?            @relation(fields: [nivelId], references: [id])
-  ocupacoes   OcupacaoQuadra[]
-  turmaAlunos TurmaAluno[]
-  avaliacoes  AvaliacaoDeAula[]
-  presencas   Presenca[]
+  usuario            Usuario             @relation(fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, map: "alunos_usuario_fkey")
+  empresa            Empresa             @relation(fields: [companyId], references: [id])
+  nivel              Nivel?              @relation(fields: [nivelId], references: [id])
+  ocupacoes          OcupacaoQuadra[]
+  turmaAlunos        TurmaAluno[]
+  faltasAvisadas     FaltaAvisada[]
+  eventosDeMatricula EventoDeMatricula[]
+  avaliacoes         AvaliacaoDeAula[]
+  presencas          Presenca[]
 
   /// DEF-024 fase 1 — alvo das FKs compostas de `presencas` e
   /// `avaliacoes_de_aula`. `id` ja e PK, entao este UNIQUE nunca falha por
@@ -457,13 +461,18 @@ model OcupacaoQuadra {
   origemTurma Turma?            @relation(fields: [companyId, origemTurmaId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_origem_turma_fkey")
   avaliacoes  AvaliacaoDeAula[]
 
-  presencas Presenca[]
-  eventos   EventoDeOcupacao[]
+  presencas     Presenca[]
+  eventos       EventoDeOcupacao[]
+  /// Duas relacoes para a MESMA tabela: a FK de `origem_tipo` (INV-067) e a
+  /// de tenant. `ocupacoes_quadra` nao tem `UNIQUE (company_id, id,
+  /// origem_tipo)`, entao as duas responsabilidades nao cabem numa so.
+  faltasPorTipo FaltaAvisada[]     @relation("FaltaOcupacaoTipo")
+  faltas        FaltaAvisada[]     @relation("FaltaOcupacaoEmpresa")
   // Prisma exige unicidade do par `(id, origem_tipo)` para modelar 1-1, e
   // criar esse UNIQUE seria um índice redundante — `ocupacao_id` já é PK de
   // `chamadas`. Então aqui o tipo é lista e **o banco é que garante uma
   // chamada por ocorrência**, pela PK. Mesmo caminho de `presencas`.
-  chamadas  Chamada[]
+  chamadas      Chamada[]
 
   @@unique([id, origemTipo], map: "ocupacoes_quadra_id_origem_tipo_key")
   /// SPEC-032 — alvo da FK composta de `eventos_de_ocupacao`. Redundante como
@@ -515,6 +524,8 @@ model Turma {
   /// SPEC-025 / validacao cruzada — o alvo da FK composta de
   /// `ocupacoes_quadra`. Sem ele, o banco aceitava ocupacao de uma empresa
   /// apontando para turma de outra.
+  eventosDeMatricula EventoDeMatricula[]
+
   @@unique([companyId, id], map: "turmas_company_id_id_key")
   @@index([companyId])
   @@index([quadraId])
@@ -1012,6 +1023,10 @@ enum TipoDeAcao {
   turma_horario_editado
   credito_lancado
   credito_retirado
+  /// SPEC-031/D21: o gestor tirou o aluno da turma. Precisa de nome proprio —
+  /// `reserva_cancelada` nao descreve o gesto, e o alvo tecnico dele e uma
+  /// MATRICULA, nao uma ocupacao (ver `EventoDeMatricula`).
+  turma_aluno_removido
 
   @@map("tipo_de_acao")
 }
@@ -1049,9 +1064,10 @@ model AcaoAdministrativa {
   motivo    String?
   criadoEm  DateTime   @default(now()) @map("criado_em") @db.Timestamptz(6)
 
-  empresa Empresa            @relation(fields: [companyId], references: [id], onDelete: Restrict, map: "acoes_empresa_fkey")
-  autor   Usuario            @relation("AcaoRegistradaPor", fields: [autorId], references: [id], onDelete: Restrict, map: "acoes_autor_fkey")
-  eventos EventoDeOcupacao[]
+  empresa            Empresa             @relation(fields: [companyId], references: [id], onDelete: Restrict, map: "acoes_empresa_fkey")
+  autor              Usuario             @relation("AcaoRegistradaPor", fields: [autorId], references: [id], onDelete: Restrict, map: "acoes_autor_fkey")
+  eventos            EventoDeOcupacao[]
+  eventosDeMatricula EventoDeMatricula[]
 
   @@unique([companyId, id], map: "acoes_company_id_id_key")
   @@index([companyId, criadoEm(sort: Desc)], map: "acoes_company_criado_em_idx")
@@ -1078,4 +1094,88 @@ model EventoDeOcupacao {
   @@index([companyId, ocupacaoId, criadoEm(sort: Desc)], map: "eventos_ocupacao_idx")
   @@index([companyId, acaoId], map: "eventos_acao_idx")
   @@map("eventos_de_ocupacao")
+}
+
+/// SPEC-031/D3 — a configuracao de operacao da empresa.
+///
+/// Sao DOIS prazos, uma coluna cada (REQ-001). A primeira versao da DDL tinha
+/// um so, escrita pelo molde do irmao `config_pagamento_empresa` sem ler o
+/// requisito que ela existe para satisfazer.
+///
+/// **NULO e a unica ausencia, e zero nao existe** (INV-065): o CHECK do banco
+/// e `IS NULL OR >= 1` nos dois campos. Do lado do codigo, a ausencia vira o
+/// tipo soma `PrazoDeCancelamento` — `number | null` deixaria `prazo ?? 0`
+/// compilar, e um deles viraria "prazo zero" em silencio.
+model ConfigOperacaoEmpresa {
+  id                            String   @id @default(uuid()) @db.Uuid
+  companyId                     String   @unique @map("company_id") @db.Uuid
+  prazoCancelamentoAulaHoras    Int?     @map("prazo_cancelamento_aula_horas")
+  prazoCancelamentoReservaHoras Int?     @map("prazo_cancelamento_reserva_horas")
+  createdAt                     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  empresa Empresa @relation(fields: [companyId], references: [id], onDelete: Restrict, map: "config_operacao_empresa_company_id_fkey")
+
+  @@map("config_operacao_empresa")
+}
+
+/// SPEC-031/D13 — a falta que o aluno avisa sem sair da turma.
+///
+/// **Quatro FKs e tres pais.** A contagem esteve em tres versoes ao mesmo
+/// tempo (cinco somando D13+D18, tres no D18, dois pais no D22/2b); a v13 da
+/// spec a fechou. As quatro sao RESTRICT, e e isso que obriga a tabela a ser
+/// apagada antes dos tres pais na sequencia de limpeza.
+///
+/// Nao ha FK simples para `alunos(id)`: a composta com `company_id` a
+/// substitui. Declarar as duas manteria viva a forma que o D18 chama de "o
+/// molde com o buraco" — `presencas` a tem, e so nao pode ser diferente
+/// porque o `UNIQUE (company_id, id)` chegou depois, com a SPEC-032.
+model FaltaAvisada {
+  id         String     @id @default(uuid()) @db.Uuid
+  companyId  String     @map("company_id") @db.Uuid
+  ocupacaoId String     @map("ocupacao_id") @db.Uuid
+  origemTipo OrigemTipo @default(TURMA) @map("origem_tipo")
+  alunoId    String     @map("aluno_id") @db.Uuid
+  avisadaEm  DateTime   @default(now()) @map("avisada_em") @db.Timestamptz(6)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  empresa         Empresa        @relation(fields: [companyId], references: [id], onDelete: Restrict, map: "faltas_company_id_fkey")
+  ocupacaoPorTipo OcupacaoQuadra @relation("FaltaOcupacaoTipo", fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Restrict, map: "faltas_ocupacao_fkey")
+  ocupacao        OcupacaoQuadra @relation("FaltaOcupacaoEmpresa", fields: [companyId, ocupacaoId], references: [companyId, id], onDelete: Restrict, map: "faltas_ocupacao_empresa_fkey")
+  aluno           Aluno          @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "faltas_aluno_empresa_fkey")
+
+  /// AC-017: a idempotencia e do BANCO. `createMany({ skipDuplicates })` so
+  /// funciona porque esta constraint existe — dois POST simultaneos produzem
+  /// UMA linha.
+  @@unique([ocupacaoId, alunoId], map: "faltas_unica")
+  @@map("faltas_avisadas")
+}
+
+/// SPEC-031/D21 — o alvo tecnico da remocao administrativa.
+///
+/// `EventoDeOcupacao` nao serve: remover um aluno de uma turma **nao muda
+/// ocupacao nenhuma**, entao nao haveria `ocupacaoId` honesto para preencher —
+/// e inventar um produziria auditoria semanticamente falsa, que e pior que
+/// auditoria ausente.
+///
+/// Segue a cisao da SPEC-032: a acao e o gesto humano (uma), os eventos sao os
+/// alvos tecnicos (N). Aqui o alvo e uma MATRICULA.
+///
+/// **Append-only por trigger**, como as duas da SPEC-032 — e por isso entra
+/// tambem no conjunto `APPEND_ONLY` de `limpar-empresa.ts`, que e diferente de
+/// `TABELAS_DA_EMPRESA`: estar num nao poe no outro.
+model EventoDeMatricula {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  acaoId    String   @map("acao_id") @db.Uuid
+  turmaId   String   @map("turma_id") @db.Uuid
+  alunoId   String   @map("aluno_id") @db.Uuid
+  criadoEm  DateTime @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  acao  AcaoAdministrativa @relation(fields: [companyId, acaoId], references: [companyId, id], onDelete: Restrict, map: "eventos_matricula_acao_fkey")
+  turma Turma              @relation(fields: [companyId, turmaId], references: [companyId, id], onDelete: Restrict, map: "eventos_matricula_turma_fkey")
+  aluno Aluno              @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "eventos_matricula_aluno_fkey")
+
+  @@map("eventos_de_matricula")
 }
