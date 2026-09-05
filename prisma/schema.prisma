@@ -1001,6 +1001,12 @@ model AvaliacaoDeAula {
 enum TipoDeAcao {
   reserva_criada
   reserva_cancelada
+  /// SPEC-034: mover uma reserva avulsa (PATCH /bookings/:id).
+  reserva_movida
+  /// SPEC-034: cancelar UMA ocorrencia de turma. E o quarto caminho que
+  /// poe ocupacao de TURMA em `cancelado`, e o unico que comeca por
+  /// `turmas FOR UPDATE` de fora do ClassesService (D12).
+  aula_cancelada
   pagamento_confirmado
   turma_criada
   turma_horario_editado
@@ -1013,6 +1019,9 @@ enum TipoDeAcao {
 enum TipoDeEventoDeOcupacao {
   criada
   cancelada
+  /// SPEC-034: a ocupacao nao mudou de status, mudou de lugar --
+  /// `data`, `hora_inicio`, `hora_fim` e/ou `quadra_id`.
+  movida
   reativada
   pagamento_confirmado
 

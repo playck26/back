@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  DiaComItensResponseDto,
   DiaDaAgendaResponseDto,
   ItemDaAgendaResponseDto,
 } from './dto/booking-response.dto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   formatDateOnly,
@@ -19,6 +21,9 @@ export type DiaDaAgenda = DiaDaAgendaResponseDto;
 
 /** SPEC-021/TASK-005 — idem. */
 export type ItemDoDia = ItemDaAgendaResponseDto;
+
+/** SPEC-034/CON-034.1 — a forma canônica vive no DTO. */
+export type DiaComItens = DiaComItensResponseDto;
 
 /**
  * SPEC-012 (MOD-005) — agenda do gestor.
@@ -49,6 +54,42 @@ function autorDo(
   const alvo = qual === 'ultimo' ? doTipo.at(-1) : doTipo.at(0);
   return alvo?.acao.autor.nome ?? null;
 }
+
+/**
+ * SPEC-034 — o `include` do item, em UM lugar só.
+ *
+ * Era literal dentro de `detalheDoDia`. A rota da semana precisa exatamente
+ * do mesmo, e duplicá-lo faria o AC-001 ("os itens do dia batem campo a campo
+ * com `GET /agenda/:data`") virar promessa sobre duas consultas que alguém
+ * teria de lembrar de manter iguais.
+ *
+ * NFR-002: `include` explícito resolve os nomes de uma vez — sem N+1 para
+ * descobrir quem reservou.
+ *
+ * **Fica no módulo, não na classe**, para que o tipo do payload possa ser
+ * derivado dele — é isso que faz `mapearItem` recusar em compilação um
+ * `include` que perdeu um campo.
+ */
+const INCLUDE_DO_ITEM = {
+  quadra: { select: { nome: true } },
+  aluno: { include: { usuario: { select: { nome: true } } } },
+  origemTurma: { select: { nome: true } },
+  // SPEC-032/AC-009 — o autor entra no MESMO `include`, sem N+1. É a razão do
+  // NFR-002 desta rota: descobrir quem criou cada item com uma consulta por
+  // item transformaria um dia cheio em dezenas de idas.
+  eventos: {
+    select: {
+      tipo: true,
+      criadoEm: true,
+      acao: { select: { autor: { select: { nome: true } } } },
+    },
+    orderBy: { criadoEm: 'asc' },
+  },
+} satisfies Prisma.OcupacaoQuadraInclude;
+
+type OcupacaoDoItem = Prisma.OcupacaoQuadraGetPayload<{
+  include: typeof INCLUDE_DO_ITEM;
+}>;
 
 @Injectable()
 export class AgendaService {
@@ -175,8 +216,6 @@ export class AgendaService {
   async detalheDoDia(companyId: string, data: string): Promise<ItemDoDia[]> {
     const dataDate = parseDateOnly(data);
 
-    // NFR-002: `include` explícito resolve os nomes de uma vez — sem N+1
-    // para descobrir quem reservou.
     const ocupacoes = await this.prisma.ocupacaoQuadra.findMany({
       where: {
         companyId,
@@ -184,26 +223,93 @@ export class AgendaService {
         statusPagamento: { not: 'cancelado' },
         quadra: { status: 'ativa' },
       },
-      include: {
-        quadra: { select: { nome: true } },
-        aluno: { include: { usuario: { select: { nome: true } } } },
-        origemTurma: { select: { nome: true } },
-        // SPEC-032/AC-009 — o autor entra no MESMO `include`, sem N+1. É a
-        // razão do NFR-002 desta rota: descobrir quem criou cada item com uma
-        // consulta por item transformaria um dia cheio em dezenas de idas.
-        eventos: {
-          select: {
-            tipo: true,
-            criadoEm: true,
-            acao: { select: { autor: { select: { nome: true } } } },
-          },
-          orderBy: { criadoEm: 'asc' },
-        },
-      },
+      include: INCLUDE_DO_ITEM,
       orderBy: [{ horaInicio: 'asc' }, { quadraId: 'asc' }],
     });
 
-    return ocupacoes.map((o) => ({
+    return ocupacoes.map((o) => this.mapearItem(o));
+  }
+
+  /**
+   * SPEC-034/REQ-001 — os sete dias, com o detalhe de cada um.
+   *
+   * **NFR-001: UMA consulta de ocupações para a semana inteira.** Sete
+   * chamadas a `detalheDoDia` produziriam resposta idêntica e passariam no
+   * AC-001 sem que ninguém percebesse — foi exatamente esse o achado da 2ª
+   * validação cruzada, e é por isso que o AC ganhou um espião que **conta**
+   * as chamadas em vez de só comparar o resultado.
+   *
+   * As outras duas consultas (quadras ativas e regras semanais) são as mesmas
+   * do `resumoDoMes` e não escalam com o tamanho da semana. O NFR diz "uma
+   * consulta de **ocupações**", não "uma consulta", de propósito.
+   *
+   * **D10 — a semana começa no dia que o cliente mandar.** O servidor não
+   * adivinha convenção de semana; o Admin já calcula o domingo dele por
+   * `getUTCDay()` (`agenda-view.tsx:60`).
+   */
+  async semanaDe(companyId: string, inicio: string): Promise<DiaComItens[]> {
+    const primeiro = parseDateOnly(inicio);
+    const ultimo = new Date(primeiro);
+    ultimo.setUTCDate(ultimo.getUTCDate() + 6);
+
+    const [ocupacoes, quadrasAtivas, linhas] = await Promise.all([
+      this.prisma.ocupacaoQuadra.findMany({
+        where: {
+          companyId,
+          data: { gte: primeiro, lte: ultimo },
+          // Mesmos dois filtros do dia e do mês: cancelada não ocupa a quadra
+          // (a EXCLUDE a ignora) e quadra inativa não é agenda de ninguém.
+          statusPagamento: { not: 'cancelado' },
+          quadra: { status: 'ativa' },
+        },
+        include: INCLUDE_DO_ITEM,
+        orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }, { quadraId: 'asc' }],
+      }),
+      this.prisma.quadra.findMany({
+        where: { companyId, status: 'ativa' },
+        select: { id: true },
+      }),
+      this.prisma.horarioFuncionamento.findMany({
+        where: { companyId },
+        select: {
+          quadraId: true,
+          diaSemana: true,
+          fechado: true,
+          horaInicio: true,
+          horaFim: true,
+        },
+      }),
+    ]);
+
+    const porDia = new Map<string, ItemDoDia[]>();
+    for (const o of ocupacoes) {
+      const chave = formatDateOnly(o.data);
+      const lista = porDia.get(chave);
+      if (lista) lista.push(this.mapearItem(o));
+      else porDia.set(chave, [this.mapearItem(o)]);
+    }
+
+    // **Exatamente sete, sempre** (REQ-001): dia sem ocupação entra com
+    // `itens: []`. Devolver só os dias com movimento faria a grade da semana
+    // ter de adivinhar os buracos, e o `fechado` do dia vazio é informação —
+    // é a mesma decisão da SPEC-010 que o mês já toma.
+    const dias: DiaComItens[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const dia = new Date(primeiro);
+      dia.setUTCDate(dia.getUTCDate() + i);
+      const chave = formatDateOnly(dia);
+      dias.push({
+        data: chave,
+        fechado: this.tudoFechado(quadrasAtivas, linhas, dia.getUTCDay()),
+        itens: porDia.get(chave) ?? [],
+      });
+    }
+    return dias;
+  }
+
+  /** SPEC-034 — o mapeamento do item, também em um lugar só. Ver acima. */
+  private mapearItem(o: OcupacaoDoItem): ItemDoDia {
+    return {
       id: o.id,
       quadraNome: o.quadra.nome,
       horaInicio: formatTimeOnly(o.horaInicio),
@@ -227,7 +333,7 @@ export class AgendaService {
       // uma ocupação pode ser cancelada mais de uma vez, e quem pergunta
       // "quem cancelou isto?" quer saber do estado atual.
       canceladaPor: autorDo(o.eventos, 'cancelada', 'ultimo'),
-    }));
+    };
   }
 
   /**

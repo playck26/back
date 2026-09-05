@@ -175,6 +175,24 @@ export class DiaDaAgendaResponseDto {
   fechado!: boolean;
 }
 
+/**
+ * SPEC-034/CON-034.1 — um dia da semana, com o detalhe dentro.
+ *
+ * `total`/`pendentes` do `DiaDaAgendaResponseDto` NÃO entram: quem tem os
+ * itens conta sozinho, e dois caminhos para o mesmo número é como as
+ * contagens deste projeto passaram a divergir.
+ */
+export class DiaComItensResponseDto {
+  @ApiProperty({ type: String, example: '2026-09-06' })
+  data!: string;
+
+  @ApiProperty({ type: Boolean })
+  fechado!: boolean;
+
+  @ApiProperty({ type: () => [ItemDaAgendaResponseDto] })
+  itens!: ItemDaAgendaResponseDto[];
+}
+
 export class ItemDaAgendaResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
