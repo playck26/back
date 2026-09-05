@@ -708,13 +708,20 @@ export class ClassesService {
   /**
    * SPEC-034/TASK-004 — cancelar UMA ocorrência de turma.
    *
-   * ### Este é o QUARTO caminho que põe ocupação de `TURMA` em `cancelado`
+   * ### Este método CANCELA ocorrência de turma — e por isso trava primeiro
    *
-   * `presenca.service.ts` afirma, num comentário, que travar só `turmas`
-   * basta **porque** os caminhos são três e todos passam por esse lock. Este
-   * método é o quarto, e é por isso que ele **começa** por
-   * `turmas FOR UPDATE` (D12) — sem isso a afirmação vira falsa e
+   * A invariante mora em `presenca.service.ts`, no comentário logo acima de
+   * `travarEValidarOcorrencia`: travar só `turmas` basta **porque** todo
+   * caminho que cancela ocorrência de turma passa por esse mesmo lock. **Lá é
+   * a fonte; aqui não se repete a contagem** — esta linha já disse "os
+   * caminhos são três e este é o quarto" enquanto o outro arquivo dizia
+   * "DOIS", no mesmo commit, e foi assim que a validação cruzada de
+   * 2026-09-05 achou a divergência. Número duplicado é o que envelhece.
+   *
+   * O que importa aqui é a consequência: este método **começa** por
+   * `turmas FOR UPDATE` (D12) porque sem isso a afirmação de lá vira falsa e
    * `salvarChamada` passa a poder gravar chamada numa aula recém-cancelada.
+   * O FIT-023 (AC-016) é o teste que prova isso.
    *
    * ### A ordem dentro da transação
    *
