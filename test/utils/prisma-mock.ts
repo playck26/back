@@ -45,6 +45,10 @@ export interface PrismaMock {
     create: jest.Mock;
     update: jest.Mock;
   };
+  // SPEC-031/TASK-003: os dois prazos de cancelamento. `upsert` porque a
+  // primeira gravacao cria a linha e as demais a substituem — `PUT` e
+  // substituicao total.
+  configOperacaoEmpresa: { findUnique: jest.Mock; upsert: jest.Mock };
   empresa: {
     findUnique: jest.Mock;
     findMany: jest.Mock;
@@ -119,6 +123,12 @@ export function buildPrismaMock(): PrismaMock {
       findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+    },
+    // SPEC-031: padrao e "empresa sem configuracao" — que e o estado da
+    // maioria hoje, e o que a AC-003 descreve.
+    configOperacaoEmpresa: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn(),
     },
     empresa: {
       findUnique: jest.fn(),

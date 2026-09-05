@@ -18,11 +18,12 @@ import { CourtImageController } from './court-image.controller';
 import { CourtsService } from './courts.service';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
+import { CompanySettingsModule } from '../company-settings/company-settings.module';
 
 @Module({
   // StorageModule entra pela imagem de quadra (SPEC-018/TASK-005), pelo
   // mesmo caminho que a logo entrou em MOD-002.
-  imports: [PeopleModule, StorageModule],
+  imports: [CompanySettingsModule, PeopleModule, StorageModule],
   controllers: [
     CourtsController,
     BookingsController,

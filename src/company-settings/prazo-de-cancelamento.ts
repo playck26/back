@@ -73,6 +73,24 @@ export function podeCancelar(
   }
 }
 
+/**
+ * A ÚNICA tradução de `number | null` para o tipo soma.
+ *
+ * Existe como função, e num lugar só, porque o buraco que o D5 fechou não é
+ * de tipo — é de aritmética: `prazo ?? 0` e `Number(prazo)` **compilam** neste
+ * projeto (`strictNullChecks: true`, `strict` ausente), e os dois produzem
+ * "prazo de zero horas", que `podeCancelar` trata como permitir sempre. Com a
+ * conversão espalhada, bastaria um serviço esquecer.
+ *
+ * O banco garante o outro lado: `CHECK (IS NULL OR >= 1)` nas duas colunas.
+ * Se um zero chegasse aqui mesmo assim, ele viraria `HORAS 0` e a política o
+ * trataria como "sem antecedência" — por isso o zero é proibido na origem, e
+ * não interpretado (D4).
+ */
+export function prazoDe(horas: number | null): PrazoDeCancelamento {
+  return horas === null ? { regra: 'SEM_PRAZO' } : { regra: 'HORAS', horas };
+}
+
 export interface EntradaDeSaidaDeTurma {
   readonly papelDoAutor: PapelDoAutor;
   /**
