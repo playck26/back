@@ -6488,6 +6488,11 @@
               "TURMA"
             ]
           },
+          "origemTurmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
           "responsavel": {
             "type": "string",
             "nullable": true
@@ -6522,6 +6527,7 @@
           "horaInicio",
           "horaFim",
           "origemTipo",
+          "origemTurmaId",
           "responsavel",
           "statusPagamento",
           "valor",

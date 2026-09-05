@@ -210,6 +210,20 @@ export class ItemDaAgendaResponseDto {
   origemTipo!: 'AVULSO' | 'TURMA';
 
   /**
+   * SPEC-034 — a turma de origem, quando `origemTipo` e `TURMA`.
+   *
+   * **Entrou porque a rota de cancelar ocorrencia precisa dela na URL**
+   * (`/classes/:turmaId/ocorrencias/:ocupacaoId/cancel`), e o item da agenda
+   * nao a carregava: a tela sabia QUE era uma aula e nao DE QUAL turma.
+   * Achado montando a TASK-008 -- e o tipo de buraco que so aparece quando
+   * alguem tenta usar o contrato.
+   *
+   * Nulo em ocupacao `AVULSO`, e e assim que a tela decide qual acao oferecer.
+   */
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  origemTurmaId!: string | null;
+
+  /**
    * SPEC-012/AC-004 — **a turma, quando a ocupação é de turma; o aluno,
    * quando é avulsa.** Identificar ocupação de turma pelo aluno era o defeito
    * que a AC-004 existe para barrar: a turma tem muitos alunos e nenhum deles

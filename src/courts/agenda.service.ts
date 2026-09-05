@@ -315,6 +315,7 @@ export class AgendaService {
       horaInicio: formatTimeOnly(o.horaInicio),
       horaFim: formatTimeOnly(o.horaFim),
       origemTipo: o.origemTipo,
+      origemTurmaId: o.origemTurmaId,
       // AC-004: ocupação de turma não tem `aluno_id` — quem responde por
       // ela é a turma. Mesma razão do AC-019 de SPEC-010.
       responsavel:
