@@ -52,6 +52,27 @@ const db = new PrismaClient();
 const q = (sql: string) => db.$executeRawUnsafe(sql);
 
 /**
+ * Apaga o `super_admin` do caso de autoria, **na ordem das FKs**: a ação
+ * append-only primeiro, pela válvula, depois o usuário.
+ */
+async function limparSuperAdmin(superId: string): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL ROLE playck_test_cleanup`);
+    await tx.$executeRawUnsafe(
+      `SELECT set_config('playck.limpeza_append_only', 'on', true)`,
+    );
+    await tx.$executeRawUnsafe(
+      `DELETE FROM acoes_administrativas WHERE autor_id = '${superId}'`,
+    );
+    await tx.$executeRawUnsafe(
+      `SELECT set_config('playck.limpeza_append_only', '', true)`,
+    );
+    await tx.$executeRawUnsafe(`RESET ROLE`);
+    await tx.$executeRawUnsafe(`DELETE FROM usuarios WHERE id = '${superId}'`);
+  });
+}
+
+/**
  * **Recusado, e recusado PELA FK** — não por qualquer erro.
  *
  * A exigência do nome da constraint é herdada do FIT-014, e a razão dela está
@@ -208,16 +229,45 @@ describe('FIT-021 — DEF-024 fase 1: a empresa entra na chave', () => {
    * `super_admin` (que tem `company_id` nulo) deixa de poder ser autor de
    * qualquer coisa, e é isso que a LIM-032f protege.
    */
+  /**
+   * **A limpeza deste caso tem ordem, e ela custou três execuções vermelhas.**
+   *
+   * O `super_admin` tem `company_id` NULO, então `limparEmpresa` — que apaga
+   * por `WHERE company_id = $1` — **nunca o alcança**. Quem tem de apagá-lo é
+   * este teste.
+   *
+   * A versão anterior tentava, e falhava em silêncio: o `DELETE FROM usuarios`
+   * vinha **antes** de apagar a ação que o referencia (`acoes_autor_fkey`, com
+   * `RESTRICT`), e o erro era engolido por um `.catch(() => undefined)`. O
+   * usuário sobrevivia, e a execução seguinte no MESMO banco batia em `23505`.
+   * Reproduzido três vezes em 2026-09-05 — é a ressalva R3 do veredito.
+   *
+   * Agora a ordem é filho antes de pai, e **sem `catch`**: se a limpeza
+   * quebrar, o teste tem de ficar vermelho na hora, e não na próxima execução
+   * de outra pessoa.
+   *
+   * `acoes_administrativas` é append-only (SPEC-032/INV-061), então o `DELETE`
+   * precisa da válvula: GUC **e** a role `playck_test_cleanup`, dentro da
+   * mesma transação. É o mesmo mecanismo de `limparEmpresa`.
+   */
   it('a FK de AUTORIA continua simples: super_admin pode ser autor', async () => {
     const SUPER = 'f0240000-0000-4000-8000-00000000009f';
+    // Defensivo: se uma execução antiga (com o defeito) deixou o usuário para
+    // trás, este teste continua podendo rodar.
+    await limparSuperAdmin(SUPER);
+
     await q(
       `INSERT INTO usuarios (id,email,senha_hash,nome,role,updated_at) VALUES ('${SUPER}','def024-super@teste.local','x','S','super_admin',now())`,
     );
     await aceitaOParCerto(
       `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em) VALUES (gen_random_uuid(),'${EMPRESA_A}','reserva_cancelada','${SUPER}',now())`,
     );
-    await q(`DELETE FROM usuarios WHERE id = '${SUPER}'`).catch(
-      () => undefined,
+
+    await limparSuperAdmin(SUPER);
+    const [{ n }] = await db.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM usuarios WHERE id = '${SUPER}'`,
     );
+    // A afirmação que faltava: a limpeza **aconteceu**.
+    expect(Number(n)).toBe(0);
   });
 });

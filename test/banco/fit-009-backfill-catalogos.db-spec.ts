@@ -203,7 +203,45 @@ async function esporteDaQuadra(id: string): Promise<string | null> {
   return linhas[0]?.nome ?? null;
 }
 
+/**
+ * **A dedup depende do COLLATION do banco, e isso não estava declarado em
+ * lugar nenhum** (ressalva R4 do veredito de 2026-09-05).
+ *
+ * O backfill dedup por `lower(nome)`. Num cluster com locale **`C`**, `lower()`
+ * é ASCII puro: `lower('TÊNIS')` devolve `'tÊnis'`, que não é igual a
+ * `lower('Tênis')` = `'tênis'`. As duas grafias viram **duas opções**, e o
+ * AC-012 falha com um diff de cinco linhas que não diz por quê.
+ *
+ * Isto não é defeito do teste nem do backfill — é um **requisito de ambiente**
+ * que ninguém tinha escrito. A migration já rodou em produção, onde o cluster
+ * dobra acento; o risco é um banco novo (CI, máquina de alguém) nascer com
+ * `C` e o sintoma aparecer como se fosse regressão da dedup.
+ *
+ * A conferência abaixo troca esse diff por uma frase. **Ela não pula o teste**:
+ * um ambiente que não dobra acento não pode dizer que provou a dedup.
+ */
+async function exigirCollationQueDobraAcento(): Promise<void> {
+  const [r] = await prisma.$queryRawUnsafe<{ dobra: boolean }[]>(
+    `SELECT lower('TÊNIS') = lower('Tênis') AS dobra`,
+  );
+  if (!r.dobra) {
+    const [l] = await prisma.$queryRawUnsafe<{ collate: string }[]>(
+      `SELECT datcollate AS collate FROM pg_database WHERE datname = current_database()`,
+    );
+    throw new Error(
+      `Este banco usa collation "${l.collate}", onde lower() NAO dobra acento: ` +
+        `lower('TENIS') !== lower('Tenis'). A dedup do backfill (SPEC-020) e por ` +
+        `lower(nome), entao o AC-012 nao pode ser provado aqui. ` +
+        `Crie o banco com locale UTF-8/ICU — por exemplo: ` +
+        `CREATE DATABASE x TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'pt-BR' LOCALE 'C' ENCODING 'UTF8'.`,
+    );
+  }
+}
+
 describe('FIT-009 — o backfill dos catálogos, contra Postgres real', () => {
+  // R4: falha com uma frase, e não com um diff de cinco linhas.
+  beforeAll(exigirCollationQueDobraAcento);
+
   beforeEach(async () => {
     await recriarEstadoPreMigration();
   });

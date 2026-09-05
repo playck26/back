@@ -150,6 +150,14 @@ function ehCorridaPerdida(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientUnknownRequestError;
 }
 
+/** O destino composto por `moveBooking` dentro da transação. */
+interface DestinoDeMovimento {
+  quadraId: string;
+  data: Date;
+  horaInicio: Date;
+  horaFim: Date;
+}
+
 /** Forma mínima de uma ocupação para virar resposta de API. */
 interface OcupacaoParaResposta {
   id: string;
@@ -1349,14 +1357,22 @@ export class CourtsService {
       });
     }
 
-    // O destino e composto DENTRO da transacao, a partir da linha travada.
-    // O `catch` precisa dele para perguntar ao banco "quem ganhou?" — e essa
-    // pergunta e a diferenca entre responder 409 e responder 500.
-    let destinoDaTentativa:
-      | { quadraId: string; data: Date; horaInicio: Date; horaFim: Date }
-      | undefined;
-
+    // O destino e composto DENTRO da transacao, a partir da linha travada, e o
+    // `catch` precisa dele para perguntar ao banco "quem ganhou?" — essa
+    // pergunta e a diferenca entre responder 409 e responder 500. Ele vive
+    // DENTRO do laco: ver o comentario da declaracao, logo abaixo.
     for (let tentativa = 1; ; tentativa += 1) {
+      // **Nasce vazio a cada tentativa** (ressalva R7 do veredito de
+      // 2026-09-05). Antes ele vivia fora do laço: se a 2ª tentativa falhasse
+      // ANTES de compor o destino, o `catch` consultaria o conflito no destino
+      // da 1ª — e a linha travada pode ter mudado nesse intervalo, já que a
+      // transação anterior soltou o lock ao abortar. Vazio, o `catch` pula a
+      // consulta e deixa o erro subir, que é o desfecho honesto: sem destino
+      // DESTA tentativa, não há o que afirmar sobre conflito.
+      //
+      // Num objeto, e não numa `let`: a atribuição acontece dentro do closure
+      // do `$transaction`, que o controle de fluxo do TypeScript não enxerga.
+      const tentativaAtual: { destino?: DestinoDeMovimento } = {};
       try {
         return await this.prisma.$transaction(async (tx) => {
           // `FOR UPDATE` não é expressável no query builder do Prisma —
@@ -1418,7 +1434,7 @@ export class CourtsService {
               message: 'horaFim deve ser maior que horaInicio.',
             });
           }
-          destinoDaTentativa = destino;
+          tentativaAtual.destino = destino;
 
           // **Quadra da empresa E ATIVA — agora o código faz o que a frase
           // sempre prometeu.** A FK composta impede empresa alheia; ela não
@@ -1516,13 +1532,17 @@ export class CourtsService {
           // quando ele commita, e — sem esta traducao — o `23P01` subia cru
           // como 500. Localmente o escalonador nao produzia o ciclo e o
           // teste passava; no CI, produziu.
-          if (destinoDaTentativa) {
+          // Tipo explícito na leitura: o `tsc` estreita a propriedade para
+          // `undefined` porque a única atribuição está no closure.
+          const destinoLido: DestinoDeMovimento | undefined =
+            tentativaAtual.destino;
+          if (destinoLido) {
             const conflito = await this.findConflito(
               companyId,
-              destinoDaTentativa.quadraId,
-              destinoDaTentativa.data,
-              destinoDaTentativa.horaInicio,
-              destinoDaTentativa.horaFim,
+              destinoLido.quadraId,
+              destinoLido.data,
+              destinoLido.horaInicio,
+              destinoLido.horaFim,
               id,
             );
             if (conflito) {
