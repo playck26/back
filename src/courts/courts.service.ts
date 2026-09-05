@@ -1259,6 +1259,24 @@ export class CourtsService {
    * Duas tentativas, não N: se a segunda também perde sem conflito visível, o
    * erro sobe cru — `409` sem conflito seria mentira (DEF-013).
    */
+  /**
+   * SPEC-034/AC-020 — **quantas retentativas o `moveBooking` já fez.**
+   *
+   * Existe porque "exatamente uma retentativa" não é aferível de fora: a
+   * resposta de uma transação que perdeu e refez é idêntica à de uma que
+   * ganhou de primeira. Sem este contador, o FIT-022b provaria "não deu 500",
+   * que é metade do critério.
+   *
+   * **Não é só andaime de teste.** É a métrica que diz quantas vezes o
+   * caminho de mover encostou no deadlock em produção — e o DEF-023 existiu
+   * porque ninguém tinha esse número quando o `40P01` apareceu.
+   */
+  private _retentativasDeMover = 0;
+
+  get retentativasDeMover(): number {
+    return this._retentativasDeMover;
+  }
+
   async moveBooking(
     companyId: string,
     id: string,
@@ -1408,6 +1426,7 @@ export class CourtsService {
         });
       } catch (error) {
         if (tentativa === 1 && ehCorridaPerdida(error)) {
+          this._retentativasDeMover += 1;
           continue;
         }
         throw error;
