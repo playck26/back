@@ -32,6 +32,17 @@ export interface TxMock {
     deleteMany: jest.Mock;
   };
   quadra: { findMany: jest.Mock };
+  /**
+   * SPEC-031/DEF — `cancelBooking` e `updatePaymentStatus` leem a ocupacao com
+   * `SELECT … FOR UPDATE`, que o query builder do Prisma nao expressa; o
+   * segundo ainda rele a linha inteira DENTRO da transacao.
+   *
+   * Os dois dubles **delegam ao `findFirst` de cima**, para os testes
+   * continuarem armando um lugar so: com tres lugares para armar, a primeira
+   * divergencia entre eles vira um teste que passa por acaso.
+   */
+  $queryRaw: jest.Mock;
+  ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -113,6 +124,8 @@ export function buildPrismaMock(): PrismaMock {
       deleteMany: jest.fn(),
     },
     quadra: { findMany: jest.fn().mockResolvedValue([]) },
+    $queryRaw: jest.fn(),
+    ocupacaoQuadra: { findFirstOrThrow: jest.fn(), update: jest.fn() },
   };
 
   const mock: PrismaMock = {
@@ -167,6 +180,55 @@ export function buildPrismaMock(): PrismaMock {
     tx,
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
+
+  /**
+   * A ponte da leitura travada, montada DEPOIS de `mock` porque precisa dele.
+   *
+   * `updatePaymentStatus` e `cancelBooking` leem a ocupacao com
+   * `SELECT … FOR UPDATE` (raw) e, no primeiro caso, releem a linha inteira
+   * dentro da mesma transacao. Os testes continuam armando **so**
+   * `prisma.ocupacaoQuadra.findFirst`, e estas duas linhas fazem o resto
+   * derivar dali — sem isso, cada teste teria de armar tres lugares e a
+   * primeira divergencia entre eles viraria um teste que passa por acaso.
+   */
+  tx.ocupacaoQuadra.findFirstOrThrow.mockImplementation(async () => {
+    const linha: unknown = await mock.ocupacaoQuadra.findFirst();
+    if (!linha) throw new Error('P2025');
+    return linha;
+  });
+  tx.ocupacaoQuadra.update.mockImplementation(
+    (args: { data?: unknown }): unknown =>
+      mock.ocupacaoQuadra.update(args) as unknown,
+  );
+
+  tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = strings.join('');
+    if (sql.includes('ocupacoes_quadra')) {
+      const linha = (await mock.ocupacaoQuadra.findFirst()) as {
+        id: string;
+        companyId?: string;
+        alunoId?: string | null;
+        origemTipo?: string;
+        statusPagamento?: string;
+        data?: Date;
+        horaInicio?: Date;
+      } | null;
+      return linha
+        ? [
+            {
+              id: linha.id,
+              company_id: linha.companyId ?? 'c1',
+              aluno_id: linha.alunoId ?? null,
+              origem_tipo: linha.origemTipo,
+              status_pagamento: linha.statusPagamento,
+              data: linha.data,
+              hora_inicio: linha.horaInicio,
+            },
+          ]
+        : [];
+    }
+    return [];
+  });
 
   return mock;
 }
