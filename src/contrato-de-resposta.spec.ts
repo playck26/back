@@ -309,6 +309,11 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // SPEC-023 — os mesmos quatro, mais o da saída. Vêm de
   // `MatriculaDoAlunoService`; são os primeiros corpos de erro com schema
   // publicado no projeto (LIM-004 saiu de `{2xx: 90, 4xx: 0}`).
+  //
+  // SPEC-031/TASK-009d — o quinto TROCOU: `AULA_HOJE` saiu no passo 4 e
+  // `PRAZO_DE_CANCELAMENTO` entrou. Esta linha é o que impede a troca de sair
+  // pela metade — publicar a remoção sem a entrada deixaria o contrato
+  // escondendo o código que `sair` de fato devolve.
   [
     'ErroDeMatriculaResponseDto.code',
     [
@@ -316,7 +321,7 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'TURMA_INATIVA',
       'LIMITE_DE_TURMAS',
       'TURMA_CHEIA',
-      'AULA_HOJE',
+      'PRAZO_DE_CANCELAMENTO',
     ],
   ],
   // SPEC-024 — o portão do aceite. `ACEITE_PENDENTE` vem do `JwtAuthGuard`;
