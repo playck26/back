@@ -102,7 +102,7 @@ export const TABELAS_DA_EMPRESA = [
   // `empresas` —, porque as quatro FKs dela sao RESTRICT. Quatro rodadas de
   // validacao acharam um pai faltando, um por vez, por listar em vez de
   // ordenar.
-  'faltas_avisadas',
+
   'ocupacoes_quadra',
   'pedidos_reserva',
   // SPEC-031/D21: ANTES de `turmas`, `alunos` e `acoes_administrativas` — tem
