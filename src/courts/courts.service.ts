@@ -1264,46 +1264,81 @@ export class CourtsService {
     status: 'pago' | 'cancelado',
     autorId: string,
   ) {
-    const ocupacao = await this.prisma.ocupacaoQuadra.findFirst({
-      where: { id, companyId },
-    });
-    if (!ocupacao) {
-      throw new NotFoundException();
-    }
-
-    // AC-007/AC-011: pagamento é coisa de reserva avulsa (CON-006). Aula
-    // recorrente não tem cobrança própria no modelo, então marcar "pago"
-    // numa ocupação de turma é estado sem significado.
-    this.assertOcupacaoAvulsa(ocupacao.origemTipo);
-
-    if (ocupacao.statusPagamento === status) {
-      return this.toOcupacaoResponse(ocupacao);
-    }
-
-    // AC-012: `cancelado` é terminal.
-    //
-    // Não é preciosismo de máquina de estados: a constraint EXCLUDE de
-    // INV-001 tem `WHERE (status_pagamento <> 'cancelado')`, ou seja,
-    // cancelar **libera o slot de verdade**. Voltar de `cancelado` para
-    // `pago` tenta recolocar a reserva na linha do tempo — se alguém já
-    // reservou aquele horário no meio-tempo, o UPDATE viola a constraint e
-    // devolve erro cru do Postgres; se ninguém reservou, a reserva
-    // ressuscita em silêncio e o aluno que cancelou não fica sabendo.
-    if (ocupacao.statusPagamento === 'cancelado') {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'RESERVA_CANCELADA',
-        message:
-          'Esta reserva foi cancelada e o horário pode já ter sido ocupado. Recarregue a agenda.',
-      });
-    }
-
     // SPEC-032 — esta rota tambem CANCELA (`status = 'cancelado'`), entao ela
     // dispara a trigger `ocupacao_cancelada_exige_evento` e precisa da mesma
     // atomicidade que o `cancelBooking`. O `pago` nao dispara a trigger, mas
     // grava evento pela mesma razao do resto: sem autor, `updated_at` responde
     // "quando" e ninguem responde "quem".
     const atualizada = await this.prisma.$transaction(async (tx) => {
+      /**
+       * **A leitura entra na transação, e trava — mesmo conserto do
+       * `cancelBooking`, e pelo mesmo motivo.**
+       *
+       * Até este commit a leitura era `this.prisma.ocupacaoQuadra.findFirst`
+       * **fora** de qualquer transação, e as três guardas abaixo decidiam
+       * sobre ela. A auditoria adversarial de 2026-09-05 reproduziu a corrida
+       * em banco real, duas vezes:
+       *
+       * 1. reserva futura `pendente_pagamento`; o gestor manda "marcar como
+       *    pago" e a leitura devolve `pendente_pagamento` — passa pela guarda
+       *    do AC-012;
+       * 2. nesse intervalo o aluno cancela pelo `cancelBooking` **já
+       *    corrigido**, que trava, grava `cancelado` + evento e commita;
+       * 3. o `update` do pagamento grava `pago`.
+       *
+       * Estado final medido: `{ meio: 'cancelado', fim: 'pago' }`. **A reserva
+       * cancelada ressuscita, volta ao índice `EXCLUDE`, e o aluno que
+       * cancelou não fica sabendo** — exatamente o que o comentário do AC-012
+       * abaixo descreve como o dano que a guarda existe para impedir.
+       *
+       * E se alguém pegou o slot liberado no meio-tempo, o `UPDATE` viola
+       * `no_overlap_por_quadra` e sobe **cru**: `23P01` vira `500`, não `409`
+       * — esta rota não tem o `ehCorridaPerdida`/retry do `createBooking`.
+       *
+       * O `FOR UPDATE` não é expressável no query builder do Prisma. Travar
+       * pelo `id` e reler a linha inteira **dentro** da mesma transação é o
+       * mínimo: o `findFirstOrThrow` seguinte já lê a linha travada.
+       */
+      const travadas = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id
+          FROM ocupacoes_quadra
+         WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
+         FOR UPDATE
+      `;
+      if (!travadas[0]) {
+        throw new NotFoundException();
+      }
+      const ocupacao = await tx.ocupacaoQuadra.findFirstOrThrow({
+        where: { id, companyId },
+      });
+
+      // AC-007/AC-011: pagamento é coisa de reserva avulsa (CON-006). Aula
+      // recorrente não tem cobrança própria no modelo, então marcar "pago"
+      // numa ocupação de turma é estado sem significado.
+      this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+
+      if (ocupacao.statusPagamento === status) {
+        return ocupacao;
+      }
+
+      // AC-012: `cancelado` é terminal.
+      //
+      // Não é preciosismo de máquina de estados: a constraint EXCLUDE de
+      // INV-001 tem `WHERE (status_pagamento <> 'cancelado')`, ou seja,
+      // cancelar **libera o slot de verdade**. Voltar de `cancelado` para
+      // `pago` tenta recolocar a reserva na linha do tempo — se alguém já
+      // reservou aquele horário no meio-tempo, o UPDATE viola a constraint e
+      // devolve erro cru do Postgres; se ninguém reservou, a reserva
+      // ressuscita em silêncio e o aluno que cancelou não fica sabendo.
+      if (ocupacao.statusPagamento === 'cancelado') {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'RESERVA_CANCELADA',
+          message:
+            'Esta reserva foi cancelada e o horário pode já ter sido ocupado. Recarregue a agenda.',
+        });
+      }
+
       const transicaoId = novaTransicao();
       const registrador = new RegistradorDeAcao(
         tx,

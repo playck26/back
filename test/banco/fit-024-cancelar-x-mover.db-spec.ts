@@ -58,6 +58,15 @@ const PASSADO = '2026-01-05';
 
 const dbCancel = new PrismaClient();
 const dbMover = new PrismaClient();
+const dbPagar = new PrismaClient();
+/**
+ * **Conexão própria para o caso do pagamento, e não é economia de linha — é
+ * conserto.** Os dois casos espionam `$transaction` do MESMO cliente; rodando
+ * juntos, o espião do segundo envolvia o do primeiro e os dois wrappers de
+ * `tx.$queryRaw` ficavam ativos ao mesmo tempo. Isolado passava, em conjunto
+ * quebrava — a assinatura de teste que depende de ordem de execução.
+ */
+const dbCancel2 = new PrismaClient();
 const semear = new PrismaClient();
 const observador = new PrismaClient();
 
@@ -75,6 +84,8 @@ function servico(c: PrismaClient): CourtsService {
 
 const servicoCancel = servico(dbCancel);
 const servicoMover = servico(dbMover);
+const servicoPagar = servico(dbPagar);
+const servicoCancel2 = servico(dbCancel2);
 
 /**
  * A transação interativa do Prisma expira em 5 s, e a pausa deliberada aqui
@@ -160,13 +171,18 @@ const estadoFinal = () =>
     select: { data: true, statusPagamento: true },
   });
 
-beforeAll(() => alargarTransacao(dbCancel));
+beforeAll(() => {
+  alargarTransacao(dbCancel);
+  alargarTransacao(dbCancel2);
+});
 
 afterAll(async () => {
   await limparEmpresa(semear, EMPRESA);
   await Promise.all([
     dbCancel.$disconnect(),
     dbMover.$disconnect(),
+    dbPagar.$disconnect(),
+    dbCancel2.$disconnect(),
     semear.$disconnect(),
     observador.$disconnect(),
   ]);
@@ -280,6 +296,90 @@ describe('FIT-024 — cancelar x mover, sob concorrencia', () => {
       expect(passou && final.statusPagamento === 'cancelado').toBe(false);
     } finally {
       liberar();
+      espiao.mockRestore();
+    }
+  });
+  /**
+   * **A MESMA corrida, com `updatePaymentStatus` no lugar do movimento.**
+   *
+   * Achado por auditoria adversarial em 2026-09-05, e reproduzido em banco
+   * real antes de virar conserto: `updatePaymentStatus` lia a ocupação com
+   * `this.prisma.ocupacaoQuadra.findFirst` **fora** de qualquer transação, e a
+   * guarda do AC-012 decidia sobre essa leitura.
+   *
+   * O estado que saía: `{ meio: 'cancelado', fim: 'pago' }`. **A reserva
+   * cancelada ressuscitava**, voltava ao índice `EXCLUDE` — porque ele tem
+   * `WHERE status_pagamento <> 'cancelado'` — e o aluno que cancelou não
+   * ficava sabendo.
+   *
+   * O comentário do AC-012 no serviço já descrevia esse dano exato como o
+   * motivo de a guarda existir. Ela existia; só decidia sobre a linha errada.
+   */
+  it('pagar NAO ressuscita reserva cancelada por outra conexao (AC-012)', async () => {
+    await semearReserva();
+
+    let leu!: () => void;
+    const jaLeu = new Promise<void>((r) => (leu = r));
+    let liberar!: () => void;
+    const liberado = new Promise<void>((r) => (liberar = r));
+
+    const original = dbCancel2.$transaction.bind(dbCancel2) as (
+      ...a: unknown[]
+    ) => Promise<unknown>;
+    const espiao = jest
+      .spyOn(dbCancel2, '$transaction')
+      .mockImplementation((fn: (tx: TxComRaw) => unknown) =>
+        original((tx: TxComRaw) => {
+          const raw = tx.$queryRaw.bind(tx) as (
+            ...a: unknown[]
+          ) => Promise<unknown>;
+          let primeira = true;
+          tx.$queryRaw = async (...args: unknown[]): Promise<unknown> => {
+            const linhas: unknown = await raw(...args);
+            if (primeira) {
+              primeira = false;
+              leu();
+              await liberado;
+            }
+            return linhas;
+          };
+          return fn(tx);
+        }),
+      );
+
+    try {
+      const cancelamento = servicoCancel2
+        .cancelBooking(EMPRESA, RESERVA, ADMIN, 'company_admin')
+        .then(() => 'cancelou');
+
+      // O cancelamento já segura o `FOR UPDATE` da linha.
+      await jaLeu;
+
+      const pagamento = servicoPagar
+        .updatePaymentStatus(EMPRESA, RESERVA, 'pago', ADMIN)
+        .then(
+          () => 'pagou',
+          (e: { response?: { code?: string } }) => e.response?.code ?? 'erro',
+        );
+
+      // **Sem o conserto ninguém espera aqui** — o `findFirst` de fora da
+      // transação não pede lock nenhum, lê `pendente_pagamento` e passa reto.
+      await esperarAte(
+        alguemBloqueado,
+        20_000,
+        'o pagamento atras do lock do cancelamento',
+      );
+
+      liberar();
+      await cancelamento;
+
+      // Ele acorda vendo `cancelado`, e a guarda do AC-012 finalmente decide
+      // sobre a linha que vale.
+      expect(await pagamento).toBe('RESERVA_CANCELADA');
+
+      const fim = await estadoFinal();
+      expect(fim.statusPagamento).toBe('cancelado');
+    } finally {
       espiao.mockRestore();
     }
   });

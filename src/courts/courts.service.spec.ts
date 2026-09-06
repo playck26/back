@@ -38,6 +38,11 @@ function buildPrismaMock() {
     ocupacaoQuadra: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+      // SPEC-031/DEF — `updatePaymentStatus` passou a travar com
+      // `SELECT ... FOR UPDATE` e a reler a linha **dentro** da transacao.
+      // O duble delega ao `findFirst` pelo mesmo motivo do `$queryRaw`
+      // abaixo: os testes continuam armando um lugar so.
+      findFirstOrThrow: jest.fn(),
       // SPEC-032: `createBooking` passou a LER a linha criada — o evento
       // aponta para `ocupacao.id`. Antes o retorno era ignorado, e o dublê
       // podia devolver `undefined`.
@@ -173,6 +178,16 @@ describe('CourtsService', () => {
     (prisma.$transaction as unknown as jest.Mock).mockImplementation(
       (cb: (tx: PrismaService) => unknown) => cb(prisma),
     );
+    // `findFirstOrThrow` le a linha JA travada: mesma fonte do `findFirst`.
+    (
+      prisma.ocupacaoQuadra.findFirstOrThrow as unknown as jest.Mock
+    ).mockImplementation(async () => {
+      const linha: unknown = await (
+        prisma.ocupacaoQuadra.findFirst as unknown as jest.Mock
+      )();
+      if (!linha) throw new Error('P2025');
+      return linha;
+    });
     // O raw devolve a MESMA linha que `findFirst` devolveria, em snake_case,
     // dentro de um array — que e a forma do `SELECT ... FOR UPDATE`.
     (prisma.$queryRaw as unknown as jest.Mock).mockImplementation(async () => {
