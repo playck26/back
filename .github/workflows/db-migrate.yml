@@ -91,12 +91,29 @@ jobs:
           # SPEC-042: aluno nao cria nem cancela reserva no passado. As datas
           # do trecho de aluno sao calculadas no dia do run, nao fixas — e a
           # janela do cleanup acompanha, senao a reserva de hoje+7 vira
-          # residuo permanente. As datas FIXAS do trecho de admin (FIT-001 em
-          # 2026-09-01..20, reserva em 2026-08-25) continuam: admin pode.
+          # residuo permanente.
           # +30 e nao +7: o FIT-001 reserva 2026-09-01..20 as 10h, e a segunda
           # reserva do aluno e 10:00-11:00 — em hoje+7 (dentro da janela) dava
           # 409 contra o FIT-001, nao contra o que o passo testa. (Run 33780058433.)
           ALUNO_DATA=$(date -u -d '+30 days' +%F)
+          # SPEC-031/D5b — **a data do ADMIN tambem deixou de poder ser fixa.**
+          #
+          # Este bloco dizia "as datas FIXAS do trecho de admin continuam:
+          # admin pode", e a premissa era verdadeira ate a TASK-006 subir. O
+          # D5b recusa cancelar DEPOIS DO INICIO em qualquer configuracao, e o
+          # INV-066/AC-010b diz que o gestor e barrado junto com o aluno nesse
+          # corte — ele passa onde o aluno e barrado pela ANTECEDENCIA, nao
+          # depois do inicio.
+          #
+          # Com `2026-08-25` fixa, o passo "cancelar libera o slot" pedia para
+          # cancelar uma reserva de 12 dias atras e levava 409
+          # PRAZO_DE_CANCELAMENTO. O `grep -q 204` falhava sem mensagem sob
+          # `set -e`. (Run 34063894837, 2026-09-06 — a primeira execucao do
+          # workflow depois da TASK-006.)
+          #
+          # +45 e nao +30: o trecho do aluno ja usa +30, e as duas reservas se
+          # cruzariam no mesmo slot.
+          SMOKE_DATA=$(date -u -d '+45 days' +%F)
           CLEAN_ATE=$(date -u -d '+120 days' +%F)
           pnpm run build
           JWT_ACCESS_SECRET=ci-smoke-access JWT_REFRESH_SECRET=ci-smoke-refresh PORT=3000 node dist/main.js &
@@ -201,10 +218,10 @@ jobs:
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
-          -- SPEC-031/D22/2b: `faltas_avisadas` antes dos TRES pais dela
-          -- (`ocupacoes_quadra`, `alunos`, `empresas`) -- as quatro FKs sao
-          -- RESTRICT. E `eventos_de_matricula` antes de `acoes`, `turmas` e
-          -- `alunos`, pelo mesmo motivo (D21).
+          -- SPEC-031/D22/2b: faltas_avisadas antes dos TRES pais dela
+          -- (ocupacoes_quadra, alunos, empresas) -- as quatro FKs sao
+          -- RESTRICT. E eventos_de_matricula antes de acoes, turmas e
+          -- alunos, pelo mesmo motivo (D21).
           DELETE FROM faltas_avisadas WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
@@ -213,7 +230,7 @@ jobs:
           DELETE FROM eventos_de_matricula WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM eventos_de_matricula WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-031/D22/10: a acao passou a ter DOIS filhos. Olhar so
-          -- `eventos_de_ocupacao` apagaria acao que `eventos_de_matricula` ainda
+          -- eventos_de_ocupacao apagaria acao que eventos_de_matricula ainda
           -- referencia -- 23503 no proprio DELETE.
           DELETE FROM acoes_administrativas a WHERE NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id)
                                                 AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id);
@@ -226,17 +243,17 @@ jobs:
           -- com a empresa tem FK RESTRICT para ela; a do run ATUAL ja existe
           -- neste ponto e fica de fora.
           DELETE FROM horarios_funcionamento WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
-          -- SPEC-031/D22/2d: `quadras` ANTES de `esportes_de_quadra` e
-          -- `categorias_de_quadra` -- `quadras_esporte_fkey` e RESTRICT. Hoje e
-          -- no-op: `POST /companies` cria empresa, esportes, horarios e admin, e
+          -- SPEC-031/D22/2d: quadras ANTES de esportes_de_quadra e
+          -- categorias_de_quadra -- quadras_esporte_fkey e RESTRICT. Hoje e
+          -- no-op: POST /companies cria empresa, esportes, horarios e admin, e
           -- NENHUMA quadra, entao a empresa CI nunca tem uma. **O risco e
           -- latente, nao ativo** -- medido: com quadra, os DOIS blocos abortam em
-          -- `23001`; sem quadra, os dois chegam a COMMIT. Fica aqui para o dia em
+          -- 23001; sem quadra, os dois chegam a COMMIT. Fica aqui para o dia em
           -- que algum passo do smoke criar quadra sob a empresa do run.
           DELETE FROM quadras WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM config_pagamento_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-031/D22/1b: company-scoped com FK RESTRICT. Sem esta linha o
-          -- `DELETE FROM empresas` abaixo recebe 23503.
+          -- DELETE FROM empresas abaixo recebe 23503.
           DELETE FROM config_operacao_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM contratos_da_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM categorias_de_quadra WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
@@ -263,7 +280,7 @@ jobs:
           SQL
 
           echo "--- GET /courts/:id/availability ---"
-          curl -s "http://localhost:3000/api/v1/courts/$QUADRA_ID/availability?data=2026-08-25" \
+          curl -s "http://localhost:3000/api/v1/courts/$QUADRA_ID/availability?data=$SMOKE_DATA" \
             -H "Authorization: Bearer $ACCESS_TOKEN" | jq -e '.slots | length == 16'
 
           echo "--- cria aluno de teste pra usar nas reservas ---"
@@ -276,7 +293,7 @@ jobs:
           echo "--- POST /bookings (reserva avulsa sem conflito) ---"
           BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-25\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$SMOKE_DATA\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
           echo "$BOOKING_RES"
           echo "$BOOKING_RES" | jq -e '.statusPagamento == "pendente_pagamento" and .origemTipo == "AVULSO"'
           BOOKING_ID=$(echo "$BOOKING_RES" | jq -r '.id')
@@ -284,7 +301,7 @@ jobs:
           echo "--- POST /bookings no mesmo horário precisa ser 409 (REQ-004) ---"
           CONFLICT_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-25\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$SMOKE_DATA\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
           [ "$CONFLICT_RES" = "409" ] || (echo "esperado 409, veio $CONFLICT_RES" && exit 1)
 
           echo "--- cancelar libera o slot (AC-003) ---"
@@ -292,7 +309,7 @@ jobs:
             -H "Authorization: Bearer $ACCESS_TOKEN" | grep -q 204
           REBOOK_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"2026-08-25\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
+            -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$SMOKE_DATA\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
           [ "$REBOOK_RES" = "201" ] || (echo "esperado 201 após cancelar, veio $REBOOK_RES" && exit 1)
 
           echo "--- FIT-001: 2 requisições simultâneas no mesmo slot, 20 execuções, zero overbooking (NFR-001) ---"
@@ -646,7 +663,7 @@ jobs:
           -- dia em que deixar de ser.
           DELETE FROM quadras WHERE company_id = '$COMPANY_ID';
           DELETE FROM config_pagamento_empresa WHERE company_id = '$COMPANY_ID';
-          -- SPEC-031/D22/1b: antes do `DELETE FROM empresas` logo abaixo.
+          -- SPEC-031/D22/1b: antes do DELETE FROM empresas logo abaixo.
           DELETE FROM config_operacao_empresa WHERE company_id = '$COMPANY_ID';
           DELETE FROM contratos_da_empresa WHERE company_id = '$COMPANY_ID';
           DELETE FROM categorias_de_quadra WHERE company_id = '$COMPANY_ID';
