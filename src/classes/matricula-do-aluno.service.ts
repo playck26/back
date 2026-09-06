@@ -294,10 +294,13 @@ export class MatriculaDoAlunoService {
        * todos — empresa sem configuração deixa de exigir antecedência, e só o
        * corte de `minutos <= 0` (D5b) permanece.
        *
-       * **Esta é uma leitura do rollout, não uma citação dele.** A spec diz
-       * "os dois códigos conforme a configuração" e não diz qual em qual
-       * caso; escolhi a que não muda nada para quem não configurou, que é a
-       * reversível. Se a intenção era outra, o lugar de corrigir é aqui.
+       * **Isto deixou de ser leitura e virou regra.** A v13 da spec dizia
+       * "os dois códigos conforme a configuração" sem dizer qual em qual
+       * caso; a validação cruzada de 2026-09-05 apontou que interpretação de
+       * rollout tem de ser norma, não comentário. A **v14** tem a tabela, na
+       * seção *"Rollout do `AULA_HOJE`"* — e diz explicitamente que este ramo
+       * **não** equivale à AC-003 final: enquanto ele existir, a empresa sem
+       * configuração é barrada por "tem aula hoje", que é mais restritivo.
        */
       if (prazos.aula.regra === 'SEM_PRAZO') {
         const aulaHoje = await tx.ocupacaoQuadra.findFirst({

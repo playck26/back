@@ -32,9 +32,21 @@ export interface TxMock {
     deleteMany: jest.Mock;
   };
   quadra: { findMany: jest.Mock };
-  // SPEC-031/REQ-006: a falta avisada trava `alunos` e a ocorrência por SQL
-  // cru — o mock precisa de `$queryRaw` porque a rota não usa o modelo.
+  /**
+   * SPEC-031 — **duas famílias de leitura crua passam por aqui.**
+   *
+   * A falta avisada (REQ-006) trava `alunos` e a ocorrência por SQL cru; e
+   * `cancelBooking`/`updatePaymentStatus` leem a ocupação com
+   * `SELECT … FOR UPDATE`, que o query builder do Prisma não expressa — o
+   * segundo ainda relê a linha inteira DENTRO da transação.
+   *
+   * É **um** `$queryRaw` para as duas, e ele decide pela FORMA da query. Os
+   * dublês de `ocupacaoQuadra` **delegam ao `findFirst` de cima**, para os
+   * testes continuarem armando um lugar só: com três lugares para armar, a
+   * primeira divergência entre eles vira um teste que passa por acaso.
+   */
   $queryRaw: jest.Mock;
+  ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
   turmaAluno: { findFirst: jest.Mock };
   faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
   configOperacaoEmpresa: { findUnique: jest.Mock };
@@ -121,24 +133,8 @@ export function buildPrismaMock(): PrismaMock {
     quadra: { findMany: jest.fn().mockResolvedValue([]) },
     // Padrão da falta avisada: aluno existe, está matriculado, a ocorrência
     // é de turma e não está cancelada. Quem testa a recusa sobrescreve.
-    //
-    // `$queryRaw` é um mock só, e as duas consultas da rota passam por ele —
-    // por isso ele decide pela FORMA da query, não pela ordem. Ordem daria um
-    // teste que passa por acaso quando a implementação reordenar.
-    $queryRaw: jest.fn((strings: TemplateStringsArray) =>
-      Promise.resolve(
-        strings.join('').includes('FROM alunos')
-          ? [{ id: 'aluno-1' }]
-          : [
-              {
-                id: 'oc-1',
-                status_pagamento: 'pendente_pagamento',
-                data: new Date('2099-01-01T00:00:00.000Z'),
-                hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
-              },
-            ],
-      ),
-    ),
+    $queryRaw: jest.fn(),
+    ocupacaoQuadra: { findFirstOrThrow: jest.fn(), update: jest.fn() },
     turmaAluno: { findFirst: jest.fn().mockResolvedValue({ id: 'm1' }) },
     faltaAvisada: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -199,6 +195,69 @@ export function buildPrismaMock(): PrismaMock {
     tx,
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
+
+  /**
+   * A ponte da leitura travada, montada DEPOIS de `mock` porque precisa dele.
+   *
+   * `updatePaymentStatus` e `cancelBooking` leem a ocupacao com
+   * `SELECT … FOR UPDATE` (raw) e, no primeiro caso, releem a linha inteira
+   * dentro da mesma transacao. Os testes continuam armando **so**
+   * `prisma.ocupacaoQuadra.findFirst`, e estas duas linhas fazem o resto
+   * derivar dali — sem isso, cada teste teria de armar tres lugares e a
+   * primeira divergencia entre eles viraria um teste que passa por acaso.
+   */
+  tx.ocupacaoQuadra.findFirstOrThrow.mockImplementation(async () => {
+    const linha: unknown = await mock.ocupacaoQuadra.findFirst();
+    if (!linha) throw new Error('P2025');
+    return linha;
+  });
+  tx.ocupacaoQuadra.update.mockImplementation(
+    (args: { data?: unknown }): unknown =>
+      mock.ocupacaoQuadra.update(args) as unknown,
+  );
+
+  tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = strings.join('');
+    // A de `courts` seleciona `ocupacoes_quadra` e **não** menciona
+    // `origem_turma_id`; a da falta menciona. É o que separa as duas.
+    if (sql.includes('ocupacoes_quadra') && !sql.includes('origem_turma_id')) {
+      const linha = (await mock.ocupacaoQuadra.findFirst()) as {
+        id: string;
+        companyId?: string;
+        alunoId?: string | null;
+        origemTipo?: string;
+        statusPagamento?: string;
+        data?: Date;
+        horaInicio?: Date;
+      } | null;
+      return linha
+        ? [
+            {
+              id: linha.id,
+              company_id: linha.companyId ?? 'c1',
+              aluno_id: linha.alunoId ?? null,
+              origem_tipo: linha.origemTipo,
+              status_pagamento: linha.statusPagamento,
+              data: linha.data,
+              hora_inicio: linha.horaInicio,
+            },
+          ]
+        : [];
+    }
+    // A consulta da falta avisada: `alunos FOR KEY SHARE`, e a ocorrência
+    // filtrada por `origem_turma_id` — que é o que a distingue da de cima.
+    if (sql.includes('FROM alunos')) {
+      return [{ id: 'aluno-1' }];
+    }
+    return [
+      {
+        id: 'oc-1',
+        status_pagamento: 'pendente_pagamento',
+        data: new Date('2099-01-01T00:00:00.000Z'),
+        hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
+      },
+    ];
+  });
 
   return mock;
 }
