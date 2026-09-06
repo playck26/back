@@ -555,6 +555,13 @@ export class ClassesService {
         // sumia das "Anteriores" no dia seguinte (o filtro da avaliação),
         // sem nunca dizer o que houve.
         chamadas: { select: { completude: true } },
+        // SPEC-031/REQ-006 — o aviso DESTE aluno, e só dele.
+        //
+        // `where` na relação, e `select: { id: true }`: sem o filtro viriam
+        // os avisos da turma inteira para o `map` usar um booleano — que é
+        // exatamente o buraco que o comentário do `select` acima descreve, em
+        // miniatura. Com ele, no máximo uma linha por ocorrência.
+        faltas: { where: { alunoId: aluno.id }, select: { id: true } },
       },
       orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
     });
@@ -569,6 +576,7 @@ export class ClassesService {
       // distinguir `completa` de `legada` — isso é registro do professor. O
       // que muda a vida dele é só "a aula não aconteceu".
       naoRealizada: ocupacao.chamadas[0]?.completude === 'nao_houve',
+      faltaAvisada: ocupacao.faltas.length > 0,
       data: formatDateOnly(ocupacao.data),
       horaInicio: formatTimeOnly(ocupacao.horaInicio),
       horaFim: formatTimeOnly(ocupacao.horaFim),

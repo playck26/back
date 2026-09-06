@@ -64,6 +64,25 @@ export class AulaDoAlunoResponseDto {
    */
   @ApiProperty({ type: Boolean, example: false })
   naoRealizada!: boolean;
+
+  /**
+   * SPEC-031/REQ-006 — **o aluno vê o próprio aviso.**
+   *
+   * A spec não pede este campo: o único AC de visão da falta é o AC-019, e ele
+   * é do PROFESSOR. **É acréscimo, e declarado como tal.**
+   *
+   * A razão é que sem ele o botão de avisar não tem estado. O aluno avisaria,
+   * recarregaria a tela, e leria "avisar que vou faltar" de novo — sem
+   * conseguir distinguir "não avisei" de "avisei e o app esqueceu". Um botão
+   * que esquece é pior que botão nenhum, e o sentido inteiro da falta avisada
+   * é poder apontar para o registro depois (*"eu avisei, por que fui
+   * cobrado?"*, AC-018c).
+   *
+   * `false` para quem não avisou. Nunca `null`: ausência de aviso é um estado
+   * conhecido, não um dado faltando.
+   */
+  @ApiProperty({ type: Boolean, example: false })
+  faltaAvisada!: boolean;
 }
 
 /**
