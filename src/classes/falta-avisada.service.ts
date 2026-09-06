@@ -71,6 +71,7 @@ export class FaltaAvisadaService {
     turmaId: string,
     ocupacaoId: string,
     escrever: (tx: Prisma.TransactionClient, alunoId: string) => Promise<T>,
+    pularPolitica = false,
   ): Promise<T> {
     const agora = new Date();
 
@@ -134,6 +135,7 @@ export class FaltaAvisadaService {
 
       // (5) D23 — a política, nos DOIS verbos e com o mesmo código.
       const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+      if (pularPolitica) return escrever(tx, aluno.id); // SABOTAGEM S12
       const veredicto = avaliarSaidaDeTurma({
         papelDoAutor: 'aluno',
         agora,
@@ -218,6 +220,7 @@ export class FaltaAvisadaService {
           where: { companyId, ocupacaoId, alunoId },
         });
       },
+      true,
     );
   }
 }
