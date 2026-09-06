@@ -115,14 +115,6 @@ export class RegistradorDeAcao {
       })
     ).id;
 
-    await this.tx.eventoDeMatricula.create({
-      data: {
-        companyId: this.companyId,
-        acaoId: this.acaoId,
-        turmaId,
-        alunoId,
-      },
-    });
   }
 
   /**
