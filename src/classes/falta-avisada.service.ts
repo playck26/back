@@ -115,7 +115,6 @@ export class FaltaAvisadaService {
            AND company_id      = ${companyId}::uuid
            AND origem_tipo     = 'TURMA'
            AND origem_turma_id = ${turmaId}::uuid
-         FOR UPDATE
       `;
       const ocorrencia = ocorrencias[0];
       if (!ocorrencia) throw new NotFoundException();
