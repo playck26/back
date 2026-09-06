@@ -7644,13 +7644,17 @@
               "TURMA_INATIVA",
               "LIMITE_DE_TURMAS",
               "TURMA_CHEIA",
-              "AULA_HOJE"
+              "PRAZO_DE_CANCELAMENTO"
             ],
             "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy."
           },
           "message": {
             "type": "string",
             "example": "Esta turma já está com todas as vagas ocupadas."
+          },
+          "horasExigidas": {
+            "type": "number",
+            "example": 2
           }
         },
         "required": [

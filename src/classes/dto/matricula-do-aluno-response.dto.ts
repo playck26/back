@@ -74,13 +74,28 @@ export class ErroDeMatriculaResponseDto {
   @ApiProperty({ example: 409 })
   statusCode!: number;
 
+  /**
+   * **SPEC-031/TASK-009d — passo 4 do rollout: `AULA_HOJE` saiu, e
+   * `PRAZO_DE_CANCELAMENTO` entrou no lugar.**
+   *
+   * A troca é um par, não duas mudanças independentes. O passo 3 fez a rota
+   * de sair parar de emitir `AULA_HOJE` e passar a emitir
+   * `PRAZO_DE_CANCELAMENTO`; publicar a remoção sem publicar a entrada
+   * deixaria o contrato **escondendo o código que a rota de fato devolve** —
+   * que é o defeito que este projeto já nomeou duas vezes
+   * (`me-classes.controller.ts`: *"contrato que esconde um caso é contrato
+   * errado"*).
+   *
+   * Os quatro primeiros vêm de `entrar`; o último, de `sair`. O DTO é
+   * compartilhado pelos dois verbos.
+   */
   @ApiProperty({
     enum: [
       'ALUNO_NAO_APROVADO',
       'TURMA_INATIVA',
       'LIMITE_DE_TURMAS',
       'TURMA_CHEIA',
-      'AULA_HOJE',
+      'PRAZO_DE_CANCELAMENTO',
     ],
     description:
       'O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy.',
@@ -89,6 +104,16 @@ export class ErroDeMatriculaResponseDto {
 
   @ApiProperty({ example: 'Esta turma já está com todas as vagas ocupadas.' })
   message!: string;
+
+  /**
+   * AC-006 — quantas horas o clube exige, quando exige.
+   *
+   * Presente **só** com `PRAZO_DE_CANCELAMENTO` e prazo configurado: sem
+   * prazo a recusa é "a aula já começou" e não há número a dizer. O corpo já
+   * devolvia este campo; o contrato é que não o publicava.
+   */
+  @ApiPropertyOptional({ type: Number, example: 2 })
+  horasExigidas?: number;
 }
 
 export class MatriculaDoAlunoResponseDto {
