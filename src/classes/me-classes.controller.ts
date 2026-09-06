@@ -42,6 +42,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { ClassesService } from './classes.service';
+import { FaltaAvisadaService } from './falta-avisada.service';
 
 // CON-004.5 (SPEC-005) — exclusivo do aluno, separado do CRUD
 // administrativo de turmas em ClassesController (company_admin).
@@ -54,6 +55,7 @@ export class MeClassesController {
     private readonly classesService: ClassesService,
     private readonly matricula: MatriculaDoAlunoService,
     private readonly avaliacoes: AvaliacaoDeAulaService,
+    private readonly faltas: FaltaAvisadaService,
   ) {}
 
   @Get()
@@ -194,5 +196,82 @@ export class MeClassesController {
     @Param('id', UuidCanonicoPipe) turmaId: string,
   ) {
     return this.matricula.sair(user.companyId as string, user.sub, turmaId);
+  }
+
+  /**
+   * SPEC-031/AC-015 — **avisar que vai faltar, sem sair da turma.**
+   *
+   * `@Roles('aluno')` é obrigatório, e não decoração: o prefixo `/me/` **não
+   * é mecanismo**. Sem o decorator, o `RolesGuard` diz de si mesmo, em
+   * comentário, que deixa passar qualquer role autenticada.
+   *
+   * Idempotente pelo BANCO (AC-017): dois `POST` simultâneos produzem uma
+   * linha, e o segundo devolve o mesmo `204`.
+   */
+  @Post(':turmaId/aulas/:ocupacaoId/falta')
+  @ApiNoContentResponse()
+  @ApiConflictResponse({
+    description:
+      'Ocorrência cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo de antecedência (`PRAZO_DE_CANCELAMENTO`).',
+  })
+  @ApiNotFoundResponse({
+    description:
+      'Aluno não matriculado na turma, ou a ocorrência não é desta turma. Os dois respondem igual: a URL da turma A não pode revelar a ocorrência da B.',
+  })
+  @HttpCode(204)
+  @Roles('aluno')
+  avisarFalta(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.faltas.avisar(
+      user.companyId as string,
+      user.sub,
+      turmaId,
+      ocupacaoId,
+    );
+  }
+
+  /**
+   * SPEC-031/AC-016c (D23) — **retirar o aviso obedece à MESMA regra de
+   * prazo.**
+   *
+   * Retirar significa "eu vou", que é o estado padrão, e parece inofensivo.
+   * Mas com o `DELETE` livre o aluno avisaria cedo e retiraria em cima da
+   * hora, terminando exatamente no estado que o prazo existe para negar:
+   * falta sem aviso válido, tarde demais para o clube reagir.
+   *
+   * Repetir devolve o mesmo `204`, inclusive sem linha (AC-017b).
+   */
+  @Delete(':turmaId/aulas/:ocupacaoId/falta')
+  @ApiNoContentResponse()
+  @ApiConflictResponse({
+    description:
+      'Ocorrência cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`) — simétrico ao `POST`, por decisão (D23).',
+  })
+  // O `404` acontecia em runtime e não estava publicado — o mesmo defeito que
+  // as linhas 159-165 deste arquivo já registram: **contrato que esconde um
+  // caso é contrato errado**. Os dois verbos compartilham
+  // `comAOcorrenciaTravada`, que levanta `NotFoundException` nas duas mesmas
+  // guardas; o `POST` declarava e o `DELETE` não, então o cliente gerado
+  // tratava o `404` do `DELETE` como erro não previsto.
+  @ApiNotFoundResponse({
+    description:
+      'Aluno não matriculado na turma, ou a ocorrência não é desta turma. Os dois respondem igual: a URL da turma A não pode revelar a ocorrência da B.',
+  })
+  @HttpCode(204)
+  @Roles('aluno')
+  retirarFalta(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.faltas.retirar(
+      user.companyId as string,
+      user.sub,
+      turmaId,
+      ocupacaoId,
+    );
   }
 }

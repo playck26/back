@@ -13,6 +13,7 @@ import { MeTeacherAgendaController } from './me-teacher-agenda.controller';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { PresencaService } from './presenca.service';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
+import { FaltaAvisadaService } from './falta-avisada.service';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { CompanySettingsModule } from '../company-settings/company-settings.modu
     MeTeacherAgendaController,
   ],
   providers: [
+    FaltaAvisadaService,
     ClassesService,
     AgendaDoProfessorService,
     AvaliacaoDeAulaService,

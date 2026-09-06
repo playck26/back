@@ -33,16 +33,23 @@ export interface TxMock {
   };
   quadra: { findMany: jest.Mock };
   /**
-   * SPEC-031/DEF — `cancelBooking` e `updatePaymentStatus` leem a ocupacao com
-   * `SELECT … FOR UPDATE`, que o query builder do Prisma nao expressa; o
-   * segundo ainda rele a linha inteira DENTRO da transacao.
+   * SPEC-031 — **duas famílias de leitura crua passam por aqui.**
    *
-   * Os dois dubles **delegam ao `findFirst` de cima**, para os testes
-   * continuarem armando um lugar so: com tres lugares para armar, a primeira
-   * divergencia entre eles vira um teste que passa por acaso.
+   * A falta avisada (REQ-006) trava `alunos` e a ocorrência por SQL cru; e
+   * `cancelBooking`/`updatePaymentStatus` leem a ocupação com
+   * `SELECT … FOR UPDATE`, que o query builder do Prisma não expressa — o
+   * segundo ainda relê a linha inteira DENTRO da transação.
+   *
+   * É **um** `$queryRaw` para as duas, e ele decide pela FORMA da query. Os
+   * dublês de `ocupacaoQuadra` **delegam ao `findFirst` de cima**, para os
+   * testes continuarem armando um lugar só: com três lugares para armar, a
+   * primeira divergência entre eles vira um teste que passa por acaso.
    */
   $queryRaw: jest.Mock;
   ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
+  turmaAluno: { findFirst: jest.Mock };
+  faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
+  configOperacaoEmpresa: { findUnique: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -124,8 +131,16 @@ export function buildPrismaMock(): PrismaMock {
       deleteMany: jest.fn(),
     },
     quadra: { findMany: jest.fn().mockResolvedValue([]) },
+    // Padrão da falta avisada: aluno existe, está matriculado, a ocorrência
+    // é de turma e não está cancelada. Quem testa a recusa sobrescreve.
     $queryRaw: jest.fn(),
     ocupacaoQuadra: { findFirstOrThrow: jest.fn(), update: jest.fn() },
+    turmaAluno: { findFirst: jest.fn().mockResolvedValue({ id: 'm1' }) },
+    faltaAvisada: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
   };
 
   const mock: PrismaMock = {
@@ -203,7 +218,9 @@ export function buildPrismaMock(): PrismaMock {
 
   tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = strings.join('');
-    if (sql.includes('ocupacoes_quadra')) {
+    // A de `courts` seleciona `ocupacoes_quadra` e **não** menciona
+    // `origem_turma_id`; a da falta menciona. É o que separa as duas.
+    if (sql.includes('ocupacoes_quadra') && !sql.includes('origem_turma_id')) {
       const linha = (await mock.ocupacaoQuadra.findFirst()) as {
         id: string;
         companyId?: string;
@@ -227,7 +244,19 @@ export function buildPrismaMock(): PrismaMock {
           ]
         : [];
     }
-    return [];
+    // A consulta da falta avisada: `alunos FOR KEY SHARE`, e a ocorrência
+    // filtrada por `origem_turma_id` — que é o que a distingue da de cima.
+    if (sql.includes('FROM alunos')) {
+      return [{ id: 'aluno-1' }];
+    }
+    return [
+      {
+        id: 'oc-1',
+        status_pagamento: 'pendente_pagamento',
+        data: new Date('2099-01-01T00:00:00.000Z'),
+        hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
+      },
+    ];
   });
 
   return mock;

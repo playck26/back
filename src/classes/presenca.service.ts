@@ -39,6 +39,15 @@ export interface LinhaDaChamada {
   nome: string;
   status: StatusPresenca | null;
   naTurmaHoje: boolean;
+  /**
+   * SPEC-031/AC-019 — o aluno avisou que ia faltar.
+   *
+   * **Sobrevive ao cancelamento da aula** (D14): o `GET` devolve a ocorrência
+   * cancelada com a lista inteira, e o aviso pertence ali — ele é o registro
+   * histórico que responde *"eu avisei, por que fui cobrado?"*, e essa é a
+   * única tela onde a pergunta aparece.
+   */
+  faltaAvisada: boolean;
 }
 
 export interface ItemChamada {
@@ -484,7 +493,7 @@ export class PresencaService {
       ocupacaoId,
     );
 
-    const [presencas, matriculados, cabecalho] = await Promise.all([
+    const [presencas, matriculados, cabecalho, faltas] = await Promise.all([
       this.prisma.presenca.findMany({
         where: { ocupacaoId },
         include: {
@@ -498,7 +507,14 @@ export class PresencaService {
         },
       }),
       this.prisma.chamada.findUnique({ where: { ocupacaoId } }),
+      // SPEC-031/AC-019. Sem filtro de status da ocupação: a falta de uma aula
+      // cancelada continua aparecendo, que é o D14.
+      this.prisma.faltaAvisada.findMany({
+        where: { ocupacaoId },
+        select: { alunoId: true },
+      }),
     ]);
+    const avisaram = new Set(faltas.map((f) => f.alunoId));
 
     // SPEC-015/AC-000c — o que devolver depende da **completude declarada
     // pelo cabeçalho**, não de haver ou não linhas em `presencas`.
@@ -541,6 +557,7 @@ export class PresencaService {
       nome: p.aluno.usuario.nome,
       status: p.status,
       naTurmaHoje: matriculados.some((m) => m.alunoId === p.alunoId),
+      faltaAvisada: avisaram.has(p.alunoId),
     }));
 
     // INV-020, agora estrita: chamada **completa** não ganha aluno novo ao
@@ -556,6 +573,7 @@ export class PresencaService {
               nome: m.aluno.usuario.nome,
               status: null,
               naTurmaHoje: true,
+              faltaAvisada: avisaram.has(m.alunoId),
             })),
         ];
 
