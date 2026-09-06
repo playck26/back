@@ -250,6 +250,16 @@ export class MeClassesController {
     description:
       'Ocorrência cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`) — simétrico ao `POST`, por decisão (D23).',
   })
+  // O `404` acontecia em runtime e não estava publicado — o mesmo defeito que
+  // as linhas 159-165 deste arquivo já registram: **contrato que esconde um
+  // caso é contrato errado**. Os dois verbos compartilham
+  // `comAOcorrenciaTravada`, que levanta `NotFoundException` nas duas mesmas
+  // guardas; o `POST` declarava e o `DELETE` não, então o cliente gerado
+  // tratava o `404` do `DELETE` como erro não previsto.
+  @ApiNotFoundResponse({
+    description:
+      'Aluno não matriculado na turma, ou a ocorrência não é desta turma. Os dois respondem igual: a URL da turma A não pode revelar a ocorrência da B.',
+  })
   @HttpCode(204)
   @Roles('aluno')
   retirarFalta(

@@ -66,7 +66,19 @@ const presencas = new PresencaService(semear as unknown as PrismaService);
  *
  * Aqui data, início e fim saem do **mesmo timestamp**, então a data rola junto
  * com a hora; e o fim é cortado no fim do dia por `LEAST` sobre *timestamps*,
- * onde não existe volta. Nenhum caso usa `hora_fim` — só o `EXCLUDE` usa.
+ * onde não existe volta.
+ *
+ * **O `GREATEST` é a terceira versão desta linha, e ele fecha o que as duas
+ * primeiras deixaram aberto.** O `LEAST` opera sobre timestamp, mas o resultado
+ * volta para `time`: com `ini` entre 23:59:00 e 24:00:00 o teto vira 23:59:00 e
+ * `hora_fim < hora_inicio` de novo — três janelas de 60 segundos por dia, uma
+ * para cada deslocamento usado aqui. Achado por auditoria adversarial em
+ * 2026-09-05, que mediu `ini = 23:59:30` devolvendo `hi=23:59:30, hf=23:59:00`.
+ *
+ * `GREATEST(..., ini)` garante `fim >= ini` para QUALQUER `ini`, inclusive
+ * `23:59:59.999`. Quando os dois se igualam o range fica vazio, e range vazio
+ * não conflita com ninguém — nenhum caso deste arquivo usa `hora_fim`, só o
+ * `EXCLUDE` usa.
  */
 async function ocorrenciaEmMinutos(
   n: number,
@@ -78,8 +90,11 @@ async function ocorrenciaEmMinutos(
       SELECT (now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${n} minutes' AS ini
     ), j AS (
       SELECT ini,
-             LEAST(ini + INTERVAL '50 minutes',
-                   date_trunc('day', ini) + INTERVAL '23 hours 59 minutes') AS fim
+             GREATEST(
+               LEAST(ini + INTERVAL '50 minutes',
+                     date_trunc('day', ini) + INTERVAL '23 hours 59 minutes'),
+               ini
+             ) AS fim
         FROM t
     )
     INSERT INTO ocupacoes_quadra
@@ -99,8 +114,11 @@ async function moverOcorrencia(id: string, n: number): Promise<void> {
       SELECT (now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${n} minutes' AS ini
     ), j AS (
       SELECT ini,
-             LEAST(ini + INTERVAL '50 minutes',
-                   date_trunc('day', ini) + INTERVAL '23 hours 59 minutes') AS fim
+             GREATEST(
+               LEAST(ini + INTERVAL '50 minutes',
+                     date_trunc('day', ini) + INTERVAL '23 hours 59 minutes'),
+               ini
+             ) AS fim
         FROM t
     )
     UPDATE ocupacoes_quadra o
@@ -146,6 +164,16 @@ async function semearFixture() {
   await q(
     `INSERT INTO turma_alunos (id,turma_id,aluno_id) VALUES (gen_random_uuid(),'${TURMA}','${ALUNO}')`,
   );
+}
+
+/** Uma reserva AVULSA, que é o que a falta nunca pode alcançar. */
+async function ocorrenciaAvulsa(): Promise<string> {
+  const [r] = await semear.$queryRawUnsafe<{ id: string }[]>(`
+    INSERT INTO ocupacoes_quadra
+      (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,status_pagamento,valor,updated_at)
+    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','2099-12-20','09:00','10:00','AVULSO','${ALUNO}','pendente_pagamento',100,now())
+    RETURNING id`);
+  return r.id;
 }
 
 const contaFaltas = (ocupacaoId: string) =>
@@ -206,19 +234,41 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
    * AC-017c — **o banco recusa**, não o código. A FK composta com
    * `origem_tipo` e o CHECK `faltas_origem_turma` são as duas metades.
    */
-  it('AC-017c: falta em reserva AVULSA e recusada pelo banco', async () => {
-    const [r] = await semear.$queryRawUnsafe<{ id: string }[]>(`
-      INSERT INTO ocupacoes_quadra
-        (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,status_pagamento,valor,updated_at)
-      VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','2026-12-20','09:00','10:00','AVULSO','${ALUNO}','pendente_pagamento',100,now())
-      RETURNING id`);
+  it('AC-017c: falta em reserva AVULSA e recusada pela FK composta', async () => {
+    const avulsa = await ocorrenciaAvulsa();
 
+    // Sem `origem_tipo` explícito, cai no `DEFAULT 'TURMA'` — então quem
+    // recusa aqui é a FK composta `(ocupacao_id, origem_tipo)`, que não acha
+    // par numa ocupação AVULSO. `23503`, e não um erro qualquer.
     await expect(
       q(
         `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at)
-         VALUES (gen_random_uuid(),'${EMPRESA}','${r.id}','${ALUNO}',now())`,
+         VALUES (gen_random_uuid(),'${EMPRESA}','${avulsa}','${ALUNO}',now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/23503/);
+  });
+
+  /**
+   * **A OUTRA metade do mecanismo, que não tinha teste.**
+   *
+   * O docstring do caso acima dizia "a FK composta e o CHECK são as duas
+   * metades", e o `INSERT` omitia `origem_tipo` — caía no `DEFAULT 'TURMA'`, o
+   * CHECK nunca era violado, e só a FK trabalhava. A própria migration diz por
+   * que o CHECK existe: *"o DEFAULT sozinho não impede um `INSERT` explícito
+   * com 'AVULSO'; o CHECK impede"* — e ninguém tinha exercitado isso.
+   *
+   * Achado por auditoria adversarial em 2026-09-05, que mediu: com
+   * `DROP CONSTRAINT faltas_origem_turma` a suíte seguia inteira verde.
+   */
+  it('AC-017c: origem_tipo AVULSO explicito e recusado pelo CHECK', async () => {
+    const avulsa = await ocorrenciaAvulsa();
+
+    await expect(
+      q(
+        `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,origem_tipo,aluno_id,updated_at)
+         VALUES (gen_random_uuid(),'${EMPRESA}','${avulsa}','AVULSO','${ALUNO}',now())`,
+      ),
+    ).rejects.toThrow(/23514/);
   });
 
   /**

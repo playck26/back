@@ -67,6 +67,32 @@ const dbMesa = new PrismaClient();
 const observador = new PrismaClient();
 const semear = new PrismaClient();
 
+/**
+ * **A transação sob julgamento é a do SERVIÇO, e ela usa o padrão do Prisma.**
+ *
+ * `comAOcorrenciaTravada` abre `$transaction` sem opções — 5 s. Todas as OUTRAS
+ * transações deste arquivo levam `timeout: 60_000` explícito, e as barreiras
+ * declaram tolerância de 20 s: havia um orçamento de tempo oculto de 5 s contra
+ * barreiras de 20 s, e num runner lento os dois casos morriam com `erro` em vez
+ * do código esperado — exatamente o vermelho sem informação que o
+ * `esperarOuDenunciar` foi escrito para eliminar.
+ *
+ * Achado por auditoria adversarial em 2026-09-05, que mediu: 6 s de atraso
+ * injetado (bem dentro dos 20 s que o teste diz tolerar) derruba os dois casos.
+ *
+ * Alargar aqui é decisão **do harness**, e é o mesmo idioma do `fit-023`: o
+ * serviço mantém o padrão de produção, que para produção é o certo — segurar
+ * dois locks por mais de 5 s é problema, não recurso.
+ */
+function alargarTransacao(c: PrismaClient) {
+  const orig = c.$transaction.bind(c) as (...a: unknown[]) => Promise<unknown>;
+  (c as unknown as { $transaction: unknown }).$transaction = (
+    fn: unknown,
+    opcoes?: Record<string, unknown>,
+  ) => orig(fn, { maxWait: 60_000, timeout: 120_000, ...(opcoes ?? {}) });
+}
+alargarTransacao(dbFalta);
+
 const q = (sql: string) => semear.$executeRawUnsafe(sql);
 const faltas = new FaltaAvisadaService(
   dbFalta as unknown as PrismaService,

@@ -3760,6 +3760,9 @@
           "204": {
             "description": ""
           },
+          "404": {
+            "description": "Aluno não matriculado na turma, ou a ocorrência não é desta turma. Os dois respondem igual: a URL da turma A não pode revelar a ocorrência da B."
+          },
           "409": {
             "description": "Ocorrência cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`) — simétrico ao `POST`, por decisão (D23)."
           }

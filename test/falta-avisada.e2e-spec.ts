@@ -10,7 +10,7 @@ import { buildPrismaMock, type PrismaMock } from './utils/prisma-mock';
  *
  * ## O que esta suíte prova, e o que ela não prova
  *
- * O comportamento está provado contra Postgres real no `fit-025`, que chama o
+ * O comportamento está provado contra Postgres real no `fit-018-019-falta-avisada.db-spec.ts`, que chama o
  * serviço direto. **Isso deixa a rota inteira sem prova** — e a rota tem três
  * coisas que nenhum db-spec alcança:
  *
@@ -21,7 +21,7 @@ import { buildPrismaMock, type PrismaMock } from './utils/prisma-mock';
  *    em comentário, que deixa passar qualquer role autenticada — então a
  *    ausência dele não quebra nada visível.
  * 3. **A ORDEM dos dois `:params`.** Trocar `:turmaId` com `:ocupacaoId`
- *    passaria em todos os doze casos do `fit-025`, porque lá a chamada é
+ *    passaria em todos os casos do `fit-018-019`, porque lá a chamada é
  *    direta. Só apareceria em produção.
  *
  * Prisma é mock: o que não se prova aqui são os predicados SQL — e a lição de
