@@ -204,7 +204,7 @@ describe('SPEC-044 — myUpcomingClasses depois do select', () => {
     // viriam os avisos da turma inteira, e o booleano do aluno passaria a
     // depender de linha de outra pessoa.
     expect(argumento.select?.faltas).toEqual({
-      where: { alunoId: expect.any(String) as unknown as string },
+      where: { alunoId: expect.any(String) },
       select: { id: true },
     });
   });
