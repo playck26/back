@@ -142,7 +142,6 @@ export class FaltaAvisadaService {
           minutos: antecedenciaEmMinutos(
             ocorrencia.data,
             ocorrencia.hora_inicio,
-            agora,
           ),
         },
         prazo: prazos.aula,
