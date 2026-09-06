@@ -275,19 +275,26 @@ describe('sair', () => {
     });
   });
 
-  it('recusa sair no dia da aula', async () => {
-    const { service, tx } = montar({ jaAlocado: true, temAulaHoje: true });
+  /*
+   * **O `AULA_HOJE` saiu no passo 3 do rollout (TASK-009c).** Havia aqui um
+   * caso provando que a empresa SEM prazo recusava a saída no dia da aula.
+   * Ele não foi só apagado: o comportamento que o substitui tem provas
+   * próprias no bloco de relógio fixo, mais abaixo — a empresa sem prazo
+   * agora SAI no dia da aula, e só é barrada depois de a aula começar
+   * (AC-003 + D5b).
+   *
+   * Apagar um teste sem apontar para o que tomou o lugar dele é como o
+   * defeito perde a memória.
+   */
 
-    await expect(
-      codigoDoErro(service.sair(EMPRESA, USUARIO, TURMA)),
-    ).resolves.toBe('AULA_HOJE');
-    expect(tx.turmaAluno.delete).not.toHaveBeenCalled();
-  });
-
-  it('a aula de hoje é procurada por ocupação, ignorando cancelada', async () => {
+  it('a ocorrência é procurada por ocupação, ignorando cancelada', async () => {
     // A ocupação é o encontro já materializado numa data real. Perguntar ao
     // `dia_semana` exigiria aritmética de calendário e daria a resposta
     // errada quando a ocupação foi cancelada.
+    //
+    // Depois do passo 3 quem faz esta consulta é `ocorrenciaRelevante`, e não
+    // mais o ramo do `AULA_HOJE` — os dois filtravam igual, e a asserção
+    // continua valendo. O que mudou foi o dono da pergunta.
     const { service, tx } = montar({ jaAlocado: true });
 
     await service.sair(EMPRESA, USUARIO, TURMA);
@@ -502,6 +509,60 @@ describe('sair — com prazo configurado (SPEC-031)', () => {
     await expect(
       codigoDoErro(service.sair(EMPRESA, USUARIO, TURMA)),
     ).resolves.toBe('PRAZO_DE_CANCELAMENTO');
+    expect(tx.turmaAluno.delete).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **AC-003 — a mudança do passo 3, e a única que esta spec impõe a quem não
+   * pediu nada.**
+   *
+   * Antes: empresa sem prazo era barrada por `AULA_HOJE` se houvesse aula
+   * hoje, em qualquer horário — o aluno não saía às 6h da manhã de uma aula
+   * das 19h. Agora ela não exige antecedência nenhuma, e só o corte do D5b
+   * age.
+   *
+   * Aula às 13h, agora 12h: sai. **Este caso era `AULA_HOJE` até ontem.**
+   */
+  it('AC-003: SEM prazo configurado, sai no dia da aula que ainda não começou', async () => {
+    const { service, tx } = montar({
+      jaAlocado: true,
+      ocorrencia: ocorrenciaAs(13),
+    });
+
+    await service.sair(EMPRESA, USUARIO, TURMA);
+
+    expect(tx.turmaAluno.delete).toHaveBeenCalled();
+  });
+
+  /**
+   * **D5b — o que NÃO mudou, e é por isso que a política é chamada sempre.**
+   *
+   * Sem prazo configurado a política ainda roda, e o corte de `minutos <= 0`
+   * barra depois do início. Pular a chamada quando não há prazo devolveria o
+   * `if` pela porta dos fundos e perderia este corte.
+   */
+  it('D5b: SEM prazo, aula que JÁ começou recusa — e a mensagem não inventa horas', async () => {
+    const { service, tx } = montar({
+      jaAlocado: true,
+      ocorrencia: { ...ocorrenciaAs(11), horaFim: hora(13) },
+    });
+
+    const erro = await service
+      .sair(EMPRESA, USUARIO, TURMA)
+      .then(() => null)
+      .catch(
+        (e: ConflictException) =>
+          e.getResponse() as {
+            code: string;
+            message: string;
+            horasExigidas?: number;
+          },
+      );
+
+    expect(erro?.code).toBe('PRAZO_DE_CANCELAMENTO');
+    expect(erro?.message).toBe('Esta aula já começou.');
+    // Sem prazo configurado não há número a dizer, e dizer um seria mentira.
+    expect(erro?.horasExigidas).toBeUndefined();
     expect(tx.turmaAluno.delete).not.toHaveBeenCalled();
   });
 
