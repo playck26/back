@@ -219,7 +219,6 @@ export class MeClassesController {
       'Aluno não matriculado na turma, ou a ocorrência não é desta turma. Os dois respondem igual: a URL da turma A não pode revelar a ocorrência da B.',
   })
   @HttpCode(204)
-  @Roles('aluno')
   avisarFalta(
     @CurrentUser() user: AccessTokenPayload,
     @Param('turmaId', UuidCanonicoPipe) turmaId: string,
