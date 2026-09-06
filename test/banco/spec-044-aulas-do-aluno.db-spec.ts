@@ -136,6 +136,12 @@ describe('SPEC-044 — myUpcomingClasses depois do select', () => {
       quadraId: QUADRA,
       quadraNome: 'Quadra 044',
       naoRealizada: false,
+      // SPEC-031/REQ-006 — o aluno vê o próprio aviso. Esta suíte é o
+      // terceiro guarda de contrato de `myUpcomingClasses` (os outros dois
+      // são o `toEqual` do unitário e o `tsc` do Cliente), e foi o único que
+      // rodou contra Postgres real — ele pegou o campo novo na CI, porque o
+      // Docker desta máquina estava fora quando escrevi.
+      faltaAvisada: false,
       data: HOJE,
       horaInicio: '09:00',
       horaFim: '10:00',
@@ -148,6 +154,7 @@ describe('SPEC-044 — myUpcomingClasses depois do select', () => {
       quadraId: QUADRA,
       quadraNome: 'Quadra 044',
       naoRealizada: true,
+      faltaAvisada: false,
       data: HOJE,
       horaInicio: '18:00',
       horaFim: '19:00',
@@ -181,6 +188,7 @@ describe('SPEC-044 — myUpcomingClasses depois do select', () => {
     expect(Object.keys(argumento.select ?? {}).sort()).toEqual([
       'chamadas',
       'data',
+      'faltas',
       'horaFim',
       'horaInicio',
       'id',
@@ -192,5 +200,12 @@ describe('SPEC-044 — myUpcomingClasses depois do select', () => {
     // E as relações também são recortadas: turma e quadra só pelo `nome`.
     expect(argumento.select?.origemTurma).toEqual({ select: { nome: true } });
     expect(argumento.select?.quadra).toEqual({ select: { nome: true } });
+    // SPEC-031 — a relação nova é recortada **e filtrada**. Sem o `where`
+    // viriam os avisos da turma inteira, e o booleano do aluno passaria a
+    // depender de linha de outra pessoa.
+    expect(argumento.select?.faltas).toEqual({
+      where: { alunoId: expect.any(String) as unknown as string },
+      select: { id: true },
+    });
   });
 });
