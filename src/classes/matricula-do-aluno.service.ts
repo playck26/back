@@ -5,7 +5,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
@@ -282,67 +281,56 @@ export class MatriculaDoAlunoService {
       const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
 
       /**
-       * **Rollout passo 1 (D11): empresa SEM prazo configurado continua na
-       * regra de hoje, e com o código de hoje.**
+       * **Rollout passo 3 (D11): o `AULA_HOJE` deixou de existir.**
        *
-       * O passo 1 manda "emitir os dois códigos conforme a configuração", e
-       * esta é a leitura que mantém o cliente antigo funcionando: quem nunca
-       * configurou nada não vê mudança nenhuma de comportamento nem de
-       * código. Quem configurou entra na regra nova.
+       * Até aqui havia um ramo para empresa **sem** prazo configurado, que
+       * mantinha a regra antiga ("tem aula hoje") e o código antigo, para o
+       * cliente publicado não quebrar. Os passos 1 e 2 fecharam — o back
+       * emitiu os dois códigos, e os três frontends foram publicados
+       * classificando a resposta —, então o ramo saiu.
        *
-       * O passo 3 apaga este bloco inteiro, e aí a AC-003 passa a valer para
-       * todos — empresa sem configuração deixa de exigir antecedência, e só o
-       * corte de `minutos <= 0` (D5b) permanece.
+       * **Isto muda comportamento em produção, e a mudança é deliberada
+       * (AC-003).** Quem nunca configurou prazo era barrado por "tem aula
+       * hoje", que é MAIS restritivo: o aluno não saía no dia da aula nem às
+       * 6h da manhã. Agora só o corte de `minutos <= 0` age (D5b), e ele sai
+       * até a aula começar.
        *
-       * **Isto deixou de ser leitura e virou regra.** A v13 da spec dizia
-       * "os dois códigos conforme a configuração" sem dizer qual em qual
-       * caso; a validação cruzada de 2026-09-05 apontou que interpretação de
-       * rollout tem de ser norma, não comentário. A **v14** tem a tabela, na
-       * seção *"Rollout do `AULA_HOJE`"* — e diz explicitamente que este ramo
-       * **não** equivale à AC-003 final: enquanto ele existir, a empresa sem
-       * configuração é barrada por "tem aula hoje", que é mais restritivo.
+       * É a única mudança que esta spec impõe a quem não pediu nada — e a
+       * tela do gestor a anuncia desde a TASK-009a, no cartão do prazo.
+       *
+       * A política é chamada **sempre**, inclusive com `SEM_PRAZO`. Pular a
+       * chamada quando não há prazo devolveria o `if` pela porta dos fundos e
+       * perderia o corte do D5b, que não depende de configuração nenhuma.
        */
-      if (prazos.aula.regra === 'SEM_PRAZO') {
-        const aulaHoje = await tx.ocupacaoQuadra.findFirst({
-          where: {
-            companyId,
-            origemTipo: 'TURMA',
-            origemTurmaId: turmaId,
-            statusPagamento: { not: 'cancelado' },
-            data: hojeNoFusoDoClube(agora),
-          },
-          select: { id: true },
-        });
-        if (aulaHoje) {
-          throw new ConflictException({
-            statusCode: 409,
-            code: 'AULA_HOJE',
-            message:
-              'Esta turma tem aula hoje. Você pode sair a partir de amanhã, ou falar com o clube.',
-          });
-        }
-      } else {
-        const veredicto = avaliarSaidaDeTurma({
-          papelDoAutor: 'aluno',
+      const veredicto = avaliarSaidaDeTurma({
+        papelDoAutor: 'aluno',
+        agora,
+        ocorrenciaRelevante: await ocorrenciaRelevante(
+          tx,
+          companyId,
+          turmaId,
           agora,
-          ocorrenciaRelevante: await ocorrenciaRelevante(
-            tx,
-            companyId,
-            turmaId,
-            agora,
-          ),
-          prazo: prazos.aula,
+        ),
+        prazo: prazos.aula,
+      });
+      if (!veredicto.permitido) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: veredicto.code,
+          // AC-006: dizer QUANTAS horas o clube exige. "Fora do prazo" sem o
+          // número obriga o aluno a descobrir por tentativa.
+          //
+          // Sem prazo configurado não há número a dizer: a recusa só acontece
+          // depois de a aula começar, e a frase certa é essa. Mesmo par de
+          // mensagens do `falta-avisada.service.ts`.
+          message:
+            prazos.aula.regra === 'HORAS'
+              ? `Esta turma exige ${prazos.aula.horas}h de antecedência para sair.`
+              : 'Esta aula já começou.',
+          ...(prazos.aula.regra === 'HORAS'
+            ? { horasExigidas: prazos.aula.horas }
+            : {}),
         });
-        if (!veredicto.permitido) {
-          throw new ConflictException({
-            statusCode: 409,
-            code: veredicto.code,
-            // AC-006: dizer QUANTAS horas o clube exige. "Fora do prazo" sem
-            // o número obriga o aluno a descobrir por tentativa.
-            message: `Esta turma exige ${prazos.aula.horas}h de antecedência para sair.`,
-            horasExigidas: prazos.aula.horas,
-          });
-        }
       }
 
       await tx.turmaAluno.delete({ where: { id: alocacao.id } });
