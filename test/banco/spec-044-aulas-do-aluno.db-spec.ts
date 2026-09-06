@@ -203,9 +203,11 @@ describe('SPEC-044 — myUpcomingClasses depois do select', () => {
     // SPEC-031 — a relação nova é recortada **e filtrada**. Sem o `where`
     // viriam os avisos da turma inteira, e o booleano do aluno passaria a
     // depender de linha de outra pessoa.
-    expect(argumento.select?.faltas).toEqual({
-      where: { alunoId: expect.any(String) },
-      select: { id: true },
-    });
+    const faltas = argumento.select?.faltas as {
+      where: { alunoId: string };
+      select: Record<string, boolean>;
+    };
+    expect(typeof faltas.where.alunoId).toBe('string');
+    expect(faltas.select).toEqual({ id: true });
   });
 });
