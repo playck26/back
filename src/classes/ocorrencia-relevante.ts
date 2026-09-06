@@ -1,8 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import {
-  agoraNoFusoDoClube,
-  minutosDaHora,
-} from '../courts/date-time.util';
+import { agoraNoFusoDoClube, minutosDaHora } from '../courts/date-time.util';
 import type { Antecedencia } from '../company-settings/prazo-de-cancelamento';
 
 /**
