@@ -102,7 +102,7 @@ export class RegistradorDeAcao {
    * A ação continua sendo criada **preguiçosamente**, pela mesma razão de
    * `registrar`: gesto sem efeito não cria ação.
    */
-  async registrarMatricula(turmaId: string, alunoId: string): Promise<void> {
+  async registrarMatricula(_turmaId: string, _alunoId: string): Promise<void> {
     this.acaoId ??= (
       await this.tx.acaoAdministrativa.create({
         data: {
@@ -114,7 +114,6 @@ export class RegistradorDeAcao {
         select: { id: true },
       })
     ).id;
-
   }
 
   /**
