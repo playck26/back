@@ -405,9 +405,32 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**26 tabelas e 13 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-02**, e batido contra o banco:
-27 tabelas com a `_prisma_migrations`).
+**29 tabelas e 13 enums** no `schema.prisma` (conferido por
+`grep -c '^model'` / `'^enum'` em **2026-09-06**), **31 migrations**, e o
+schema **idêntico em DEV e produção** — provado por
+`prisma migrate diff --from-url <DEV> --to-url <PROD>` no mesmo dia:
+*"No difference detected."*
+
+> **As três que entraram desde 2026-09-02 são da SPEC-031**, e as três já
+> estão em produção:
+>
+> | Tabela | Para quê |
+> |---|---|
+> | `config_operacao_empresa` | os dois prazos de cancelamento, em horas. `NULL` = sem prazo, e é o padrão |
+> | `faltas_avisadas` | o aluno avisa que vai faltar **sem sair da turma** |
+> | `eventos_de_matricula` | auditoria da saída de turma (D21) |
+>
+> `faltas_avisadas` tem **quatro FKs para três pais**, todas `RESTRICT`: a
+> composta com `origem_tipo` (amarra a ocorrência DE TURMA), a de tenant
+> `(company_id, ocupacao_id)`, a de tenant `(company_id, aluno_id)`, e a de
+> `company_id`. Duas responsabilidades não cabem numa constraint só porque
+> `ocupacoes_quadra` não tem `UNIQUE (company_id, id, origem_tipo)`.
+>
+> E o índice `faltas_unica (ocupacao_id, aluno_id)` **é** o mecanismo da
+> idempotência: medido em 2026-09-05, `DROP INDEX` faz dois `POST`
+> simultâneos produzirem **duas** linhas. `createMany({ skipDuplicates })`
+> sozinho não garante nada — `ON CONFLICT DO NOTHING` sem índice não tem
+> conflito para detectar.
 
 > **A planta dizia "17 tabelas e 10 enums, conferido em 2026-08-25", e estava
 > defasada em SEIS tabelas.** Quatro não eram desta spec —
@@ -475,6 +498,7 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 |---|---|
 | `acoes_append_only`, `eventos_append_only` | `BEFORE UPDATE OR DELETE` — recusam alteração e remoção nas duas tabelas de auditoria |
 | `ocupacao_cancelada_exige_evento` | `CONSTRAINT TRIGGER AFTER UPDATE ... DEFERRABLE INITIALLY DEFERRED` — a transição para `cancelado` exige evento **desta transição** |
+| `eventos_matricula_append_only` (SPEC-031/D21) | a **terceira** da família, e a que faltava: `eventos_de_matricula` é auditoria como as outras duas. Consertar só duas deixaria o fluxo funcional verde e a limpeza do CI abortando |
 
 **Por que trigger e não `REVOKE`.** Foi a primeira ideia e é inócua: tabela
 nova no Postgres **não concede nada a `PUBLIC`**, e a aplicação conecta como
@@ -665,6 +689,57 @@ DEF-011 por outra porta.
 dois DTOs, e não um `if` no meio do caminho, para que acrescentar um campo do
 lado errado seja decisão visível e não vazamento silencioso (INV-025a, com
 prova sobre o JSON serializado).
+
+### Os dois prazos, e a falta avisada (SPEC-031)
+
+O clube configura **dois** prazos em horas — sair de turma e cancelar reserva
+— e eles são independentes de propósito: a turma tem professor contratado para
+a hora, a quadra não.
+
+| Rota | Quem | O quê |
+|---|---|---|
+| `GET`/`PUT /company-settings/operacao` | `company_admin` | lê e grava os dois prazos. `PUT` é **substituição total** |
+| `GET /me/company/operacao` | aluno, professor, gestor | a rota de *capability*: existir é o sinal de versão do rollout |
+| `POST`/`DELETE /me/classes/:turmaId/aulas/:ocupacaoId/falta` | **só** `aluno` | avisar que vai faltar, e desfazer |
+
+**`null` é "sem prazo", e é o padrão** — nunca `0`. Os dois desenham a mesma
+tela e significam o oposto, e o tipo soma (`SEM_PRAZO` | `HORAS`) existe para
+o `?? 0` não ser escrevível.
+
+**A política é avaliada nos DOIS verbos da falta (D23).** Retirar o aviso
+dentro do prazo é proibido igual a dá-lo: com o `DELETE` livre, o aluno
+avisaria cedo e retiraria em cima da hora, terminando no estado que o prazo
+existe para negar.
+
+**A ordem de locks é normativa (D19):** `alunos FOR KEY SHARE` →
+`ocupacoes_quadra FOR UPDATE`. Dois locks explícitos, na ordem do INV-029.
+Travar `turmas` seria o conserto errado — pegaria o nível 1 além do 2 e do 3.
+
+**A matrícula é consulta própria**, e não a derivação do `alunoId`. Derivar
+prova identidade, não matrícula: um aluno da empresa certa, não matriculado na
+turma B, passa pelas quatro FKs, porque `faltas_avisadas` não tem FK para
+`turma_alunos`. Medido em 2026-09-05: sem a consulta, ele é **aceito**.
+
+### `AULA_HOJE` deixou de existir, em quatro passos (SPEC-031/D11)
+
+O rollout terminou em **2026-09-06**, e os quatro passos foram deploys
+separados: (1) o back emite os dois códigos conforme a configuração; (2) os
+frontends publicam classificando a resposta; (3) o back para de emitir
+`AULA_HOJE`; (4) o código sai do `openapi.json` e os três frontends regeneram
+os tipos.
+
+**O passo 3 mudou comportamento**, deliberadamente (AC-003): empresa **sem**
+prazo configurado era barrada por "tem aula hoje" em qualquer horário; agora só
+o corte de `minutos <= 0` age, e o aluno sai até a aula começar.
+
+**O passo 4 não foi remoção, foi troca.** O enum de `ErroDeMatriculaResponseDto`
+listava `AULA_HOJE` e não listava `PRAZO_DE_CANCELAMENTO` — publicar só a
+remoção deixaria o contrato escondendo o código que a rota devolve.
+
+**A prova de que o rollout funcionou:** a tela do Cliente não mudou uma linha
+nos passos 3 e 4, porque ela mostra a mensagem do servidor sem ramificar no
+código. Há teste do contrapositivo — um código que a tela nunca viu também
+aparece.
 
 ### O aluno entra e sai de turma (SPEC-023)
 
