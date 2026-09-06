@@ -59,8 +59,8 @@ export function podeCancelar(
   prazo: PrazoDeCancelamento,
   a: Antecedencia,
 ): boolean {
-  if (a.tipo === 'SEM_OCORRENCIA') return true;
   if (a.minutos <= 0) return false;
+  if (a.tipo === 'SEM_OCORRENCIA') return true;
   switch (prazo.regra) {
     case 'SEM_PRAZO':
       return true;
