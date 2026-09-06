@@ -1,7 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import {
   agoraNoFusoDoClube,
-  horaDeMinutos,
   minutosDaHora,
 } from '../courts/date-time.util';
 import type { Antecedencia } from '../company-settings/prazo-de-cancelamento';
@@ -83,7 +82,6 @@ export async function ocorrenciaRelevante(
         // hoje, e ainda não terminou
         {
           data: agoraLocal.dia,
-          horaFim: { gte: horaDeMinutos(agoraLocal.minutos) },
         },
       ],
     },
