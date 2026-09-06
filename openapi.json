@@ -7501,6 +7501,10 @@
           "naoRealizada": {
             "type": "boolean",
             "example": false
+          },
+          "faltaAvisada": {
+            "type": "boolean",
+            "example": false
           }
         },
         "required": [
@@ -7512,7 +7516,8 @@
           "data",
           "horaInicio",
           "horaFim",
-          "naoRealizada"
+          "naoRealizada",
+          "faltaAvisada"
         ]
       },
       "EncontroDaTurmaDisponivelDto": {

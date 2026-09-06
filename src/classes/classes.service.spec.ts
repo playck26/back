@@ -805,6 +805,7 @@ describe('ClassesService', () => {
           // hora, mas a mesma omissão em outro campo passaria a medir outra
           // coisa em silêncio.
           chamadas: [],
+          faltas: [],
           data: new Date('2026-08-25T00:00:00.000Z'),
           horaInicio: new Date('1970-01-01T14:00:00.000Z'),
           horaFim: new Date('1970-01-01T15:00:00.000Z'),
@@ -840,7 +841,12 @@ describe('ClassesService', () => {
           // asserção é `toEqual` (não `objectContaining`), então ela cobra
           // campo novo no contrato — e é isso que se quer aqui: o DEF-012
           // nasceu de resposta que ganhou/perdeu campo sem nada acender.
+          //
+          // E cobrou de novo em 2026-09-06, quando `faltaAvisada` entrou: o
+          // teste falhou com `+ "faltaAvisada": false` antes de eu lembrar de
+          // atualizá-lo. A guarda funcionando é isto.
           naoRealizada: false,
+          faltaAvisada: false,
         },
       ]);
     });
@@ -860,6 +866,7 @@ describe('ClassesService', () => {
           quadraId: 'q1',
           quadra: { nome: 'Quadra 1' },
           chamadas: [{ completude: 'nao_houve' }],
+          faltas: [],
           data: new Date('2026-08-25T00:00:00.000Z'),
           horaInicio: new Date('1970-01-01T14:00:00.000Z'),
           horaFim: new Date('1970-01-01T15:00:00.000Z'),
@@ -884,6 +891,7 @@ describe('ClassesService', () => {
           quadraId: 'q1',
           quadra: { nome: 'Quadra 1' },
           chamadas: [{ completude: 'completa' }],
+          faltas: [],
           data: new Date('2026-08-25T00:00:00.000Z'),
           horaInicio: new Date('1970-01-01T14:00:00.000Z'),
           horaFim: new Date('1970-01-01T15:00:00.000Z'),
@@ -894,6 +902,58 @@ describe('ClassesService', () => {
 
       expect(result[0].naoRealizada).toBe(false);
     });
+  });
+
+  /**
+   * SPEC-031/REQ-006 — **o aluno vê o próprio aviso.**
+   *
+   * Acréscimo declarado: a spec só tem AC de visão para o PROFESSOR (AC-019).
+   * Sem este campo o botão de avisar não teria estado, e o aluno não
+   * distinguiria "não avisei" de "avisei e o app esqueceu".
+   */
+  it('marca `faltaAvisada` quando existe aviso DESTE aluno', async () => {
+    (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({ id: 'a1' });
+    (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
+      { turmaId: 't1' },
+    ]);
+    (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'o1',
+        origemTurmaId: 't1',
+        origemTurma: { nome: 'Turma A' },
+        quadraId: 'q1',
+        quadra: { nome: 'Quadra 1' },
+        chamadas: [],
+        faltas: [{ id: 'f1' }],
+        data: new Date('2026-08-25T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+        horaFim: new Date('1970-01-01T15:00:00.000Z'),
+      },
+    ]);
+
+    const r = await service.myUpcomingClasses('c1', 'u1');
+
+    expect(r[0].faltaAvisada).toBe(true);
+  });
+
+  /**
+   * **O filtro é o mecanismo, e ele precisa de prova própria.** Sem o `where`
+   * na relação viriam os avisos da turma inteira, e QUALQUER colega que
+   * avisasse marcaria a aula deste aluno como avisada — um booleano derivado
+   * de linha de outra pessoa.
+   */
+  it('a consulta filtra os avisos pelo alunoId, não traz os da turma', async () => {
+    (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({ id: 'a1' });
+    (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
+      { turmaId: 't1' },
+    ]);
+    (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([]);
+
+    await service.myUpcomingClasses('c1', 'u1');
+
+    const [args] = (prisma.ocupacaoQuadra.findMany as jest.Mock).mock
+      .calls[0] as [{ select: { faltas: { where: { alunoId: string } } } }];
+    expect(args.select.faltas.where.alunoId).toBe('a1');
   });
 });
 
