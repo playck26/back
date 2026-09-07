@@ -1058,6 +1058,45 @@ describe('ClassesService — visao do professor (SPEC-013)', () => {
  * Relógio fixo, nunca relativo — a fixture escolhe o instante, e não a hora em
  * que o CI roda.
  */
+/**
+ * SPEC-031/AC-013d — **`papelDoAutor` e obrigatorio, e continua sendo.**
+ *
+ * ## Por que uma asercao de TIPO, e nao um teste
+ *
+ * A validacao cruzada de 2026-09-07 (DEF-RD031-02) mostrou que a
+ * obrigatoriedade estava demonstrada e a **preservacao dela nao**: basta dar
+ * valor padrao ao parametro para a exigencia sumir **em silencio**. Medido
+ * contra os cinco gates, com `= 'company_admin'` no lugar:
+ *
+ * | gate | resultado |
+ * |---|---|
+ * | `lint:ci` | 0 erros |
+ * | `typecheck` | 0 |
+ * | `pnpm test` | 980 verdes |
+ * | `pnpm test:e2e` | 215 verdes |
+ * | `pnpm run test:banco` | 265 verdes |
+ *
+ * **Nenhum pegou** — e o default escolhido era `company_admin`, ou seja, um
+ * chamador que esquecesse o argumento ganharia privilegio de gestor.
+ *
+ * Teste de comportamento nao alcanca isto: nenhum chamador *omite* o
+ * argumento hoje, entao nenhuma execucao muda. O que muda e o **contrato**, e
+ * contrato se afere no tipo.
+ *
+ * `Parameters<...>['length']` e `5` enquanto os cinco forem exigidos. Um valor
+ * padrao torna o quinto opcional, a aridade vira `4 | 5`, e `4 | 5 extends 5`
+ * e falso — a atribuicao abaixo deixa de compilar.
+ *
+ * E a mesma familia da INV-069, que protege `agora` em
+ * `antecedenciaEmMinutos` pelo mesmo motivo e com o mesmo raciocinio: a
+ * S2 da SPEC-031 existiu porque *"dar valor padrao"* nao derruba CI nenhum.
+ */
+type ArgumentosDeRemoveStudent = Parameters<ClassesService['removeStudent']>;
+type OsCincoSaoExigidos = ArgumentosDeRemoveStudent['length'] extends 5
+  ? true
+  : false;
+export const PAPEL_DO_AUTOR_CONTINUA_OBRIGATORIO: OsCincoSaoExigidos = true;
+
 describe('removeStudent — SPEC-031 (D12, AC-013b, AC-014b)', () => {
   const AGORA = new Date('2026-10-05T15:00:00.000Z'); // 12:00 no clube
   const DIA = new Date('2026-10-05T00:00:00.000Z');
