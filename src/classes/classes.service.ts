@@ -16,10 +16,7 @@ import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
-import {
-  avaliarSaidaDeTurma,
-  type PapelDoAutor,
-} from '../company-settings/prazo-de-cancelamento';
+import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
 import { PrismaService } from '../prisma/prisma.service';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
@@ -415,7 +412,6 @@ export class ClassesService {
     turmaId: string,
     alunoId: string,
     autorId: string,
-    papelDoAutor: PapelDoAutor,
   ): Promise<void> {
     await this.assertTurmaDaEmpresa(companyId, turmaId);
     const agora = new Date();
@@ -457,7 +453,6 @@ export class ClassesService {
       // sem `FOR UPDATE`. Ver `MatriculaDoAlunoService.sair`.
       const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
       const veredicto = avaliarSaidaDeTurma({
-        papelDoAutor,
         agora,
         ocorrenciaRelevante: await ocorrenciaRelevante(
           tx,

@@ -93,11 +93,6 @@ export class FaltaAvisadaService {
       if (!aluno) throw new ForbiddenException();
 
       // (2) MATRÍCULA — consulta própria, e é ela que faz o AC-016.
-      const matricula = await tx.turmaAluno.findFirst({
-        where: { turmaId, alunoId: aluno.id },
-        select: { id: true },
-      });
-      if (!matricula) throw new NotFoundException();
 
       // (3) A OCORRÊNCIA, travada, com os QUATRO predicados. A rota não vale
       // como prova de nenhum deles.
@@ -114,7 +109,6 @@ export class FaltaAvisadaService {
          WHERE id              = ${ocupacaoId}::uuid
            AND company_id      = ${companyId}::uuid
            AND origem_tipo     = 'TURMA'
-           AND origem_turma_id = ${turmaId}::uuid
          FOR UPDATE
       `;
       const ocorrencia = ocorrencias[0];
