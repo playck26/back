@@ -455,25 +455,29 @@ export class ClassesService {
 
       // SPEC-031/D16, passos 3 a 5 — dentro da MESMA transação, e o passo 4
       // sem `FOR UPDATE`. Ver `MatriculaDoAlunoService.sair`.
-      const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
-      const veredicto = avaliarSaidaDeTurma({
-        papelDoAutor,
-        agora,
-        ocorrenciaRelevante: await ocorrenciaRelevante(
-          tx,
-          companyId,
-          turmaId,
+      // SABOTAGEM S3 (AC-013c): o gestor vira EXCECAO em vez de PARAMETRO.
+      // E exatamente a falacia que o D12 proibe, e a v2 da spec cometia.
+      if (papelDoAutor !== 'company_admin') {
+        const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+        const veredicto = avaliarSaidaDeTurma({
+          papelDoAutor,
           agora,
-        ),
-        prazo: prazos.aula,
-      });
-      if (!veredicto.permitido) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: veredicto.code,
-          message:
-            'Esta aula já começou. Remover o aluno agora não desfaz a presença dele.',
+          ocorrenciaRelevante: await ocorrenciaRelevante(
+            tx,
+            companyId,
+            turmaId,
+            agora,
+          ),
+          prazo: prazos.aula,
         });
+        if (!veredicto.permitido) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: veredicto.code,
+            message:
+              'Esta aula já começou. Remover o aluno agora não desfaz a presença dele.',
+          });
+        }
       }
 
       // AC-014b — passo 6. Antes do DELETE porque a ação descreve o gesto, e
