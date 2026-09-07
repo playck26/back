@@ -211,3 +211,27 @@ jobs:
           SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
           SPACES_KEY: ci-spaces-key
           SPACES_SECRET: ci-spaces-secret
+
+      # SPEC-031/DoD — FIT-018, FIT-019 e FIT-020 sao exigidos NESTE job, e
+      # rodavam so no `build` (via `test:banco`). A divergencia estava
+      # DECLARADA no Harness, e a revalidacao de 2026-09-07 respondeu o que
+      # faltava: "o historico nao altera sozinho o DoD".
+      #
+      # Corrigido no job, e nao no DoD, porque a alternativa era enfraquecer
+      # a norma depois do fato. Um job chamado `fit-critical` que nao contem
+      # os FITs criticos mente pelo nome.
+      #
+      # Eles vivem em `test/banco/*.db-spec.ts` e nao em `test/fit/`, entao
+      # entram por caminho explicito — e continuam rodando no `build`
+      # tambem, o que e redundancia barata e nao problema.
+      - name: FIT-018/FIT-019/FIT-020
+        run: pnpm run test:banco -- fit-018-019 fit-020
+        env:
+          JWT_ACCESS_SECRET: fit-access-secret
+          JWT_REFRESH_SECRET: fit-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
