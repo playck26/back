@@ -415,7 +415,7 @@ export class ClassesService {
     turmaId: string,
     alunoId: string,
     autorId: string,
-    papelDoAutor: PapelDoAutor,
+    papelDoAutor: PapelDoAutor = 'company_admin',
   ): Promise<void> {
     await this.assertTurmaDaEmpresa(companyId, turmaId);
     const agora = new Date();
