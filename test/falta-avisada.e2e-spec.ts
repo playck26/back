@@ -88,6 +88,13 @@ describe('SPEC-031 — rotas de falta avisada (REQ-006)', () => {
       .expect(204);
 
     // A matrícula é consultada com a TURMA da URL — não com a ocupação.
+    //
+    // **DEF-VC031-02: a consulta é AFERIDA antes de ser lida.** A versão
+    // anterior desestruturava `mock.calls[0]` direto, e quando a sabotagem
+    // **S10** apagava a consulta o teste morria com `TypeError` em vez de
+    // dizer o que faltou. Vermelho sem informação é o que o `esperarOuDenunciar`
+    // do FIT-020 existe para evitar, e aqui o mesmo defeito estava de volta.
+    expect(prisma.tx.turmaAluno.findFirst).toHaveBeenCalled();
     const [matricula] = prisma.tx.turmaAluno.findFirst.mock.calls[0] as [
       { where: { turmaId: string; alunoId: string } },
     ];
