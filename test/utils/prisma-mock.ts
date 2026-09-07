@@ -218,9 +218,31 @@ export function buildPrismaMock(): PrismaMock {
 
   tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = strings.join('');
-    // A de `courts` seleciona `ocupacoes_quadra` e **não** menciona
-    // `origem_turma_id`; a da falta menciona. É o que separa as duas.
-    if (sql.includes('ocupacoes_quadra') && !sql.includes('origem_turma_id')) {
+    /**
+     * **DEF-VC031-02 — o mock NAO pode ramificar pelo predicado que a
+     * sabotagem remove.**
+     *
+     * A versão anterior distinguia as duas famílias por `origem_turma_id`:
+     * a de `courts` não menciona, a da falta menciona. Parecia esperto e era
+     * armadilha — a sabotagem **S8** remove exatamente esse predicado, então
+     * a consulta da falta caía no ramo de `courts`, devolvia outra linha, e o
+     * e2e falhava com `404` onde esperava `204`.
+     *
+     * **O CI ficava vermelho pelo motivo errado**, e a evidência dizia
+     * "turma A alcança a ocorrência de B" quando o que ela mostrava era o
+     * mock trocando de ramo. Achado pela validação cruzada de 2026-09-06.
+     *
+     * O critério agora é a **comparação `origem_tipo = 'TURMA'`**, que só a
+     * consulta da falta faz e que **nenhuma sabotagem desta spec remove** — a
+     * S8 tira `origem_turma_id` e deixa `origem_tipo` de pé.
+     *
+     * Projetar `status_pagamento` não serve como critério: as DUAS famílias
+     * projetam (foi a primeira tentativa deste conserto, e ela quebrou o e2e
+     * da falta na hora).
+     */
+    const ehDaFaltaAvisada =
+      sql.includes('origem_tipo') && sql.includes("'TURMA'");
+    if (!ehDaFaltaAvisada && sql.includes('ocupacoes_quadra')) {
       const linha = (await mock.ocupacaoQuadra.findFirst()) as {
         id: string;
         companyId?: string;
