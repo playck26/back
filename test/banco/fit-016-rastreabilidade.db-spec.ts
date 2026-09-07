@@ -194,7 +194,25 @@ describe('FIT-016 — nada cruza empresa (INV-077)', () => {
   });
 });
 
-describe('FIT-020 — a válvula da limpeza funciona (LIM-032e)', () => {
+/**
+ * **Era `FIT-020`, e virou `FIT-032` em 2026-09-07 — DEF-025.**
+ *
+ * O id estava DUPLICADO: esta válvula (SPEC-032) e a corrida
+ * `DELETE /falta` × cancelamento (SPEC-031,
+ * `fit-020-falta-x-cancelamento.db-spec.ts`) respondiam pelo mesmo número,
+ * com sentidos diferentes. Um id de FIT existe para ser alça estável de uma
+ * prova; duas provas na mesma alça é a alça não existir.
+ *
+ * **Quem se moveu foi esta, e não a da SPEC-031 — e não por antiguidade.**
+ * Por antiguidade seria o contrário: esta é de 2026-09-02 e a outra de 09-06.
+ * Mas o critério que vale é *alcance*: a da SPEC-031 é citada em ~40 lugares
+ * (o nome do passo no `fit-critical`, `evd.json`, seis prompts de validação,
+ * `STATUS.md`), e esta em **dois** — este `describe` e uma linha da spec da
+ * SPEC-032. Mover a de menor alcance quebra menos alça estável.
+ *
+ * Nada do teste mudou. Só o número.
+ */
+describe('FIT-032 — a válvula da limpeza funciona (LIM-032e)', () => {
   /**
    * O teste que avisa no dia em que a **terceira** tabela append-only nascer
    * sem entrar em `TABELAS_DA_EMPRESA`. Sem ele, a próxima spec descobre isso
