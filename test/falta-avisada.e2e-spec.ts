@@ -105,6 +105,52 @@ describe('SPEC-031 — rotas de falta avisada (REQ-006)', () => {
     expect(criado.skipDuplicates).toBe(true);
   });
 
+  /**
+   * **Casos escritos pela validação cruzada de 2026-09-06**, mantidos com a
+   * autoria dela. O primeiro é o negativo que a minha EVD original não
+   * provava; o segundo é o DEF-VC031-01 na camada HTTP.
+   */
+  it('REVIEW-031: aluno sem matricula recebe 404 e nao grava', async () => {
+    const token = await comoAluno();
+    prisma.tx.turmaAluno.findFirst.mockResolvedValue(null);
+    await request(app.getHttpServer())
+      .post(ROTA)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+    expect(prisma.tx.faltaAvisada.createMany).not.toHaveBeenCalled();
+  });
+
+  it('REVIEW-031: PATCH payment-status deve recusar reserva passada com 409', async () => {
+    const token = await comoGestor();
+    Object.assign(prisma.tx, {
+      acaoAdministrativa: {
+        create: jest.fn().mockResolvedValue({ id: 'acao-review' }),
+      },
+      eventoDeOcupacao: { create: jest.fn().mockResolvedValue({}) },
+    });
+    const base = {
+      id: OCUPACAO,
+      companyId: 'c1',
+      quadraId: TURMA,
+      alunoId: 'aluno-1',
+      data: new Date('2000-01-01T00:00:00.000Z'),
+      horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+      horaFim: new Date('1970-01-01T10:00:00.000Z'),
+      origemTipo: 'AVULSO',
+      statusPagamento: 'pendente_pagamento',
+    };
+    prisma.ocupacaoQuadra.findFirst.mockResolvedValue(base);
+    prisma.ocupacaoQuadra.update.mockResolvedValue({
+      ...base,
+      statusPagamento: 'cancelado',
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/bookings/${OCUPACAO}/payment-status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'cancelado' })
+      .expect(409);
+  });
+
   it('DELETE responde 204 e apaga escopado por empresa, ocupação e aluno', async () => {
     const token = await comoAluno();
 

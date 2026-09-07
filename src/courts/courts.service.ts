@@ -1272,6 +1272,10 @@ export class CourtsService {
     status: 'pago' | 'cancelado',
     autorId: string,
   ) {
+    // INV-069 — a hora entra UMA vez e e injetada na conta, nunca lida dentro
+    // dela: duas leituras na mesma decisao podem cair em minutos diferentes.
+    const agora = new Date();
+
     // SPEC-032 — esta rota tambem CANCELA (`status = 'cancelado'`), entao ela
     // dispara a trigger `ocupacao_cancelada_exige_evento` e precisa da mesma
     // atomicidade que o `cancelBooking`. O `pago` nao dispara a trigger, mas
@@ -1345,6 +1349,52 @@ export class CourtsService {
           message:
             'Esta reserva foi cancelada e o horário pode já ter sido ocupado. Recarregue a agenda.',
         });
+      }
+
+      /**
+       * **DEF-VC031-01 — este caminho CANCELA, e não avaliava o D5b.**
+       *
+       * Achado pela validação cruzada de 2026-09-06, e era bypass em
+       * produção: existem **dois** caminhos para cancelar uma reserva —
+       * `cancelBooking` e este `PATCH .../payment-status` com
+       * `status: 'cancelado'` — e só o primeiro aplicava a regra.
+       *
+       * Para a MESMA reserva já iniciada, `cancelBooking` recusava com `409`
+       * e o caminho do pagamento **aceitava**. A regra que a SPEC-031 impõe
+       * ("depois do início não se cancela, em qualquer configuração") tinha
+       * uma porta aberta ao lado.
+       *
+       * Eu mexi neste método no mesmo dia — para consertar a leitura sem
+       * lock — e **não vi a segunda metade do problema**: travar a linha
+       * garante que a decisão é sobre o estado certo, não que exista decisão.
+       *
+       * `papelDoAutor: 'company_admin'` porque a rota é `@Roles('company_admin')`.
+       * Pelo INV-066 o gestor não é barrado pela ANTECEDÊNCIA — mas é barrado
+       * junto com o aluno **depois do início** (AC-010b). É exatamente o corte
+       * que faltava.
+       */
+      if (status === 'cancelado') {
+        const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+        const veredicto = avaliarCancelamentoDeReserva({
+          papelDoAutor: 'company_admin',
+          agora,
+          ocorrenciaRelevante: {
+            tipo: 'MINUTOS',
+            minutos: antecedenciaEmMinutos(
+              ocupacao.data,
+              ocupacao.horaInicio,
+              agora,
+            ),
+          },
+          prazo: prazos.reserva,
+        });
+        if (!veredicto.permitido) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: veredicto.code,
+            message: 'Esta reserva já começou e não pode mais ser cancelada.',
+          });
+        }
       }
 
       const transicaoId = novaTransicao();

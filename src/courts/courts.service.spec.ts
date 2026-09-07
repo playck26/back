@@ -1714,6 +1714,43 @@ describe('CourtsService', () => {
   });
 
   describe('updatePaymentStatus (SPEC-006, CON-006.3)', () => {
+    /**
+     * **DEF-VC031-01 — escrito pela validação cruzada de 2026-09-06, e
+     * mantido com a autoria dela.**
+     *
+     * A forma é o que vale: a mesma reserva passada, os DOIS caminhos. Havia
+     * `cancelBooking` recusando com `409` e `updatePaymentStatus` **aceitando**
+     * — a regra do D5b tinha uma porta aberta ao lado, em produção.
+     *
+     * Eu mexi no `updatePaymentStatus` no mesmo dia, para consertar a leitura
+     * sem lock, e não vi a segunda metade: **travar a linha garante que a
+     * decisão é sobre o estado certo, não que exista decisão.**
+     */
+    it('REVIEW-031: payment-status deve recusar cancelar reserva ja iniciada', async () => {
+      const base = {
+        id: 'o1',
+        companyId: 'c1',
+        quadraId: 'q1',
+        alunoId: 'a1',
+        data: new Date('2000-01-01T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+        horaFim: new Date('1970-01-01T10:00:00.000Z'),
+        origemTipo: 'AVULSO',
+        statusPagamento: 'pendente_pagamento',
+      };
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(base);
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({ ...base, ...data }),
+      );
+      await expect(
+        service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+      await expect(
+        service.updatePaymentStatus('c1', 'o1', 'cancelado', 'autor-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
     it('lança 404 cross-tenant', async () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
