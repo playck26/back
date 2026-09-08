@@ -11,6 +11,7 @@ import { CommonModule } from './common/common.module';
 import { ClassesModule } from './classes/classes.module';
 import { CompaniesModule } from './companies/companies.module';
 import { CourtsModule } from './courts/courts.module';
+import { CreditosModule } from './creditos/creditos.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { PaymentConfigModule } from './payment-config/payment-config.module';
 import { PeopleModule } from './people/people.module';
@@ -37,6 +38,10 @@ import { StorageModule } from './storage/storage.module';
     ClassesModule,
     DashboardModule,
     PaymentConfigModule,
+    // SPEC-033 (MOD-011) — a carteira. Registrado sem controller nesta task:
+    // o serviço existe para quem consome crédito (reserva, cancelamento) e
+    // para a rota administrativa da TASK-004, que ainda não existe.
+    CreditosModule,
     // SPEC-017 (MOD-008) — fundação de mídia. Registrado sem consumidor de
     // propósito: é o que faz a validação das seis variáveis do Spaces
     // rodar no boot. Nenhuma rota depende dele até a SPEC-018.
