@@ -405,11 +405,15 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**29 tabelas e 13 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-06**), **31 migrations**, e o
-schema **idêntico em DEV e produção** — provado por
-`prisma migrate diff --from-url <DEV> --to-url <PROD>` no mesmo dia:
-*"No difference detected."*
+**30 tabelas e 14 enums** no `schema.prisma` (conferido por
+`grep -c '^model'` / `'^enum'` em **2026-09-08**), **32 migrations**.
+
+> **A 32ª ainda NÃO está em produção**, e a planta não pode dizer que está.
+> `20260908120000_spec033_creditos_carteira` é a TASK-001 da SPEC-033 e vive na
+> PR `back#62`; até ela ser mergeada, **DEV e produção divergem por uma
+> migration**. A identidade das duas foi provada por
+> `prisma migrate diff --from-url <DEV> --to-url <PROD>` em 2026-09-06
+> (*"No difference detected."*) e vale para as 31 anteriores.
 
 > **As três que entraram desde 2026-09-02 são da SPEC-031**, e as três já
 > estão em produção:
@@ -466,6 +470,7 @@ schema **idêntico em DEV e produção** — provado por
 | `avaliacoes_de_aula` | MOD-004 | SPEC-025. A nota do aluno sobre uma aula. FK **composta** para `ocupacoes_quadra` e para `alunos` carregando a empresa — sem isso o banco aceitaria a média de uma turma agregar nota alheia, que foi exatamente o vazamento que a validação cruzada achou |
 | `acoes_administrativas` | MOD-010 | **SPEC-032.** O **gesto humano**: uma por comando lógico que escreve. Append-only por trigger. A FK do autor **não** carrega a empresa, de propósito — `usuarios.company_id` é nulo para `super_admin`, e uma FK composta o impediria de ser autor de qualquer coisa (LIM-032f) |
 | `eventos_de_ocupacao` | MOD-010 | **SPEC-032.** O **alvo técnico**: N por ação, um por ocupação afetada. A cisão entre as duas existe porque um evento não pode apontar para 40 ocorrências ao mesmo tempo — a v1 da spec tentava, e foi reprovada por isso. `transicao_id` casa com o da ocupação e é o que a trigger confere no `COMMIT` |
+| `movimentos_de_credito` | MOD-010 | **SPEC-033.** O **ledger da carteira**, append-only. O saldo em `alunos.saldo_creditos` é escrito **pela trigger do ledger**, nunca pelo serviço (INV-071), e a guarda cobre `INSERT` **e** `UPDATE` — a primeira versão só cobria `UPDATE`, e a validação cruzada inseriu um aluno com saldo 12345 e zero movimentos. Duas colunas `GENERATED ALWAYS … STORED` servem de discriminante constante em FK composta: é o que faz a devolução só apontar para um **consumo** do mesmo aluno, ocupação e valor (D5), e o que impede consumo em ocupação de **turma** (INV-097). **Únicas colunas geradas do projeto** — e é por elas que a migration desta spec é SQL manual: o `migrate diff` as transforma num `DEFAULT CASE …` que o Postgres recusa com `0A000` |
 | `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
@@ -483,6 +488,10 @@ que são a garantia real):
 | `presencas_chamada_fkey` (`ON DELETE NO ACTION`) | presença sem cabeçalho é impossível — INV-027 imposta pelo banco. `NO ACTION` e não `RESTRICT` porque apagar a ocorrência cascateia para as duas tabelas na mesma instrução; `RESTRICT` é checado na hora e abortaria |
 | `arquivos_pendentes_key_da_empresa_check` | INV-030 no banco: `key LIKE 'empresas/%'` e `split_part(key,'/',2) = company_id::text`. É o que substitui a FK que esta tabela não pode ter |
 | `arquivos_pendentes_erro_com_tentativa_check`, `..._lock_com_conflito_check` | erro sem tentativa é afirmação sem lastro; contador de lock e data do conflito existem ou não existem juntos |
+| `movimentos_origem_causal_fkey` (6 colunas, SPEC-033/D5) | a devolução aponta para um **consumo** do mesmo aluno, ocupação e valor. O `tipo` do alvo é fixado por **coluna gerada** (`origem_tipo`), que é constante `'consumo'` na devolução — mesma construção de `presencas.origem_tipo`, levada a seis colunas |
+| `movimentos_ocupacao_avulsa_fkey` (4 colunas, SPEC-033/INV-097) | consumo e devolução só alcançam ocupação **AVULSA** do próprio aluno. O `CHECK ocupacoes_valor_por_origem` não serve para isto: ele confere o **valor** da ocupação, não a origem do movimento — e a validação cruzada inseriu um consumo numa ocupação de TURMA para provar |
+| `movimentos_ocupacao_por_tipo` | `consumo`/`devolucao` **exigem** `ocupacao_id`; `entrada`/`retirada` **proíbem**. Sem ele, `MATCH SIMPLE` pularia a FK de quatro colunas sempre que a coluna fosse nula, e a INV-097 não alcançaria nada |
+| `ocupacao_cancelada_exige_devolucao`, `movimentos_consumo_ativo_unico` (SPEC-033) | duas `CONSTRAINT TRIGGER` **diferidas**, no molde da `ocupacao_cancelada_exige_evento`: cancelar reserva paga com crédito exige devolução **por qualquer caminho**, e há no máximo **um consumo ativo** por ocupação. Levantam SQLSTATE **customizados** (`P3301`, `P3302`) porque no `COMMIT` natural o Prisma entrega o erro sem `code`; a aplicação fecha a transação com `SET CONSTRAINTS` **das três nomeadas** e lê `P2010` + `meta.code`. Nome que não existe na lista derruba a transação inteira com `42704`, o que torna a ordem *migration antes do deploy* carga da decisão |
 | `quadras_imagem_confirmada_check` (SPEC-018) | AC-007/008 no banco: `imagem_key`, `imagem_confirmada_por` e `imagem_confirmada_em` são as três nulas ou as três preenchidas. Sem isto, imagem pública sem autor seria gravável por qualquer caminho que esquecesse o campo — e a exigência de confirmação viraria aviso de tela |
 | `quadras_imagem_confirmada_por_fkey` (`ON DELETE RESTRICT`) | a confirmação vale por ter nome de gente: apagar a conta não pode apagar o autor da afirmação. Mesmo regime de `chamadas.registrada_por` |
 | `usuarios_foto_da_empresa_check`, `professores_foto_da_empresa_check`, `quadras_imagem_da_empresa_check`, `empresas_logo_da_empresa_check` (SPEC-018) | INV-030 por coluna de mídia: a chave gravada mora sob a empresa **da própria linha**. Pega chave adulterada no banco, que o prefixo e o escopo por token não pegam — os dois leem o mesmo token. O resto da gramática fica com `chave-de-midia.ts`, fonte única |
