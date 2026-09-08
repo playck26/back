@@ -14,6 +14,7 @@ import { CourtsService } from './courts.service';
 import { plainToInstance } from 'class-transformer';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { CreditosService } from '../creditos/creditos.service';
 
 // TEST-005 (SPEC-004): unit tests de MOD-005 com Prisma mockado. FIT-001
 // (concorrência real, INV-001) exige banco vivo — validado à parte via
@@ -88,6 +89,12 @@ function buildPrismaMock() {
     // testes continuarem armando um lugar so — mesmo desenho de
     // `buildMocks` em `classes.service.spec.ts`.
     $queryRaw: jest.fn(),
+    // SPEC-033/D7 — as transacoes que mexem em carteira fecham com
+    // `SET CONSTRAINTS ... IMMEDIATE`, que e raw. O duble e inerte de
+    // proposito: o que este arquivo prova e a SEQUENCIA das escritas, e o
+    // julgamento das diferidas so existe contra Postgres de verdade (ver
+    // `test/banco/creditos-reserva.db-spec.ts`).
+    $executeRawUnsafe: jest.fn(),
     $transaction: jest.fn(),
   } as unknown as PrismaService;
 }
@@ -190,31 +197,54 @@ describe('CourtsService', () => {
     });
     // O raw devolve a MESMA linha que `findFirst` devolveria, em snake_case,
     // dentro de um array — que e a forma do `SELECT ... FOR UPDATE`.
-    (prisma.$queryRaw as unknown as jest.Mock).mockImplementation(async () => {
-      const linha = (await (
-        prisma.ocupacaoQuadra.findFirst as unknown as jest.Mock
-      )()) as {
-        id: string;
-        alunoId: string | null;
-        origemTipo: string;
-        statusPagamento: string;
-        data: Date;
-        horaInicio: Date;
-      } | null;
-      return linha
-        ? [
-            {
-              id: linha.id,
-              company_id: 'c1',
-              aluno_id: linha.alunoId ?? null,
-              origem_tipo: linha.origemTipo,
-              status_pagamento: linha.statusPagamento,
-              data: linha.data,
-              hora_inicio: linha.horaInicio,
-            },
-          ]
-        : [];
-    });
+    (prisma.$queryRaw as unknown as jest.Mock).mockImplementation(
+      async (strings: TemplateStringsArray) => {
+        /**
+         * **SPEC-033 acrescentou DOIS raws a estes caminhos**, e o duble tem de
+         * distinguir os tres — senao a leitura da carteira recebe a linha da
+         * ocupacao e o servico decide sobre o objeto errado.
+         *
+         * O criterio e a TABELA no `FROM`, que e o que cada consulta é. Nao é
+         * predicado: predicado some quando alguem sabota, e ramificar por
+         * predicado ja fez o CI ficar vermelho pelo motivo errado uma vez
+         * (DEF-VC031-02, registrado em `test/utils/prisma-mock.ts`).
+         */
+        const sql = strings.join('');
+        // `SELECT saldo_creditos FROM alunos ... FOR UPDATE` — nivel 2.
+        if (sql.includes('FROM alunos')) {
+          return [{ saldo_creditos: 1_000_000 }];
+        }
+        // O consumo ATIVO da ocupacao. Vazio por padrao: estes testes sao de
+        // OCUPACAO, e reserva sem consumo nao devolve nada. Quem testar
+        // devolucao arma outro valor, ou usa o db-spec, que tem trigger.
+        if (sql.includes('movimentos_de_credito')) {
+          return [];
+        }
+        const linha = (await (
+          prisma.ocupacaoQuadra.findFirst as unknown as jest.Mock
+        )()) as {
+          id: string;
+          alunoId: string | null;
+          origemTipo: string;
+          statusPagamento: string;
+          data: Date;
+          horaInicio: Date;
+        } | null;
+        return linha
+          ? [
+              {
+                id: linha.id,
+                company_id: 'c1',
+                aluno_id: linha.alunoId ?? null,
+                origem_tipo: linha.origemTipo,
+                status_pagamento: linha.statusPagamento,
+                data: linha.data,
+                hora_inicio: linha.horaInicio,
+              },
+            ]
+          : [];
+      },
+    );
     studentsService = buildStudentsMock();
     horarios = buildHorariosMock();
     // SPEC-018/TASK-005: o resolvedor de imagem entra como dublê. Estes
@@ -230,6 +260,7 @@ describe('CourtsService', () => {
       horarios,
       imagens,
       new ConfigOperacaoService(prisma),
+      new CreditosService(),
     );
   });
 

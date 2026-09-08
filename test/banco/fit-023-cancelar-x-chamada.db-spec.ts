@@ -47,6 +47,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
+import { CreditosService } from '../../src/creditos/creditos.service';
 
 jest.setTimeout(300_000);
 
@@ -86,6 +87,7 @@ function courts(c: PrismaClient): CourtsService {
       },
     } as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(c as unknown as PrismaService),
+    new CreditosService(),
   );
 }
 

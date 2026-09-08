@@ -19,11 +19,20 @@ import { CourtsService } from './courts.service';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
+import { CreditosModule } from '../creditos/creditos.module';
 
 @Module({
   // StorageModule entra pela imagem de quadra (SPEC-018/TASK-005), pelo
   // mesmo caminho que a logo entrou em MOD-002.
-  imports: [CompanySettingsModule, PeopleModule, StorageModule],
+  imports: [
+    CompanySettingsModule,
+    PeopleModule,
+    StorageModule,
+    // SPEC-033/TASK-005: criar reserva debita e cancelar devolve, DENTRO da
+    // mesma transacao -- sem isso haveria janela entre a reserva existir e o
+    // dinheiro sair.
+    CreditosModule,
+  ],
   controllers: [
     CourtsController,
     BookingsController,
