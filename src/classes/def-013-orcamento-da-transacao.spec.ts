@@ -8,6 +8,7 @@ import { parseTimeOnly } from '../courts/date-time.util';
 import { ClassesService } from './classes.service';
 import type { EncontroDaTurma } from './encontros';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { CreditosService } from '../creditos/creditos.service';
 
 /**
  * DEF-013 — **a transação de turma estoura o timeout do Prisma quando a
@@ -327,6 +328,7 @@ function buildClassesService(tx: Prisma.TransactionClient) {
       resolver: jest.fn(() => ({ imagemUrl: null })),
     } as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(prisma),
+    new CreditosService(),
   );
   return new ClassesService(
     prisma,

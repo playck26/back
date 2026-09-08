@@ -2939,6 +2939,110 @@
         ]
       }
     },
+    "/api/v1/students/{id}/creditos": {
+      "get": {
+        "operationId": "CreditosController_extrato",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtratoDeCreditoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "creditos"
+        ]
+      },
+      "post": {
+        "operationId": "CreditosController_lancar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LancarCreditoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MovimentoCriadoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "creditos"
+        ]
+      }
+    },
+    "/api/v1/me/creditos": {
+      "get": {
+        "operationId": "MeCreditosController_minhaCarteira",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtratoDoAlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/avaliacoes": {
       "get": {
         "operationId": "ClassesController_avaliacoesDaTurma",
@@ -4295,110 +4399,6 @@
         ],
         "tags": [
           "bookings"
-        ]
-      }
-    },
-    "/api/v1/students/{id}/creditos": {
-      "get": {
-        "operationId": "CreditosController_extrato",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExtratoDeCreditoResponseDto"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "creditos"
-        ]
-      },
-      "post": {
-        "operationId": "CreditosController_lancar",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LancarCreditoDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MovimentoCriadoResponseDto"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "creditos"
-        ]
-      }
-    },
-    "/api/v1/me/creditos": {
-      "get": {
-        "operationId": "MeCreditosController_minhaCarteira",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExtratoDoAlunoResponseDto"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "me"
         ]
       }
     }
@@ -6936,6 +6936,166 @@
           }
         }
       },
+      "MovimentoDeCreditoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "entrada",
+              "retirada",
+              "consumo",
+              "devolucao"
+            ]
+          },
+          "valorCentavos": {
+            "type": "number",
+            "description": "Sempre positivo; o sinal vem do tipo (D3)."
+          },
+          "motivo": {
+            "type": "string",
+            "nullable": true,
+            "description": "Nota interna do clube. Presente só nos administrativos, e **omitido na visão do aluno** (AC-013)."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "criadoEm": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tipo",
+          "valorCentavos",
+          "motivo",
+          "ocupacaoId",
+          "criadoEm"
+        ]
+      },
+      "ExtratoDeCreditoResponseDto": {
+        "type": "object",
+        "properties": {
+          "saldoCentavos": {
+            "type": "number",
+            "description": "Derivado do ledger pela trigger (D1). Nunca escrito por serviço."
+          },
+          "movimentos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovimentoDeCreditoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "saldoCentavos",
+          "movimentos"
+        ]
+      },
+      "LancarCreditoDto": {
+        "type": "object",
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "entrada",
+              "retirada"
+            ],
+            "description": "Só os dois administrativos. `consumo` e `devolucao` nascem da reserva e do cancelamento, nunca de uma chamada humana."
+          },
+          "valorCentavos": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Centavos inteiros, sempre positivos — o sinal vem do tipo (D3). \"Entrada de −500\" é impossível por construção."
+          },
+          "motivo": {
+            "type": "string",
+            "description": "Obrigatório. É nota interna do clube — o aluno não vê (AC-013)."
+          },
+          "senha": {
+            "type": "string",
+            "description": "A senha de quem está logado, reconferida no ato (D6). Não é sessão elevada: cada lançamento pede de novo."
+          }
+        },
+        "required": [
+          "tipo",
+          "valorCentavos",
+          "motivo",
+          "senha"
+        ]
+      },
+      "MovimentoCriadoResponseDto": {
+        "type": "object",
+        "properties": {
+          "movimentoId": {
+            "type": "string"
+          },
+          "saldoCentavos": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "movimentoId",
+          "saldoCentavos"
+        ]
+      },
+      "MovimentoDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "entrada",
+              "retirada",
+              "consumo",
+              "devolucao"
+            ]
+          },
+          "valorCentavos": {
+            "type": "number",
+            "description": "Sempre positivo; o sinal vem do tipo (D3)."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "criadoEm": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tipo",
+          "valorCentavos",
+          "ocupacaoId",
+          "criadoEm"
+        ]
+      },
+      "ExtratoDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "saldoCentavos": {
+            "type": "number"
+          },
+          "movimentos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovimentoDoAlunoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "saldoCentavos",
+          "movimentos"
+        ]
+      },
       "AvaliacaoParaOGestorDto": {
         "type": "object",
         "properties": {
@@ -8547,166 +8707,6 @@
         },
         "required": [
           "status"
-        ]
-      },
-      "MovimentoDeCreditoResponseDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "tipo": {
-            "type": "string",
-            "enum": [
-              "entrada",
-              "retirada",
-              "consumo",
-              "devolucao"
-            ]
-          },
-          "valorCentavos": {
-            "type": "number",
-            "description": "Sempre positivo; o sinal vem do tipo (D3)."
-          },
-          "motivo": {
-            "type": "string",
-            "nullable": true,
-            "description": "Nota interna do clube. Presente só nos administrativos, e **omitido na visão do aluno** (AC-013)."
-          },
-          "ocupacaoId": {
-            "type": "string",
-            "nullable": true
-          },
-          "criadoEm": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "tipo",
-          "valorCentavos",
-          "motivo",
-          "ocupacaoId",
-          "criadoEm"
-        ]
-      },
-      "ExtratoDeCreditoResponseDto": {
-        "type": "object",
-        "properties": {
-          "saldoCentavos": {
-            "type": "number",
-            "description": "Derivado do ledger pela trigger (D1). Nunca escrito por serviço."
-          },
-          "movimentos": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MovimentoDeCreditoResponseDto"
-            }
-          }
-        },
-        "required": [
-          "saldoCentavos",
-          "movimentos"
-        ]
-      },
-      "LancarCreditoDto": {
-        "type": "object",
-        "properties": {
-          "tipo": {
-            "type": "string",
-            "enum": [
-              "entrada",
-              "retirada"
-            ],
-            "description": "Só os dois administrativos. `consumo` e `devolucao` nascem da reserva e do cancelamento, nunca de uma chamada humana."
-          },
-          "valorCentavos": {
-            "type": "number",
-            "minimum": 1,
-            "description": "Centavos inteiros, sempre positivos — o sinal vem do tipo (D3). \"Entrada de −500\" é impossível por construção."
-          },
-          "motivo": {
-            "type": "string",
-            "description": "Obrigatório. É nota interna do clube — o aluno não vê (AC-013)."
-          },
-          "senha": {
-            "type": "string",
-            "description": "A senha de quem está logado, reconferida no ato (D6). Não é sessão elevada: cada lançamento pede de novo."
-          }
-        },
-        "required": [
-          "tipo",
-          "valorCentavos",
-          "motivo",
-          "senha"
-        ]
-      },
-      "MovimentoCriadoResponseDto": {
-        "type": "object",
-        "properties": {
-          "movimentoId": {
-            "type": "string"
-          },
-          "saldoCentavos": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "movimentoId",
-          "saldoCentavos"
-        ]
-      },
-      "MovimentoDoAlunoResponseDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "tipo": {
-            "type": "string",
-            "enum": [
-              "entrada",
-              "retirada",
-              "consumo",
-              "devolucao"
-            ]
-          },
-          "valorCentavos": {
-            "type": "number",
-            "description": "Sempre positivo; o sinal vem do tipo (D3)."
-          },
-          "ocupacaoId": {
-            "type": "string",
-            "nullable": true
-          },
-          "criadoEm": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "tipo",
-          "valorCentavos",
-          "ocupacaoId",
-          "criadoEm"
-        ]
-      },
-      "ExtratoDoAlunoResponseDto": {
-        "type": "object",
-        "properties": {
-          "saldoCentavos": {
-            "type": "number"
-          },
-          "movimentos": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MovimentoDoAlunoResponseDto"
-            }
-          }
-        },
-        "required": [
-          "saldoCentavos",
-          "movimentos"
         ]
       }
     }

@@ -38,6 +38,7 @@ import { ConfigOperacaoService } from '../../src/company-settings/config-operaca
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
+import { CreditosService } from '../../src/creditos/creditos.service';
 
 jest.setTimeout(180_000);
 
@@ -79,6 +80,7 @@ function servico(c: PrismaClient): CourtsService {
     new HorarioFuncionamentoService(c as unknown as PrismaService),
     {} as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(c as unknown as PrismaService),
+    new CreditosService(),
   );
 }
 
@@ -134,15 +136,30 @@ async function semearReserva() {
   );
 }
 
-/** Alguém esperando lock de linha em `ocupacoes_quadra`? */
+/**
+ * Alguém esperando lock de linha — na ocupação **ou na carteira**?
+ *
+ * **A carteira entrou aqui na SPEC-033, e não por conveniência.** A ordem
+ * global de travas (INV-029) põe `alunos` no nível 2 e `ocupacoes_quadra` no
+ * nível 3, então os caminhos que mexem em crédito passaram a travar a carteira
+ * **primeiro**. Consequência medida: o `updatePaymentStatus` que disputa uma
+ * reserva com o `cancelBooking` agora bloqueia em `alunos`, antes de chegar à
+ * ocupação — e um detector que só olhasse `ocupacoes_quadra` nunca o veria,
+ * dando timeout e **acusando o serviço por um defeito do detector**.
+ *
+ * A condição continua NOMINAL, não frouxa: exige `wait_event_type = 'Lock'`,
+ * `pg_blocking_pids` não vazio e um `FOR UPDATE` sobre uma das duas tabelas
+ * deste cenário. Contenção alheia não satisfaz.
+ */
 async function alguemBloqueado(): Promise<boolean> {
   const [r] = await observador.$queryRawUnsafe<{ n: bigint }[]>(`
     SELECT count(*) AS n
       FROM pg_stat_activity a
      WHERE a.wait_event_type = 'Lock'
        AND cardinality(pg_blocking_pids(a.pid)) > 0
-       AND a.query ILIKE '%ocupacoes_quadra%'
        AND a.query ILIKE '%FOR UPDATE%'
+       AND (a.query ILIKE '%ocupacoes_quadra%'
+            OR a.query ILIKE '%saldo_creditos%')
   `);
   return Number(r.n) > 0;
 }
@@ -235,12 +252,31 @@ describe('FIT-024 — cancelar x mover, sob concorrencia', () => {
           const raw = tx.$queryRaw.bind(tx) as (
             ...a: unknown[]
           ) => Promise<unknown>;
-          let primeira = true;
-          // O PRIMEIRO `$queryRaw` do `cancelBooking` é o `FOR UPDATE`.
+          let pausou = false;
+          /**
+           * **A pausa é DEPOIS do `FOR UPDATE` da OCUPAÇÃO, e a barreira
+           * identifica isso pela TABELA — não pela posição.**
+           *
+           * Ela dizia "o PRIMEIRO `$queryRaw` do `cancelBooking` é o
+           * `FOR UPDATE`", e a SPEC-033 tornou isso falso: o primeiro passou a
+           * ser a trava da CARTEIRA (`alunos`, nível 2 da INV-029), que vem
+           * antes da ocupação por ordem de travas. A barreira então pausava
+           * antes de a ocupação estar travada, o `moveBooking` não bloqueava,
+           * e o teste morria em timeout — **acusando o serviço quando o
+           * defeito era da barreira**.
+           *
+           * Identificar pela tabela é a mesma lição de
+           * `test/utils/prisma-mock.ts`: critério que uma mudança legítima
+           * move não é critério.
+           */
           tx.$queryRaw = async (...args: unknown[]): Promise<unknown> => {
             const linhas: unknown = await raw(...args);
-            if (primeira) {
-              primeira = false;
+            const primeiro = args[0] as { raw?: string[] };
+            const sql = Array.isArray(primeiro?.raw)
+              ? primeiro.raw.join(' ')
+              : String(args[0]);
+            if (!pausou && sql.includes('ocupacoes_quadra')) {
+              pausou = true;
               leu();
               await liberado;
             }
@@ -333,11 +369,31 @@ describe('FIT-024 — cancelar x mover, sob concorrencia', () => {
           const raw = tx.$queryRaw.bind(tx) as (
             ...a: unknown[]
           ) => Promise<unknown>;
-          let primeira = true;
+          let pausou = false;
+          /**
+           * **A pausa é DEPOIS do `FOR UPDATE` da OCUPAÇÃO, e a barreira
+           * identifica isso pela TABELA — não pela posição.**
+           *
+           * Ela dizia "o PRIMEIRO `$queryRaw` do `cancelBooking` é o
+           * `FOR UPDATE`", e a SPEC-033 tornou isso falso: o primeiro passou a
+           * ser a trava da CARTEIRA (`alunos`, nível 2 da INV-029), que vem
+           * antes da ocupação por ordem de travas. A barreira então pausava
+           * antes de a ocupação estar travada, o `moveBooking` não bloqueava,
+           * e o teste morria em timeout — **acusando o serviço quando o
+           * defeito era da barreira**.
+           *
+           * Identificar pela tabela é a mesma lição de
+           * `test/utils/prisma-mock.ts`: critério que uma mudança legítima
+           * move não é critério.
+           */
           tx.$queryRaw = async (...args: unknown[]): Promise<unknown> => {
             const linhas: unknown = await raw(...args);
-            if (primeira) {
-              primeira = false;
+            const primeiro = args[0] as { raw?: string[] };
+            const sql = Array.isArray(primeiro?.raw)
+              ? primeiro.raw.join(' ')
+              : String(args[0]);
+            if (!pausou && sql.includes('ocupacoes_quadra')) {
+              pausou = true;
               leu();
               await liberado;
             }

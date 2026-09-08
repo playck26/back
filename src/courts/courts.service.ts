@@ -7,6 +7,14 @@ import {
 } from '@nestjs/common';
 import { Prisma, type OrigemTipo, type StatusPagamento } from '@prisma/client';
 import { StudentsService } from '../people/students.service';
+import {
+  CreditosService,
+  saldoInsuficiente,
+} from '../creditos/creditos.service';
+import {
+  julgarInvariantesDiferidas,
+  traduzirRecusaDeCancelamento,
+} from '../creditos/set-constraints';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -194,6 +202,10 @@ export class CourtsService {
     private readonly imagens: ImagemDaQuadraService,
     // SPEC-031/D17: o segundo verbo do AC-013 passa pela mesma política.
     private readonly operacao: ConfigOperacaoService,
+    // SPEC-033: a carteira. O ledger é escrito **dentro** da transação que
+    // cria ou cancela a reserva — sem isso haveria janela entre a reserva
+    // existir e o dinheiro sair.
+    private readonly creditos: CreditosService,
   ) {}
 
   /**
@@ -545,6 +557,24 @@ export class CourtsService {
         // sem ela, uma falha no meio deixaria a chave de idempotência
         // gravada sem as reservas correspondentes.
         const criadas = await this.prisma.$transaction(async (tx) => {
+          /**
+           * **Passo 1 dos cinco (SPEC-033): travar, ainda sem decidir.**
+           *
+           * `alunos` é o nível 2 da ordem global (INV-029) e
+           * `ocupacoes_quadra` é o nível 3 — então a carteira trava **antes**
+           * da primeira ocupação nascer. A ordem inversa foi ensaiada e dá
+           * `40P01` sob concorrência; esta não deu deadlock nenhum.
+           *
+           * Também não é opcional por outro motivo: o `INSERT` da ocupação
+           * pega `FOR KEY SHARE` na linha do aluno (a FK `aluno_id`).
+           * Travar depois seria pedir `FOR UPDATE` sobre uma linha em que a
+           * própria transação já segura `KEY SHARE` — upgrade de trava, que
+           * deadlocka dois pedidos do MESMO aluno sem disputa real.
+           */
+          const saldoCentavos = dto.alunoId
+            ? await this.creditos.travarESaber(tx, companyId, dto.alunoId)
+            : null;
+
           const pedido = clientRequestId
             ? await tx.pedidoReserva.create({
                 data: { companyId, clientRequestId, fingerprint },
@@ -583,6 +613,21 @@ export class CourtsService {
             await registrador.registrar(ocupacao.id, 'criada', transicaoId);
             resultado.push(ocupacao);
           }
+
+          await this.debitarCarteira({
+            tx,
+            companyId,
+            alunoId: dto.alunoId,
+            autorId,
+            papelDoAutor,
+            saldoCentavos,
+            ocupacoes: resultado,
+            registrador,
+          });
+
+          // **Última instrução** (D7): força as diferidas a julgarem aqui,
+          // onde o Prisma ainda traduz o erro em `P2010` + `meta.code`.
+          await julgarInvariantesDiferidas(tx);
           return resultado;
         });
 
@@ -1070,6 +1115,118 @@ export class CourtsService {
    * A SPEC-033 depende deste mesmo passo para debitar e devolver crédito com
    * segurança, e por isso ele está declarado lá como TASK-000.
    */
+  /**
+   * SPEC-033, passos 3 a 5 da criação — **o débito, e o papel decidindo.**
+   *
+   * ## Por que o valor vem do banco, e não da memória
+   *
+   * `createBooking` calcula `precoHora * horas` em `Prisma.Decimal`, e
+   * `horas = minutos/60`. Um bloco de 20 min a R$ 80/h dá `26,6666…` em
+   * memória e vira `26,67` só quando o Postgres grava em `numeric(10,2)`.
+   * **Multiplicar o número de memória por 100 debitaria 2666 contra uma
+   * reserva de 2667.** Por isso a soma é sobre o `valor` DEVOLVIDO pelo
+   * `INSERT`, e por isso o passo 2 (inserir) vem antes do 3 (somar) — decidir
+   * sobre um número que o banco ainda não confirmou foi achado bloqueante.
+   *
+   * ## Os cinco ramos do AC-007c, e nenhum deles é exceção
+   *
+   * | ramo | movimento | `status_pagamento` |
+   * |---|---|---|
+   * | aluno **com** saldo | `consumo` | `pago` |
+   * | gestor, aluno **com** saldo | `consumo` | `pago` |
+   * | gestor, aluno **sem** saldo (PA-04) | nenhum | `pendente_pagamento` |
+   * | **aluno sem saldo** (AC-007) | nenhum — a reserva **não nasce** | `422` |
+   * | `valor = 0,00` (PA-07) | nenhum | `pago` — não há o que cobrar |
+   *
+   * **O papel é parâmetro, não exceção (D12).** O gestor não é bloqueado por
+   * falta de saldo de um aluno — o clube não pode ficar impedido de operar por
+   * isso —, e ninguém fica com saldo negativo, porque nesse ramo não nasce
+   * movimento nenhum.
+   *
+   * ## E a reserva que consumiu nasce `pago`
+   *
+   * O default da coluna é `pendente_pagamento`. Sem o AC-007c isto produziria
+   * **reserva com saldo debitado e cobrança em aberto** — a carteira paga e o
+   * clube cobra de novo.
+   */
+  private async debitarCarteira(args: {
+    tx: Prisma.TransactionClient;
+    companyId: string;
+    alunoId: string | undefined;
+    autorId: string;
+    papelDoAutor: 'aluno' | 'company_admin';
+    saldoCentavos: number | null;
+    ocupacoes: { id: string; valor?: Prisma.Decimal | null }[];
+    registrador: RegistradorDeAcao;
+  }): Promise<void> {
+    const { tx, companyId, alunoId, ocupacoes } = args;
+
+    // Sem aluno não há carteira. Não é caso especial: é a ausência do
+    // recurso, e reserva sem `aluno_id` continua válida.
+    const comValor = alunoId
+      ? ocupacoes
+          .map((o) => ({ id: o.id, centavos: paraCentavos(o.valor) }))
+          .filter((o) => o.centavos > 0)
+      : [];
+
+    // PA-07: ocupação de zero centavos não emite movimento — zero não move
+    // saldo e sujaria o extrato. Ela nasce `pago` do mesmo jeito: não há o
+    // que cobrar.
+    const gratuitas = alunoId
+      ? ocupacoes.filter((o) => paraCentavos(o.valor) === 0).map((o) => o.id)
+      : [];
+    if (gratuitas.length > 0) {
+      await tx.ocupacaoQuadra.updateMany({
+        where: { id: { in: gratuitas } },
+        data: { statusPagamento: 'pago' },
+      });
+    }
+
+    if (comValor.length === 0) {
+      return;
+    }
+
+    const total = comValor.reduce((soma, o) => soma + o.centavos, 0);
+    if ((args.saldoCentavos ?? 0) < total) {
+      // AC-007: o pedido é tudo-ou-nada, e a mensagem fala do TOTAL, não do
+      // bloco — dizer "faltam X" por bloco esconderia o custo real do gesto.
+      if (args.papelDoAutor === 'aluno') {
+        throw saldoInsuficiente(args.saldoCentavos ?? 0, total);
+      }
+      // PA-04: o gestor segue, sem movimento e sem débito.
+      return;
+    }
+
+    // Um consumo por OCUPAÇÃO (D4) — é o que faz cancelar um bloco devolver
+    // aquele bloco. Não um por pedido.
+    // A ação já existe: o registrador é preguiçoso, mas o laço acima
+    // registrou N eventos antes de chegarmos aqui. Se fosse `null`, o
+    // movimento seria órfão — e `movimentos_acao_fkey` recusaria de todo
+    // jeito. A asserção troca `23503` por uma frase.
+    const acaoId = args.registrador.idDaAcao;
+    if (!acaoId) {
+      throw new Error(
+        'consumo sem ação administrativa: o registrador não foi usado antes do débito',
+      );
+    }
+    for (const ocupacao of comValor) {
+      await this.creditos.consumir(tx, {
+        companyId,
+        alunoId: alunoId as string,
+        valorCentavos: ocupacao.centavos,
+        autorId: args.autorId,
+        acaoId,
+        ocupacaoId: ocupacao.id,
+      });
+    }
+
+    // AC-007c: quem consumiu crédito nasce `pago`.
+    await tx.ocupacaoQuadra.updateMany({
+      where: { id: { in: comValor.map((o) => o.id) } },
+      data: { statusPagamento: 'pago' },
+    });
+  }
+
   async cancelBooking(
     companyId: string,
     id: string,
@@ -1082,178 +1239,299 @@ export class CourtsService {
     alunoIdScope?: string,
   ): Promise<void> {
     const agora = new Date();
-    await this.prisma.$transaction(async (tx) => {
-      /**
-       * **A leitura TRAVA a linha, e isso foi defeito reproduzido.**
-       *
-       * Até 2026-09-05 este `SELECT` era um `findFirst` sem lock, e a
-       * validação cruzada da SPEC-031 montou a corrida em PostgreSQL 18.4,
-       * com duas conexões:
-       *
-       * 1. `cancelBooking` lê uma reserva **futura**, sem travá-la;
-       * 2. `moveBooking` move a mesma reserva para uma data **passada**, e
-       *    commita — ele sempre travou (`courts.service.ts`, `moveBooking`);
-       * 3. o cancelamento decide com o horário **velho**, passa no corte
-       *    temporal e escreve. **Uma reserva já consumida termina cancelada.**
-       *
-       * Em execução sequencial nada disso acontece: mover primeiro impede
-       * cancelar, cancelar primeiro impede mover. **É a corrida que abre a
-       * janela**, e por isso dois controles sequenciais passavam enquanto o
-       * defeito existia — ler, decidir e escrever precisavam ser um ato só.
-       *
-       * `FOR UPDATE` e não `findFirst`: o lock não é expressável no query
-       * builder do Prisma, mesmo idioma de `moveBooking` e de
-       * `classes.service.ts:335`.
-       */
-      const travadas = await tx.$queryRaw<
-        {
-          id: string;
-          company_id: string;
-          aluno_id: string | null;
-          origem_tipo: 'AVULSO' | 'TURMA';
-          status_pagamento: StatusPagamento;
-          data: Date;
-          hora_inicio: Date;
-        }[]
-      >`
+
+    /**
+     * **Passo 2 (SPEC-033): ler SEM trava, e só para descobrir o `aluno_id`.**
+     *
+     * A ordem global manda `alunos` (nível 2) antes de `ocupacoes_quadra`
+     * (nível 3), e o `aluno_id` mora na ocupação — parece um impasse e não é.
+     * `SELECT` simples **não pega lock de linha**, então isto não é aquisição
+     * de trava e não inverte ordem nenhuma. O que esta leitura não pode fazer
+     * é **decidir**: nem prazo, nem status, nem valor. Ela só diz qual linha
+     * travar, e o passo 5 confere que era a certa.
+     */
+    const espiada = await this.prisma.ocupacaoQuadra.findFirst({
+      where: { id, companyId },
+      select: { alunoId: true },
+    });
+    const alunoParaTravar = espiada?.alunoId ?? null;
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        /**
+         * **Passo 3: a carteira trava primeiro** — e só quando existe. Reserva
+         * sem aluno não tem carteira, e pular este passo é o certo, não uma
+         * exceção. A ordem inversa (ocupação antes de aluno) foi ensaiada e dá
+         * `40P01`.
+         */
+        if (alunoParaTravar) {
+          await this.creditos.travarESaber(tx, companyId, alunoParaTravar);
+        }
+        /**
+         * **A leitura TRAVA a linha, e isso foi defeito reproduzido.**
+         *
+         * Até 2026-09-05 este `SELECT` era um `findFirst` sem lock, e a
+         * validação cruzada da SPEC-031 montou a corrida em PostgreSQL 18.4,
+         * com duas conexões:
+         *
+         * 1. `cancelBooking` lê uma reserva **futura**, sem travá-la;
+         * 2. `moveBooking` move a mesma reserva para uma data **passada**, e
+         *    commita — ele sempre travou (`courts.service.ts`, `moveBooking`);
+         * 3. o cancelamento decide com o horário **velho**, passa no corte
+         *    temporal e escreve. **Uma reserva já consumida termina cancelada.**
+         *
+         * Em execução sequencial nada disso acontece: mover primeiro impede
+         * cancelar, cancelar primeiro impede mover. **É a corrida que abre a
+         * janela**, e por isso dois controles sequenciais passavam enquanto o
+         * defeito existia — ler, decidir e escrever precisavam ser um ato só.
+         *
+         * `FOR UPDATE` e não `findFirst`: o lock não é expressável no query
+         * builder do Prisma, mesmo idioma de `moveBooking` e de
+         * `classes.service.ts:335`.
+         */
+        const travadas = await tx.$queryRaw<
+          {
+            id: string;
+            company_id: string;
+            aluno_id: string | null;
+            origem_tipo: 'AVULSO' | 'TURMA';
+            status_pagamento: StatusPagamento;
+            data: Date;
+            hora_inicio: Date;
+          }[]
+        >`
         SELECT id, company_id, aluno_id, origem_tipo, status_pagamento,
                data, hora_inicio
           FROM ocupacoes_quadra
          WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
          FOR UPDATE
       `;
-      const bruta = travadas[0];
-      if (!bruta) {
-        throw new NotFoundException();
-      }
-      // Mesma forma que o resto do método já esperava, agora vinda da linha
-      // travada em vez de uma leitura solta.
-      const ocupacao = {
-        id: bruta.id,
-        alunoId: bruta.aluno_id,
-        origemTipo: bruta.origem_tipo,
-        statusPagamento: bruta.status_pagamento,
-        data: bruta.data,
-        horaInicio: bruta.hora_inicio,
-      };
-      if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
-        throw new ForbiddenException();
-      }
+        const bruta = travadas[0];
+        if (!bruta) {
+          throw new NotFoundException();
+        }
+        // Mesma forma que o resto do método já esperava, agora vinda da linha
+        // travada em vez de uma leitura solta.
+        const ocupacao = {
+          id: bruta.id,
+          alunoId: bruta.aluno_id,
+          origemTipo: bruta.origem_tipo,
+          statusPagamento: bruta.status_pagamento,
+          data: bruta.data,
+          horaInicio: bruta.hora_inicio,
+        };
+        if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
+          throw new ForbiddenException();
+        }
 
-      // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
-      // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
-      // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
-      // esta rota apagaria a aula da agenda de todo mundo a partir de uma
-      // ação pensada para reserva individual.
-      this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+        /**
+         * **Passo 5: a linha travada tem o aluno que foi travado?**
+         *
+         * Hoje nenhum código muda `aluno_id` de ocupação — conferido por
+         * comando. Mas *"não existe caminho que mude"* é **premissa**, e esta
+         * spec já reprovou uma versão inteira por confiar em premissa desse
+         * tipo. A conferência custa uma comparação e transforma a premissa em
+         * fato verificado em tempo de execução; sem ela, a carteira travada
+         * poderia não ser a da reserva, e decidir assim seria debitar estranho.
+         */
+        if ((ocupacao.alunoId ?? null) !== alunoParaTravar) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'RESERVA_MUDOU_DE_ALUNO',
+            message: 'A reserva mudou durante o cancelamento. Tente novamente.',
+          });
+        }
 
-      // Cancelar o que já está cancelado é idempotente: sem escrita, sem
-      // erro. Repetir a ação não é engano do usuário, é rede instável.
-      //
-      // SPEC-032/AC-002: sair aqui não grava ação NEM evento — é por isso que
-      // o registrador é preguiçoso. Criá-lo antes gravaria uma ação vazia a
-      // cada retentativa de rede.
-      if (ocupacao.statusPagamento === 'cancelado') {
-        return;
-      }
+        // SPEC-012:TASK-000 — cancelar ocorrência de turma não é suportado
+        // (GAP-008): a ocupação de origem TURMA é a aula inteira, compartilhada
+        // por todos os matriculados, sem `aluno_id` próprio. Cancelá-la por
+        // esta rota apagaria a aula da agenda de todo mundo a partir de uma
+        // ação pensada para reserva individual.
+        this.assertOcupacaoAvulsa(ocupacao.origemTipo);
 
-      /**
-       * **Ninguém cancela o que já começou — e "ninguém" passou a incluir o
-       * gestor.**
-       *
-       * ## O corte, e de quem ele vale
-       *
-       * SPEC-042/INV-094, decisão do Israel (D-I5): o horário foi consumido,
-       * a quadra ficou ocupada, e cancelar depois é apagar uma cobrança
-       * legítima. **Até a SPEC-031 isso valia só para o aluno** — a guarda
-       * era `if (alunoIdScope && ...)`, e `alunoIdScope` é `undefined` para o
-       * gestor: `undefined` funcionava como papel administrativo, **por
-       * omissão e sem nome**.
-       *
-       * A SPEC-031/D17 revoga a metade que dizia *"o gestor continua podendo,
-       * ele precisa corrigir lançamento errado"*. O papel virou valor de
-       * entrada, e o gestor entra na política com `SEM_PRAZO`: herda o corte
-       * de `minutos <= 0` (D5b) **sem** herdar a antecedência do clube
-       * (AC-013). Corrigir lançamento errado passa a ter outro caminho, e não
-       * este — com a SPEC-033 vindo, cancelar quadra já usada e receber o
-       * dinheiro de volta é abuso.
-       *
-       * É a única mudança de comportamento que esta spec impõe a quem nunca
-       * configurou nada (AC-003).
-       *
-       * ## Duas coisas que a posição desta guarda carrega
-       *
-       * **Depois da saída idempotente, de propósito.** Uma retentativa de
-       * rede de um cancelamento que já deu certo tem de continuar devolvendo
-       * sucesso; posta antes, ela passaria a devolver erro pelo simples fato
-       * de o horário ter chegado nesse meio-tempo.
-       *
-       * **E depois da linha TRAVADA.** Decidir sobre uma leitura sem lock foi
-       * defeito reproduzido (ver o `FOR UPDATE` acima e o FIT-024): o
-       * `moveBooking` empurrava a reserva para o passado entre a leitura e a
-       * escrita, e o cancelamento decidia com o horário velho.
-       *
-       * ## O corte é pelo INÍCIO, não pelo fim
-       *
-       * Diferente do corte das abas (SPEC-041/D-I4), e não é incoerência: lá
-       * a pergunta é "onde isto aparece", aqui é "ainda dá para desfazer".
-       * Uma reserva das 19h às 21h consultada às 20h continua na aba
-       * `Reservas` **e** já não é cancelável, porque a pessoa está na quadra.
-       *
-       * ## O código de erro
-       *
-       * `RESERVA_JA_COMECOU` deu lugar a `PRAZO_DE_CANCELAMENTO`
-       * (AC-007/AC-010b). Não precisou de passo de rollout: `grep` nos três
-       * frontends não acha o código antigo em lugar nenhum — só o `back` o
-       * conhecia.
-       */
-      const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
-      const veredicto = avaliarCancelamentoDeReserva({
-        papelDoAutor,
-        agora,
-        ocorrenciaRelevante: {
-          tipo: 'MINUTOS',
-          minutos: antecedenciaEmMinutos(
-            ocupacao.data,
-            ocupacao.horaInicio,
-            agora,
-          ),
-        },
-        // O prazo da RESERVA, não o da aula — são dois campos por decisão
-        // (REQ-001), e trocá-los faria o clube configurar um e ver o outro.
-        prazo: prazos.reserva,
-      });
-      if (!veredicto.permitido) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: veredicto.code,
-          message:
-            prazos.reserva.regra === 'HORAS'
-              ? `Esta reserva exige ${prazos.reserva.horas}h de antecedência para cancelar.`
-              : 'Esta reserva já começou e não pode mais ser cancelada.',
+        // Cancelar o que já está cancelado é idempotente: sem escrita, sem
+        // erro. Repetir a ação não é engano do usuário, é rede instável.
+        //
+        // SPEC-032/AC-002: sair aqui não grava ação NEM evento — é por isso que
+        // o registrador é preguiçoso. Criá-lo antes gravaria uma ação vazia a
+        // cada retentativa de rede.
+        if (ocupacao.statusPagamento === 'cancelado') {
+          return;
+        }
+
+        /**
+         * **Ninguém cancela o que já começou — e "ninguém" passou a incluir o
+         * gestor.**
+         *
+         * ## O corte, e de quem ele vale
+         *
+         * SPEC-042/INV-094, decisão do Israel (D-I5): o horário foi consumido,
+         * a quadra ficou ocupada, e cancelar depois é apagar uma cobrança
+         * legítima. **Até a SPEC-031 isso valia só para o aluno** — a guarda
+         * era `if (alunoIdScope && ...)`, e `alunoIdScope` é `undefined` para o
+         * gestor: `undefined` funcionava como papel administrativo, **por
+         * omissão e sem nome**.
+         *
+         * A SPEC-031/D17 revoga a metade que dizia *"o gestor continua podendo,
+         * ele precisa corrigir lançamento errado"*. O papel virou valor de
+         * entrada, e o gestor entra na política com `SEM_PRAZO`: herda o corte
+         * de `minutos <= 0` (D5b) **sem** herdar a antecedência do clube
+         * (AC-013). Corrigir lançamento errado passa a ter outro caminho, e não
+         * este — com a SPEC-033 vindo, cancelar quadra já usada e receber o
+         * dinheiro de volta é abuso.
+         *
+         * É a única mudança de comportamento que esta spec impõe a quem nunca
+         * configurou nada (AC-003).
+         *
+         * ## Duas coisas que a posição desta guarda carrega
+         *
+         * **Depois da saída idempotente, de propósito.** Uma retentativa de
+         * rede de um cancelamento que já deu certo tem de continuar devolvendo
+         * sucesso; posta antes, ela passaria a devolver erro pelo simples fato
+         * de o horário ter chegado nesse meio-tempo.
+         *
+         * **E depois da linha TRAVADA.** Decidir sobre uma leitura sem lock foi
+         * defeito reproduzido (ver o `FOR UPDATE` acima e o FIT-024): o
+         * `moveBooking` empurrava a reserva para o passado entre a leitura e a
+         * escrita, e o cancelamento decidia com o horário velho.
+         *
+         * ## O corte é pelo INÍCIO, não pelo fim
+         *
+         * Diferente do corte das abas (SPEC-041/D-I4), e não é incoerência: lá
+         * a pergunta é "onde isto aparece", aqui é "ainda dá para desfazer".
+         * Uma reserva das 19h às 21h consultada às 20h continua na aba
+         * `Reservas` **e** já não é cancelável, porque a pessoa está na quadra.
+         *
+         * ## O código de erro
+         *
+         * `RESERVA_JA_COMECOU` deu lugar a `PRAZO_DE_CANCELAMENTO`
+         * (AC-007/AC-010b). Não precisou de passo de rollout: `grep` nos três
+         * frontends não acha o código antigo em lugar nenhum — só o `back` o
+         * conhecia.
+         */
+        const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+        const veredicto = avaliarCancelamentoDeReserva({
+          papelDoAutor,
+          agora,
+          ocorrenciaRelevante: {
+            tipo: 'MINUTOS',
+            minutos: antecedenciaEmMinutos(
+              ocupacao.data,
+              ocupacao.horaInicio,
+              agora,
+            ),
+          },
+          // O prazo da RESERVA, não o da aula — são dois campos por decisão
+          // (REQ-001), e trocá-los faria o clube configurar um e ver o outro.
+          prazo: prazos.reserva,
         });
-      }
+        if (!veredicto.permitido) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: veredicto.code,
+            message:
+              prazos.reserva.regra === 'HORAS'
+                ? `Esta reserva exige ${prazos.reserva.horas}h de antecedência para cancelar.`
+                : 'Esta reserva já começou e não pode mais ser cancelada.',
+          });
+        }
 
-      const transicaoId = novaTransicao();
-      const registrador = new RegistradorDeAcao(
-        tx,
-        companyId,
-        autorId,
-        'reserva_cancelada',
-      );
+        const transicaoId = novaTransicao();
+        const registrador = new RegistradorDeAcao(
+          tx,
+          companyId,
+          autorId,
+          'reserva_cancelada',
+        );
 
-      // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
-      // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
-      // migration), então essa escrita sozinha já resolve.
-      await tx.ocupacaoQuadra.update({
-        where: { id },
-        data: { statusPagamento: 'cancelado', transicaoId },
+        // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
+        // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
+        // migration), então essa escrita sozinha já resolve.
+        await tx.ocupacaoQuadra.update({
+          where: { id },
+          data: { statusPagamento: 'cancelado', transicaoId },
+        });
+
+        // A ordem entre esta linha e o `update` acima **não importa**: a
+        // trigger é `DEFERRABLE INITIALLY DEFERRED` e só julga no COMMIT.
+        // Fosse imediata, gravar a ocupação antes do evento falharia sempre.
+        await registrador.registrar(id, 'cancelada', transicaoId);
+
+        /**
+         * **Passo 7, e ele é UM movimento — não dois.**
+         *
+         * A versão anterior desta sequência mandava `UPDATE alunos` **e** o
+         * movimento, e isso **dobrava o crédito**: com a trigger do D1,
+         * inserir o movimento já atualiza o saldo. Consumo de R$ 120,
+         * cancelamento somando 120 à mão e a trigger somando outros 120 —
+         * saldo 240 contra um ledger de 120. **A trigger é a única escrita no
+         * saldo, em todos os caminhos.**
+         *
+         * Quem não devolve: ocupação de `TURMA` (não tem `valor`, o `CHECK`
+         * proíbe) e reserva sem `aluno_id`. Nos dois casos grava-se a ocupação
+         * e o evento, e nenhum movimento — **a ausência dele é a resposta**
+         * (AC-010).
+         */
+        await this.devolverCarteira(tx, {
+          companyId,
+          ocupacaoId: id,
+          autorId,
+          registrador,
+        });
+
+        // Última instrução (D7).
+        await julgarInvariantesDiferidas(tx);
       });
+    } catch (erro) {
+      // A INV-096 recusando vira `409`, não `500`: no `back` revertido ela
+      // dispara **por desenho** (saída B do rollout), e responder erro de
+      // servidor transformaria contingência planejada em incidente.
+      traduzirRecusaDeCancelamento(erro);
+    }
+  }
 
-      // A ordem entre esta linha e o `update` acima **não importa**: a
-      // trigger é `DEFERRABLE INITIALLY DEFERRED` e só julga no COMMIT.
-      // Fosse imediata, gravar a ocupação antes do evento falharia sempre.
-      await registrador.registrar(id, 'cancelada', transicaoId);
+  /**
+   * A devolução do consumo ATIVO de uma ocupação, se houver.
+   *
+   * **"Ativo" é consumo sem devolução** — a mesma definição da INV-098, e a
+   * que faz `consumo → devolução → consumo` (cancelar, reativar, cancelar)
+   * continuar possível, com as quatro linhas legítimas (AC-011).
+   *
+   * Devolver o mesmo consumo duas vezes é impossível pelo índice parcial
+   * `ux_movimentos_devolucao_por_consumo`; esta busca é o que impede a
+   * tentativa, e o índice é o que impede o resultado.
+   */
+  private async devolverCarteira(
+    tx: Prisma.TransactionClient,
+    args: {
+      companyId: string;
+      ocupacaoId: string;
+      autorId: string;
+      registrador: RegistradorDeAcao;
+    },
+  ): Promise<void> {
+    const consumo = await this.creditos.consumoAtivoDaOcupacao(
+      tx,
+      args.companyId,
+      args.ocupacaoId,
+    );
+    if (!consumo) {
+      return;
+    }
+    const acaoId = args.registrador.idDaAcao;
+    if (!acaoId) {
+      throw new Error(
+        'devolução sem ação administrativa: o registrador não foi usado antes do estorno',
+      );
+    }
+    await this.creditos.devolver(tx, {
+      companyId: args.companyId,
+      alunoId: consumo.alunoId,
+      valorCentavos: consumo.valorCentavos,
+      autorId: args.autorId,
+      acaoId,
+      ocupacaoId: args.ocupacaoId,
+      movimentoOrigemId: consumo.id,
     });
   }
 
@@ -1281,140 +1559,185 @@ export class CourtsService {
     // atomicidade que o `cancelBooking`. O `pago` nao dispara a trigger, mas
     // grava evento pela mesma razao do resto: sem autor, `updated_at` responde
     // "quando" e ninguem responde "quem".
-    const atualizada = await this.prisma.$transaction(async (tx) => {
-      /**
-       * **A leitura entra na transação, e trava — mesmo conserto do
-       * `cancelBooking`, e pelo mesmo motivo.**
-       *
-       * Até este commit a leitura era `this.prisma.ocupacaoQuadra.findFirst`
-       * **fora** de qualquer transação, e as três guardas abaixo decidiam
-       * sobre ela. A auditoria adversarial de 2026-09-05 reproduziu a corrida
-       * em banco real, duas vezes:
-       *
-       * 1. reserva futura `pendente_pagamento`; o gestor manda "marcar como
-       *    pago" e a leitura devolve `pendente_pagamento` — passa pela guarda
-       *    do AC-012;
-       * 2. nesse intervalo o aluno cancela pelo `cancelBooking` **já
-       *    corrigido**, que trava, grava `cancelado` + evento e commita;
-       * 3. o `update` do pagamento grava `pago`.
-       *
-       * Estado final medido: `{ meio: 'cancelado', fim: 'pago' }`. **A reserva
-       * cancelada ressuscita, volta ao índice `EXCLUDE`, e o aluno que
-       * cancelou não fica sabendo** — exatamente o que o comentário do AC-012
-       * abaixo descreve como o dano que a guarda existe para impedir.
-       *
-       * E se alguém pegou o slot liberado no meio-tempo, o `UPDATE` viola
-       * `no_overlap_por_quadra` e sobe **cru**: `23P01` vira `500`, não `409`
-       * — esta rota não tem o `ehCorridaPerdida`/retry do `createBooking`.
-       *
-       * O `FOR UPDATE` não é expressável no query builder do Prisma. Travar
-       * pelo `id` e reler a linha inteira **dentro** da mesma transação é o
-       * mínimo: o `findFirstOrThrow` seguinte já lê a linha travada.
-       */
-      const travadas = await tx.$queryRaw<{ id: string }[]>`
+    /**
+     * **PA-02: a mesma sequência da SPEC-033 vale aqui.**
+     *
+     * `updatePaymentStatus` é o segundo caminho que põe reserva avulsa em
+     * `cancelado`. Escrever "os dois caminhos" seria repetir o erro que
+     * produziu o DEF-VC031-01 — aquele defeito nasceu de uma spec que
+     * enumerava caminhos e esqueceu um. **A garantia não é esta linha: é a
+     * INV-096**, que julga o COMMIT e não conhece rota. Os passos 2, 3 e 5
+     * entram aqui porque sem eles a transação **falharia** na trigger, não
+     * porque a lista de caminhos esteja completa.
+     */
+    const espiada = await this.prisma.ocupacaoQuadra.findFirst({
+      where: { id, companyId },
+      select: { alunoId: true },
+    });
+    const alunoParaTravar = espiada?.alunoId ?? null;
+
+    const atualizada = await this.prisma
+      .$transaction(async (tx) => {
+        if (alunoParaTravar) {
+          await this.creditos.travarESaber(tx, companyId, alunoParaTravar);
+        }
+        /**
+         * **A leitura entra na transação, e trava — mesmo conserto do
+         * `cancelBooking`, e pelo mesmo motivo.**
+         *
+         * Até este commit a leitura era `this.prisma.ocupacaoQuadra.findFirst`
+         * **fora** de qualquer transação, e as três guardas abaixo decidiam
+         * sobre ela. A auditoria adversarial de 2026-09-05 reproduziu a corrida
+         * em banco real, duas vezes:
+         *
+         * 1. reserva futura `pendente_pagamento`; o gestor manda "marcar como
+         *    pago" e a leitura devolve `pendente_pagamento` — passa pela guarda
+         *    do AC-012;
+         * 2. nesse intervalo o aluno cancela pelo `cancelBooking` **já
+         *    corrigido**, que trava, grava `cancelado` + evento e commita;
+         * 3. o `update` do pagamento grava `pago`.
+         *
+         * Estado final medido: `{ meio: 'cancelado', fim: 'pago' }`. **A reserva
+         * cancelada ressuscita, volta ao índice `EXCLUDE`, e o aluno que
+         * cancelou não fica sabendo** — exatamente o que o comentário do AC-012
+         * abaixo descreve como o dano que a guarda existe para impedir.
+         *
+         * E se alguém pegou o slot liberado no meio-tempo, o `UPDATE` viola
+         * `no_overlap_por_quadra` e sobe **cru**: `23P01` vira `500`, não `409`
+         * — esta rota não tem o `ehCorridaPerdida`/retry do `createBooking`.
+         *
+         * O `FOR UPDATE` não é expressável no query builder do Prisma. Travar
+         * pelo `id` e reler a linha inteira **dentro** da mesma transação é o
+         * mínimo: o `findFirstOrThrow` seguinte já lê a linha travada.
+         */
+        const travadas = await tx.$queryRaw<{ id: string }[]>`
         SELECT id
           FROM ocupacoes_quadra
          WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
          FOR UPDATE
       `;
-      if (!travadas[0]) {
-        throw new NotFoundException();
-      }
-      const ocupacao = await tx.ocupacaoQuadra.findFirstOrThrow({
-        where: { id, companyId },
-      });
-
-      // AC-007/AC-011: pagamento é coisa de reserva avulsa (CON-006). Aula
-      // recorrente não tem cobrança própria no modelo, então marcar "pago"
-      // numa ocupação de turma é estado sem significado.
-      this.assertOcupacaoAvulsa(ocupacao.origemTipo);
-
-      if (ocupacao.statusPagamento === status) {
-        return ocupacao;
-      }
-
-      // AC-012: `cancelado` é terminal.
-      //
-      // Não é preciosismo de máquina de estados: a constraint EXCLUDE de
-      // INV-001 tem `WHERE (status_pagamento <> 'cancelado')`, ou seja,
-      // cancelar **libera o slot de verdade**. Voltar de `cancelado` para
-      // `pago` tenta recolocar a reserva na linha do tempo — se alguém já
-      // reservou aquele horário no meio-tempo, o UPDATE viola a constraint e
-      // devolve erro cru do Postgres; se ninguém reservou, a reserva
-      // ressuscita em silêncio e o aluno que cancelou não fica sabendo.
-      if (ocupacao.statusPagamento === 'cancelado') {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'RESERVA_CANCELADA',
-          message:
-            'Esta reserva foi cancelada e o horário pode já ter sido ocupado. Recarregue a agenda.',
+        if (!travadas[0]) {
+          throw new NotFoundException();
+        }
+        const ocupacao = await tx.ocupacaoQuadra.findFirstOrThrow({
+          where: { id, companyId },
         });
-      }
 
-      /**
-       * **DEF-VC031-01 — este caminho CANCELA, e não avaliava o D5b.**
-       *
-       * Achado pela validação cruzada de 2026-09-06, e era bypass em
-       * produção: existem **dois** caminhos para cancelar uma reserva —
-       * `cancelBooking` e este `PATCH .../payment-status` com
-       * `status: 'cancelado'` — e só o primeiro aplicava a regra.
-       *
-       * Para a MESMA reserva já iniciada, `cancelBooking` recusava com `409`
-       * e o caminho do pagamento **aceitava**. A regra que a SPEC-031 impõe
-       * ("depois do início não se cancela, em qualquer configuração") tinha
-       * uma porta aberta ao lado.
-       *
-       * Eu mexi neste método no mesmo dia — para consertar a leitura sem
-       * lock — e **não vi a segunda metade do problema**: travar a linha
-       * garante que a decisão é sobre o estado certo, não que exista decisão.
-       *
-       * `papelDoAutor: 'company_admin'` porque a rota é `@Roles('company_admin')`.
-       * Pelo INV-066 o gestor não é barrado pela ANTECEDÊNCIA — mas é barrado
-       * junto com o aluno **depois do início** (AC-010b). É exatamente o corte
-       * que faltava.
-       */
-      if (status === 'cancelado') {
-        const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
-        const veredicto = avaliarCancelamentoDeReserva({
-          papelDoAutor: 'company_admin',
-          agora,
-          ocorrenciaRelevante: {
-            tipo: 'MINUTOS',
-            minutos: antecedenciaEmMinutos(
-              ocupacao.data,
-              ocupacao.horaInicio,
-              agora,
-            ),
-          },
-          prazo: prazos.reserva,
-        });
-        if (!veredicto.permitido) {
+        // Passo 5 (SPEC-033): a linha travada é a do aluno que foi travado.
+        if ((ocupacao.alunoId ?? null) !== alunoParaTravar) {
           throw new ConflictException({
             statusCode: 409,
-            code: veredicto.code,
-            message: 'Esta reserva já começou e não pode mais ser cancelada.',
+            code: 'RESERVA_MUDOU_DE_ALUNO',
+            message: 'A reserva mudou durante a operação. Tente novamente.',
           });
         }
-      }
 
-      const transicaoId = novaTransicao();
-      const registrador = new RegistradorDeAcao(
-        tx,
-        companyId,
-        autorId,
-        status === 'pago' ? 'pagamento_confirmado' : 'reserva_cancelada',
-      );
-      const linha = await tx.ocupacaoQuadra.update({
-        where: { id },
-        data: { statusPagamento: status, transicaoId },
-      });
-      await registrador.registrar(
-        id,
-        status === 'pago' ? 'pagamento_confirmado' : 'cancelada',
-        transicaoId,
-      );
-      return linha;
-    });
+        // AC-007/AC-011: pagamento é coisa de reserva avulsa (CON-006). Aula
+        // recorrente não tem cobrança própria no modelo, então marcar "pago"
+        // numa ocupação de turma é estado sem significado.
+        this.assertOcupacaoAvulsa(ocupacao.origemTipo);
+
+        if (ocupacao.statusPagamento === status) {
+          return ocupacao;
+        }
+
+        // AC-012: `cancelado` é terminal.
+        //
+        // Não é preciosismo de máquina de estados: a constraint EXCLUDE de
+        // INV-001 tem `WHERE (status_pagamento <> 'cancelado')`, ou seja,
+        // cancelar **libera o slot de verdade**. Voltar de `cancelado` para
+        // `pago` tenta recolocar a reserva na linha do tempo — se alguém já
+        // reservou aquele horário no meio-tempo, o UPDATE viola a constraint e
+        // devolve erro cru do Postgres; se ninguém reservou, a reserva
+        // ressuscita em silêncio e o aluno que cancelou não fica sabendo.
+        if (ocupacao.statusPagamento === 'cancelado') {
+          throw new UnprocessableEntityException({
+            statusCode: 422,
+            code: 'RESERVA_CANCELADA',
+            message:
+              'Esta reserva foi cancelada e o horário pode já ter sido ocupado. Recarregue a agenda.',
+          });
+        }
+
+        /**
+         * **DEF-VC031-01 — este caminho CANCELA, e não avaliava o D5b.**
+         *
+         * Achado pela validação cruzada de 2026-09-06, e era bypass em
+         * produção: existem **dois** caminhos para cancelar uma reserva —
+         * `cancelBooking` e este `PATCH .../payment-status` com
+         * `status: 'cancelado'` — e só o primeiro aplicava a regra.
+         *
+         * Para a MESMA reserva já iniciada, `cancelBooking` recusava com `409`
+         * e o caminho do pagamento **aceitava**. A regra que a SPEC-031 impõe
+         * ("depois do início não se cancela, em qualquer configuração") tinha
+         * uma porta aberta ao lado.
+         *
+         * Eu mexi neste método no mesmo dia — para consertar a leitura sem
+         * lock — e **não vi a segunda metade do problema**: travar a linha
+         * garante que a decisão é sobre o estado certo, não que exista decisão.
+         *
+         * `papelDoAutor: 'company_admin'` porque a rota é `@Roles('company_admin')`.
+         * Pelo INV-066 o gestor não é barrado pela ANTECEDÊNCIA — mas é barrado
+         * junto com o aluno **depois do início** (AC-010b). É exatamente o corte
+         * que faltava.
+         */
+        if (status === 'cancelado') {
+          const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+          const veredicto = avaliarCancelamentoDeReserva({
+            papelDoAutor: 'company_admin',
+            agora,
+            ocorrenciaRelevante: {
+              tipo: 'MINUTOS',
+              minutos: antecedenciaEmMinutos(
+                ocupacao.data,
+                ocupacao.horaInicio,
+                agora,
+              ),
+            },
+            prazo: prazos.reserva,
+          });
+          if (!veredicto.permitido) {
+            throw new ConflictException({
+              statusCode: 409,
+              code: veredicto.code,
+              message: 'Esta reserva já começou e não pode mais ser cancelada.',
+            });
+          }
+        }
+
+        const transicaoId = novaTransicao();
+        const registrador = new RegistradorDeAcao(
+          tx,
+          companyId,
+          autorId,
+          status === 'pago' ? 'pagamento_confirmado' : 'reserva_cancelada',
+        );
+        const linha = await tx.ocupacaoQuadra.update({
+          where: { id },
+          data: { statusPagamento: status, transicaoId },
+        });
+        await registrador.registrar(
+          id,
+          status === 'pago' ? 'pagamento_confirmado' : 'cancelada',
+          transicaoId,
+        );
+
+        // Passo 7: a devolução, quando este caminho cancela. Marcar como
+        // `pago` não devolve nada — não é cancelamento.
+        if (status === 'cancelado') {
+          await this.devolverCarteira(tx, {
+            companyId,
+            ocupacaoId: id,
+            autorId,
+            registrador,
+          });
+        }
+
+        // Última instrução (D7).
+        await julgarInvariantesDiferidas(tx);
+        return linha;
+      })
+      .catch(traduzirRecusaDeCancelamento);
     return this.toOcupacaoResponse(atualizada);
   }
 
@@ -1848,4 +2171,16 @@ export class CourtsService {
       valor: ocupacao.valor != null ? Number(ocupacao.valor) : null,
     };
   }
+}
+
+/**
+ * `numeric(10,2)` em centavos inteiros.
+ *
+ * A multiplicação é feita em `Decimal`, nunca em `number`: o valor já veio do
+ * banco com duas casas, então `mul(100)` é exato — e `Number(valor) * 100`
+ * não seria, porque passaria por ponto flutuante antes.
+ */
+function paraCentavos(valor: Prisma.Decimal | null | undefined): number {
+  if (!valor) return 0;
+  return valor.mul(100).toNumber();
 }
