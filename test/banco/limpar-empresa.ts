@@ -81,6 +81,8 @@ const APPEND_ONLY: ReadonlySet<string> = new Set([
   // `TABELAS_DA_EMPRESA` NAO poe aqui — sao conjuntos diferentes, e foi o
   // primeiro item da lista de quinze justamente porque isso ja passou batido.
   'eventos_de_matricula',
+  // SPEC-033/INV-070: o ledger da carteira e a QUARTA da familia.
+  'movimentos_de_credito',
 ]);
 
 /**
@@ -98,6 +100,16 @@ export const TABELAS_DA_EMPRESA = [
   // SPEC-032: ANTES de `ocupacoes_quadra` e de `acoes_administrativas` — o
   // evento aponta para as duas por FK composta, com RESTRICT nas duas.
   'eventos_de_ocupacao',
+  // SPEC-033: ANTES de `ocupacoes_quadra`, `alunos`, `acoes_administrativas` e
+  // `usuarios` — o movimento aponta para as QUATRO com RESTRICT.
+  //
+  // **E aponta para SI MESMO duas vezes** (a FK simples do estorno e a causal
+  // de seis colunas), o que parecia quebrar o `DELETE` unico: RESTRICT nao e
+  // adiavel, ao contrario de NO ACTION. **Medido, e passa** — RESTRICT e
+  // checado no fim do COMANDO, e um `DELETE` unico tira o consumo e a
+  // devolucao juntos. A consequencia e para quem vier depois: **partir esta
+  // limpeza em dois comandos quebraria**, e o `23503` nao diria isso.
+  'movimentos_de_credito',
   // SPEC-031/D18: ANTES dos TRES pais — `ocupacoes_quadra`, `alunos` e
   // `empresas` —, porque as quatro FKs dela sao RESTRICT. Quatro rodadas de
   // validacao acharam um pai faltando, um por vez, por listar em vez de
