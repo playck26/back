@@ -11,14 +11,19 @@ export class MovimentoDeCreditoResponseDto {
   @ApiProperty({ description: 'Sempre positivo; o sinal vem do tipo (D3).' })
   valorCentavos!: number;
 
+  // **`type` explícito nos anuláveis, e isto não é enfeite.** Sem ele o
+  // schema sai sem tipo, o `openapi-typescript` gera `Record<string, never>`
+  // e o campo fica INUTILIZÁVEL nos frontends — que é a forma silenciosa do
+  // DEF-012: contrato que compila e não serve.
   @ApiProperty({
+    type: String,
     nullable: true,
     description:
       'Nota interna do clube. Presente só nos administrativos, e **omitido na visão do aluno** (AC-013).',
   })
   motivo!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   ocupacaoId!: string | null;
 
   @ApiProperty()
@@ -44,4 +49,37 @@ export class MovimentoCriadoResponseDto {
 
   @ApiProperty()
   saldoCentavos!: number;
+}
+
+/** Uma linha do extrato **do aluno** — sem `motivo` (AC-013). */
+export class MovimentoDoAlunoResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty({ enum: ['entrada', 'retirada', 'consumo', 'devolucao'] })
+  tipo!: string;
+
+  @ApiProperty({ description: 'Sempre positivo; o sinal vem do tipo (D3).' })
+  valorCentavos!: number;
+
+  @ApiProperty({ type: String, nullable: true })
+  ocupacaoId!: string | null;
+
+  @ApiProperty()
+  criadoEm!: string;
+}
+
+/**
+ * O que o aluno vê da própria carteira.
+ *
+ * **DTO separado, e não o do admin com um campo a menos.** Um tipo só com
+ * `motivo` opcional deixaria o compilador satisfeito no dia em que a
+ * projeção esquecesse de omiti-lo — e o vazamento seria silencioso.
+ */
+export class ExtratoDoAlunoResponseDto {
+  @ApiProperty()
+  saldoCentavos!: number;
+
+  @ApiProperty({ type: [MovimentoDoAlunoResponseDto] })
+  movimentos!: MovimentoDoAlunoResponseDto[];
 }

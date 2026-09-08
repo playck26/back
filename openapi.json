@@ -3017,6 +3017,32 @@
         ]
       }
     },
+    "/api/v1/me/creditos": {
+      "get": {
+        "operationId": "MeCreditosController_minhaCarteira",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtratoDoAlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/avaliacoes": {
       "get": {
         "operationId": "ClassesController_avaliacoesDaTurma",
@@ -6930,12 +6956,12 @@
             "description": "Sempre positivo; o sinal vem do tipo (D3)."
           },
           "motivo": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Nota interna do clube. Presente só nos administrativos, e **omitido na visão do aluno** (AC-013)."
           },
           "ocupacaoId": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "criadoEm": {
@@ -7015,6 +7041,59 @@
         "required": [
           "movimentoId",
           "saldoCentavos"
+        ]
+      },
+      "MovimentoDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "entrada",
+              "retirada",
+              "consumo",
+              "devolucao"
+            ]
+          },
+          "valorCentavos": {
+            "type": "number",
+            "description": "Sempre positivo; o sinal vem do tipo (D3)."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "criadoEm": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tipo",
+          "valorCentavos",
+          "ocupacaoId",
+          "criadoEm"
+        ]
+      },
+      "ExtratoDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "saldoCentavos": {
+            "type": "number"
+          },
+          "movimentos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovimentoDoAlunoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "saldoCentavos",
+          "movimentos"
         ]
       },
       "AvaliacaoParaOGestorDto": {
