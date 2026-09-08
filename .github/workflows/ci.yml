@@ -235,3 +235,22 @@ jobs:
           SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
           SPACES_KEY: ci-spaces-key
           SPACES_SECRET: ci-spaces-secret
+
+      # SPEC-033/TASK-009 — os FITs da CARTEIRA entram aqui pelo mesmo
+      # argumento que trouxe os tres acima: um job chamado `fit-critical` que
+      # nao contem os FITs criticos mente pelo nome, e **dinheiro e o mais
+      # critico que este projeto tem**.
+      #
+      # A EVD-033-033 esta entre eles de proposito: ela e o que faz um rename
+      # de constraint derrubar a CI antes de derrubar producao com `42704`.
+      - name: FIT-025 a FIT-031 + EVD-033-033 (carteira)
+        run: pnpm run test:banco -- creditos
+        env:
+          JWT_ACCESS_SECRET: fit-access-secret
+          JWT_REFRESH_SECRET: fit-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
