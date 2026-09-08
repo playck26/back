@@ -408,12 +408,22 @@ a replicar:
 **30 tabelas e 14 enums** no `schema.prisma` (conferido por
 `grep -c '^model'` / `'^enum'` em **2026-09-08**), **32 migrations**.
 
-> **A 32ª ainda NÃO está em produção**, e a planta não pode dizer que está.
-> `20260908120000_spec033_creditos_carteira` é a TASK-001 da SPEC-033 e vive na
-> PR `back#62`; até ela ser mergeada, **DEV e produção divergem por uma
-> migration**. A identidade das duas foi provada por
-> `prisma migrate diff --from-url <DEV> --to-url <PROD>` em 2026-09-06
-> (*"No difference detected."*) e vale para as 31 anteriores.
+> **A 32ª entrou em produção em 2026-09-08**, e a prova é o log do deployment,
+> não o merge. `20260908120000_spec033_creditos_carteira` (SPEC-033/TASK-001)
+> foi aplicada pelo `run_command` do App Platform — `pnpm run db:migrate:deploy
+> && pnpm run start:prod` — no deployment `4be3d60e`, que ficou `ACTIVE`:
+>
+> ```text
+> 32 migrations found in prisma/migrations
+> Applying migration `20260908120000_spec033_creditos_carteira`
+> All migrations have been successfully applied.
+> [NestApplication] Nest application successfully started
+> ```
+>
+> **O DEV foi alinhado no mesmo dia** pelo `db-migrate.yml` (run `34266654792`),
+> e os dois canários da Neon — FIT-001 e FIT-002 — passaram **com o schema
+> novo**, que é a evidência de que as triggers e constraints desta migration
+> não quebram as invariantes já existentes num Postgres hospedado.
 
 > **As três que entraram desde 2026-09-02 são da SPEC-031**, e as três já
 > estão em produção:
