@@ -8543,12 +8543,12 @@
             "description": "Sempre positivo; o sinal vem do tipo (D3)."
           },
           "motivo": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Nota interna do clube. Presente só nos administrativos, e **omitido na visão do aluno** (AC-013)."
           },
           "ocupacaoId": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "criadoEm": {
