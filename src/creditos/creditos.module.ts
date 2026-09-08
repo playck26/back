@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { CreditosAdminService } from './creditos-admin.service';
 import { CreditosController } from './creditos.controller';
+import { CreditosDoAlunoService } from './creditos-do-aluno.service';
+import { MeCreditosController } from './me-creditos.controller';
 import { CreditosService } from './creditos.service';
 
 /**
@@ -12,8 +14,8 @@ import { CreditosService } from './creditos.service';
  * tem uma porta só, que é o controller daqui.
  */
 @Module({
-  controllers: [CreditosController],
-  providers: [CreditosService, CreditosAdminService],
+  controllers: [CreditosController, MeCreditosController],
+  providers: [CreditosService, CreditosAdminService, CreditosDoAlunoService],
   exports: [CreditosService],
 })
 export class CreditosModule {}

@@ -4375,6 +4375,32 @@
           "creditos"
         ]
       }
+    },
+    "/api/v1/me/creditos": {
+      "get": {
+        "operationId": "MeCreditosController_minhaCarteira",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtratoDoAlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
     }
   },
   "info": {
@@ -8628,6 +8654,59 @@
         "required": [
           "movimentoId",
           "saldoCentavos"
+        ]
+      },
+      "MovimentoDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "entrada",
+              "retirada",
+              "consumo",
+              "devolucao"
+            ]
+          },
+          "valorCentavos": {
+            "type": "number",
+            "description": "Sempre positivo; o sinal vem do tipo (D3)."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "criadoEm": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tipo",
+          "valorCentavos",
+          "ocupacaoId",
+          "criadoEm"
+        ]
+      },
+      "ExtratoDoAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "saldoCentavos": {
+            "type": "number"
+          },
+          "movimentos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovimentoDoAlunoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "saldoCentavos",
+          "movimentos"
         ]
       }
     }
