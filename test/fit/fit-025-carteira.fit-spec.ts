@@ -36,16 +36,22 @@ import type { App } from 'supertest/types';
 import { exigirBancoLocal } from '../banco/exigir-banco-local';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { subirAppReal } from './app-real';
-import {
-  ADMIN_USUARIO,
-  ALUNO1,
-  ALUNO1_EMAIL,
-  EMPRESA,
-  QUADRA,
-  dataFutura,
-  login,
-  montarCenario,
-} from './cenario';
+import { dataFutura, idsDoCenario, login, montarCenario } from './cenario';
+
+/**
+ * **Cenário 3, e não o padrão — foi o defeito da primeira execução.**
+ *
+ * Os canários rodam em JOBS PARALELOS contra o MESMO banco Neon. Este arquivo
+ * usava os ids do cenário 1, que são os do FIT-001: o `beforeAll` daqui
+ * apagava a empresa dele no meio da corrida dele, e o FIT-001 caiu com
+ * "Aluno não encontrado" nas iterações 3 e 4. **Eu quebrei o canário alheio**,
+ * e o arquivo ao lado (`fit-002`) já mostrava a saída — `idsDoCenario(2)`.
+ *
+ * A função existe exatamente para isto. Usar o default por omissão é o
+ * caminho de menor esforço, e foi por ele que passei.
+ */
+const C = idsDoCenario(3);
+const { ADMIN_USUARIO, ALUNO1, ALUNO1_EMAIL, EMPRESA, QUADRA } = C;
 
 jest.setTimeout(180_000);
 
@@ -113,7 +119,7 @@ const proximaHora = (h: string) =>
 
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
-  await montarCenario(db);
+  await montarCenario(db, C);
   [appA, appB] = await Promise.all([subirAppReal(), subirAppReal()]);
 });
 
