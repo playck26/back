@@ -774,11 +774,51 @@ jobs:
           SPACES_KEY: ci-spaces-key
           SPACES_SECRET: ci-spaces-secret
 
+  # SPEC-033/TASK-009 — **o canário da CARTEIRA.**
+  #
+  # As sete validações cruzadas da SPEC-033 fecharam com a mesma linha na
+  # lista do que segue sem prova: "carga e concorrência na Neon". Tudo o que
+  # ela mediu rodou em Postgres local — inclusive a concorrência.
+  #
+  # Local e Neon não são o mesmo alvo: latência de rede entre as duas conexões
+  # muda o intercalamento, e uma janela que o loopback fecha em microssegundos
+  # fica aberta o bastante para outra transação entrar. Já mordeu este projeto
+  # (`P1002`, advisory lock preso).
+  #
+  # Ele fecha a perna de CONCORRÊNCIA. Carga continua sem prova, e dizer que
+  # "a Neon está coberta" seria trocar uma lacuna por uma frase.
+  fit-025-neon:
+    name: FIT-025 Neon (carteira)
+    needs: migrate
+    if: ${{ always() && inputs.run_smoke && needs.migrate.outputs.migrado == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: FIT-025
+        run: pnpm run test:fit -- --testPathPattern fit-025
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
+          JWT_ACCESS_SECRET: fit-neon-access
+          JWT_REFRESH_SECRET: fit-neon-refresh
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
   # SPEC-043/AC-010 — badge verde com FIT pulado foi a causa raiz de 26 dias
   # sem gate. Disparo sem smoke/FITs falha de propósito.
   gate:
     name: gate (smoke e FITs rodaram?)
-    needs: [migrate, fit-001-neon, fit-002-neon]
+    needs: [migrate, fit-001-neon, fit-002-neon, fit-025-neon]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -787,7 +827,7 @@ jobs:
             echo "::error title=FITs pulados::Disparado com run_smoke=false. Migration aplicada, mas o gate NAO rodou - este workflow nao fica verde sem ele."
             exit 1
           fi
-          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}"; do
+          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}" "${{ needs.fit-025-neon.result }}"; do
             [ "$r" = "success" ] || { echo "::error::um canario FIT nao concluiu success ($r)"; exit 1; }
           done
-          echo "migration, FIT-001 Neon e FIT-002 Neon: success"
+          echo "migration, FIT-001, FIT-002 e FIT-025 Neon: success"
