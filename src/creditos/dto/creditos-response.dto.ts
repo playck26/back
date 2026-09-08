@@ -11,14 +11,19 @@ export class MovimentoDeCreditoResponseDto {
   @ApiProperty({ description: 'Sempre positivo; o sinal vem do tipo (D3).' })
   valorCentavos!: number;
 
+  // **`type` explícito nos anuláveis, e isto não é enfeite.** Sem ele o
+  // schema sai sem tipo, o `openapi-typescript` gera `Record<string, never>`
+  // e o campo fica INUTILIZÁVEL nos frontends — que é a forma silenciosa do
+  // DEF-012: contrato que compila e não serve.
   @ApiProperty({
+    type: String,
     nullable: true,
     description:
       'Nota interna do clube. Presente só nos administrativos, e **omitido na visão do aluno** (AC-013).',
   })
   motivo!: string | null;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({ type: String, nullable: true })
   ocupacaoId!: string | null;
 
   @ApiProperty()
