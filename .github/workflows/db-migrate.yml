@@ -391,7 +391,8 @@ jobs:
             (.ocupacaoQuadrasPct >= 0 and .ocupacaoQuadrasPct <= 100)
           '
           echo "--- GET /dashboard/summary?periodo=2026-09 (formato AAAA-MM aceito) ---"
-          curl -s "http://localhost:3000/api/v1/dashboard/summary?periodo=2026-09" -H "Authorization: Bearer $ACCESS_TOKEN" \
+          curl -s "http://localhost:3000/api/v1/dashboard/summary?periodo=2026-09" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             | jq -e '.ocupacaoQuadrasPct >= 0'
           echo "MOD-007 OK — dashboard agrega alunos ativos + ocupação de turma + ocupação de quadra contra o Neon."
 
@@ -437,13 +438,47 @@ jobs:
           [ "$APROVAR_CODE" = "200" ] || (echo "aprovar vinculo: esperado 200, veio $APROVAR_CODE" && exit 1)
 
           echo "--- aluno lê quadras (CON-005.1, leitura aberta a aluno) ---"
-          curl -s http://localhost:3000/api/v1/courts -H "Authorization: Bearer $ALUNO_TOKEN" | jq -e '.total >= 1'
+          curl -s http://localhost:3000/api/v1/courts \
+            -H "Authorization: Bearer $ALUNO_TOKEN" \
+            | jq -e '.total >= 1'
 
           echo "--- aluno NÃO consegue criar quadra (403, escrita continua company_admin-only) ---"
           ALUNO_CREATE_COURT_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/courts \
             -H "Authorization: Bearer $ALUNO_TOKEN" -H "Content-Type: application/json" \
             -d '{"nome":"Quadra Indevida","esporte":"tenis","precoHora":1}')
           [ "$ALUNO_CREATE_COURT_RES" = "403" ] || (echo "esperado 403, veio $ALUNO_CREATE_COURT_RES" && exit 1)
+
+          # SPEC-033 — **o aluno passou a precisar de CRÉDITO para reservar.**
+          #
+          # Este smoke quebrou no primeiro disparo depois que o consumo subiu:
+          # `422 SALDO_INSUFICIENTE`, "faltam R$ 80,00". O codigo faz o que o
+          # AC-007 manda; o smoke e que descrevia um fluxo que deixou de
+          # existir sem carteira.
+          #
+          # Dar o credito AQUI, pela rota real, e melhor que contornar: o
+          # smoke passa a exercitar `POST /students/:id/creditos` contra a
+          # Neon -- com a senha reconferida no ato (D6) -- e a reserva
+          # seguinte prova o consumo de ponta a ponta. Mais cobertura, nao
+          # menos.
+          echo "--- SPEC-033: o admin lanca credito para o aluno (senha reconferida no ato) ---"
+          CREDITO_RES=$(curl -s -X POST \
+            "http://localhost:3000/api/v1/students/$ALUNO_APP_ID/creditos" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"tipo\":\"entrada\",\"valorCentavos\":50000,\"motivo\":\"aporte do smoke\",\"senha\":\"$SEED_ADMIN_SENHA\"}")
+          echo "$CREDITO_RES"
+          echo "$CREDITO_RES" | jq -e '.saldoCentavos == 50000'
+
+          echo "--- SPEC-033/AC-002: senha errada e 422 SENHA_INVALIDA, e NAO grava ---"
+          SENHA_ERRADA_RES=$(curl -s -X POST \
+            "http://localhost:3000/api/v1/students/$ALUNO_APP_ID/creditos" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"tipo":"entrada","valorCentavos":1000,"motivo":"nao deve entrar","senha":"senha-errada-123"}')
+          echo "$SENHA_ERRADA_RES" | jq -e '.code == "SENHA_INVALIDA"'
+          curl -s "http://localhost:3000/api/v1/students/$ALUNO_APP_ID/creditos"             \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            | jq -e '.saldoCentavos == 50000'
 
           echo "--- aluno reserva quadra para si mesmo, sem informar alunoId (REQ-005) ---"
           ALUNO_BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
@@ -453,6 +488,16 @@ jobs:
           echo "$ALUNO_BOOKING_RES" | jq -e '.alunoId and .origemTipo == "AVULSO"'
           ALUNO_BOOKING_ID=$(echo "$ALUNO_BOOKING_RES" | jq -r '.id')
           ALUNO_PROPRIO_ID=$(echo "$ALUNO_BOOKING_RES" | jq -r '.alunoId')
+
+          echo "--- SPEC-033: a reserva consumiu credito, nasceu paga, e o extrato do ALUNO omite o motivo ---"
+          curl -s "http://localhost:3000/api/v1/students/$ALUNO_APP_ID/creditos"             \
+            -H "Authorization: Bearer $ACCESS_TOKEN"             \
+            | jq -e '.saldoCentavos == 42000 and ([.movimentos[] | select(.tipo == "consumo")] | length) == 1'
+          echo "$ALUNO_BOOKING_RES" | jq -e '.statusPagamento == "pago"'
+          # AC-013: a visao do ALUNO omite o motivo. O gestor ve; ele nao.
+          curl -s http://localhost:3000/api/v1/me/creditos             \
+            -H "Authorization: Bearer $ALUNO_TOKEN"             \
+            | jq -e '.saldoCentavos == 42000 and ([.movimentos[] | has("motivo")] | any | not)'
 
           echo "--- aluno tentando informar alunoId de outro aluno é ignorado, servidor força o próprio id do token (REQ-005) ---"
           OUTRO_BOOKING_RES=$(curl -s -X POST http://localhost:3000/api/v1/bookings \
@@ -466,7 +511,9 @@ jobs:
             | jq -e --arg id "$ALUNO_PROPRIO_ID" '[.data[] | select(.alunoId != $id)] | length == 0'
 
           echo "--- GET /me/classes do aluno (CON-004.5) — sem turma alocada, lista vazia ---"
-          curl -s http://localhost:3000/api/v1/me/classes -H "Authorization: Bearer $ALUNO_TOKEN" | jq -e '. == []'
+          curl -s http://localhost:3000/api/v1/me/classes \
+            -H "Authorization: Bearer $ALUNO_TOKEN" \
+            | jq -e '. == []'
 
           echo "--- aluno cancela a própria reserva (204) ---"
           CANCEL_ALUNO_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$ALUNO_BOOKING_ID/cancel" \
