@@ -480,7 +480,7 @@ a replicar:
 | `avaliacoes_de_aula` | MOD-004 | SPEC-025. A nota do aluno sobre uma aula. FK **composta** para `ocupacoes_quadra` e para `alunos` carregando a empresa — sem isso o banco aceitaria a média de uma turma agregar nota alheia, que foi exatamente o vazamento que a validação cruzada achou |
 | `acoes_administrativas` | MOD-010 | **SPEC-032.** O **gesto humano**: uma por comando lógico que escreve. Append-only por trigger. A FK do autor **não** carrega a empresa, de propósito — `usuarios.company_id` é nulo para `super_admin`, e uma FK composta o impediria de ser autor de qualquer coisa (LIM-032f) |
 | `eventos_de_ocupacao` | MOD-010 | **SPEC-032.** O **alvo técnico**: N por ação, um por ocupação afetada. A cisão entre as duas existe porque um evento não pode apontar para 40 ocorrências ao mesmo tempo — a v1 da spec tentava, e foi reprovada por isso. `transicao_id` casa com o da ocupação e é o que a trigger confere no `COMMIT` |
-| `movimentos_de_credito` | MOD-010 | **SPEC-033.** O **ledger da carteira**, append-only. O saldo em `alunos.saldo_creditos` é escrito **pela trigger do ledger**, nunca pelo serviço (INV-071), e a guarda cobre `INSERT` **e** `UPDATE` — a primeira versão só cobria `UPDATE`, e a validação cruzada inseriu um aluno com saldo 12345 e zero movimentos. Duas colunas `GENERATED ALWAYS … STORED` servem de discriminante constante em FK composta: é o que faz a devolução só apontar para um **consumo** do mesmo aluno, ocupação e valor (D5), e o que impede consumo em ocupação de **turma** (INV-097). **Únicas colunas geradas do projeto** — e é por elas que a migration desta spec é SQL manual: o `migrate diff` as transforma num `DEFAULT CASE …` que o Postgres recusa com `0A000` |
+| `movimentos_de_credito` | **MOD-011** | **SPEC-033.** O **ledger da carteira**, append-only. O saldo em `alunos.saldo_creditos` é escrito **pela trigger do ledger**, nunca pelo serviço (INV-071), e a guarda cobre `INSERT` **e** `UPDATE` — a primeira versão só cobria `UPDATE`, e a validação cruzada inseriu um aluno com saldo 12345 e zero movimentos. Duas colunas `GENERATED ALWAYS … STORED` servem de discriminante constante em FK composta: é o que faz a devolução só apontar para um **consumo** do mesmo aluno, ocupação e valor (D5), e o que impede consumo em ocupação de **turma** (INV-097). **Únicas colunas geradas do projeto** — e é por elas que a migration desta spec é SQL manual: o `migrate diff` as transforma num `DEFAULT CASE …` que o Postgres recusa com `0A000` |
 | `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
@@ -593,10 +593,22 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**55 caminhos, 78 operações HTTP** (conferido em 2026-08-25 contra o
-`openapi.json`, depois da SPEC-018/TASK-006). As duas medidas aparecem porque "rotas" é ambíguo: a
-versão anterior desta planta dizia "41 rotas" contando caminhos, e trocar
-a métrica em silêncio faria o número parecer um salto de escopo.
+**84 caminhos, 118 operações HTTP** (conferido em **2026-09-08** contra o
+`openapi.json`, depois da SPEC-033). As duas medidas aparecem porque "rotas" é
+ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
+métrica em silêncio faria o número parecer um salto de escopo.
+
+> **O número anterior — 55 caminhos, 78 operações — era de 2026-08-25**, e ficou
+> parado por seis specs. Não é que ele estivesse errado quando escrito: é que
+> planta com número datado envelhece **em silêncio**, que é o pior jeito. A
+> conferência custa um comando:
+> `node -e "const o=require('./openapi.json'); …"`.
+
+**As quatro rotas da carteira** (SPEC-033): `GET`/`POST /students/:id/creditos`
+para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
+`401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
+`DELETE`: o ledger é append-only, e rota que não existe não precisa ser
+defendida.
 
 A fonte é o `openapi.json` **gerado do código**, com gate de CI
 (`git diff --exit-code openapi.json`) que falha se ele ficar stale —
@@ -957,6 +969,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030 a INV-033, INV-035 a INV-039, INV-042 a INV-044, INV-046 a INV-048 |
 | MOD-009 | TermosEAceites | `termos_da_plataforma`, `contratos_da_empresa`, `aceites` | SPEC-024. O portão do aceite roda no `JwtAuthGuard`, em toda requisição autenticada — e é por isso que a versão vigente é constante, não consulta |
 | MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
+| **MOD-011** | **Carteira** | `movimentos_de_credito`, e `alunos.saldo_creditos` **só pela trigger** | **SPEC-033.** INV-070, INV-071, INV-085, INV-095 a INV-098. **Três serviços, e a separação é a decisão:** `CreditosService` é o mecanismo do ledger e recebe o `tx` de quem escreve (reserva, cancelamento); `CreditosAdminService` é o caso de uso do gestor, abre a própria transação e é o único que conhece `bcrypt`; `CreditosDoAlunoService` responde `/me/creditos` **sem `motivo`** (AC-013), e a omissão está no `select`. Juntar os três faria a criação de reserva depender de `bcrypt` |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
