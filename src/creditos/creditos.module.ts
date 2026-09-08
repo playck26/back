@@ -1,16 +1,19 @@
 import { Module } from '@nestjs/common';
+import { CreditosAdminService } from './creditos-admin.service';
+import { CreditosController } from './creditos.controller';
 import { CreditosService } from './creditos.service';
 
 /**
  * SPEC-033 — MOD-011, a carteira.
  *
- * O serviço sai do módulo porque **quem consome crédito não é este módulo**:
- * a criação de reserva (`CourtsService`) e o cancelamento debitam e devolvem,
- * e a rota administrativa da TASK-004 lança e retira. O módulo existe para
- * dar um dono ao serviço, não para guardá-lo.
+ * `CreditosService` sai do módulo porque **quem consome crédito não é este
+ * módulo**: a criação de reserva e o cancelamento debitam e devolvem
+ * (TASK-005). `CreditosAdminService` não sai — o caso de uso administrativo
+ * tem uma porta só, que é o controller daqui.
  */
 @Module({
-  providers: [CreditosService],
+  controllers: [CreditosController],
+  providers: [CreditosService, CreditosAdminService],
   exports: [CreditosService],
 })
 export class CreditosModule {}

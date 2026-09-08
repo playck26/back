@@ -12,6 +12,10 @@ export interface TxMock {
   // atrás junto se o cadastro não puder ser concluído.
   usuario: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
   aluno: { create: jest.Mock };
+  // SPEC-033/TASK-004: a acao administrativa nasce DENTRO da transacao do
+  // lancamento, antes do movimento — `movimentos_acao_fkey` a exige.
+  acaoAdministrativa: { create: jest.Mock };
+  movimentoDeCredito: { create: jest.Mock };
   // SPEC-009: `trocarSenha` revoga as sessões dentro da transação.
   refreshToken: { updateMany: jest.Mock };
   // SPEC-009/INV-009: o aceite reivindica a linha do convite e só então
@@ -84,7 +88,12 @@ export interface PrismaMock {
   };
   aluno: {
     create: jest.Mock;
+    // SPEC-033: o extrato le o saldo (derivado pela trigger, D1) e a rota
+    // de lancamento o rele depois de escrever.
+    findFirst: jest.Mock;
+    findUnique: jest.Mock;
   };
+  movimentoDeCredito: { findMany: jest.Mock };
   // SPEC-012: a agenda é leitura agregada sobre estes modelos.
   ocupacaoQuadra: {
     groupBy: jest.Mock;
@@ -110,6 +119,12 @@ export function buildPrismaMock(): PrismaMock {
   const tx: TxMock = {
     usuario: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     aluno: { create: jest.fn() },
+    acaoAdministrativa: {
+      create: jest.fn().mockResolvedValue({ id: 'acao-credito' }),
+    },
+    movimentoDeCredito: {
+      create: jest.fn().mockResolvedValue({ id: 'movimento-1' }),
+    },
     refreshToken: { updateMany: jest.fn() },
     conviteAluno: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
     horarioFuncionamento: {
@@ -191,7 +206,11 @@ export function buildPrismaMock(): PrismaMock {
     },
     aluno: {
       create: jest.fn(),
+      // Padrao: aluno existe, saldo zero. Quem testa saldo sobrescreve.
+      findFirst: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
+      findUnique: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
     },
+    movimentoDeCredito: { findMany: jest.fn().mockResolvedValue([]) },
     tx,
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
