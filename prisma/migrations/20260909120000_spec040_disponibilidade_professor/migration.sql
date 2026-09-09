@@ -25,9 +25,16 @@ CREATE TABLE "disponibilidades_professor" (
   -- `horarios_funcionamento` — tradução de índice entre banco e aplicação é
   -- erro que só aparece no domingo.
   "dia_semana"   SMALLINT NOT NULL,
-  "hora_inicio"  TIME(0),
-  "hora_fim"     TIME(0),
-  "indisponivel" BOOLEAN NOT NULL DEFAULT false,
+  -- **NOT NULL, e sem coluna `indisponivel`.** O molde tem `fechado` porque
+  -- la existe HERANCA: `quadra_id IS NULL` e o padrao do clube, e a quadra
+  -- precisa poder dizer "fechado" para SOBREPOR um dia aberto herdado. A D3
+  -- desta spec removeu a heranca -- ausencia de linha ja e "nao atende" --,
+  -- e com ela some a razao da coluna. Mantida, "nao atende" teria DUAS
+  -- representacoes, e a 039 teria de lembrar de filtrar `indisponivel =
+  -- false` em toda consulta; esquecer oferece horario que o professor nao
+  -- atende, sem erro nenhum. Linha existe = atende, destas horas a estas.
+  "hora_inicio"  TIME(0) NOT NULL,
+  "hora_fim"     TIME(0) NOT NULL,
   "created_at"   TIMESTAMPTZ NOT NULL DEFAULT now(),
   "updated_at"   TIMESTAMPTZ NOT NULL,
   CONSTRAINT "disponibilidades_professor_pkey" PRIMARY KEY ("id")
@@ -56,28 +63,22 @@ ALTER TABLE "disponibilidades_professor"
   ADD CONSTRAINT "disponibilidades_dia_valido"
   CHECK ("dia_semana" BETWEEN 0 AND 6);
 
--- Coerência entre a flag e as horas. Sem isto o banco aceita "atende das 10h
--- às 8h" e "não atende das 9h às 18h", e a aplicação passa a ter que
--- desconfiar do próprio dado.
+-- Sem a flag, a coerencia do molde encolhe para o que dela sobrou de real:
+-- fim depois do inicio. Sem isto o banco aceita "atende das 10h as 8h", e a
+-- aplicacao passa a ter que desconfiar do proprio dado.
 ALTER TABLE "disponibilidades_professor"
-  ADD CONSTRAINT "disponibilidades_coerencia"
-  CHECK (
-    ("indisponivel" = true  AND "hora_inicio" IS NULL AND "hora_fim" IS NULL)
-    OR
-    ("indisponivel" = false AND "hora_inicio" IS NOT NULL AND "hora_fim" IS NOT NULL
-       AND "hora_fim" > "hora_inicio")
-  );
+  ADD CONSTRAINT "disponibilidades_intervalo"
+  CHECK ("hora_fim" > "hora_inicio");
 
 -- Hora cheia, como o horário da quadra. A regra também vive na aplicação;
 -- aqui é a rede de baixo.
 ALTER TABLE "disponibilidades_professor"
   ADD CONSTRAINT "disponibilidades_hora_cheia"
   CHECK (
-    ("hora_inicio" IS NULL OR (EXTRACT(MINUTE FROM "hora_inicio") = 0
-                               AND EXTRACT(SECOND FROM "hora_inicio") = 0))
-    AND
-    ("hora_fim" IS NULL OR (EXTRACT(MINUTE FROM "hora_fim") = 0
-                            AND EXTRACT(SECOND FROM "hora_fim") = 0))
+    EXTRACT(MINUTE FROM "hora_inicio") = 0
+    AND EXTRACT(SECOND FROM "hora_inicio") = 0
+    AND EXTRACT(MINUTE FROM "hora_fim") = 0
+    AND EXTRACT(SECOND FROM "hora_fim") = 0
   );
 
 -- INV-100: uma linha por professor por dia.

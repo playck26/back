@@ -1256,16 +1256,17 @@ enum TipoMovimentoCredito {
 /// cadastrado nascer disponivel o dia inteiro, o que e falso e abriria agenda
 /// na SPEC-039 para quem nao combinou nada.
 model DisponibilidadeProfessor {
-  id           String    @id @default(uuid()) @db.Uuid
-  companyId    String    @map("company_id") @db.Uuid
-  professorId  String    @map("professor_id") @db.Uuid
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  professorId String   @map("professor_id") @db.Uuid
   /// 0 = domingo, como `Date.getDay()`.
-  diaSemana    Int       @map("dia_semana") @db.SmallInt
-  horaInicio   DateTime? @map("hora_inicio") @db.Time(0)
-  horaFim      DateTime? @map("hora_fim") @db.Time(0)
-  indisponivel Boolean   @default(false)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  diaSemana   Int      @map("dia_semana") @db.SmallInt
+  /// NOT NULL, e sem `indisponivel`: a D3 removeu a heranca, entao linha
+  /// existe = atende. Ver o comentario da migration.
+  horaInicio  DateTime @map("hora_inicio") @db.Time(0)
+  horaFim     DateTime @map("hora_fim") @db.Time(0)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   empresa   Empresa   @relation(fields: [companyId], references: [id], map: "disponibilidades_empresa_fkey")
   /// FK COMPOSTA (DEF-024): sem `company_id` na chave, a agenda de um
