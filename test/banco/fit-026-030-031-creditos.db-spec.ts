@@ -440,6 +440,79 @@ describe('FIT-030 — a causalidade da devolução, os seis casos', () => {
     ).resolves.toBeDefined();
   });
 
+  it('SABOTAGEM: sem o `movimentos_ocupacao_por_tipo`, o caso 1 passa a ACEITAR', async () => {
+    /**
+     * A spec pede esta sabotagem por nome: *"remover o
+     * `movimentos_ocupacao_por_tipo` e a primeira linha passa a aceitar"*.
+     *
+     * **Ela é o que prova que o CHECK é carga estrutural, não enfeite.** A
+     * devolução apontando uma `entrada` é recusada pela FK causal de seis
+     * colunas — mas só porque o CHECK obriga `consumo`/`devolucao` a terem
+     * `ocupacao_id`. Sem ele, a `entrada` tem `ocupacao_id` nulo, o
+     * `MATCH SIMPLE` **pula a FK inteira**, e a devolução indevida passa.
+     *
+     * ## Por que dentro de uma transação que SEMPRE volta atrás
+     *
+     * A primeira versão derrubava o CHECK, inseria a linha indevida e tentava
+     * limpar no `finally`. **Não dá:** o ledger é append-only, o `DELETE` é
+     * recusado pela trigger, e o `ADD CONSTRAINT` seguinte falha porque a
+     * linha viola o próprio CHECK. Resultado medido: o banco ficou **sem a
+     * garantia** para todos os testes seguintes, e o caso seguinte morreu com
+     * `42704`.
+     *
+     * DDL no Postgres é transacional. Um `ROLLBACK` desfaz o `DROP` e a linha
+     * de uma vez — e não depende de conseguir apagar nada.
+     */
+    const entradaSolta = proximo();
+    await movimento({
+      id: entradaSolta,
+      company_id: E,
+      aluno_id: ALUNO,
+      tipo: 'entrada',
+      valor_centavos: 8000,
+      motivo: 'aporte da sabotagem',
+      autor_id: UADMIN,
+      acao_id: ACAO,
+    });
+
+    const VOLTA = 'rollback-da-sabotagem';
+    let passouSemOCheck = false;
+    await db
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          'ALTER TABLE movimentos_de_credito DROP CONSTRAINT movimentos_ocupacao_por_tipo',
+        );
+        await tx.$executeRawUnsafe(
+          `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,movimento_origem_id)
+           VALUES ('${proximo()}','${E}','${ALUNO}','devolucao',8000,'${UADMIN}','${ACAO}','${entradaSolta}')`,
+        );
+        passouSemOCheck = true;
+        throw new Error(VOLTA);
+      })
+      .catch((e: Error) => {
+        if (e.message !== VOLTA) throw e;
+      });
+
+    // **É isto que o CHECK impede:** sem ele, a devolução de uma `entrada`
+    // entra, porque com `ocupacao_id` nulo o `MATCH SIMPLE` nem avalia a FK.
+    expect(passouSemOCheck).toBe(true);
+
+    // O CHECK voltou com o rollback — e o mesmo INSERT agora é recusado.
+    await expect(
+      movimento({
+        id: proximo(),
+        company_id: E,
+        aluno_id: ALUNO,
+        tipo: 'devolucao',
+        valor_centavos: 8000,
+        autor_id: UADMIN,
+        acao_id: ACAO,
+        ocupacao_id: null,
+        movimento_origem_id: entradaSolta,
+      }),
+    ).rejects.toThrow(/movimentos_ocupacao_por_tipo|23514/);
+  });
+
   it('e o MESMO consumo não é estornado duas vezes — índice parcial', async () => {
     await expect(
       movimento({ id: proximo(), ...base, movimento_origem_id: consumoBom }),
