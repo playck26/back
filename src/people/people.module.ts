@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { FrequenciaModule } from '../frequencia/frequencia.module';
 import { StorageModule } from '../storage/storage.module';
+import { DisponibilidadeProfessorService } from './disponibilidade-professor.service';
 import { FotoDeProfessorService } from './foto-de-professor.service';
 import { LevelsController } from './levels.controller';
 import { LevelsService } from './levels.service';
@@ -26,9 +27,17 @@ import { TeachersService } from './teachers.service';
     TeachersService,
     LevelsService,
     FotoDeProfessorService,
+    DisponibilidadeProfessorService,
   ],
   // SPEC-009/REQ-007: MOD-001 provisiona conta de aluno chamando o método
   // público de MOD-003, então o serviço precisa sair do módulo.
-  exports: [StudentsService, FotoDeProfessorService],
+  // `DisponibilidadeProfessorService` sai do modulo porque a SPEC-039 (aula
+  // avulsa) precisa perguntar se o professor atende — e o proprio motivo de
+  // esta spec vir antes dela.
+  exports: [
+    StudentsService,
+    FotoDeProfessorService,
+    DisponibilidadeProfessorService,
+  ],
 })
 export class PeopleModule {}

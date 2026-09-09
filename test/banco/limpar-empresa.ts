@@ -122,10 +122,19 @@ export const TABELAS_DA_EMPRESA = [
   'eventos_de_matricula',
   'turmas',
   'alunos',
-  // SPEC-040: ANTES de `professores` e de `empresas`. A FK composta para a
-  // ficha e CASCADE (apagar o professor apaga a agenda), mas a de `empresas`
-  // e RESTRICT -- e a limpeza apaga por `company_id` tabela a tabela, nao por
-  // cascata. Sem esta linha, o `DELETE FROM empresas` recebe 23503.
+  // SPEC-040. **A primeira versao deste comentario dizia que sem esta linha o
+  // `DELETE FROM empresas` receberia 23503. Medido: e falso.** A FK para a
+  // ficha e CASCADE, entao apagar `professores` ja leva a agenda junto, e a
+  // FK RESTRICT para `empresas` nunca chega a ser alcancada -- quem reclama
+  // primeiro e sempre `professores_company_id_fkey`.
+  //
+  // A linha fica porque `limpar-empresa.db-spec.ts` a exige (toda tabela com
+  // `company_id` entra, e a FK RESTRICT para `empresas` esta no schema), e
+  // porque apagar explicitamente nao depende de a proxima pessoa manter o
+  // CASCADE. Antes de `professores` pela mesma razao de ordem das outras.
+  //
+  // Fica registrada assim, e nao corrigida em silencio, porque este arquivo
+  // ja custou caro duas vezes por acreditar no que estava escrito nele.
   'disponibilidades_professor',
   'professores',
   'horarios_funcionamento',

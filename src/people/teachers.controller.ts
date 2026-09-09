@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -25,6 +26,9 @@ import {
 } from './dto/people-response.dto';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
+import { DefinirDisponibilidadeDto } from './dto/definir-disponibilidade.dto';
+import { DiaDisponibilidadeResponseDto } from './dto/disponibilidade-response.dto';
+import { DisponibilidadeProfessorService } from './disponibilidade-professor.service';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { TeachersService } from './teachers.service';
@@ -34,7 +38,10 @@ import { TeachersService } from './teachers.service';
 @UseGuards(JwtAuthGuard, CompanyAdminGuard)
 @Controller('teachers')
 export class TeachersController {
-  constructor(private readonly teachersService: TeachersService) {}
+  constructor(
+    private readonly teachersService: TeachersService,
+    private readonly disponibilidade: DisponibilidadeProfessorService,
+  ) {}
 
   @Get()
   @ApiOkResponse({ type: ProfessorPaginadoResponseDto })
@@ -67,6 +74,34 @@ export class TeachersController {
     @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.teachersService.gerarAcesso(user.companyId as string, id);
+  }
+
+  /**
+   * SPEC-040/REQ-001 — a semana em que o professor atende.
+   *
+   * `PUT` porque substitui a grade inteira (AC-001). Vem ANTES de `@Get(':id')`
+   * e `@Patch(':id')` no arquivo por convencao do modulo, mas o Nest casa por
+   * caminho e nao por ordem quando os segmentos diferem — `:id/disponibilidade`
+   * nunca colide com `:id`.
+   */
+  @Put(':id/disponibilidade')
+  @ApiOkResponse({ type: [DiaDisponibilidadeResponseDto] })
+  definirDisponibilidade(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Body() dto: DefinirDisponibilidadeDto,
+  ) {
+    return this.disponibilidade.definir(user.companyId as string, id, dto);
+  }
+
+  /** SPEC-040/REQ-002/AC-007 — os sete dias, sempre. */
+  @Get(':id/disponibilidade')
+  @ApiOkResponse({ type: [DiaDisponibilidadeResponseDto] })
+  lerDisponibilidade(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.disponibilidade.listar(user.companyId as string, id);
   }
 
   @Get(':id')
