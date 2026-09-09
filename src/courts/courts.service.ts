@@ -1156,7 +1156,11 @@ export class CourtsService {
     autorId: string;
     papelDoAutor: 'aluno' | 'company_admin';
     saldoCentavos: number | null;
-    ocupacoes: { id: string; valor?: Prisma.Decimal | null }[];
+    ocupacoes: {
+      id: string;
+      valor?: Prisma.Decimal | null;
+      statusPagamento?: StatusPagamento;
+    }[];
     registrador: RegistradorDeAcao;
   }): Promise<void> {
     const { tx, companyId, alunoId, ocupacoes } = args;
@@ -1165,6 +1169,7 @@ export class CourtsService {
     // recurso, e reserva sem `aluno_id` continua válida.
     const comValor = alunoId
       ? ocupacoes
+          .filter((o) => o.valor != null)
           .map((o) => ({ id: o.id, centavos: paraCentavos(o.valor) }))
           .filter((o) => o.centavos > 0)
       : [];
@@ -1172,14 +1177,24 @@ export class CourtsService {
     // PA-07: ocupação de zero centavos não emite movimento — zero não move
     // saldo e sujaria o extrato. Ela nasce `pago` do mesmo jeito: não há o
     // que cobrar.
+    //
+    // **`valor` AUSENTE não é `valor = 0`**, e conflatá-los marcaria `pago`
+    // uma ocupação que não é gratuita. Em produção o caso é inalcançável — o
+    // `CHECK ocupacoes_valor_por_origem` exige `valor` em AVULSO —, mas
+    // "inalcançável" é premissa, e esta spec já reprovou uma versão inteira
+    // por confiar em premissa desse tipo. Achado por um unitário que passava
+    // um objeto sem `valor`.
     const gratuitas = alunoId
-      ? ocupacoes.filter((o) => paraCentavos(o.valor) === 0).map((o) => o.id)
+      ? ocupacoes
+          .filter((o) => o.valor != null && paraCentavos(o.valor) === 0)
+          .map((o) => o.id)
       : [];
     if (gratuitas.length > 0) {
       await tx.ocupacaoQuadra.updateMany({
         where: { id: { in: gratuitas } },
         data: { statusPagamento: 'pago' },
       });
+      marcarComoPagas(ocupacoes, gratuitas);
     }
 
     if (comValor.length === 0) {
@@ -1225,6 +1240,10 @@ export class CourtsService {
       where: { id: { in: comValor.map((o) => o.id) } },
       data: { statusPagamento: 'pago' },
     });
+    marcarComoPagas(
+      ocupacoes,
+      comValor.map((o) => o.id),
+    );
   }
 
   async cancelBooking(
@@ -2183,4 +2202,30 @@ export class CourtsService {
 function paraCentavos(valor: Prisma.Decimal | null | undefined): number {
   if (!valor) return 0;
   return valor.mul(100).toNumber();
+}
+
+/**
+ * **A RESPOSTA também tem de dizer `pago` — e não dizia.**
+ *
+ * O `updateMany` do AC-007c acontece DEPOIS de as ocupações serem criadas, e
+ * os objetos que voltam para o cliente são os do `create`: com
+ * `pendente_pagamento`, o valor do `DEFAULT` da coluna. O banco ficava certo e
+ * **a resposta mentia** — o app do aluno mostraria "pendente de pagamento"
+ * numa reserva que a carteira acabou de quitar.
+ *
+ * Achado pelo smoke da Neon, não pelos testes daqui: o db-spec afirmava o
+ * estado no BANCO e o e2e não olhava este campo. A lição é a de sempre neste
+ * projeto — **provar o efeito onde o usuário o vê**, não só onde é conveniente
+ * medir.
+ */
+function marcarComoPagas(
+  ocupacoes: { id: string; statusPagamento?: StatusPagamento }[],
+  ids: string[],
+): void {
+  const pagas = new Set(ids);
+  for (const o of ocupacoes) {
+    if (pagas.has(o.id)) {
+      o.statusPagamento = 'pago';
+    }
+  }
 }
