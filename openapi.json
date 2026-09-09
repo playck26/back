@@ -8651,7 +8651,7 @@
           "pendentes": {
             "type": "number",
             "example": 1,
-            "description": "Quantas ainda sem chamada registrada. É esta contagem que faz o calendário valer: a grade ele já conhece de cabeça; o que falta registrar, não."
+            "description": "Quantas ainda sem chamada registrada. É esta contagem que faz o calendário valer: a grade ele já conhece de cabeça; o que falta registrar, não. **Aula particular nunca entra aqui** (SPEC-039/LIM-039a), mas conta em `aulas`."
           }
         },
         "required": [
@@ -8667,6 +8667,13 @@
             "type": "string",
             "format": "uuid",
             "description": "O MESMO id que `PUT /me/teacher/attendance/:ocupacaoId` aceita (INV-026b). Se divergirem, o caminho quebra no último passo."
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "turma",
+              "particular"
+            ]
           },
           "turmaId": {
             "type": "string",
@@ -8699,11 +8706,13 @@
               "legada",
               "nao_houve"
             ],
-            "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); **não** é pendência e não pinta o ponto vermelho. `cancelada` não aparece aqui: o filtro do calendário a exclui antes."
+            "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); **não** é pendência e não pinta o ponto vermelho. `cancelada` não aparece aqui: o filtro do calendário a exclui antes. **`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem chamada, e resolver um estado ali pintaria `pendente` numa aula que nunca poderá receber uma — ponto vermelho que o professor não limpa.",
+            "nullable": true
           }
         },
         "required": [
           "ocupacaoId",
+          "tipo",
           "turmaId",
           "turmaNome",
           "quadraNome",

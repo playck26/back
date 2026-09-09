@@ -18,7 +18,7 @@ export class DiaDaAgendaDoProfessorDto {
   @ApiProperty({
     example: 1,
     description:
-      'Quantas ainda sem chamada registrada. É esta contagem que faz o calendário valer: a grade ele já conhece de cabeça; o que falta registrar, não.',
+      'Quantas ainda sem chamada registrada. É esta contagem que faz o calendário valer: a grade ele já conhece de cabeça; o que falta registrar, não. **Aula particular nunca entra aqui** (SPEC-039/LIM-039a), mas conta em `aulas`.',
   })
   pendentes!: number;
 }
@@ -30,6 +30,16 @@ export class AulaDoDiaDoProfessorDto {
       'O MESMO id que `PUT /me/teacher/attendance/:ocupacaoId` aceita (INV-026b). Se divergirem, o caminho quebra no último passo.',
   })
   ocupacaoId!: string;
+
+  /**
+   * SPEC-039/AC-009 — o que distingue aula de turma de aula particular.
+   *
+   * A tela poderia deduzir por `turmaId === null`, e dedução não é contrato:
+   * no dia em que existir ocorrência de turma sem turma, a dedução quebra em
+   * silêncio.
+   */
+  @ApiProperty({ enum: ['turma', 'particular'] })
+  tipo!: 'turma' | 'particular';
 
   @ApiProperty({ type: String, format: 'uuid', nullable: true })
   turmaId!: string | null;
@@ -69,7 +79,12 @@ export class AulaDoDiaDoProfessorDto {
       '`legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. ' +
       '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); ' +
       '**não** é pendência e não pinta o ponto vermelho. ' +
-      '`cancelada` não aparece aqui: o filtro do calendário a exclui antes.',
+      '`cancelada` não aparece aqui: o filtro do calendário a exclui antes. ' +
+      '**`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem ' +
+      'chamada, e resolver um estado ali pintaria `pendente` numa aula que ' +
+      'nunca poderá receber uma — ponto vermelho que o professor não limpa.',
+    type: String,
+    nullable: true,
   })
-  chamada!: string;
+  chamada!: string | null;
 }

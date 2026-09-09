@@ -120,6 +120,8 @@ export class AgendaDoProfessorService {
         // a relação é composta e o banco garante UMA por ocorrência, pela
         // PK. Aqui isso vira `[0]`.
         chamadas: { select: { completude: true } },
+        // SPEC-039: a origem decide se a aula pode ser pendência.
+        origemTipo: true,
       },
     });
 
@@ -132,9 +134,15 @@ export class AgendaDoProfessorService {
       // chamada. `futura` e `em_andamento` não são esquecimento, e pintar o
       // ponto vermelho nelas fazia o calendário cobrar o professor por uma
       // aula que ele ainda vai dar.
+      //
+      // **SPEC-039: a aula particular conta em `aulas` e NUNCA em
+      // `pendentes`.** Ela não tem chamada (LIM-039a), então sem esta guarda
+      // toda aula particular passada viraria pendência eterna — e a contagem
+      // que faz este calendário valer passaria a mentir todo dia.
       if (
+        o.origemTipo !== 'AVULSO' &&
         estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim) ===
-        'pendente'
+          'pendente'
       ) {
         atual.pendentes += 1;
       }
@@ -168,15 +176,29 @@ export class AgendaDoProfessorService {
       orderBy: [{ horaInicio: 'asc' }],
     });
 
-    return ocupacoes.map((o) => ({
-      ocupacaoId: o.id,
-      turmaId: o.origemTurmaId,
-      turmaNome: o.origemTurma?.nome ?? null,
-      quadraNome: o.quadra.nome,
-      horaInicio: formatTimeOnly(o.horaInicio),
-      horaFim: formatTimeOnly(o.horaFim),
-      chamada: estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim),
-    }));
+    return ocupacoes.map((o) => {
+      const particular = o.origemTipo === 'AVULSO';
+      return {
+        ocupacaoId: o.id,
+        // SPEC-039/AC-009 — o campo que a tela usa para distinguir. Sem ele
+        // ela teria de deduzir por `turmaId === null`, que é dedução e não
+        // contrato.
+        tipo: particular ? ('particular' as const) : ('turma' as const),
+        turmaId: o.origemTurmaId,
+        turmaNome: o.origemTurma?.nome ?? null,
+        quadraNome: o.quadra.nome,
+        horaInicio: formatTimeOnly(o.horaInicio),
+        horaFim: formatTimeOnly(o.horaFim),
+        // **`null`, e não um estado.** Aula particular não tem chamada
+        // (LIM-039a): `chamadas`/`presencas` são de turma, e um aluno só não
+        // precisa de lista. Resolver o estado aqui pintaria `pendente` numa
+        // aula que **nunca** poderá receber chamada — um ponto vermelho que o
+        // professor não tem como limpar.
+        chamada: particular
+          ? null
+          : estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim),
+      };
+    });
   }
 
   /**
@@ -218,9 +240,22 @@ export class AgendaDoProfessorService {
     return {
       companyId,
       data,
-      origemTipo: 'TURMA' as const,
       statusPagamento: { not: 'cancelado' as const },
-      origemTurma: { professorId, companyId },
+      // SPEC-039/D6 — **duas origens, e o professor chega por caminhos
+      // diferentes em cada uma.** Na ocorrência de turma ele vem PELA TURMA;
+      // na aula particular, pela coluna da própria ocupação (o `CHECK`
+      // proíbe a coluna na linha de turma, e a INV-106 explica por quê).
+      //
+      // Um professor que tem aula particular marcada e não a vê no próprio
+      // calendário é pior do que não ter a funcionalidade: ele planeja o dia
+      // por esta tela.
+      OR: [
+        {
+          origemTipo: 'TURMA' as const,
+          origemTurma: { professorId, companyId },
+        },
+        { origemTipo: 'AVULSO' as const, professorId },
+      ],
     };
   }
 }

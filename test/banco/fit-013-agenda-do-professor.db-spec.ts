@@ -348,6 +348,69 @@ describe('FIT-013 — o que NÃO é aula dele', () => {
   });
 
   /**
+   * SPEC-039/D6 — **a aula PARTICULAR entra, e a reserva de quadra continua
+   * fora.** As duas são `AVULSO`; o que as separa é `professor_id`.
+   *
+   * O caso acima é o controle disto: se ele ficasse vermelho junto, o filtro
+   * teria passado a arrastar reserva de quadra para a agenda do professor.
+   */
+  it('SPEC-039: a aula PARTICULAR dele entra na agenda', async () => {
+    await montar();
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,professor_id,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${DIA_1}',TIME '07:00',TIME '08:00','AVULSO','${PROF_A}',150,'pago',now())`,
+    );
+
+    const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    const particular = dia.filter((a) => a.tipo === 'particular');
+    expect(particular).toHaveLength(1);
+    expect(particular[0].turmaId).toBeNull();
+    expect(particular[0].horaInicio).toBe('07:00');
+    // **`null`, não um estado.** Aula particular não tem chamada (LIM-039a).
+    expect(particular[0].chamada).toBeNull();
+  });
+
+  it('SPEC-039: a aula particular NUNCA vira pendência -- nem passada', async () => {
+    // **O defeito que este caso existe para impedir.** `DIA_1` já passou. Sem
+    // a guarda no `resumoDoMes`, o `estadoDaChamada` resolveria `pendente`
+    // (terminou e não há linha em `chamadas`) — e toda aula particular passada
+    // viraria ponto vermelho ETERNO, que o professor não tem como limpar,
+    // porque não existe chamada para lançar.
+    await montar();
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,professor_id,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${DIA_1}',TIME '07:00',TIME '08:00','AVULSO','${PROF_A}',150,'pago',now())`,
+    );
+
+    const mes = await service.resumoDoMes(EMPRESA, UPROF_A, MES);
+    const doDia = mes.find((d) => d.data === DIA_1);
+    // Conta como aula — ele precisa vê-la ao planejar o dia.
+    expect(doDia?.aulas).toBe(1);
+    // E nunca como pendência.
+    expect(doDia?.pendentes).toBe(0);
+  });
+
+  it('SPEC-039: aula particular de OUTRO professor não entra', async () => {
+    // A metade que não pode quebrar: o filtro ganhou um `OR`, e `OR` mal
+    // escrito vaza escopo. `PROF_B` é da mesma empresa.
+    await montar();
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,professor_id,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${DIA_1}',TIME '09:00',TIME '10:00','AVULSO','${PROF_B}',150,'pago',now())`,
+    );
+
+    const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    expect(dia.filter((a) => a.tipo === 'particular')).toEqual([]);
+  });
+
+  it('SPEC-039: aula particular CANCELADA não entra', async () => {
+    await montar();
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,professor_id,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${DIA_1}',TIME '11:00',TIME '12:00','AVULSO','${PROF_A}',150,'cancelado',now())`,
+    );
+
+    const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    expect(dia.filter((a) => a.tipo === 'particular')).toEqual([]);
+  });
+
+  /**
    * **Aqui havia uma prova que dizia o contrário, e ela caiu de propósito.**
    *
    * Chamava-se *"quadra inativa não é agenda de ninguém"* e exigia mês vazio.
