@@ -104,7 +104,7 @@ function proximaData() {
 async function reservar(
   papel: 'aluno' | 'company_admin',
   hora = '10:00',
-): Promise<string> {
+): Promise<{ id: string; statusPagamento: string }> {
   const resposta = (await courts.createBooking(
     EMPRESA,
     {
@@ -116,10 +116,10 @@ async function reservar(
     UADMIN,
     undefined,
     papel,
-  )) as { reservas: { id: string }[] };
+  )) as { reservas: { id: string; statusPagamento: string }[] };
   // Com `slots` a resposta é `{ reservas: [...] }`; o formato antigo (sem
   // `slots`) devolve a reserva solta. Os casos não deveriam saber disso.
-  return resposta.reservas[0].id;
+  return resposta.reservas[0];
 }
 
 beforeAll(async () => {
@@ -152,7 +152,22 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     await creditar(20_000);
     const antes = await saldo();
 
-    const id = await reservar('aluno');
+    const reserva = await reservar('aluno');
+    const id = reserva.id;
+
+    /**
+     * **A RESPOSTA, não só o banco — e esta linha nasceu de um defeito real.**
+     *
+     * O `updateMany` do AC-007c roda depois do `create`, e os objetos que
+     * voltam ao cliente carregavam `pendente_pagamento`. O banco ficava certo
+     * e a resposta mentia; o app do aluno mostraria "pendente de pagamento"
+     * numa reserva que a carteira acabou de quitar.
+     *
+     * Este arquivo não pegou: ele afirmava `statusDa(id)`, que lê o BANCO.
+     * Quem pegou foi o smoke da Neon, por HTTP. A asserção fica aqui para não
+     * depender disso de novo.
+     */
+    expect(reserva.statusPagamento).toBe('pago');
 
     expect(await saldo()).toBe(antes - 8_000);
     expect(await movimentos(id)).toEqual([
@@ -201,7 +216,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
   it('PA-04: o GESTOR reserva para aluno sem saldo — aceito, `pendente_pagamento`, ZERO movimento', async () => {
     expect(await saldo()).toBe(0);
 
-    const id = await reservar('company_admin');
+    const { id } = await reservar('company_admin');
 
     // O clube não fica impedido de operar por falta de saldo de um aluno, e
     // ninguém fica negativo — porque neste ramo não nasce movimento.
@@ -214,7 +229,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     await creditar(10_000);
     const antesDaReserva = await saldo();
 
-    const id = await reservar('aluno');
+    const { id } = await reservar('aluno');
     expect(await saldo()).toBe(antesDaReserva - 8_000);
 
     await courts.cancelBooking(EMPRESA, id, UADMIN, 'company_admin');
@@ -250,7 +265,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     await creditar(10_000);
     const antesDaReserva = await saldo();
 
-    const id = await reservar('aluno');
+    const { id } = await reservar('aluno');
     expect(await saldo()).toBe(antesDaReserva - 8_000);
 
     // A garantia não é esta rota conhecer a regra: é a INV-096, que julga o
@@ -266,7 +281,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
 
   it('INV-096: cancelar SEM devolver é impossível — a trigger recusa, e vira 409', async () => {
     await creditar(10_000);
-    const id = await reservar('aluno');
+    const { id } = await reservar('aluno');
 
     // A sabotagem: cancelar por fora do serviço, gravando ocupação e evento
     // mas NENHUMA devolução. É exatamente o que o `back` revertido faz (saída
@@ -298,7 +313,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
 
   it('AC-011: cancelar, reativar e cancelar de novo produz QUATRO linhas legítimas', async () => {
     await creditar(20_000);
-    const id = await reservar('aluno');
+    const { id } = await reservar('aluno');
 
     await courts.cancelBooking(EMPRESA, id, UADMIN, 'company_admin');
 
@@ -339,7 +354,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
   it('cancelar duas vezes é idempotente e NÃO devolve duas vezes', async () => {
     await creditar(10_000);
     const antes = await saldo();
-    const id = await reservar('aluno');
+    const { id } = await reservar('aluno');
 
     await courts.cancelBooking(EMPRESA, id, UADMIN, 'company_admin');
     // Retentativa de rede: sem escrita, sem erro — e sem segundo estorno.
