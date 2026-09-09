@@ -369,6 +369,16 @@ jobs:
           CANCEL_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
             -H "Authorization: Bearer $ACCESS_TOKEN")
           [ "$CANCEL_RES" = "200" ] || (echo "esperado 200, veio $CANCEL_RES" && exit 1)
+          # **E o CORPO aqui vem `null`, que e o OUTRO lado do contrato.**
+          # Este cancelamento acontece ANTES do passo que carrega credito,
+          # entao nao ha o que devolver -- e `null` e justamente o que a tela
+          # do aluno usa para ficar calada em vez de dizer "seu credito
+          # voltou". Com os dois passos, o smoke prova as DUAS pontas contra
+          # a Neon, e nao so uma.
+          CANCEL_BODY=$(curl -s -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          echo "$CANCEL_BODY" | jq -e '.creditoDevolvidoCentavos == null' \
+            || (echo "esperado creditoDevolvidoCentavos null, veio: $CANCEL_BODY" && exit 1)
           REBOOK_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
             -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$SMOKE_DATA\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
@@ -589,8 +599,13 @@ jobs:
           # A SEGUNDA chamada e idempotente (a reserva ja esta cancelada) e e
           # ela que confere o codigo; a primeira e a que traz o corpo.
           [ "$CANCEL_ALUNO_RES" = "200" ] || (echo "esperado 200, veio $CANCEL_ALUNO_RES" && exit 1)
-          echo "$CANCEL_ALUNO_BODY" | jq -e '.creditoDevolvidoCentavos == null' \
-            || (echo "esperado creditoDevolvidoCentavos null, veio: $CANCEL_ALUNO_BODY" && exit 1)
+          # **8000, e nao `null` -- o canario corrigiu esta linha.** Eu havia escrito `null`
+          # supondo que a reserva do aluno nao fosse paga com credito. Os
+          # passos ACIMA carregam R$ 500 e a reserva de R$ 80 CONSUMIU: a
+          # devolucao volta 8000 centavos. Nenhum teste local acharia isso --
+          # so aqui o fluxo inteiro existe.
+          echo "$CANCEL_ALUNO_BODY" | jq -e '.creditoDevolvidoCentavos == 8000' \
+            || (echo "esperado creditoDevolvidoCentavos 8000, veio: $CANCEL_ALUNO_BODY" && exit 1)
 
           echo "--- aluno NÃO consegue cancelar reserva de outro aluno (403) ---"
           CANCEL_OUTRO_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
