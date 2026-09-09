@@ -21,6 +21,7 @@ import { PrismaClient } from '@prisma/client';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { CourtsService } from '../../src/courts/courts.service';
 import { CreditosService } from '../../src/creditos/creditos.service';
+import { traduzirRecusaDeCancelamento } from '../../src/creditos/set-constraints';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
@@ -74,6 +75,19 @@ const statusDa = async (id: string) => {
   );
   return linhas[0]?.status_pagamento;
 };
+
+/** A lista nomeada, como o serviço a escreve (`set-constraints.ts`). */
+const SET_NOMEADO =
+  'SET CONSTRAINTS ocupacao_cancelada_exige_evento, ' +
+  'ocupacao_cancelada_exige_devolucao, movimentos_consumo_ativo_unico IMMEDIATE';
+
+async function novaAcao(tipo: string): Promise<string> {
+  const [linha] = await db.$queryRawUnsafe<{ id: string }[]>(
+    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
+     VALUES (gen_random_uuid(),'${EMPRESA}','${tipo}','${UADMIN}') RETURNING id`,
+  );
+  return linha.id;
+}
 
 /** Um aporte pela porta do ledger — a única que existe (D1). */
 async function creditar(centavos: number) {
@@ -364,6 +378,80 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     expect(
       (await movimentos(id)).filter((m) => m.tipo === 'devolucao'),
     ).toHaveLength(1);
+  });
+
+  it('DEF: os TRÊS códigos do contrato chegam distintos — um por mecanismo', async () => {
+    /**
+     * A tabela normativa da spec dá **três** destinos, e o código dava um só
+     * (`CANCELAMENTO_CARTEIRA_INDISPONIVEL` para os dois SQLSTATE) e **nenhum**
+     * para o índice parcial — que subia cru, virando `500` numa recusa que a
+     * norma declara `409`.
+     *
+     * Achado pelo `Docs/contrato-spec-x-codigo.py`. E a primeira tentativa de
+     * conserto casava `23505`, que **nunca teria disparado**: pelo client do
+     * Prisma o erro chega como `P2002` + `meta.target`. Este caso existe para
+     * que a distinção não volte a ser afirmação.
+     */
+    await creditar(20_000);
+    const { id } = await reservar('aluno');
+
+    // 1. INV-096 — cancelar sem devolver.
+    const acaoA = await novaAcao('reserva_cancelada');
+    const trans = '0d330000-0000-4000-8000-0000000000e1';
+    await expect(
+      db
+        .$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(
+            `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${trans}' WHERE id='${id}'`,
+          );
+          await tx.$executeRawUnsafe(
+            `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+             VALUES (gen_random_uuid(),'${EMPRESA}','${acaoA}','${id}','cancelada','${trans}')`,
+          );
+          await tx.$executeRawUnsafe(SET_NOMEADO);
+        })
+        .catch(traduzirRecusaDeCancelamento),
+    ).rejects.toMatchObject({
+      response: { code: 'CANCELAMENTO_CARTEIRA_INDISPONIVEL' },
+    });
+
+    // 2. INV-098 — segundo consumo ativo.
+    const acaoB = await novaAcao('reserva_criada');
+    await expect(
+      db
+        .$transaction(async (tx) => {
+          await creditos.consumir(tx, {
+            companyId: EMPRESA,
+            alunoId: ALUNO,
+            valorCentavos: 8_000,
+            autorId: UADMIN,
+            acaoId: acaoB,
+            ocupacaoId: id,
+          });
+          await tx.$executeRawUnsafe(SET_NOMEADO);
+        })
+        .catch(traduzirRecusaDeCancelamento),
+    ).rejects.toMatchObject({ response: { code: 'CONSUMO_JA_ATIVO' } });
+
+    // 3. o índice parcial — devolver duas vezes o mesmo consumo.
+    const ativo = await creditos.consumoAtivoDaOcupacao(db, EMPRESA, id);
+    const acaoC = await novaAcao('reserva_cancelada');
+    const devolver = () =>
+      db.$transaction((tx) =>
+        creditos.devolver(tx, {
+          companyId: EMPRESA,
+          alunoId: ALUNO,
+          valorCentavos: ativo!.valorCentavos,
+          autorId: UADMIN,
+          acaoId: acaoC,
+          ocupacaoId: id,
+          movimentoOrigemId: ativo!.id,
+        }),
+      );
+    await devolver();
+    await expect(
+      devolver().catch(traduzirRecusaDeCancelamento),
+    ).rejects.toMatchObject({ response: { code: 'DEVOLUCAO_JA_FEITA' } });
   });
 
   it('reserva de TURMA não devolve: não tem `valor`, então não há o que estornar', async () => {

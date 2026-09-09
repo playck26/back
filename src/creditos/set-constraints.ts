@@ -77,17 +77,66 @@ function sqlstateDe(erro: unknown): string | undefined {
  * Para o HTTP dá no mesmo, porque as duas são `409`.
  */
 export function traduzirRecusaDeCancelamento(erro: unknown): never {
-  const sqlstate = sqlstateDe(erro);
-  if (
-    sqlstate === SQLSTATE_CANCELAMENTO_SEM_DEVOLUCAO ||
-    sqlstate === SQLSTATE_CONSUMO_ATIVO_DUPLICADO
-  ) {
+  const traducao = POR_SQLSTATE[sqlstateDe(erro) ?? ''];
+  if (traducao) {
+    throw new ConflictException({ statusCode: 409, ...traducao });
+  }
+  if (ehDevolucaoRepetida(erro)) {
     throw new ConflictException({
       statusCode: 409,
-      code: 'CANCELAMENTO_CARTEIRA_INDISPONIVEL',
-      message:
-        'Não foi possível concluir o cancelamento porque a devolução do crédito não pôde ser registrada.',
+      code: 'DEVOLUCAO_JA_FEITA',
+      message: 'O crédito desta reserva já foi devolvido.',
     });
   }
   throw erro;
 }
+
+/**
+ * O índice parcial `ux_movimentos_devolucao_por_consumo`, violado.
+ *
+ * **A primeira versão deste conserto casava `23505` e NUNCA teria disparado.**
+ * `23505` é o SQLSTATE do Postgres — verdade no banco, e é o que a tabela da
+ * spec registra —, mas a devolução é inserida pelo CLIENT do Prisma, não por
+ * raw: o erro chega como `P2002` com `meta.target`, e `meta.code` nem existe.
+ * Medido antes de embarcar:
+ *
+ *     {classe: PrismaClientKnownRequestError, code: P2002,
+ *      meta: {modelName: MovimentoDeCredito, target: [movimento_origem_id]}}
+ *
+ * Casar pela COLUNA e não pelo nome do índice é deliberado: `meta.target` traz
+ * as colunas, não o nome — e `movimento_origem_id` só tem um índice único.
+ */
+function ehDevolucaoRepetida(erro: unknown): boolean {
+  const e = erro as { code?: string; meta?: { target?: unknown } };
+  if (e.code !== 'P2002') return false;
+  const alvo = e.meta?.target;
+  return Array.isArray(alvo) && alvo.includes('movimento_origem_id');
+}
+
+/**
+ * **Um código por MECANISMO, e não um só para todos — DEF de 2026-09-09.**
+ *
+ * A tabela normativa da spec dá três destinos distintos, e o código dava um só
+ * (`CANCELAMENTO_CARTEIRA_INDISPONIVEL` para os dois SQLSTATE) e **nenhum**
+ * para o `23505` do índice parcial — que subia cru, virando `500` numa recusa
+ * que a norma declara como `409`.
+ *
+ * Quem achou foi o `Docs/contrato-spec-x-codigo.py`: a spec prometia
+ * `DEVOLUCAO_JA_FEITA` e `CONSUMO_JA_ATIVO`, e nenhum dos dois existia no
+ * código. Quem escrevesse o frontend tratando esses códigos escreveria um ramo
+ * morto.
+ *
+ * Nenhum frontend tratava o código antigo (medido: zero ocorrências nos três),
+ * então a troca não quebra tela nenhuma.
+ */
+const POR_SQLSTATE: Record<string, { code: string; message: string }> = {
+  [SQLSTATE_CANCELAMENTO_SEM_DEVOLUCAO]: {
+    code: 'CANCELAMENTO_CARTEIRA_INDISPONIVEL',
+    message:
+      'Não foi possível concluir o cancelamento porque a devolução do crédito não pôde ser registrada.',
+  },
+  [SQLSTATE_CONSUMO_ATIVO_DUPLICADO]: {
+    code: 'CONSUMO_JA_ATIVO',
+    message: 'Esta reserva já tem um consumo de crédito ativo.',
+  },
+};
