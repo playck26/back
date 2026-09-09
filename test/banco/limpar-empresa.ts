@@ -122,6 +122,11 @@ export const TABELAS_DA_EMPRESA = [
   'eventos_de_matricula',
   'turmas',
   'alunos',
+  // SPEC-040: ANTES de `professores` e de `empresas`. A FK composta para a
+  // ficha e CASCADE (apagar o professor apaga a agenda), mas a de `empresas`
+  // e RESTRICT -- e a limpeza apaga por `company_id` tabela a tabela, nao por
+  // cascata. Sem esta linha, o `DELETE FROM empresas` recebe 23503.
+  'disponibilidades_professor',
   'professores',
   'horarios_funcionamento',
   'quadras',
