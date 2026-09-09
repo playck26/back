@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-034/AC-016 — **FIT-023: cancelar ocorrência × salvar chamada,
  * concorrentes, serializando em `turmas`.**
@@ -88,6 +89,9 @@ function courts(c: PrismaClient): CourtsService {
     } as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(c as unknown as PrismaService),
     new CreditosService(),
+    // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+    // gate so roda quando `professorId` vem no pedido.
+    { carregarSemana: jest.fn() } as unknown as DisponibilidadeProfessorService,
   );
 }
 

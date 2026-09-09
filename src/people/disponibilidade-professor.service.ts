@@ -104,6 +104,33 @@ export class DisponibilidadeProfessorService {
   }
 
   /**
+   * SPEC-039 — a semana do professor como MAPA, para quem precisa decidir.
+   *
+   * **Uma consulta só**, no molde de `HorarioFuncionamentoService.carregarLinhas`:
+   * quem valida um pedido de vários blocos faria uma ida ao banco por bloco, e
+   * este projeto já baniu esse N+1 três vezes — a terceira entrou pelo caminho
+   * de ESCRITA, onde ninguém procurava.
+   *
+   * Dia ausente do mapa é "não atende" (D3 da SPEC-040), e é o estado inicial
+   * de todo professor já cadastrado.
+   */
+  async carregarSemana(
+    companyId: string,
+    professorId: string,
+  ): Promise<Map<number, { horaInicio: Date; horaFim: Date }>> {
+    const linhas = await this.prisma.disponibilidadeProfessor.findMany({
+      where: { companyId, professorId },
+      select: { diaSemana: true, horaInicio: true, horaFim: true },
+    });
+    return new Map(
+      linhas.map((l) => [
+        l.diaSemana,
+        { horaInicio: l.horaInicio, horaFim: l.horaFim },
+      ]),
+    );
+  }
+
+  /**
    * SPEC-040/REQ-002/AC-007 — os **sete** dias, sempre.
    *
    * Os dias sem linha voltam com `indisponivel: true`. A tela não deveria ter

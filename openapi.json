@@ -6557,6 +6557,13 @@
           },
           "alunoId": {
             "type": "string"
+          },
+          "professorId": {
+            "type": "string"
+          },
+          "valor": {
+            "type": "number",
+            "example": 120
           }
         },
         "required": [
