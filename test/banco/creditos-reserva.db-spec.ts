@@ -1,4 +1,3 @@
-import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-033/TASK-005 — **reservar debita, cancelar devolve.** Contra Postgres.
  *
@@ -27,6 +26,7 @@ import { ConfigOperacaoService } from '../../src/company-settings/config-operaca
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';

@@ -1,8 +1,8 @@
-import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import { Prisma } from '@prisma/client';
 import { CourtsService } from '../courts/courts.service';
 import { HorarioFuncionamentoService } from '../courts/horario-funcionamento.service';
 import type { ImagemDaQuadraService } from '../courts/imagem-da-quadra.service';
+import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import type { StudentsService } from '../people/students.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { parseTimeOnly } from '../courts/date-time.util';

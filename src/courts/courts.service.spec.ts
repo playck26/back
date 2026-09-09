@@ -1,4 +1,3 @@
-import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import {
   ConflictException,
   ForbiddenException,
@@ -6,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import type { StudentsService } from '../people/students.service';
 import { formatTimeOnly, parseDateOnly, parseTimeOnly } from './date-time.util';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
