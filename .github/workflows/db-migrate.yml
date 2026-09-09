@@ -920,7 +920,22 @@ jobs:
             echo "::error title=FITs pulados::Disparado com run_smoke=false. Migration aplicada, mas o gate NAO rodou - este workflow nao fica verde sem ele."
             exit 1
           fi
+          # **O `migrate` NAO estava nesta lista, e a linha de baixo afirmava
+          # que ele tinha passado.** Em 2026-09-08 o run 34299844893 fechou com
+          # `migrate: failure` e `gate: success` -- o smoke quebrou no cleanup
+          # e o gate deu o workflow por bom, dizendo "migration ... success"
+          # sem nunca ter olhado.
+          #
+          # E a familia de defeito que o SPEC-043/AC-010 existe para impedir, e
+          # que o comentario logo acima invoca: badge verde com passo que nao
+          # provou nada. O `migrate` carrega a migration E o smoke funcional --
+          # e o smoke e o unico lugar que exercita o produto de ponta a ponta
+          # contra a Neon.
+          [ "${{ needs.migrate.result }}" = "success" ] || {
+            echo "::error title=migrate nao passou::o job migrate (migration + smoke) concluiu ${{ needs.migrate.result }} - o gate nao pode ficar verde sem ele"
+            exit 1
+          }
           for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}" "${{ needs.fit-025-neon.result }}"; do
             [ "$r" = "success" ] || { echo "::error::um canario FIT nao concluiu success ($r)"; exit 1; }
           done
-          echo "migration, FIT-001, FIT-002 e FIT-025 Neon: success"
+          echo "migrate (migration + smoke), FIT-001, FIT-002 e FIT-025 Neon: success"
