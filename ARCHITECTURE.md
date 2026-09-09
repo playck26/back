@@ -406,7 +406,16 @@ a replicar:
 ## 3. Modelo de domínio
 
 **31 tabelas e 14 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-09**), **33 migrations**.
+`grep -c '^model'` / `'^enum'` em **2026-09-09**), **34 migrations**.
+
+> **A 34ª é a `20260909180000_spec039_aula_avulsa`, e ela NÃO cria tabela.**
+> A aula particular é uma coluna (`professor_id`), uma FK composta, um `CHECK`
+> e uma segunda `EXCLUDE` em `ocupacoes_quadra` — e o tamanho disso é a decisão
+> da spec, não economia. Um terceiro `origem_tipo` seria recusado por **duas**
+> coisas que já existem: a coluna gerada da carteira (a INV-097 bloquearia o
+> "consome crédito" que a demanda pede) e o `CHECK ocupacoes_valor_por_origem`,
+> que tem ramo para `AVULSO` e `TURMA` e mais nenhum — valor sem ramo torna o
+> `CHECK` falso e **toda** inserção morre.
 
 > **A 33ª é a `20260909120000_spec040_disponibilidade_professor`**, e ao
 > contrário da 32ª ela **não** é SQL manual por necessidade — é por disciplina:
@@ -475,7 +484,7 @@ a replicar:
 | `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
 | `niveis` | MOD-003 | único por `(company_id, nome)` |
 | `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor`. `imagem_key` é **pública** e vem com `imagem_confirmada_por`/`_em`: as três vivem e morrem juntas por CHECK (SPEC-018, decisão 1) |
-| `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008 |
+| `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008. **SPEC-039:** ganhou `professor_id` (nulável), e a aula particular é uma linha `AVULSO` com ele preenchido — **não** um terceiro `origem_tipo`. O professor é atributo, não origem; `origem_tipo` responde "quem criou esta ocupação", e a resposta continua sendo "um pedido avulso" |
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
@@ -500,6 +509,8 @@ que são a garantia real):
 | `UNIQUE NULLS NOT DISTINCT (company_id, quadra_id, dia_semana)` | um único horário padrão por dia (PG 15+) |
 | `horarios_coerencia_fechado`, `horarios_hora_cheia` | dia fechado sem horas; horário só em `HH:00` |
 | `ocupacoes_valor_por_origem` | `valor` obrigatório em AVULSO, **nulo** em TURMA |
+| `no_overlap_por_professor` (`EXCLUDE`, parcial, SPEC-039) | INV-105: o professor não fica em duas **aulas particulares** ao mesmo tempo. `no_overlap_por_quadra` exclui por **quadra** e não sabe de professor — duas aulas do mesmo professor em quadras diferentes passariam as duas. **Não alcança a ocorrência de TURMA** (LIM-039f): ela guarda o professor *na turma*, e o `CHECK` proíbe a coluna na linha dela; quem fecha essa metade é o gate da aplicação. O `WHERE professor_id IS NOT NULL` é sobre **tamanho de índice**, não correção — numa `EXCLUDE`, NULL nunca é igual a NULL |
+| `ocupacoes_professor_so_em_avulso` (SPEC-039) | INV-106: professor só em ocupação avulsa. A ocorrência de turma já sabe do professor **pela turma**, e dois caminhos para o mesmo fato divergem no primeiro ajuste |
 | `ux_ocupacoes_quadra_client_request_id` (parcial) | idempotência anterior à SPEC-011, ainda válida para linhas antigas |
 | `chamadas_origem_tipo_check` + FK composta | cabeçalho de chamada só existe para aula de turma — mesma construção de `presencas` |
 | `chamadas_completude_esperados_check` | `completa` exige `esperados > 0`; `desconhecida` e `nao_houve` exigem `esperados` nulo. Amarra os dois sentidos: afirmação sem lastro e lastro sem afirmação são igualmente recusados. **Enumera os três casos um a um** — a versão curta (`completude <> 'completa'`) cobriria também qualquer valor futuro, e um valor futuro que precise de `esperados` passaria calado |
@@ -626,6 +637,20 @@ não têm linha (a tela não deveria ter de saber que ausência significa algo);
 `PUT` e não `PATCH`: a grade é editada inteira, e substituição total evita o
 estado meio-salvo.
 
+**A aula particular NÃO tem rota própria** (SPEC-039): `POST /bookings` ganhou
+`professorId` e `valor`, e é a presença do primeiro que transforma o pedido em
+aula. Uma rota `/lessons` duplicaria a `EXCLUDE`, a carteira e o cancelamento
+para expressar a mesma coisa. Os códigos novos são `422
+FORA_DA_DISPONIBILIDADE`, `422 PROFESSOR_INATIVO`, `422 VALOR_SEM_PROFESSOR` e
+`409 PROFESSOR_INDISPONIVEL`.
+
+**`POST /bookings/:id/cancel` deixou de responder `204`** e passou a `200` com
+`{ creditoDevolvidoCentavos: number | null }` — a tela do aluno precisava saber
+se o crédito voltou, e `null` distingue "não havia o que devolver" de "devolveu
+zero". *A mudança quebrou o FIT-001 e o smoke do canário, os dois por
+conferência incompleta: a primeira varredura não olhou `test/fit/`, a segunda
+não olhou `.github/`.*
+
 A fonte é o `openapi.json` **gerado do código**, com gate de CI
 (`git diff --exit-code openapi.json`) que falha se ele ficar stale —
 verificado funcionando: o arquivo commitado estava em dia. `API_CONTRACTS.md` (raiz) descreve as regras
@@ -682,9 +707,22 @@ avulsa — coisas que não são trabalho do professor. Acrescentar um
 diferentes, e o `?` acabaria esquecido em alguma chamada.
 
 **O escopo mora num método só** (`filtroDasAulasDele`): as duas rotas usam o
-mesmo `where`, porque escopo repetido é escopo que um dia diverge. Ele
-carrega quatro condições — empresa, professor, `origemTipo: TURMA` e as
-exclusões de cancelada/quadra inativa.
+mesmo `where`, porque escopo repetido é escopo que um dia diverge.
+
+**SPEC-039 — o filtro ganhou um `OR`, e as duas origens são diferentes.** Na
+ocorrência de TURMA o professor vem **pela turma**; na aula particular, pela
+coluna da própria ocupação — o `CHECK` proíbe a coluna na linha de turma
+(INV-106), então não há caminho único. A reserva de quadra continua fora: as
+duas são `AVULSO`, e o que as separa é `professor_id`.
+
+**E a aula particular NUNCA é pendência.** Ela não tem chamada (LIM-039a):
+`chamadas`/`presencas` são de turma. Sem a guarda, o `estadoDaChamada`
+resolveria `pendente` em toda aula particular já terminada, e o ponto vermelho
+do calendário — que existe para dizer *"você esqueceu de registrar"* — viraria
+**pendência eterna que o professor não tem como limpar**, porque não existe
+chamada para lançar. São duas defesas: `chamada: null` no detalhe do dia, e
+`origemTipo !== 'AVULSO'` na contagem do mês. Ela conta em `aulas`, nunca em
+`pendentes`.
 
 **O estado da chamada sai resolvido, e desde a SPEC-030 vem de UM lugar** —
 `src/classes/estado-da-chamada.ts`. Era a regra mais duplicada do `Back`:
