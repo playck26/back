@@ -270,6 +270,32 @@ jobs:
           SPACES_KEY: ci-spaces-key
           SPACES_SECRET: ci-spaces-secret
 
+      # SPEC-035/TASK-005 — o FIT-034 e a suite da spec entram aqui pela mesma
+      # razao dos de cima. **A trava exercitada e NOVA em arranjo, nao em
+      # nome:** ate esta spec, a `no_overlap_por_quadra` so tinha visto
+      # `INSERT`. Descancelar e um `UPDATE` que ENTRA no indice parcial
+      # (`WHERE status_pagamento <> 'cancelado'`), e um indice parcial que
+      # ninguem viu recusar um `UPDATE` e promessa, nao prova.
+      #
+      # Ensaiado sem a `EXCLUDE`, o cenario grava DUAS ocupacoes vivas no
+      # mesmo slot em TODAS as 10 iteracoes -- as duas pre-checagens passam.
+      #
+      # `spec-035` entra junto porque leva a INV-106 (a trigger espelhada) e a
+      # prova de que a `EXCLUDE` recusa o `UPDATE` sem pre-checagem nenhuma.
+      # Conferido por `jest --listTests`: os dois padroes casam DOIS arquivos,
+      # nao mais.
+      - name: FIT-034 + a suite da SPEC-035
+        run: pnpm run test:banco -- fit-034 spec-035
+        env:
+          JWT_ACCESS_SECRET: fit-access-secret
+          JWT_REFRESH_SECRET: fit-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
       - name: FIT-025 a FIT-031 + EVD-033-033 (carteira)
         run: pnpm run test:banco -- creditos
         env:

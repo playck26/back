@@ -3461,9 +3461,93 @@
         ]
       }
     },
+    "/api/v1/classes/{id}/ocorrencias-canceladas": {
+      "get": {
+        "operationId": "ClassesController_ocorrenciasCanceladas",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AulaCanceladaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes/{turmaId}/ocorrencias/{ocupacaoId}/cancel": {
       "post": {
         "operationId": "ClassesController_cancelarOcorrencia",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelarOcorrenciaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
+    "/api/v1/classes/{turmaId}/ocorrencias/{ocupacaoId}/reactivate": {
+      "post": {
+        "operationId": "ClassesController_reativarOcorrencia",
         "parameters": [
           {
             "name": "turmaId",
@@ -6848,7 +6932,10 @@
               "turma_horario_editado",
               "credito_lancado",
               "credito_retirado",
-              "turma_aluno_removido"
+              "turma_aluno_removido",
+              "turma_inativada",
+              "turma_reativada",
+              "aula_reativada"
             ],
             "description": "O GESTO humano que provocou o evento."
           },
@@ -7830,6 +7917,44 @@
           "status",
           "alunosAlocados",
           "alunos"
+        ]
+      },
+      "AulaCanceladaResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "O MESMO id que `POST /classes/:turmaId/ocorrencias/:ocupacaoId/reactivate` aceita — se divergirem, o caminho quebra no último passo (mesma razão da INV-026b)."
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-22"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "horarioLivre": {
+            "type": "boolean",
+            "description": "`false` quando outra ocupação já tomou o horário. A tela avisa antes; quem decide é o servidor."
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "quadraNome",
+          "horarioLivre"
         ]
       },
       "CancelarOcorrenciaDto": {

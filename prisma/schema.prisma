@@ -1050,6 +1050,20 @@ enum TipoDeAcao {
   /// `reserva_cancelada` nao descreve o gesto, e o alvo tecnico dele e uma
   /// MATRICULA, nao uma ocupacao (ver `EventoDeMatricula`).
   turma_aluno_removido
+  /// SPEC-035/D7 — os tres gestos que o `status` da turma passou a fazer, e
+  /// que ate 2026-09-09 nao faziam nada.
+  ///
+  /// **No FIM do enum, e nao junto das irmas `turma_*`**, pela mesma regra
+  /// que o `movida` pagou: `ALTER TYPE ADD VALUE` sem `BEFORE`/`AFTER` anexa
+  /// ao final, e declarar aqui em outra posicao criaria drift permanente.
+  /// Terceira vez que esta regra governa este arquivo.
+  ///
+  /// Reusar `turma_horario_editado` foi recusado: a acao e o GESTO, e um
+  /// extrato que dissesse "horario editado" para quem investigasse uma quadra
+  /// que ficou livre mentiria.
+  turma_inativada
+  turma_reativada
+  aula_reativada
 
   @@map("tipo_de_acao")
 }

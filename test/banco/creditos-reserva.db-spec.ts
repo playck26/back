@@ -367,16 +367,40 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
 
     await courts.cancelBooking(EMPRESA, id, UADMIN, 'company_admin');
 
-    // Reativar não é rota do produto (`cancelado` é terminal, AC-012). Aqui a
-    // reativação é feita à mão para provar o que a INV-098 permite: um novo
-    // consumo, já que o anterior foi devolvido.
-    await q(
-      `UPDATE ocupacoes_quadra SET status_pagamento='pendente_pagamento' WHERE id='${id}'`,
-    );
+    /**
+     * A reativação é feita à mão para provar o que a INV-098 permite: um novo
+     * consumo, já que o anterior foi devolvido.
+     *
+     * **Este bloco mudou com a SPEC-035, e o comentário anterior envelheceu.**
+     * Ele dizia "reativar não é rota do produto" — verdade que virou meia
+     * verdade: a SPEC-035 criou a rota para **ocorrência de turma**, e para
+     * reserva avulsa continua não havendo (LIM-035a, por causa do crédito que
+     * teria de ser recobrado sem o aluno pedir). Este caso é de reserva
+     * avulsa, então o "à mão" segue certo.
+     *
+     * O que mudou de fato: o `UPDATE` solto **deixou de ser aceito**. A
+     * `ocupacao_reativada_exige_evento` (INV-106) exige o evento `reativada`
+     * desta transição, e a exigência alcança qualquer caminho — inclusive um
+     * teste que simula o produto. É a invariante nova funcionando sobre
+     * código antigo, e não uma regressão: a simulação agora é fiel ao que o
+     * banco cobra de quem descancela de verdade.
+     */
     const acao = await db.$queryRawUnsafe<{ id: string }[]>(
       `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
        VALUES (gen_random_uuid(),'${EMPRESA}','reserva_criada','${UADMIN}') RETURNING id`,
     );
+    await db.$transaction(async (tx) => {
+      const [{ t }] = await tx.$queryRawUnsafe<{ t: string }[]>(
+        `SELECT gen_random_uuid()::text AS t`,
+      );
+      await tx.$executeRawUnsafe(
+        `UPDATE ocupacoes_quadra SET status_pagamento='pendente_pagamento', transicao_id='${t}' WHERE id='${id}'`,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id,criado_em)
+         VALUES (gen_random_uuid(),'${EMPRESA}','${acao[0].id}','${id}','reativada','${t}',now())`,
+      );
+    });
     await db.$transaction(async (tx) => {
       await creditos.consumir(tx, {
         companyId: EMPRESA,

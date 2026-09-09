@@ -402,10 +402,21 @@ describe('ClassesService', () => {
   });
 
   describe('update', () => {
+    /**
+     * **`status` entrou com a SPEC-035, e a ausência dele aqui era uma
+     * fixture mentindo sobre a linha real.**
+     *
+     * `turmas.status` é `NOT NULL DEFAULT 'ativa'`: nenhuma linha do banco
+     * chega sem ele. Este objeto chegava, e ninguém notou enquanto o código
+     * não lia o campo — quando a INV-107 passou a amarrar a regeneração da
+     * grade ao status, cinco casos ficaram vermelhos de uma vez com
+     * `Cannot read properties of undefined`, e o defeito estava no dublê.
+     */
     const existente = {
       id: 't1',
       companyId: 'c1',
       quadraId: 'q1',
+      status: 'ativa' as const,
       diaSemana: 2,
       horaInicio: new Date('1970-01-01T14:00:00.000Z'),
       horaFim: new Date('1970-01-01T15:00:00.000Z'),

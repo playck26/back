@@ -1191,6 +1191,64 @@ export class CourtsService {
     await registrador.registrar(ocupacaoId, 'cancelada', transicaoId);
   }
 
+  /**
+   * SPEC-035/TASK-003 — **descancelar** uma ocorrência de turma.
+   *
+   * Espelho de `cancelOneClassOccurrence`, e a mesma divisão de trabalho:
+   * **só a escrita; quem decide é o `ClassesService`**, porque a decisão
+   * depende de segurar `turmas FOR UPDATE`.
+   *
+   * ## A `EXCLUDE` julga de graça, e é ela quem garante
+   *
+   * `no_overlap_por_quadra` tem `WHERE status_pagamento <> 'cancelado'`: este
+   * `UPDATE` **insere a linha no índice**, e se houver sobreposição o Postgres
+   * recusa com `23P01`. A pré-checagem que o `ClassesService` faz antes existe
+   * para a **mensagem** — para o gestor saber QUEM tomou o horário —, nunca
+   * para a garantia. Mesma divisão da INV-001, e por isso a corrida
+   * (FIT-034) tem um vencedor só mesmo quando as duas pré-checagens passam.
+   *
+   * ## E a trigger espelhada exige o evento
+   *
+   * `ocupacao_reativada_exige_evento` (INV-106) recusa este `UPDATE` no
+   * COMMIT se o evento `reativada` desta transição não existir. É por isso que
+   * `registrar` está aqui dentro e não no chamador: separar os dois deixaria
+   * o próximo chamador livre para esquecer, e o `DEFERRABLE` só reclamaria no
+   * fim, longe da causa.
+   */
+  async reactivateOneClassOccurrence(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    ocupacaoId: string,
+    registrador: RegistradorDeAcao,
+  ): Promise<void> {
+    const transicaoId = novaTransicao();
+    try {
+      await tx.ocupacaoQuadra.update({
+        where: { id: ocupacaoId },
+        // Volta para `pendente_pagamento`, e **não** para o status que ela
+        // tinha antes de ser cancelada: ocupação de TURMA nunca teve outro
+        // (`valor` é nulo, CHECK `ocupacoes_valor_por_origem`), e guardar o
+        // status anterior só para restaurá-lo seria coluna nova a serviço de
+        // um caso que não existe.
+        data: { statusPagamento: 'pendente_pagamento', transicaoId },
+      });
+      await registrador.registrar(ocupacaoId, 'reativada', transicaoId);
+    } catch (error) {
+      // Mesma corrida perdida da INV-001, e o mesmo motivo de não haver
+      // P-código dedicado no Prisma para violação de `EXCLUDE`. O que **não**
+      // é corrida — transação expirada, conexão caída — passa direto e
+      // continua sendo 500 (`ehCorridaPerdida`, DEF-013).
+      if (ehCorridaPerdida(error)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'HORARIO_OCUPADO',
+          message: 'Este horário foi ocupado enquanto a aula estava cancelada.',
+        });
+      }
+      throw error;
+    }
+  }
+
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
   // cancelar reserva onde `aluno_id` bate com o próprio — "dono da reserva
   // ou company_admin" (API_CONTRACTS.md CON-005.6).

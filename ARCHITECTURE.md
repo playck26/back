@@ -1,10 +1,13 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: 2026-08-30.
-**Commit de referência:** a **SPEC-017 completa** (TASK-001 a 007) mais a
-**SPEC-018:TASK-001** (as seis colunas de mídia), 2026-08-24/25, a partir de
-`f75615b`. Por nome e não por hash porque este arquivo faz parte do próprio
-commit — um documento não consegue citar o hash que ele ajuda a formar.
+**Fonte: análise direta do código.** Data: **2026-09-09** (era 2026-08-30).
+**Commit de referência:** a **SPEC-035 completa** (cancelar e reativar), que
+sucede a SPEC-039 (aula avulsa) e a SPEC-040 (disponibilidade do professor).
+Por nome e não por hash porque este arquivo faz parte do próprio commit — um
+documento não consegue citar o hash que ele ajuda a formar.
+
+**Números conferidos por comando nesta data, não estimados:** 35 migrations,
+122 operações no `openapi.json`, 10 triggers não-internas no banco.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -537,6 +540,24 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 | `acoes_append_only`, `eventos_append_only` | `BEFORE UPDATE OR DELETE` — recusam alteração e remoção nas duas tabelas de auditoria |
 | `ocupacao_cancelada_exige_evento` | `CONSTRAINT TRIGGER AFTER UPDATE ... DEFERRABLE INITIALLY DEFERRED` — a transição para `cancelado` exige evento **desta transição** |
 | `eventos_matricula_append_only` (SPEC-031/D21) | a **terceira** da família, e a que faltava: `eventos_de_matricula` é auditoria como as outras duas. Consertar só duas deixaria o fluxo funcional verde e a limpeza do CI abortando |
+| `movimentos_append_only`, `movimentos_atualiza_saldo`, `movimentos_consumo_ativo_unico`, `alunos_saldo_so_pelo_ledger`, `ocupacao_cancelada_exige_devolucao` (SPEC-033) | as cinco da carteira — o saldo só muda pelo ledger, e cancelar reserva paga com crédito exige a devolução no mesmo COMMIT |
+| `ocupacao_reativada_exige_evento` (SPEC-035/INV-106) | **a metade que faltava da INV-064.** Espelho literal da `ocupacao_cancelada_exige_evento`, na direção contrária: `cancelado -> não-cancelado` exige evento `reativada` desta transição |
+
+**São dez triggers hoje** (`SELECT tgname FROM pg_trigger WHERE NOT
+tgisinternal`, conferido contra Postgres 18.4 local), e não três — a tabela
+acima estava parada na SPEC-031.
+
+**A INV-106 merece uma linha própria, porque ela conserta um raciocínio e não
+um defeito.** A INV-064 guardava só a ida (`-> cancelado`), e isso estava
+certo **enquanto não existisse caminho que descancelasse**. A SPEC-035 criou o
+primeiro (`POST /classes/:turmaId/ocorrencias/:ocupacaoId/reactivate`), e a
+guarda virou metade de uma. Sem a volta, a linha do tempo de uma ocupação
+mostraria "cancelada por Fulano" sobre uma aula que está no ar.
+
+Ela cobrou na primeira execução: um caso da SPEC-033 (`creditos-reserva`)
+descancelava uma reserva à mão com `UPDATE` solto, para provar que a INV-098
+permite um consumo novo. **O banco recusou o teste**, e o conserto foi a
+simulação passar a gravar o evento — que é o que o produto faz.
 
 **Por que trigger e não `REVOKE`.** Foi a primeira ideia e é inócua: tabela
 nova no Postgres **não concede nada a `PUBLIC`**, e a aplicação conecta como
@@ -612,8 +633,8 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**85 caminhos, 120 operações HTTP** (conferido em **2026-09-09** contra o
-`openapi.json`, depois da SPEC-040). As duas medidas aparecem porque "rotas" é
+**87 caminhos, 122 operações HTTP** (conferido em **2026-09-09** contra o
+`openapi.json`, depois da SPEC-035 — eram 85/120 depois da SPEC-040). As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -628,6 +649,28 @@ para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
 `401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
 `DELETE`: o ledger é append-only, e rota que não existe não precisa ser
 defendida.
+
+**As duas rotas da SPEC-035**, e o par delas explica a spec inteira:
+
+| Rota | O quê |
+|---|---|
+| `POST /classes/:turmaId/ocorrencias/:ocupacaoId/reactivate` | desfaz o cancelamento de **uma** aula. `204`, motivo obrigatório, espelho do `/cancel` |
+| `GET /classes/:id/ocorrencias-canceladas` | **a porta da anterior.** Sem ela, `reactivate` seria rota sem tela |
+
+**A segunda é a que não parece necessária e é.** Os três filtros de
+`agenda.service.ts` trazem `status_pagamento <> 'cancelado'` — certo para o
+que a agenda é, e o efeito colateral é que a aula cancelada **some**. Não se
+reativa o que não se vê, e a SPEC-039 já tinha pago essa lição na tela: a aula
+particular existia, funcionava e ninguém a alcançava.
+
+Ela devolve `horarioLivre` calculado na leitura, que **pode envelhecer** entre
+o `GET` e o clique — quem decide é a `EXCLUDE` no `POST`. Guiar reduz o erro;
+prometer seria mentir, e é a mesma divisão da janela do professor na SPEC-039.
+
+**E o `PATCH /classes/:id` mudou de significado sem mudar de forma.** O campo
+`status` era gravado e não fazia mais nada (medido: a ocupação futura ficava
+viva e a quadra bloqueada). Agora inativar cancela a grade futura e reativar a
+regenera — e a regeneração pode ser recusada com `409` + `conflicts[]`.
 
 **As duas rotas da disponibilidade** (SPEC-040): `PUT`/`GET
 /teachers/:id/disponibilidade`. Elas são **assimétricas de propósito** — o
