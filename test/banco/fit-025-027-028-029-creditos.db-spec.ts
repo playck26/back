@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-033/TASK-009 — **as provas CONCORRENTES da carteira.**
  *
@@ -67,6 +68,9 @@ function servico(c: PrismaClient): CourtsService {
     {} as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(c as unknown as PrismaService),
     new CreditosService(),
+    // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+    // gate so roda quando `professorId` vem no pedido.
+    { carregarSemana: jest.fn() } as unknown as DisponibilidadeProfessorService,
   );
 }
 const servicoA = servico(dbA);

@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma, type OrigemTipo, type StatusPagamento } from '@prisma/client';
+import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import { StudentsService } from '../people/students.service';
 import {
   CreditosService,
@@ -151,6 +152,30 @@ const CODIGOS_DE_INFRA_NAO_SAO_CONFLITO = new Set([
  * ocupação existente"** numa quadra vazia. É pior que o 500 que o defeito
  * causava do outro lado: 500 manda investigar, esse 409 manda desistir.
  */
+/**
+ * SPEC-039 — a violação da `no_overlap_por_professor`, distinguida das outras.
+ *
+ * O `23P01` chega sem código dedicado do Prisma, então o nome da constraint só
+ * existe no TEXTO da mensagem. Casar texto é o retrocesso que o D7 da SPEC-033
+ * recusou para as diferidas — mas aqui não há alternativa: `EXCLUDE` não tem
+ * SQLSTATE próprio por constraint, e o nome é a única coisa que separa a trava
+ * da quadra da trava do professor.
+ *
+ * O custo é conhecido e está contido: renomear a constraint faz esta função
+ * parar de reconhecer, e o efeito é o erro voltar a subir como `500` — barulho,
+ * não silêncio. O db-spec afirma o nome, então o rename quebra o teste antes.
+ */
+function ehTravaDoProfessor(error: unknown): boolean {
+  // Só `Error` interessa: o `23P01` chega como erro do Prisma, que é `Error`.
+  // Qualquer outra coisa não é violação de constraint, e `String(objeto)`
+  // devolveria `[object Object]` — texto que nunca casaria e daria a falsa
+  // impressão de ter sido conferido.
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes('no_overlap_por_professor');
+}
+
 function ehCorridaPerdida(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     return !CODIGOS_DE_INFRA_NAO_SAO_CONFLITO.has(error.code);
@@ -206,6 +231,13 @@ export class CourtsService {
     // cria ou cancela a reserva — sem isso haveria janela entre a reserva
     // existir e o dinheiro sair.
     private readonly creditos: CreditosService,
+    /**
+     * SPEC-039 — **por ultimo de proposito.** Oito arquivos constroem este
+     * servico a mao; parametro no fim se acrescenta no fim da lista, e nao
+     * no meio de argumentos aninhados. Injetar no meio custou uma rodada
+     * de regex frageis antes de eu perceber isso.
+     */
+    private readonly disponibilidade: DisponibilidadeProfessorService,
   ) {}
 
   /**
@@ -467,6 +499,19 @@ export class CourtsService {
       await this.studentsService.exigirVinculoAprovado(companyId, dto.alunoId);
     }
 
+    // SPEC-039/D2 — `valor` so vem com `professorId`. Numa reserva de quadra o
+    // preco e da QUADRA (`precoHora x horas`); deixar o cliente escolher o
+    // valor de uma reserva comum abriria um caminho que a demanda nao pediu,
+    // num campo que a carteira debita.
+    if (dto.valor != null && !dto.professorId) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'VALOR_SEM_PROFESSOR',
+        message:
+          'O valor so pode ser definido em aula particular; a reserva de quadra usa o preco da quadra.',
+      });
+    }
+
     const dataDate = parseDateOnly(dto.data);
     const horarioDoDia = await this.horarios.resolverParaData(
       companyId,
@@ -538,6 +583,19 @@ export class CourtsService {
       }
     }
 
+    // SPEC-039 — os portões da aula particular. Depois do conflito de QUADRA,
+    // de propósito: uma aula fora da janela do professor num slot já ocupado
+    // deve dizer que o slot está ocupado, que é o que o gestor conserta
+    // primeiro.
+    if (dto.professorId) {
+      await this.exigirProfessorDisponivel(
+        companyId,
+        dto.professorId,
+        dataDate,
+        blocos,
+      );
+    }
+
     // DEF-023 — achado pelo FIT-001 (a) da SPEC-043 (run 33790414789, CI em
     // postgres:18): duas criações concorrentes do mesmo slot podem terminar
     // em DEADLOCK (`40P01`) em vez de violação da EXCLUDE. A transação
@@ -603,9 +661,22 @@ export class CourtsService {
                 horaFim: parseTimeOnly(bloco.horaFim),
                 origemTipo: 'AVULSO',
                 alunoId: dto.alunoId,
+                // SPEC-039/D1 — a aula particular NÃO é um `origem_tipo` novo;
+                // o professor é atributo. `undefined` na reserva comum, e o
+                // `CHECK ocupacoes_professor_so_em_avulso` continua satisfeito
+                // porque a origem é `AVULSO` nos dois casos.
+                professorId: dto.professorId,
                 // Congelado na criação (AC-004): reajustar o preço da
                 // quadra depois não mexe em reserva existente.
-                valor: new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
+                //
+                // **SPEC-039/D2:** na aula particular o preço é o que o clube
+                // digitou, não `precoHora × horas` — a demanda diz "definido
+                // pelo clube na própria aula". Só é aceito com `professorId`
+                // junto, e a guarda está lá em cima.
+                valor:
+                  dto.valor != null
+                    ? new Prisma.Decimal(dto.valor)
+                    : new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
                 pedidoId: pedido?.id,
                 transicaoId,
               },
@@ -640,6 +711,23 @@ export class CourtsService {
         // **Só pode** — desde que o erro seja de dado. Transação expirada e
         // conexão caída não são corrida, e virar 409 aqui faria a reserva do
         // aluno mentir do mesmo jeito que a da turma (DEF-013).
+        // SPEC-039 — **a trava do professor não é corrida de quadra.** A
+        // `no_overlap_por_professor` também levanta `23P01`, e sem esta
+        // tradução o erro cairia no `findConflito` abaixo, que só olha a
+        // QUADRA — e as duas aulas do mesmo professor estão em quadras
+        // DIFERENTES, por definição do caso. Nada visível, `409` sem conflito
+        // seria mentira, e o erro subiria cru como `500`.
+        //
+        // A pré-checagem já recusa o caso conhecido; isto cobre a corrida
+        // entre dois pedidos simultâneos, que é o que a `EXCLUDE` existe para
+        // resolver e nenhuma pré-checagem alcança.
+        if (ehTravaDoProfessor(error)) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'PROFESSOR_INDISPONIVEL',
+            message: 'O professor já tem compromisso neste horário.',
+          });
+        }
         if (ehCorridaPerdida(error)) {
           if (clientRequestId) {
             const jaFeito = await this.pedidoJaAtendido(
@@ -2103,6 +2191,106 @@ export class CourtsService {
     });
     if (!quadra) {
       throw new NotFoundException();
+    }
+  }
+
+  /**
+   * SPEC-039 — os três portões da aula particular, na ordem em que o gestor
+   * consegue agir sobre eles.
+   *
+   * 1. **O professor é da empresa?** `404`, nunca `403` — é o padrão do
+   *    projeto para não confirmar existência de recurso alheio (AC-002).
+   * 2. **Está ativo?** `422 PROFESSOR_INATIVO` (AC-005).
+   * 3. **Atende neste dia e nesta faixa?** `422 FORA_DA_DISPONIBILIDADE`
+   *    (AC-003). **Professor sem nenhuma linha cai aqui também** (AC-004):
+   *    ausência é "não atende" (SPEC-040/D3), e é o estado inicial de todo
+   *    professor já cadastrado — deliberado, porque o contrário abriria agenda
+   *    para quem não combinou nada.
+   * 4. **Já está em outra aula nesse horário?** `409 PROFESSOR_INDISPONIVEL`.
+   *
+   * **O passo 4 existe porque o banco não alcança metade dele (LIM-039f).** A
+   * `EXCLUDE no_overlap_por_professor` só enxerga `ocupacoes_quadra.professor_id`,
+   * e a ocorrência de TURMA guarda o professor **na turma** — o `CHECK` proíbe
+   * a coluna na linha dela. Medido contra o banco: aula de turma às 14h na
+   * quadra 1 e particular do mesmo professor às 14h na quadra 2 passam as
+   * duas. Aqui as duas fontes são consultadas juntas.
+   *
+   * A `EXCLUDE` continua sendo a garantia final para a metade que ela cobre;
+   * isto é a pré-checagem que faz a resposta dizer **qual** bloco falhou, e a
+   * única defesa para a metade que ela não cobre.
+   */
+  private async exigirProfessorDisponivel(
+    companyId: string,
+    professorId: string,
+    data: Date,
+    blocos: { horaInicio: string; horaFim: string }[],
+  ): Promise<void> {
+    const professor = await this.prisma.professor.findFirst({
+      where: { id: professorId, companyId },
+      select: { status: true },
+    });
+    if (!professor) {
+      throw new NotFoundException();
+    }
+    if (professor.status !== 'ativo') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'PROFESSOR_INATIVO',
+        message: 'Este professor está inativo e não recebe aula.',
+      });
+    }
+
+    // Uma consulta para a semana inteira, não uma por bloco (o N+1 que este
+    // projeto já baniu três vezes).
+    const semana = await this.disponibilidade.carregarSemana(
+      companyId,
+      professorId,
+    );
+    const diaSemana = data.getUTCDay();
+    const janela = semana.get(diaSemana);
+    for (const bloco of blocos) {
+      const dentro =
+        janela != null &&
+        formatTimeOnly(janela.horaInicio) <= bloco.horaInicio &&
+        formatTimeOnly(janela.horaFim) >= bloco.horaFim;
+      if (!dentro) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'FORA_DA_DISPONIBILIDADE',
+          message: janela
+            ? `O professor atende das ${formatTimeOnly(janela.horaInicio)} às ${formatTimeOnly(janela.horaFim)} neste dia; ${bloco.horaInicio}–${bloco.horaFim} está fora.`
+            : 'O professor não atende neste dia da semana.',
+        });
+      }
+    }
+
+    for (const bloco of blocos) {
+      // **A data vai como TEXTO, nao como `Date`.** Um parametro `Date` chega
+      // como timestamp e o `::date` passa a depender do fuso da sessao --
+      // exatamente o tipo de dependencia que a DEF-020 ja cobrou neste
+      // projeto. Medido: com `Date`, este portao nao casava a ocupacao de
+      // turma e a aula passava.
+      const dataIso = formatDateOnly(data);
+      const ocupado = await this.prisma.$queryRaw<{ id: string }[]>`
+        SELECT o.id
+          FROM ocupacoes_quadra o
+          LEFT JOIN turmas t ON t.id = o.origem_turma_id
+         WHERE o.company_id = ${companyId}::uuid
+           AND o.data = ${dataIso}::date
+           AND o.status_pagamento <> 'cancelado'
+           AND (o.professor_id = ${professorId}::uuid
+                OR t.professor_id = ${professorId}::uuid)
+           AND tsrange(o.data + o.hora_inicio, o.data + o.hora_fim)
+               && tsrange(${dataIso}::date + ${bloco.horaInicio}::time,
+                          ${dataIso}::date + ${bloco.horaFim}::time)
+         LIMIT 1`;
+      if (ocupado.length > 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'PROFESSOR_INDISPONIVEL',
+          message: `O professor já tem compromisso em ${bloco.horaInicio}–${bloco.horaFim}.`,
+        });
+      }
     }
   }
 

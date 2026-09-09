@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import { Prisma } from '@prisma/client';
 import { CourtsService } from '../courts/courts.service';
 import { HorarioFuncionamentoService } from '../courts/horario-funcionamento.service';
@@ -329,6 +330,9 @@ function buildClassesService(tx: Prisma.TransactionClient) {
     } as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(prisma),
     new CreditosService(),
+    // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+    // gate so roda quando `professorId` vem no pedido.
+    { carregarSemana: jest.fn() } as unknown as DisponibilidadeProfessorService,
   );
   return new ClassesService(
     prisma,

@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import {
   ConflictException,
   ForbiddenException,
@@ -261,6 +262,11 @@ describe('CourtsService', () => {
       imagens,
       new ConfigOperacaoService(prisma),
       new CreditosService(),
+      // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+      // gate so roda quando `professorId` vem no pedido.
+      {
+        carregarSemana: jest.fn(),
+      } as unknown as DisponibilidadeProfessorService,
     );
   });
 

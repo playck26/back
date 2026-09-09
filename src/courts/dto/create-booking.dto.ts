@@ -5,7 +5,9 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
+  IsNumber,
   IsOptional,
+  Min,
   Matches,
   ValidateNested,
 } from 'class-validator';
@@ -73,4 +75,31 @@ export class CreateBookingDto {
   @IsOptional()
   @UuidNoCorpo()
   alunoId?: string;
+
+  /**
+   * SPEC-039 — a aula particular. **Não é um `origem_tipo` novo** (D1): a
+   * ocupação continua `AVULSO`, e o professor é atributo dela.
+   *
+   * Presente, o pedido vira aula particular e passa por três portões que a
+   * reserva comum não tem: professor da empresa e ativo, dentro da janela de
+   * atendimento dele (SPEC-040), e sem outra ocupação no horário.
+   */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @UuidNoCorpo()
+  professorId?: string;
+
+  /**
+   * SPEC-039/D2 — o preço da aula, definido pelo clube no ato.
+   *
+   * **Só é aceito junto com `professorId`.** Numa reserva de quadra o preço é
+   * `precoHora × horas` e vem da quadra; deixar o cliente escolher o valor de
+   * uma reserva comum seria abrir um caminho que a demanda não pediu, num
+   * campo que a carteira debita.
+   */
+  @ApiPropertyOptional({ example: 120 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  valor?: number;
 }
