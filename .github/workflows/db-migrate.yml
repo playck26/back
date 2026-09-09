@@ -907,11 +907,51 @@ jobs:
           SPACES_KEY: ci-spaces-key
           SPACES_SECRET: ci-spaces-secret
 
+  # SPEC-033/EVD-033-033 — **o contrato de erro contra o POOLER.**
+  #
+  # A EVD-033-033 roda no `fit-critical` contra Postgres LOCAL. O mecanismo
+  # que ela prova é o mais dependente de semântica de sessão desta spec:
+  # `CONSTRAINT TRIGGER … DEFERRABLE` julgadas por `SET CONSTRAINTS …
+  # IMMEDIATE` no fim da transação, lidas por `P2010` + `meta.code`.
+  #
+  # O canário vai pelo endpoint `-pooler` (`FIT_CANARIO_HOST`), e pgbouncer em
+  # modo transação muda o que "sessão" significa. Este projeto já pagou por
+  # isso — `P1002` e advisory lock preso.
+  #
+  # O FIT-025 fechou a perna de CONCORRÊNCIA na Neon; esta fecha a do CONTRATO
+  # DE ERRO. Continuam de fora, contra o pooler: FIT-027 a FIT-031, e carga.
+  evd-033-033-neon:
+    name: EVD-033-033 Neon (contrato de erro)
+    needs: migrate
+    if: ${{ always() && inputs.run_smoke && needs.migrate.outputs.migrado == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: EVD-033-033
+        run: pnpm run test:fit -- --testPathPattern evd-033-033
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
+          JWT_ACCESS_SECRET: fit-neon-access
+          JWT_REFRESH_SECRET: fit-neon-refresh
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
   # SPEC-043/AC-010 — badge verde com FIT pulado foi a causa raiz de 26 dias
   # sem gate. Disparo sem smoke/FITs falha de propósito.
   gate:
     name: gate (smoke e FITs rodaram?)
-    needs: [migrate, fit-001-neon, fit-002-neon, fit-025-neon]
+    needs: [migrate, fit-001-neon, fit-002-neon, fit-025-neon, evd-033-033-neon]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -935,7 +975,7 @@ jobs:
             echo "::error title=migrate nao passou::o job migrate (migration + smoke) concluiu ${{ needs.migrate.result }} - o gate nao pode ficar verde sem ele"
             exit 1
           }
-          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}" "${{ needs.fit-025-neon.result }}"; do
-            [ "$r" = "success" ] || { echo "::error::um canario FIT nao concluiu success ($r)"; exit 1; }
+          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}" "${{ needs.fit-025-neon.result }}" "${{ needs.evd-033-033-neon.result }}"; do
+            [ "$r" = "success" ] || { echo "::error::um canario nao concluiu success ($r)"; exit 1; }
           done
-          echo "migrate (migration + smoke), FIT-001, FIT-002 e FIT-025 Neon: success"
+          echo "migrate (migration + smoke), FIT-001, FIT-002, FIT-025 e EVD-033-033 Neon: success"
