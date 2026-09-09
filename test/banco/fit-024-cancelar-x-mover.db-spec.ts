@@ -1,4 +1,3 @@
-import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-031 — **FIT-024: cancelar × mover, e a janela que existia entre ler e
  * escrever.**
@@ -37,6 +36,7 @@ import { CourtsService } from '../../src/courts/courts.service';
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import { CreditosService } from '../../src/creditos/creditos.service';

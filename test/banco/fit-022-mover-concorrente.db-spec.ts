@@ -1,4 +1,3 @@
-import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-034/REQ-007 — **FIT-022: mover sob concorrência.**
  *
@@ -23,6 +22,7 @@ import { limparEmpresa } from './limpar-empresa';
 import { CourtsService } from '../../src/courts/courts.service';
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';

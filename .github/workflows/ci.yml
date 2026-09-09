@@ -243,6 +243,33 @@ jobs:
       #
       # A EVD-033-033 esta entre eles de proposito: ela e o que faz um rename
       # de constraint derrubar a CI antes de derrubar producao com `42704`.
+      # SPEC-039/TASK-005 — o FIT-033 entra aqui pela mesma razao dos de cima:
+      # a INV-105 e a unica coisa que impede o professor de estar em duas
+      # quadras ao mesmo tempo, e ensaiado sem ela o cenario grava DUAS aulas
+      # ativas. Um job chamado `fit-critical` sem ele mentiria pelo nome.
+      #
+      # **`aula-avulsa` e nao `aula`.** O padrao `aula` casa CINCO arquivos --
+      # arrasta `fit-012-avaliacao-de-aula` e `spec-044-aulas-do-aluno`
+      # junto. Rodar de graca nao machuca, mas um passo que diz "aula
+      # particular" e roda outras duas specs mente sobre o que garante.
+      # Conferido por `jest --listTests`, nao suposto.
+      #
+      # **E sem `DATABASE_URL` aqui**, de proposito: o job ja define a dele
+      # (`playck_fit`, porta 5433) e o passo vizinho tambem nao a repete.
+      # Redeclarar no passo SOBRESCREVERIA a do job -- eu tinha escrito o
+      # valor errado, e o conserto foi apagar a linha, nao ajusta-la.
+      - name: FIT-033 + os portoes da aula particular (SPEC-039)
+        run: pnpm run test:banco -- aula-avulsa fit-033
+        env:
+          JWT_ACCESS_SECRET: fit-access-secret
+          JWT_REFRESH_SECRET: fit-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
       - name: FIT-025 a FIT-031 + EVD-033-033 (carteira)
         run: pnpm run test:banco -- creditos
         env:
