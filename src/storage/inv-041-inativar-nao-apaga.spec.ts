@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import { StudentsService } from '../people/students.service';
 import { TeachersService } from '../people/teachers.service';
 import { CourtsService } from '../courts/courts.service';
@@ -170,6 +171,11 @@ describe('INV-041 — inativar preserva a mídia (AC-012)', () => {
       imagens as never,
       new ConfigOperacaoService(prisma as never),
       new CreditosService(),
+      // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+      // gate so roda quando `professorId` vem no pedido.
+      {
+        carregarSemana: jest.fn(),
+      } as unknown as DisponibilidadeProfessorService,
     );
 
     await service.update('c1', 'q1', { status: 'inativa' } as never);

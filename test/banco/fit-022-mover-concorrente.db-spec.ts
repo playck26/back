@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-034/REQ-007 — **FIT-022: mover sob concorrência.**
  *
@@ -67,6 +68,9 @@ function servico(db: PrismaClient): CourtsService {
     } as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(db as unknown as PrismaService),
     new CreditosService(),
+    // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+    // gate so roda quando `professorId` vem no pedido.
+    { carregarSemana: jest.fn() } as unknown as DisponibilidadeProfessorService,
   );
 }
 

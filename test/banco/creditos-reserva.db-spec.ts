@@ -1,3 +1,4 @@
+import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 /**
  * SPEC-033/TASK-005 — **reservar debita, cancelar devolve.** Contra Postgres.
  *
@@ -52,6 +53,9 @@ const courts = new CourtsService(
   {} as unknown as ImagemDaQuadraService,
   new ConfigOperacaoService(db as unknown as PrismaService),
   creditos,
+  // SPEC-039: duble vazio -- estes testes nao criam aula particular, e o
+  // gate so roda quando `professorId` vem no pedido.
+  { carregarSemana: jest.fn() } as unknown as DisponibilidadeProfessorService,
 );
 
 const saldo = async () => {
