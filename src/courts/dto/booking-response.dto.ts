@@ -292,3 +292,25 @@ export class DashboardResumoResponseDto {
   @ApiProperty({ type: Number, example: 45 })
   ocupacaoQuadrasPct!: number;
 }
+
+/**
+ * SPEC-039 — o que o cancelamento devolveu para a carteira.
+ *
+ * **A rota respondia `204 No Content` até 2026-09-09**, e por isso a tela do
+ * aluno não tinha como dizer se o crédito voltou. Dizer "o saldo voltará"
+ * sempre seria mentira: reserva de turma e reserva sem aluno não devolvem
+ * nada — a ausência do movimento é a resposta (SPEC-033/AC-010).
+ *
+ * `null` distingue "não havia o que devolver" de `0`, que não acontece hoje e
+ * seria uma devolução de valor zero se acontecesse.
+ */
+export class CancelamentoResponseDto {
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Centavos devolvidos à carteira do aluno, ou null quando não havia consumo ativo.',
+    example: 12000,
+  })
+  creditoDevolvidoCentavos!: number | null;
+}

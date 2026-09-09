@@ -246,13 +246,23 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     const { id } = await reservar('aluno');
     expect(await saldo()).toBe(antesDaReserva - 8_000);
 
-    await courts.cancelBooking(EMPRESA, id, UADMIN, 'company_admin');
+    const resposta = await courts.cancelBooking(
+      EMPRESA,
+      id,
+      UADMIN,
+      'company_admin',
+    );
 
     expect(await saldo()).toBe(antesDaReserva);
     expect(await movimentos(id)).toEqual([
       { tipo: 'consumo', valor_centavos: 8_000 },
       { tipo: 'devolucao', valor_centavos: 8_000 },
     ]);
+    // SPEC-039 — **o numero que vai para a tela do aluno**, e ele e conferido
+    // contra o LEDGER logo acima, nao contra si mesmo. A rota deixou de ser
+    // `204` para poder dizer isto; um valor errado aqui viraria uma mensagem
+    // errada sobre dinheiro.
+    expect(resposta).toEqual({ creditoDevolvidoCentavos: 8_000 });
   });
 
   it('AC-010: cancelar reserva SEM consumo não gera movimento — a ausência é a resposta', async () => {
@@ -273,6 +283,28 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     expect(await statusDa(semConsumo!.id)).toBe('cancelado');
     expect(await movimentos(semConsumo!.id)).toEqual([]);
     expect(await saldo()).toBe(antes);
+  });
+
+  it('SPEC-039: a resposta distingue "nao devolveu" de "devolveu zero"', async () => {
+    // **`null`, e nao `0`.** A tela do aluno decide entre "seu credito voltou"
+    // e nao dizer nada; com `0` as duas frases ficariam indistinguiveis, e a
+    // primeira apareceria em reserva de turma, onde nunca houve credito.
+    //
+    // **Sujeito PROPRIO, criado aqui.** A primeira versao pegava a reserva
+    // pendente do cenario compartilhado -- e o caso anterior ja a cancelava.
+    // Cenario compartilhado e conveniencia ate o dia em que dois casos
+    // disputam a mesma linha.
+    const { id, statusPagamento } = await reservar('company_admin', '09:00');
+    expect(statusPagamento).toBe('pendente_pagamento');
+
+    const resposta = await courts.cancelBooking(
+      EMPRESA,
+      id,
+      UADMIN,
+      'company_admin',
+    );
+    expect(resposta).toEqual({ creditoDevolvidoCentavos: null });
+    expect(await movimentos(id)).toEqual([]);
   });
 
   it('PA-02: o SEGUNDO caminho devolve igual — `updatePaymentStatus` não é exceção', async () => {

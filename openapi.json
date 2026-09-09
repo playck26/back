@@ -2368,8 +2368,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelamentoResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6772,6 +6779,20 @@
             "format": "uuid"
           }
         }
+      },
+      "CancelamentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "creditoDevolvidoCentavos": {
+            "type": "number",
+            "nullable": true,
+            "description": "Centavos devolvidos à carteira do aluno, ou null quando não havia consumo ativo.",
+            "example": 12000
+          }
+        },
+        "required": [
+          "creditoDevolvidoCentavos"
+        ]
       },
       "AutorDoEventoDto": {
         "type": "object",
