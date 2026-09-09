@@ -15,7 +15,6 @@ import {
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
-  ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -29,6 +28,7 @@ import { CourtsService } from './courts.service';
 import { AgendaService } from './agenda.service';
 import { EventoDeOcupacaoResponseDto } from './dto/evento-de-ocupacao-response.dto';
 import {
+  CancelamentoResponseDto,
   OcupacaoPaginadaResponseDto,
   OcupacaoResponseDto,
   ReservasCriadasResponseDto,
@@ -127,10 +127,20 @@ export class BookingsController {
     );
   }
 
+  /**
+   * SPEC-039 — **deixou de ser `204` e passou a dizer quanto voltou.**
+   *
+   * O aluno cancelava uma reserva paga com crédito e a tela nao tinha como
+   * confirmar a devolucao: sem corpo, so restaria supor. E supor seria mentir
+   * nos casos em que nada volta (reserva de turma, reserva sem aluno).
+   *
+   * A mudanca e compativel: os dois clientes de hoje (`admin` e `cliente`)
+   * fazem `await` e ignoram o corpo -- conferido antes de mudar.
+   */
   @Post(':id/cancel')
-  @ApiNoContentResponse()
+  @ApiOkResponse({ type: CancelamentoResponseDto })
   @Roles('company_admin', 'aluno')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   async cancel(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', UuidCanonicoPipe) id: string,
