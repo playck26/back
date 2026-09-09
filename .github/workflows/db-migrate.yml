@@ -214,6 +214,21 @@ jobs:
           -- SPEC-031/D22/9: a TERCEIRA da familia. Corrigir so um bloco deixaria
           -- o fluxo funcional verde e o cleanup final abortando.
           ALTER TABLE eventos_de_matricula DISABLE TRIGGER eventos_matricula_append_only;
+          -- SPEC-033: a QUARTA da familia append-only. O ledger da carteira
+          -- aponta para acao, ocupacao, aluno e usuario -- as quatro com
+          -- RESTRICT -- e sem desligar a trigger dele o DELETE e recusado
+          -- antes de a FK sequer ser avaliada.
+          ALTER TABLE movimentos_de_credito DISABLE TRIGGER movimentos_append_only;
+          -- SPEC-033: o ledger PRIMEIRO. Ele aponta para ocupacao, acao,
+          -- aluno e usuario, as quatro com RESTRICT. A autorreferencia do
+          -- estorno so nao quebra porque consumo e devolucao da MESMA
+          -- ocupacao saem no mesmo comando -- RESTRICT e checado no fim do
+          -- COMANDO, nao por linha.
+          DELETE FROM movimentos_de_credito WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
+                OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
+          DELETE FROM movimentos_de_credito WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
@@ -232,8 +247,15 @@ jobs:
           -- SPEC-031/D22/10: a acao passou a ter DOIS filhos. Olhar so
           -- eventos_de_ocupacao apagaria acao que eventos_de_matricula ainda
           -- referencia -- 23503 no proprio DELETE.
+          --
+          -- **SPEC-033: agora sao TRES.** O comentario acima previu a
+          -- proxima, e ela chegou: `movimentos_de_credito` tambem aponta
+          -- para a acao, com RESTRICT. O disparo de 2026-09-08 quebrou
+          -- exatamente aqui, e o erro nomeou a constraint:
+          -- `movimentos_acao_fkey`.
           DELETE FROM acoes_administrativas a WHERE NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id)
-                                                AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id);
+                                                AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id)
+                                                AND NOT EXISTS (SELECT 1 FROM movimentos_de_credito c WHERE c.acao_id = a.id);
           DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE';
           DELETE FROM turma_alunos WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM ocupacoes_quadra WHERE origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
@@ -269,6 +291,12 @@ jobs:
           -- ci-$RUN_ID foi criado em MOD-002) e ficam de fora. Ordem: o que os
           -- referencia com RESTRICT primeiro (eventos -> acoes), depois alunos,
           -- depois usuarios (refresh_tokens vai em cascata).
+          -- SPEC-033: o ledger dos usuarios residuais, antes das acoes e
+          -- dos alunos. `autor_id` e FK SIMPLES para usuarios (de proposito:
+          -- o super_admin nao tem empresa e precisa poder ser autor) e
+          -- `aluno_id` e composta para alunos -- as duas RESTRICT.
+          DELETE FROM movimentos_de_credito WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo')
+             OR aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%@playck-tests.demo' AND u.email NOT LIKE '%$RUN_ID@playck-tests.demo');
           DELETE FROM eventos_de_ocupacao WHERE acao_id IN (SELECT id FROM acoes_administrativas WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo'));
           DELETE FROM acoes_administrativas WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
           DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
@@ -276,6 +304,7 @@ jobs:
           ALTER TABLE eventos_de_ocupacao ENABLE TRIGGER eventos_append_only;
           ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
           ALTER TABLE eventos_de_matricula ENABLE TRIGGER eventos_matricula_append_only;
+          ALTER TABLE movimentos_de_credito ENABLE TRIGGER movimentos_append_only;
           COMMIT;
           SQL
 
@@ -680,6 +709,21 @@ jobs:
           -- SPEC-031/D22/9: a TERCEIRA da familia. Corrigir so um bloco deixaria
           -- o fluxo funcional verde e o cleanup final abortando.
           ALTER TABLE eventos_de_matricula DISABLE TRIGGER eventos_matricula_append_only;
+          -- SPEC-033: a QUARTA da familia append-only. O ledger da carteira
+          -- aponta para acao, ocupacao, aluno e usuario -- as quatro com
+          -- RESTRICT -- e sem desligar a trigger dele o DELETE e recusado
+          -- antes de a FK sequer ser avaliada.
+          ALTER TABLE movimentos_de_credito DISABLE TRIGGER movimentos_append_only;
+          -- SPEC-033: o ledger PRIMEIRO, como no bloco de residuos. O
+          -- smoke agora lanca credito e reserva consumindo, entao a empresa
+          -- do run TEM movimentos -- nao e caso latente.
+          DELETE FROM movimentos_de_credito WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
+                OR origem_turma_id = '$CLASS_ID');
+          DELETE FROM movimentos_de_credito WHERE company_id = '$COMPANY_ID';
+          DELETE FROM movimentos_de_credito WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%-$RUN_ID@playck-tests.demo' OR email = 'ci-$RUN_ID@playck-tests.demo')
+             OR aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%-$RUN_ID@playck-tests.demo');
           DELETE FROM eventos_de_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
@@ -697,7 +741,8 @@ jobs:
            WHERE a.company_id = '$COMPANY_ID'
               OR a.autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%-$RUN_ID@playck-tests.demo' OR email = 'ci-$RUN_ID@playck-tests.demo')
               OR (NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id)
-                  AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id));
+                  AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id)
+                  AND NOT EXISTS (SELECT 1 FROM movimentos_de_credito c WHERE c.acao_id = a.id));
           DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
           DELETE FROM convites_aluno WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
@@ -731,6 +776,7 @@ jobs:
           ALTER TABLE eventos_de_ocupacao ENABLE TRIGGER eventos_append_only;
           ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
           ALTER TABLE eventos_de_matricula ENABLE TRIGGER eventos_matricula_append_only;
+          ALTER TABLE movimentos_de_credito ENABLE TRIGGER movimentos_append_only;
           COMMIT;
           SQL
 
