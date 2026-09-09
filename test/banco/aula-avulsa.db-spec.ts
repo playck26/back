@@ -162,6 +162,24 @@ describe('SPEC-039 — a aula particular no banco', () => {
     ).rejects.toThrow(/ocupacoes_professor_so_em_avulso/);
   });
 
+  it('INV-105 — o mesmo professor em horários DIFERENTES é ACEITO', async () => {
+    // **O caso que faltava, e a revisao adversarial achou.** Sem ele, uma
+    // `EXCLUDE` que recusasse TODA segunda linha do mesmo professor -- sem
+    // olhar a hora nenhuma -- passaria neste arquivo inteiro: todos os outros
+    // casos so provam RECUSA. A dimensao de TEMPO nao tinha prova.
+    //
+    // E um professor que da tres aulas no mesmo dia e o caso NORMAL do
+    // produto, nao uma borda.
+    await ocupar(QUADRA_1, '08:00', PROF_A);
+    await ocupar(QUADRA_2, '09:00', PROF_A);
+    await ocupar(QUADRA_1, '10:00', PROF_A);
+    const [{ n }] = await db.$queryRawUnsafe<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM ocupacoes_quadra
+        WHERE company_id = '${EMPRESA_A}' AND professor_id = '${PROF_A}'`,
+    );
+    expect(n).toBe(3);
+  });
+
   it('INV-105 — o MESMO professor em QUADRAS DIFERENTES, mesmo horário: recusado', async () => {
     // **Este é o caso que distingue as duas travas.** Na mesma quadra, a
     // `no_overlap_por_quadra` já recusaria — e o teste ficaria verde pela
@@ -228,6 +246,38 @@ describe('SPEC-039 — a aula particular no banco', () => {
     await expect(
       q(`DELETE FROM professores WHERE id = '${PROF_A}'`),
     ).rejects.toThrow(/ocupacoes_professor_fkey/);
+  });
+
+  it('LIM-039f: a ocupacao de TURMA e INVISIVEL para a trava -- lacuna DECLARADA', async () => {
+    // **Este caso nao celebra um acerto: ele fixa uma lacuna conhecida**, e a
+    // revisao adversarial foi quem a apontou.
+    //
+    // A ocorrencia de turma sabe do professor pela TURMA, e o
+    // `ocupacoes_professor_so_em_avulso` proibe `professor_id` na linha dela.
+    // Logo a EXCLUDE nao a enxerga: o mesmo professor cabe numa aula de turma
+    // e numa aula particular ao mesmo tempo. **Ensaiado contra o banco, nao
+    // deduzido.**
+    //
+    // Quem fecha isto e o gate da TASK-002, na aplicacao. **O dia em que
+    // alguem fechar no BANCO, este teste fica vermelho** -- e e assim que ele
+    // avisa que a LIM-039f caiu e a spec precisa mudar junto.
+    await q(
+      `UPDATE turmas SET professor_id = '${PROF_A}' WHERE id = '${TURMA}'`,
+    );
+    await q(
+      `INSERT INTO ocupacoes_quadra
+         (id, company_id, quadra_id, data, hora_inicio, hora_fim, origem_tipo,
+          origem_turma_id, updated_at)
+       VALUES ('${proximo()}','${EMPRESA_A}','${QUADRA_1}','2035-06-01','22:00','23:00',
+               'TURMA','${TURMA}',now())`,
+    );
+    await ocupar(QUADRA_2, '22:00', PROF_A);
+
+    const [{ n }] = await db.$queryRawUnsafe<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM ocupacoes_quadra
+        WHERE company_id = '${EMPRESA_A}' AND hora_inicio = '22:00'`,
+    );
+    expect(n).toBe(2);
   });
 
   it('SABOTAGEM: sem a `no_overlap_por_professor`, o professor fica em duas quadras', async () => {
