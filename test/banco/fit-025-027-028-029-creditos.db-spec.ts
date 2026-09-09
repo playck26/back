@@ -273,6 +273,72 @@ describe('FIT-027 — as duas camadas, e a sabotagem que prova a de baixo', () =
     );
     expect(await saldo()).toBe(0);
   });
+
+  it('SABOTAGEM (b): sem o INDICE, o mesmo consumo e estornado DUAS vezes', async () => {
+    /**
+     * A spec pede DUAS sabotagens para o FIT-027, e so a (a) existia. Esta e a
+     * (b): *"tirar o indice E a trava e a prova cai com saldo dobrado"*.
+     *
+     * **A (a) e a (b) provam camadas diferentes.** A (a) tira a trava e mostra
+     * o `CHECK` do saldo segurando um debito a mais. Esta tira o INDICE
+     * PARCIAL e mostra o que so ele impede: o mesmo consumo estornado duas
+     * vezes, creditando o dobro. O `CHECK` nao alcanca — somar credito nunca
+     * viola `saldo >= 0`.
+     *
+     * **Dentro de uma transacao que sempre volta atras**, pela mesma razao da
+     * sabotagem do FIT-030: as linhas indevidas nao podem ser apagadas (o
+     * ledger e append-only), entao limpar no `finally` nao funciona. DDL no
+     * Postgres e transacional; o `ROLLBACK` devolve o indice E some com as
+     * linhas.
+     */
+    await levarSaldoA(30_000);
+    const oc = await ocupacaoAvulsa('2033-06-10');
+    const consumo = await consumirEm(oc, 8000);
+    const antes = await saldo();
+
+    const VOLTA = 'rollback-da-sabotagem';
+    let saldoSemOIndice = -1;
+    await semear
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          'DROP INDEX ux_movimentos_devolucao_por_consumo',
+        );
+        for (let i = 0; i < 2; i++) {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id,movimento_origem_id)
+             VALUES (gen_random_uuid(),'${E}','${ALUNO}','devolucao',8000,'${UADMIN}','${ACAO}','${oc}','${consumo}')`,
+          );
+        }
+        const [l] = await tx.$queryRawUnsafe<{ saldo_creditos: number }[]>(
+          `SELECT saldo_creditos FROM alunos WHERE id = '${ALUNO}'`,
+        );
+        saldoSemOIndice = l.saldo_creditos;
+        throw new Error(VOLTA);
+      })
+      .catch((e: Error) => {
+        if (e.message !== VOLTA) throw e;
+      });
+
+    // **O dano que so o indice impede, medido:** um consumo de 8000 e DOIS
+    // estornos de 8000 -- o saldo sobe 16000 sobre o de depois da reserva, e
+    // fica 8000 acima do que era ANTES dela. Ou seja: quadra usada, credito
+    // devolvido, e mais um de brinde.
+    expect(saldoSemOIndice).toBe(antes + 2 * 8000);
+    expect(saldoSemOIndice).toBe(30_000 + 8000);
+    // E o rollback devolveu tudo: indice de pe, saldo intacto.
+    expect(await saldo()).toBe(antes);
+
+    // Com o indice de volta, a segunda devolucao e recusada.
+    const dev = () =>
+      semear.$executeRawUnsafe(
+        `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id,movimento_origem_id)
+         VALUES (gen_random_uuid(),'${E}','${ALUNO}','devolucao',8000,'${UADMIN}','${ACAO}','${oc}','${consumo}')`,
+      );
+    await dev();
+    await expect(dev()).rejects.toThrow(
+      /ux_movimentos_devolucao_por_consumo|23505/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
