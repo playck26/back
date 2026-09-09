@@ -251,8 +251,16 @@ describe('FIT-001 (d) — cancelar × re-reservar o mesmo slot (SPEC-032/INV-064
   }
 
   const caminhos: [Caminho, number, number][] = [
-    ['aluno cancela', 204, 110],
-    ['admin cancela', 204, 120],
+    // SPEC-039: `POST /bookings/:id/cancel` deixou de responder `204` e passou
+    // a `200` com `{ creditoDevolvidoCentavos }`, para a tela do aluno poder
+    // dizer se o credito voltou.
+    //
+    // **Este arquivo foi o UNICO lugar que a minha conferencia nao alcancou.**
+    // Antes de mudar o contrato eu procurei quem dependia do `204` em
+    // `test/*.e2e-spec.ts` e nos dois clientes -- e nao em `test/fit/`. O
+    // `fit-critical` reprovou a PR, que e exatamente o trabalho dele.
+    ['aluno cancela', 200, 110],
+    ['admin cancela', 200, 120],
     ['admin marca cancelado', 200, 130],
   ];
 
