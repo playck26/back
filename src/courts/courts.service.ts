@@ -1256,8 +1256,13 @@ export class CourtsService {
     // ser, também, o papel.
     papelDoAutor: PapelDoAutor,
     alunoIdScope?: string,
-  ): Promise<void> {
+  ): Promise<{ creditoDevolvidoCentavos: number | null }> {
     const agora = new Date();
+    // Preenchido DENTRO da transacao; lido depois dela, de proposito. Se a
+    // transacao voltar atras, `traduzirRecusaDeCancelamento` lanca e este
+    // valor nunca chega a ser devolvido -- nao ha caminho que responda "voltou
+    // R$ X" sobre uma devolucao que nao ficou gravada.
+    let devolvido: number | null = null;
 
     /**
      * **Passo 2 (SPEC-033): ler SEM trava, e só para descobrir o `aluno_id`.**
@@ -1491,7 +1496,7 @@ export class CourtsService {
          * e o evento, e nenhum movimento — **a ausência dele é a resposta**
          * (AC-010).
          */
-        await this.devolverCarteira(tx, {
+        devolvido = await this.devolverCarteira(tx, {
           companyId,
           ocupacaoId: id,
           autorId,
@@ -1507,6 +1512,7 @@ export class CourtsService {
       // servidor transformaria contingência planejada em incidente.
       traduzirRecusaDeCancelamento(erro);
     }
+    return { creditoDevolvidoCentavos: devolvido };
   }
 
   /**
@@ -1520,6 +1526,16 @@ export class CourtsService {
    * `ux_movimentos_devolucao_por_consumo`; esta busca é o que impede a
    * tentativa, e o índice é o que impede o resultado.
    */
+  /**
+   * SPEC-039 — devolve **quanto** voltou, e nao mais `void`.
+   *
+   * O aluno cancelava e a tela nao tinha como dizer se o credito voltou: a
+   * rota respondia `204`, sem corpo. Dizer "o saldo voltara" sempre seria
+   * mentira — reserva de turma e reserva sem aluno nao devolvem nada, e a
+   * ausencia do movimento e a resposta (AC-010).
+   *
+   * `null` = nao havia consumo ativo, ninguem foi creditado.
+   */
   private async devolverCarteira(
     tx: Prisma.TransactionClient,
     args: {
@@ -1528,14 +1544,14 @@ export class CourtsService {
       autorId: string;
       registrador: RegistradorDeAcao;
     },
-  ): Promise<void> {
+  ): Promise<number | null> {
     const consumo = await this.creditos.consumoAtivoDaOcupacao(
       tx,
       args.companyId,
       args.ocupacaoId,
     );
     if (!consumo) {
-      return;
+      return null;
     }
     const acaoId = args.registrador.idDaAcao;
     if (!acaoId) {
@@ -1552,6 +1568,9 @@ export class CourtsService {
       ocupacaoId: args.ocupacaoId,
       movimentoOrigemId: consumo.id,
     });
+    // O valor do CONSUMO, que e exatamente o que a devolucao repos -- e nao um
+    // numero recalculado aqui. Duas contas para o mesmo fato divergem.
+    return consumo.valorCentavos;
   }
 
   // CON-006.3 (SPEC-006, MOD-006 via PaymentStatusController): único

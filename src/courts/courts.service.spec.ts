@@ -1738,7 +1738,10 @@ describe('CourtsService', () => {
 
         await expect(
           service.cancelBooking('c1', 'o1', 'autor-1', 'aluno', 'a1'),
-        ).resolves.toBeUndefined();
+          // SPEC-039: a rota deixou de ser `204` e passou a dizer quanto voltou.
+          // Recancelar o que ja esta cancelado nao devolve nada -- e `null` diz
+          // isso melhor que `undefined`, que so dizia "a funcao nao retorna".
+        ).resolves.toEqual({ creditoDevolvidoCentavos: null });
         expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       });
     });
@@ -2061,7 +2064,8 @@ describe('CourtsService', () => {
 
       await expect(
         service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
-      ).resolves.toBeUndefined();
+        // SPEC-039 — ver o comentario do caso irmao acima.
+      ).resolves.toEqual({ creditoDevolvidoCentavos: null });
       expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
     });
   });

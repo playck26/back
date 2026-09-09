@@ -251,8 +251,16 @@ describe('FIT-001 (d) — cancelar × re-reservar o mesmo slot (SPEC-032/INV-064
   }
 
   const caminhos: [Caminho, number, number][] = [
-    ['aluno cancela', 204, 110],
-    ['admin cancela', 204, 120],
+    // SPEC-039: `POST /bookings/:id/cancel` deixou de responder `204` e passou
+    // a `200` com `{ creditoDevolvidoCentavos }`, para a tela do aluno poder
+    // dizer se o credito voltou.
+    //
+    // **Este arquivo foi o UNICO lugar que a minha conferencia nao alcancou.**
+    // Antes de mudar o contrato eu procurei quem dependia do `204` em
+    // `test/*.e2e-spec.ts` e nos dois clientes -- e nao em `test/fit/`. O
+    // `fit-critical` reprovou a PR, que e exatamente o trabalho dele.
+    ['aluno cancela', 200, 110],
+    ['admin cancela', 200, 120],
     ['admin marca cancelado', 200, 130],
   ];
 
@@ -302,6 +310,29 @@ describe('FIT-001 (d) — cancelar × re-reservar o mesmo slot (SPEC-032/INV-064
         const problemas: string[] = [];
         if (rCancel.status !== codigoCancel)
           problemas.push(`cancel=${rCancel.status}`);
+        // **O CORPO, e nao so o codigo (SPEC-039).** A revisao adversarial
+        // apontou que nada atravessava HTTP para ver a resposta: apagar o
+        // `return` do controller deixava a suite inteira verde, e a tela do
+        // aluno receberia `undefined` onde espera o valor devolvido.
+        //
+        // Estas reservas do FIT-001 nao sao pagas com credito, entao a
+        // devolucao e `null` -- e `null` e justamente o que distingue "nao
+        // havia o que devolver" de "devolveu zero". Os dois caminhos de
+        // cancelamento passam por aqui; o terceiro (`marca cancelado`) e outra
+        // rota e nao devolve este corpo.
+        if (caminho !== 'admin marca cancelado') {
+          const corpo = rCancel.body as
+            { creditoDevolvidoCentavos?: number | null } | undefined;
+          if (!corpo || !('creditoDevolvidoCentavos' in corpo)) {
+            problemas.push(
+              `cancel sem creditoDevolvidoCentavos: ${JSON.stringify(rCancel.body)}`,
+            );
+          } else if (corpo.creditoDevolvidoCentavos !== null) {
+            problemas.push(
+              `devolucao esperada null, veio ${String(corpo.creditoDevolvidoCentavos)}`,
+            );
+          }
+        }
         if (rNova.status !== 201 && rNova.status !== 409)
           problemas.push(`nova=${rNova.status}${detalhe(rNova)}`);
         if (ativas > 1) problemas.push(`ativas=${ativas}`);

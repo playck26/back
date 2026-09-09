@@ -359,8 +359,16 @@ jobs:
           [ "$CONFLICT_RES" = "409" ] || (echo "esperado 409, veio $CONFLICT_RES" && exit 1)
 
           echo "--- cancelar libera o slot (AC-003) ---"
-          curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" | grep -q 204
+          # SPEC-039: era `| grep -q 204`. Duas coisas mudaram aqui.
+          #
+          # 1. A rota passou a responder `200` com
+          #    `{ creditoDevolvidoCentavos }` -- ver API_CONTRACTS.md.
+          # 2. O `grep -q` FALHA SEM MENSAGEM, e este arquivo ja registra na
+          #    linha ~135 que isso custou caro uma vez. Agora e comparacao
+          #    explicita, com o codigo recebido no texto do erro.
+          CANCEL_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
+            -H "Authorization: Bearer $ACCESS_TOKEN")
+          [ "$CANCEL_RES" = "200" ] || (echo "esperado 200, veio $CANCEL_RES" && exit 1)
           REBOOK_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/v1/bookings \
             -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
             -d "{\"quadraId\":\"$QUADRA_ID\",\"data\":\"$SMOKE_DATA\",\"horaInicio\":\"09:00\",\"horaFim\":\"10:00\",\"alunoId\":\"$STUDENT_ID\"}")
@@ -569,10 +577,20 @@ jobs:
             -H "Authorization: Bearer $ALUNO_TOKEN" \
             | jq -e '. == []'
 
-          echo "--- aluno cancela a própria reserva (204) ---"
+          echo "--- aluno cancela a propria reserva (200, SPEC-039) ---"
+          # E aqui o CORPO importa: esta reserva do aluno nao foi paga com
+          # credito, entao a devolucao tem de vir `null`. `0` seria uma
+          # devolucao de valor zero, e a tela do aluno usa essa diferenca
+          # para decidir entre "seu credito voltou" e ficar calada.
+          CANCEL_ALUNO_BODY=$(curl -s -X POST "http://localhost:3000/api/v1/bookings/$ALUNO_BOOKING_ID/cancel" \
+            -H "Authorization: Bearer $ALUNO_TOKEN")
           CANCEL_ALUNO_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$ALUNO_BOOKING_ID/cancel" \
             -H "Authorization: Bearer $ALUNO_TOKEN")
-          [ "$CANCEL_ALUNO_RES" = "204" ] || (echo "esperado 204, veio $CANCEL_ALUNO_RES" && exit 1)
+          # A SEGUNDA chamada e idempotente (a reserva ja esta cancelada) e e
+          # ela que confere o codigo; a primeira e a que traz o corpo.
+          [ "$CANCEL_ALUNO_RES" = "200" ] || (echo "esperado 200, veio $CANCEL_ALUNO_RES" && exit 1)
+          echo "$CANCEL_ALUNO_BODY" | jq -e '.creditoDevolvidoCentavos == null' \
+            || (echo "esperado creditoDevolvidoCentavos null, veio: $CANCEL_ALUNO_BODY" && exit 1)
 
           echo "--- aluno NÃO consegue cancelar reserva de outro aluno (403) ---"
           CANCEL_OUTRO_RES=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:3000/api/v1/bookings/$BOOKING_ID/cancel" \
