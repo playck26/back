@@ -232,6 +232,8 @@ model Professor {
   /// tarde porque, ate a agenda do professor existir, nada apontava para a
   /// ficha dele carregando a empresa junto.
   disponibilidades DisponibilidadeProfessor[]
+  /// SPEC-039 — as aulas particulares deste professor.
+  ocupacoes        OcupacaoQuadra[]
 
   @@unique([companyId, id], map: "professores_company_id_id_key")
   @@index([companyId])
@@ -420,6 +422,11 @@ model OcupacaoQuadra {
   horaFim         DateTime        @map("hora_fim") @db.Time
   origemTipo      OrigemTipo      @map("origem_tipo")
   origemTurmaId   String?         @map("origem_turma_id") @db.Uuid
+  /// SPEC-039 — a aula particular. **Nao e um `origem_tipo` novo** (D1): a
+  /// ocupacao continua `AVULSO`, e o professor e ATRIBUTO dela. Um terceiro
+  /// valor no enum quebraria a FK de 4 colunas da carteira e o
+  /// `CHECK ocupacoes_valor_por_origem` -- ver o comentario da migration.
+  professorId     String?         @map("professor_id") @db.Uuid
   alunoId         String?         @map("aluno_id") @db.Uuid
   statusPagamento StatusPagamento @default(pendente_pagamento) @map("status_pagamento")
   /// SPEC-011: quanto foi cobrado, congelado na criação. **Nulo para
@@ -457,6 +464,10 @@ model OcupacaoQuadra {
   /// nisso que a SPEC-025 vazou nota de turma entre empresas.
   quadra              Quadra               @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_quadra_fkey")
   aluno               Aluno?               @relation(fields: [alunoId], references: [id])
+  /// FK COMPOSTA (DEF-024). `Restrict` de proposito: apagar professor nao pode
+  /// apagar aula prestada e paga com credito -- difere da
+  /// `disponibilidades_professor`, que e configuracao e cai por cascata.
+  professor           Professor?           @relation(fields: [companyId, professorId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "ocupacoes_professor_fkey")
   movimentosDeCredito MovimentoDeCredito[]
   pedido              PedidoReserva?       @relation(fields: [pedidoId], references: [id])
   // `onDelete: Restrict` declarado explicitamente para casar com o que a
