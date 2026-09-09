@@ -793,6 +793,90 @@
         ]
       }
     },
+    "/api/v1/teachers/{id}/disponibilidade": {
+      "put": {
+        "operationId": "TeachersController_definirDisponibilidade",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinirDisponibilidadeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DiaDisponibilidadeResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "teachers"
+        ]
+      },
+      "get": {
+        "operationId": "TeachersController_lerDisponibilidade",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DiaDisponibilidadeResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "teachers"
+        ]
+      }
+    },
     "/api/v1/teachers/{id}": {
       "get": {
         "operationId": "TeachersController_findOne",
@@ -5326,6 +5410,75 @@
           "fotoUrl",
           "createdAt",
           "senhaTemporaria"
+        ]
+      },
+      "DiaDisponibilidadeDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "08:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "12:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "horaInicio",
+          "horaFim"
+        ]
+      },
+      "DefinirDisponibilidadeDto": {
+        "type": "object",
+        "properties": {
+          "dias": {
+            "maxItems": 7,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiaDisponibilidadeDto"
+            }
+          }
+        },
+        "required": [
+          "dias"
+        ]
+      },
+      "DiaDisponibilidadeResponseDto": {
+        "type": "object",
+        "properties": {
+          "diaSemana": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "0 = domingo"
+          },
+          "indisponivel": {
+            "type": "boolean",
+            "description": "true quando o professor não atende no dia"
+          },
+          "horaInicio": {
+            "type": "string",
+            "nullable": true,
+            "example": "08:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "nullable": true,
+            "example": "12:00"
+          }
+        },
+        "required": [
+          "diaSemana",
+          "indisponivel",
+          "horaInicio",
+          "horaFim"
         ]
       },
       "UpdateTeacherDto": {

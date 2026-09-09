@@ -54,6 +54,9 @@ export interface TxMock {
   turmaAluno: { findFirst: jest.Mock };
   faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
   configOperacaoEmpresa: { findUnique: jest.Mock };
+  // SPEC-040/AC-001: o `PUT` apaga a semana e recria DENTRO da mesma
+  // transacao — estado parcial aqui seria metade da grade nova.
+  disponibilidadeProfessor: { deleteMany: jest.Mock; createMany: jest.Mock };
 }
 
 export interface PrismaMock {
@@ -111,6 +114,10 @@ export interface PrismaMock {
     create: jest.Mock;
     findUnique: jest.Mock;
   };
+  // SPEC-040: `professor.findFirst` e o portao da AC-006 (empresa alheia
+  // devolve 404), e a leitura da semana e um `findMany` so.
+  professor: { findFirst: jest.Mock };
+  disponibilidadeProfessor: { findMany: jest.Mock };
   tx: TxMock;
   $transaction: jest.Mock;
 }
@@ -156,6 +163,10 @@ export function buildPrismaMock(): PrismaMock {
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
+    disponibilidadeProfessor: {
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
 
   const mock: PrismaMock = {
@@ -190,6 +201,11 @@ export function buildPrismaMock(): PrismaMock {
       create: jest.fn(),
       findUnique: jest.fn(),
     },
+    // SPEC-040 — padrao: o professor E da empresa (o caso normal), e a
+    // semana esta vazia. Quem testa a AC-006 sobrescreve com `null`, que e
+    // exatamente o gesto que a assercao de 404 precisa deixar visivel.
+    professor: { findFirst: jest.fn().mockResolvedValue({ id: 'prof-1' }) },
+    disponibilidadeProfessor: { findMany: jest.fn().mockResolvedValue([]) },
     ocupacaoQuadra: {
       groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn().mockResolvedValue([]),

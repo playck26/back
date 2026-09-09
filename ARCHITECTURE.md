@@ -405,8 +405,15 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**30 tabelas e 14 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-08**), **32 migrations**.
+**31 tabelas e 14 enums** no `schema.prisma` (conferido por
+`grep -c '^model'` / `'^enum'` em **2026-09-09**), **33 migrations**.
+
+> **A 33ª é a `20260909120000_spec040_disponibilidade_professor`**, e ao
+> contrário da 32ª ela **não** é SQL manual por necessidade — é por disciplina:
+> o `migrate diff` cobra as **ações referenciais**, não só as colunas, e duas
+> divergências só apareceram aí (`onUpdate: NoAction` na FK composta e o
+> `ON DELETE RESTRICT ON UPDATE CASCADE` da FK de empresa, copiado do molde).
+> Conferido contra banco criado do zero: `No difference detected`.
 
 > **A 32ª entrou em produção em 2026-09-08**, e a prova é o log do deployment,
 > não o merge. `20260908120000_spec033_creditos_carteira` (SPEC-033/TASK-001)
@@ -481,6 +488,7 @@ a replicar:
 | `acoes_administrativas` | MOD-010 | **SPEC-032.** O **gesto humano**: uma por comando lógico que escreve. Append-only por trigger. A FK do autor **não** carrega a empresa, de propósito — `usuarios.company_id` é nulo para `super_admin`, e uma FK composta o impediria de ser autor de qualquer coisa (LIM-032f) |
 | `eventos_de_ocupacao` | MOD-010 | **SPEC-032.** O **alvo técnico**: N por ação, um por ocupação afetada. A cisão entre as duas existe porque um evento não pode apontar para 40 ocorrências ao mesmo tempo — a v1 da spec tentava, e foi reprovada por isso. `transicao_id` casa com o da ocupação e é o que a trigger confere no `COMMIT` |
 | `movimentos_de_credito` | **MOD-011** | **SPEC-033.** O **ledger da carteira**, append-only. O saldo em `alunos.saldo_creditos` é escrito **pela trigger do ledger**, nunca pelo serviço (INV-071), e a guarda cobre `INSERT` **e** `UPDATE` — a primeira versão só cobria `UPDATE`, e a validação cruzada inseriu um aluno com saldo 12345 e zero movimentos. Duas colunas `GENERATED ALWAYS … STORED` servem de discriminante constante em FK composta: é o que faz a devolução só apontar para um **consumo** do mesmo aluno, ocupação e valor (D5), e o que impede consumo em ocupação de **turma** (INV-097). **Únicas colunas geradas do projeto** — e é por elas que a migration desta spec é SQL manual: o `migrate diff` as transforma num `DEFAULT CASE …` que o Postgres recusa com `0A000` |
+| `disponibilidades_professor` | MOD-003 | **SPEC-040.** Quando cada professor atende: uma linha por `(professor, dia_semana)`. E da **ficha**, nao da conta — `professores.usuario_id` e nulavel (INV-014) e a maioria nao tem login. **Nao tem coluna de flag**, e a ausencia dela e a decisao (D6): o molde `horarios_funcionamento` tem `fechado` porque la ha HERANCA e a quadra precisa SOBREPOR um dia aberto herdado; aqui nao ha heranca, entao a flag daria DUAS representacoes de "nao atende" e a SPEC-039 teria de lembrar de filtrar. Primeira tabela a apontar para `professores` com a empresa junto — o `UNIQUE (company_id, id)` de `professores` nasceu nesta migration, sem ele a FK composta morre com `42830` |
 | `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
 **Constraints que o Prisma não expressa** (escritas à mão nas migrations, e
@@ -593,8 +601,8 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**84 caminhos, 118 operações HTTP** (conferido em **2026-09-08** contra o
-`openapi.json`, depois da SPEC-033). As duas medidas aparecem porque "rotas" é
+**85 caminhos, 120 operações HTTP** (conferido em **2026-09-09** contra o
+`openapi.json`, depois da SPEC-040). As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -609,6 +617,14 @@ para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
 `401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
 `DELETE`: o ledger é append-only, e rota que não existe não precisa ser
 defendida.
+
+**As duas rotas da disponibilidade** (SPEC-040): `PUT`/`GET
+/teachers/:id/disponibilidade`. Elas são **assimétricas de propósito** — o
+`GET` devolve sempre os sete dias, com `indisponivel: true` calculado nos que
+não têm linha (a tela não deveria ter de saber que ausência significa algo); o
+`PUT` recebe **só os dias atendidos**, porque não existe flag no modelo (D6).
+`PUT` e não `PATCH`: a grade é editada inteira, e substituição total evita o
+estado meio-salvo.
 
 A fonte é o `openapi.json` **gerado do código**, com gate de CI
 (`git diff --exit-code openapi.json`) que falha se ele ficar stale —

@@ -6,6 +6,31 @@ name: DB Migrate & Seed (manual)
 # alcançar a porta 5432 do Neon; os runners do GitHub Actions não têm essa
 # restrição. DATABASE_URL vem de um secret do repositório, nunca aparece
 # em log.
+#
+# ## NUNCA rode DOIS destes ao mesmo tempo -- e `gh run cancel` NAO basta
+#
+# **Custou um canario vermelho em 2026-09-09, na SPEC-040.** Um run foi
+# disparado no ref errado e cancelado 19 s depois. O `cancel` marcou o run e
+# matou o job `migrate` **no meio do smoke** -- mas os jobs `fit-*` ja tinham
+# comecado, e o GitHub os deixou correr ate o fim: o run ficou `in_progress`
+# por mais SEIS MINUTOS depois de "cancelado".
+#
+# Resultado: dois `FIT-001 Neon` rodando contra o MESMO banco e o MESMO
+# cenario. Um apagava `eventos_de_ocupacao` enquanto o outro os criava, e o
+# `limparEmpresa` do segundo morreu com
+# `23001 ... eventos_ocupacao_fkey on table eventos_de_ocupacao`.
+#
+# **O erro acusa uma FK que nao tem defeito nenhum**, e essa e a armadilha:
+# quem ler o log vai procurar o problema na ordem da limpeza, que esta certa.
+#
+# Antes de disparar, confira que nao ha outro run vivo:
+#
+# ```
+# gh run list --workflow=db-migrate.yml --limit 3
+# ```
+#
+# E depois de um `gh run cancel`, ESPERE o run sair de `in_progress` de
+# verdade (`gh run watch <id>`) -- "cancelado" aqui nao quer dizer "parado".
 on:
   workflow_dispatch:
     inputs:

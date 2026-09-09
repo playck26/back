@@ -117,10 +117,11 @@ model Empresa {
   contratos        ContratoDaEmpresa[]
   avaliacoesDeAula AvaliacaoDeAula[]
 
-  presencas           Presenca[]
-  chamadas            Chamada[]
-  acaoAdministrativas AcaoAdministrativa[]
-  faltasAvisadas      FaltaAvisada[]
+  presencas                 Presenca[]
+  chamadas                  Chamada[]
+  acaoAdministrativas       AcaoAdministrativa[]
+  faltasAvisadas            FaltaAvisada[]
+  disponibilidadeProfessors DisponibilidadeProfessor[]
 
   @@map("empresas")
 }
@@ -227,6 +228,12 @@ model Professor {
   usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
   turmas  Turma[]
 
+  /// SPEC-040 — alvo da FK composta de `disponibilidades_professor`. Entrou
+  /// tarde porque, ate a agenda do professor existir, nada apontava para a
+  /// ficha dele carregando a empresa junto.
+  disponibilidades DisponibilidadeProfessor[]
+
+  @@unique([companyId, id], map: "professores_company_id_id_key")
   @@index([companyId])
   @@map("professores")
 }
@@ -1235,4 +1242,38 @@ enum TipoMovimentoCredito {
   devolucao
 
   @@map("tipo_movimento_credito")
+}
+
+/// SPEC-040 — a semana em que o professor atende.
+///
+/// **Mesma forma de `HorarioFuncionamento`**, com um dono diferente: uma
+/// linha por `(professor, dia)`, com as horas ou a flag de indisponivel. As
+/// quatro garantias (dia valido, coerencia, hora cheia, unicidade) sao
+/// `CHECK`/indice no banco, nao promessa de aplicacao.
+///
+/// **Ausencia de linha e "nao atende"** (D3). Nao ha heranca da empresa aqui,
+/// ao contrario do horario da quadra: herdar faria todo professor ja
+/// cadastrado nascer disponivel o dia inteiro, o que e falso e abriria agenda
+/// na SPEC-039 para quem nao combinou nada.
+model DisponibilidadeProfessor {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  professorId String   @map("professor_id") @db.Uuid
+  /// 0 = domingo, como `Date.getDay()`.
+  diaSemana   Int      @map("dia_semana") @db.SmallInt
+  /// NOT NULL, e sem `indisponivel`: a D3 removeu a heranca, entao linha
+  /// existe = atende. Ver o comentario da migration.
+  horaInicio  DateTime @map("hora_inicio") @db.Time(0)
+  horaFim     DateTime @map("hora_fim") @db.Time(0)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  empresa   Empresa   @relation(fields: [companyId], references: [id], map: "disponibilidades_empresa_fkey")
+  /// FK COMPOSTA (DEF-024): sem `company_id` na chave, a agenda de um
+  /// professor da empresa A poderia apontar para a ficha da B.
+  professor Professor @relation(fields: [companyId, professorId], references: [companyId, id], onDelete: Cascade, onUpdate: NoAction, map: "disponibilidades_professor_fkey")
+
+  @@unique([companyId, professorId, diaSemana], map: "disponibilidades_professor_dia_key")
+  @@index([companyId, professorId], map: "disponibilidades_professor_idx")
+  @@map("disponibilidades_professor")
 }
