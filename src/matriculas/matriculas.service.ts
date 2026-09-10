@@ -9,6 +9,10 @@ import { StudentsService } from '../people/students.service';
 import { formatDateOnly, hojeNoFusoDoClube } from '../courts/date-time.util';
 import type { CriarMatriculaDto } from './dto/matricula.dto';
 import type { MatriculaResponseDto } from './dto/matricula-response.dto';
+import type {
+  VencimentoResponseDto,
+  VencimentosResponseDto,
+} from './dto/vencimentos-response.dto';
 
 /**
  * SPEC-037 — a matrícula: **esta pessoa contratou este plano, por este prazo,
@@ -40,6 +44,16 @@ import type { MatriculaResponseDto } from './dto/matricula-response.dto';
  * escrito por extenso, e o gate o leu como um codigo chamado `X`. Escrever a
  * regra sem escrever a forma dela e o conserto.
  */
+/**
+ * SPEC-045 — o quanto de histórico a lista de vencimentos varre.
+ *
+ * Quem venceu há dois anos não é pendência de renovação, é ex-aluno. Sem o
+ * corte, a consulta arrastaria a tabela inteira para desenhar uma tela.
+ * Declarado como constante e não enterrado na consulta, porque é um **recorte**
+ * — e recorte silencioso vira "a lista não mostra tudo" na boca de quem usa.
+ */
+const DIAS_DE_HISTORICO = 365;
+
 @Injectable()
 export class MatriculasService {
   constructor(
@@ -122,6 +136,16 @@ export class MatriculasService {
       inicio: formatDateOnly(m.inicio),
       fim: formatDateOnly(m.fim),
       contratoVersao: m.contratoVersao,
+      // SPEC-045/AC-009 — **a data sozinha não cria urgência.** "até 12 de
+      // outubro" e "vence em 5 dias" são a mesma informação, e só a segunda
+      // faz alguém agir. Mesma lição do `70%` da SPEC-036 e da contagem de
+      // conflitos da SPEC-035: o número bruto não diz o que fazer.
+      //
+      // Calculado aqui e não na tela, porque "hoje" da tela é o relógio do
+      // navegador — que está no fuso de quem viaja, e não no do clube.
+      diasRestantes: Math.round(
+        (m.fim.getTime() - hojeNoFusoDoClube().getTime()) / 86_400_000,
+      ),
       linkPagamentoUrl: m.plano?.linkPagamentoUrl ?? linkDaEmpresa ?? null,
     };
   }
@@ -252,6 +276,140 @@ export class MatriculasService {
       this.linkDaEmpresa(companyId),
     ]);
     return linhas.map((m) => this.paraResposta(m, link));
+  }
+
+  /**
+   * SPEC-045/REQ-001 — **quem vence, e quem já venceu.**
+   *
+   * ## A unidade é o ALUNO, e a resposta ingênua está errada (D2)
+   *
+   * A LIM-037c aceita sobreposição de propósito — *"upgrade de plano no meio
+   * do mês é o caso normal"*. Uma consulta por `fim BETWEEN hoje AND hoje+N`
+   * devolveria como **vencida** a matrícula antiga de quem acabou de fazer
+   * upgrade, e o gestor ligaria cobrando renovação de quem já renovou.
+   *
+   * Então a pergunta é a mesma de `minhaMatricula`: **este aluno tem matrícula
+   * vigente hoje?** E, para quem tem, **existe alguma que continue depois
+   * dela?**
+   *
+   * ## Uma consulta, não uma por aluno
+   *
+   * Carrega as matrículas relevantes da empresa de uma vez e agrupa em
+   * memória. O N+1 é o erro que este projeto já baniu três vezes, e aqui ele
+   * seria pior que o de sempre: uma consulta por aluno numa tela que o gestor
+   * abre para ver o clube inteiro.
+   *
+   * O filtro `fim >= hoje - 1 ano` existe para não arrastar histórico antigo:
+   * quem venceu há dois anos não é pendência de renovação, é ex-aluno. Está
+   * declarado aqui porque é um recorte, e recorte silencioso vira "a lista não
+   * mostra tudo" na boca de quem usa.
+   */
+  async vencimentos(
+    companyId: string,
+    dias: number,
+  ): Promise<VencimentosResponseDto> {
+    const hoje = hojeNoFusoDoClube();
+    const limite = new Date(hoje);
+    limite.setUTCDate(limite.getUTCDate() + dias);
+    // **O chão é em DIAS, e não em anos, porque o gate me reprovou.**
+    // `fuso-do-clube.spec.ts` bane `getUTCFullYear()` — *"só aparece quando
+    // alguém está montando a data de agora"* —, e a primeira versão fazia
+    // `setUTCFullYear(getUTCFullYear() - 1)`. Podia ter trocado por
+    // `getUTCDate() - 365` só para escapar do teste; a diferença é que **os
+    // dois deslocamentos agora são a mesma aritmética**, e "um ano" era
+    // arbitrário de qualquer forma.
+    const chao = new Date(hoje);
+    chao.setUTCDate(chao.getUTCDate() - DIAS_DE_HISTORICO);
+
+    const linhas = await this.prisma.matricula.findMany({
+      where: {
+        companyId,
+        fim: { gte: chao },
+        // AC-006 — desligado não é pendência de renovação. O DEF-027 fechou as
+        // portas de escrita para ele; cobrar renovação seria a mesma
+        // incoerência do outro lado.
+        aluno: { status: 'ativo' },
+      },
+      select: {
+        alunoId: true,
+        inicio: true,
+        fim: true,
+        plano: { select: { nome: true } },
+        aluno: { select: { usuario: { select: { nome: true } } } },
+      },
+      orderBy: { fim: 'asc' },
+    });
+
+    const porAluno = new Map<string, typeof linhas>();
+    for (const m of linhas) {
+      const atuais = porAluno.get(m.alunoId) ?? [];
+      atuais.push(m);
+      porAluno.set(m.alunoId, atuais);
+    }
+
+    const vencidas: VencimentoResponseDto[] = [];
+    const vencendo: VencimentoResponseDto[] = [];
+
+    for (const [, doAluno] of porAluno) {
+      const vigentes = doAluno.filter((m) => m.inicio <= hoje && m.fim >= hoje);
+
+      if (vigentes.length === 0) {
+        // Venceu e ninguém renovou. `doAluno` está ordenado por `fim`, então a
+        // última é a que terminou por último — a que o gestor precisa citar.
+        // **Matrícula que ainda não COMEÇOU não é vencida**: quem comprou o
+        // plano do mês que vem está resolvido, não pendente.
+        const futuras = doAluno.filter((m) => m.inicio > hoje);
+        if (futuras.length > 0) continue;
+        vencidas.push(this.paraVencimento(doAluno[doAluno.length - 1], hoje));
+        continue;
+      }
+
+      // A que vale é a que começou por último (mesma regra de
+      // `minhaMatricula`), e o `fim` dela é o que interessa.
+      const vigente = vigentes.reduce((a, b) => (a.inicio >= b.inicio ? a : b));
+      if (vigente.fim > limite) continue;
+
+      // AC-005 — **já comprou o próximo.** Alguma matrícula que termine depois
+      // desta tira o aluno da lista: ele não vai ficar sem plano.
+      const cobreDepois = doAluno.some((m) => m.fim > vigente.fim);
+      if (cobreDepois) continue;
+
+      vencendo.push(this.paraVencimento(vigente, hoje));
+    }
+
+    const porFim = (a: VencimentoResponseDto, b: VencimentoResponseDto) =>
+      a.fim.localeCompare(b.fim);
+    return {
+      dias,
+      // AC-008 — o que venceu há mais tempo primeiro, nos dois grupos.
+      vencidas: vencidas.sort(porFim),
+      vencendo: vencendo.sort(porFim),
+    };
+  }
+
+  /** Uma linha da lista: o bastante para agir sem abrir a ficha (AC-002). */
+  private paraVencimento(
+    m: {
+      alunoId: string;
+      fim: Date;
+      plano: { nome: string };
+      aluno: { usuario: { nome: string } };
+    },
+    hoje: Date,
+  ): VencimentoResponseDto {
+    return {
+      alunoId: m.alunoId,
+      alunoNome: m.aluno.usuario.nome,
+      planoNome: m.plano.nome,
+      fim: formatDateOnly(m.fim),
+      // Negativo para vencida. **`Math.round` e não `floor`:** as duas datas
+      // são `DATE` à meia-noite UTC, então a divisão é exata — o `round` é
+      // contra o dia de 23h ou 25h do horário de verão, que o Brasil não tem
+      // hoje e já teve.
+      diasRestantes: Math.round(
+        (m.fim.getTime() - hoje.getTime()) / 86_400_000,
+      ),
+    };
   }
 
   /**

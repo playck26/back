@@ -1522,6 +1522,44 @@
         ]
       }
     },
+    "/api/v1/matriculas/vencimentos": {
+      "get": {
+        "operationId": "VencimentosController_vencimentos",
+        "parameters": [
+          {
+            "name": "dias",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 365,
+              "default": 30,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VencimentosResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "matriculas"
+        ]
+      }
+    },
     "/api/v1/_smoke/tenant-check/{companyId}": {
       "get": {
         "operationId": "SmokeController_tenantCheck",
@@ -6543,6 +6581,11 @@
             "example": "2026-10-10",
             "description": "GRAVADO, nao derivado na leitura: \"quem vence este mes\" viraria varredura com aritmetica de data."
           },
+          "diasRestantes": {
+            "type": "number",
+            "example": 5,
+            "description": "SPEC-045/AC-009 — dias ate o vencimento, **negativo quando ja venceu**. Calculado no servidor porque \"hoje\" da tela e o relogio do NAVEGADOR, que esta no fuso de quem viaja e nao no do clube. O comentario de `fim` acima ja previa esta spec: a coluna e gravada justamente para que \"quem vence este mes\" nao vire varredura."
+          },
           "contratoVersao": {
             "type": "number",
             "example": 3,
@@ -6565,6 +6608,7 @@
           "prazoMeses",
           "inicio",
           "fim",
+          "diasRestantes",
           "contratoVersao",
           "linkPagamentoUrl"
         ]
@@ -6587,6 +6631,67 @@
         },
         "required": [
           "planoId"
+        ]
+      },
+      "VencimentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alunoNome": {
+            "type": "string",
+            "example": "Maria Silva"
+          },
+          "planoNome": {
+            "type": "string",
+            "example": "Mensal"
+          },
+          "fim": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-10-12"
+          },
+          "diasRestantes": {
+            "type": "number",
+            "example": 5,
+            "description": "Dias ate o vencimento. **Negativo quando ja venceu** — e o mesmo campo, porque \"vence em -3 dias\" e \"venceu ha 3 dias\" sao a mesma informacao e dois campos divergiriam."
+          }
+        },
+        "required": [
+          "alunoId",
+          "alunoNome",
+          "planoNome",
+          "fim",
+          "diasRestantes"
+        ]
+      },
+      "VencimentosResponseDto": {
+        "type": "object",
+        "properties": {
+          "dias": {
+            "type": "number",
+            "example": 30,
+            "description": "A janela usada, ecoada: a tela nao precisa lembrar o padrao."
+          },
+          "vencidas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VencimentoResponseDto"
+            }
+          },
+          "vencendo": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VencimentoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "dias",
+          "vencidas",
+          "vencendo"
         ]
       },
       "SmokeDeTenantResponseDto": {

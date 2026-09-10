@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { MatriculasController } from './matriculas.controller';
 import { MatriculasService } from './matriculas.service';
 import { MeMatriculaController } from './me-matricula.controller';
+import { VencimentosController } from './vencimentos.controller';
 import { PlanosController } from './planos.controller';
 import { PlanosService } from './planos.service';
 
@@ -25,7 +26,15 @@ import { PlanosService } from './planos.service';
   // comparacao. Sem ciclo: `PeopleModule` importa `Frequencia` e `Storage`, e
   // nenhum dos dois chega aqui.
   imports: [PrismaModule, PeopleModule],
-  controllers: [PlanosController, MatriculasController, MeMatriculaController],
+  // SPEC-045 — `VencimentosController` vem ANTES de `MatriculasController` na
+  // lista? Nao importa: o Nest casa por caminho, e `matriculas/vencimentos`
+  // nao colide com `students/:alunoId/matriculas`. A ordem aqui e so leitura.
+  controllers: [
+    PlanosController,
+    MatriculasController,
+    MeMatriculaController,
+    VencimentosController,
+  ],
   providers: [PlanosService, MatriculasService],
   exports: [MatriculasService],
 })

@@ -47,6 +47,13 @@ export class MatriculaResponseDto {
   fim!: string;
 
   @ApiProperty({
+    example: 5,
+    description:
+      'SPEC-045/AC-009 — dias ate o vencimento, **negativo quando ja venceu**. Calculado no servidor porque "hoje" da tela e o relogio do NAVEGADOR, que esta no fuso de quem viaja e nao no do clube. O comentario de `fim` acima ja previa esta spec: a coluna e gravada justamente para que "quem vence este mes" nao vire varredura.',
+  })
+  diasRestantes!: number;
+
+  @ApiProperty({
     example: 3,
     description:
       'A versao do contrato aceita. Exigida PELO BANCO (INV-114): matricula sem o aceite correspondente e recusada com `23503`.',
