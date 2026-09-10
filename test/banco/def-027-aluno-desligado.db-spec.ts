@@ -324,6 +324,44 @@ describe('DEF-027 — o aluno desligado', () => {
     );
   });
 
+  it('**a linha LEGADA tambem e barrada: ficha inativa com conta ativa**', async () => {
+    // `alunos.status` e `usuarios.status` andam juntos DESDE a SPEC-013 --
+    // `update` grava os dois na mesma transacao. Mas a secao do DEF-001 diz
+    // que **antes disso nao andavam**: "inativar o aluno mexe em
+    // `alunos.status`; o `usuarios` da pessoa nem e tocado". Toda linha
+    // anterior a agosto pode estar assim, e para ela o guard de sessao nao
+    // ajuda -- a conta entra normalmente.
+    //
+    // E o `alunoId` SEMPRE chega ao servico: `resolveAlunoId` devolve a ficha
+    // do proprio aluno quando quem pede e `aluno`. Entao a trava vale para os
+    // dois lados, o gestor reservando em nome dele e ele reservando sozinho.
+    await q(`UPDATE alunos SET status='inativo' WHERE id='${ALUNO}'`);
+    // `usuarios` continua ATIVO de proposito: e o estado legado.
+    expect(
+      (
+        await db.usuario.findUniqueOrThrow({
+          where: { id: USUARIO },
+          select: { status: true },
+        })
+      ).status,
+    ).toBe('ativo');
+
+    await expect(
+      courts().createBooking(
+        EMPRESA,
+        {
+          quadraId: QUADRA,
+          data: FUTURO,
+          slots: [{ horaInicio: '11:00', horaFim: '12:00' }],
+          alunoId: ALUNO,
+        },
+        USUARIO,
+      ),
+    ).rejects.toMatchObject({
+      response: { statusCode: 422, code: 'ALUNO_INATIVO' },
+    });
+  });
+
   // =====================================================================
   // PORTAO 4 — desligar com compromisso marcado
   // =====================================================================
