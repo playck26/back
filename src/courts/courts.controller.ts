@@ -47,6 +47,17 @@ export class CourtsController {
     private readonly horariosService: HorarioFuncionamentoService,
   ) {}
 
+  /**
+   * DEF-026 — **o papel decide se a quadra inativa entra na lista.**
+   *
+   * O gestor PRECISA ver a inativa: e por esta lista que ele a reativa. O
+   * aluno nao pode ve-la -- medido em 2026-09-10, ele recebia a quadra fora de
+   * operacao com 13 horarios livres, e com saldo a reserva ia ate o fim.
+   *
+   * **Nao e parametro de consulta**, e de proposito: parametro seria escolha
+   * de quem chama, e o aluno nao pode ter essa escolha. A regra vive aqui,
+   * onde o papel ja e conhecido.
+   */
   @Get()
   @Roles('company_admin', 'aluno')
   @ApiOkResponse({ type: QuadraPaginadaResponseDto })
@@ -58,6 +69,7 @@ export class CourtsController {
       user.companyId as string,
       query.page,
       query.pageSize,
+      user.role === 'company_admin',
     );
   }
 

@@ -110,7 +110,19 @@ function buildMocks() {
   };
 }
 
-const QUADRA_ATIVA = { id: 'q1', companyId: 'c1' };
+/**
+ * DEF-026 — **`status` entrou aqui, e a ausencia dele era o duble mentindo.**
+ *
+ * `quadras.status` e `NOT NULL DEFAULT 'ativa'`: nenhuma linha do banco chega
+ * sem ele. Este objeto chegava, e ninguem notou enquanto o codigo nao lia o
+ * campo -- quando o portao da quadra inativa entrou, DOZE casos ficaram
+ * vermelhos de uma vez, todos por `QUADRA_INATIVA` sobre uma quadra que o
+ * nome da constante ja dizia ser ativa.
+ *
+ * **Segunda vez que este projeto tropeca no mesmo tipo de duble incompleto**;
+ * a primeira foi `turmas.status`, na SPEC-035.
+ */
+const QUADRA_ATIVA = { id: 'q1', companyId: 'c1', status: 'ativa' as const };
 
 // SPEC-009/INV-010: MOD-004 e MOD-005 perguntam a MOD-003 se o aluno está
 // aprovado. O mock devolve "aprovado" por padrão; os testes de vínculo

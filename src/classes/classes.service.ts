@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   aulaJaComecou,
@@ -739,15 +740,35 @@ export class ClassesService {
     }
   }
 
+  /**
+   * DEF-026 — a quadra e da empresa **e esta ativa**.
+   *
+   * Turma nova, ou turma movida para uma quadra fora de operacao, gerava as
+   * oito ocorrencias normalmente -- e a agenda nao mostra quadra inativa,
+   * entao a aula existia e ninguem a via. Mesmo defeito da reserva, medido no
+   * mesmo dia.
+   *
+   * `422 QUADRA_INATIVA` e nao `404`: a quadra existe, e o gestor sabe -- ele
+   * mesmo a desativou.
+   */
   private async assertQuadraDaEmpresa(
     companyId: string,
     quadraId: string,
   ): Promise<void> {
     const quadra = await this.prisma.quadra.findFirst({
       where: { id: quadraId, companyId },
+      select: { status: true },
     });
     if (!quadra) {
       throw new NotFoundException('Quadra não encontrada');
+    }
+    if (quadra.status !== 'ativa') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'QUADRA_INATIVA',
+        message:
+          'Esta quadra está fora de operação. Reative-a antes de marcar turma nela.',
+      });
     }
   }
 
