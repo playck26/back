@@ -53,7 +53,6 @@ export interface TxMock {
    */
   $queryRaw: jest.Mock;
   // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
-  configPagamentoEmpresa: { findUnique: jest.Mock };
   ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
   turmaAluno: { findFirst: jest.Mock };
   faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
@@ -105,6 +104,11 @@ export interface PrismaMock {
     update: jest.Mock;
   };
   movimentoDeCredito: { findMany: jest.Mock };
+  // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
+  configPagamentoEmpresa: { findUnique: jest.Mock };
+  // SPEC-038: a importacao le os niveis por NOME, para casar o texto da
+  // planilha com o id -- o gestor nao tem UUID na coluna.
+  nivel: { findMany: jest.Mock };
   // SPEC-037: plano, matricula e o aceite que a INV-114 exige.
   plano: {
     findFirst: jest.Mock;
@@ -265,6 +269,7 @@ export function buildPrismaMock(): PrismaMock {
     aceite: { findFirst: jest.fn().mockResolvedValue(null) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     configPagamentoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
+    nivel: { findMany: jest.fn().mockResolvedValue([]) },
     tx,
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };

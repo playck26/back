@@ -1,4 +1,5 @@
 import {
+  BCRYPT_COST,
   gerarSenhaTemporaria,
   senhaTemporariaExpiraEm,
 } from '../common/utils/senha-temporaria';
@@ -24,7 +25,9 @@ import type { CamposDoCadastroDto } from './dto/campos-do-cadastro.dto';
 import { normalizarNascimento } from './normalizar-nascimento';
 import { formatDateOnly } from '../courts/date-time.util';
 
-const BCRYPT_COST = 12;
+// SPEC-038 — passou para `common/utils/senha-temporaria` quando a importacao
+// em lote precisou do mesmo numero. Parametro de seguranca em duas copias
+// diverge em silencio, com os dois caminhos continuando a funcionar.
 
 @Injectable()
 export class StudentsService {

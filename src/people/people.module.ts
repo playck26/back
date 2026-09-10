@@ -7,6 +7,8 @@ import { LevelsController } from './levels.controller';
 import { LevelsService } from './levels.service';
 import { StudentsController } from './students.controller';
 import { MeCadastroController } from './me-cadastro.controller';
+import { ImportacaoController } from './importacao/importacao.controller';
+import { ImportacaoDeAlunosService } from './importacao/importacao-de-alunos.service';
 import { StudentsService } from './students.service';
 import { TeacherPhotoController } from './teacher-photo.controller';
 import { TeachersController } from './teachers.controller';
@@ -26,9 +28,12 @@ import { TeachersService } from './teachers.service';
     // mesmo (`StudentsService`), e um modulo novo so para dois metodos
     // criaria um import circular ou uma segunda instancia do servico.
     MeCadastroController,
+    // SPEC-038 — importar alunos por planilha.
+    ImportacaoController,
   ],
   providers: [
     StudentsService,
+    ImportacaoDeAlunosService,
     TeachersService,
     LevelsService,
     FotoDeProfessorService,

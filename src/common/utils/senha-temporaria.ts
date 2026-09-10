@@ -34,3 +34,13 @@ export const SENHA_TEMPORARIA_VALIDADE_MS = 7 * 24 * 60 * 60 * 1000;
 export function senhaTemporariaExpiraEm(): Date {
   return new Date(Date.now() + SENHA_TEMPORARIA_VALIDADE_MS);
 }
+
+/**
+ * SPEC-038 — o custo do bcrypt, **num lugar so**.
+ *
+ * Ele vivia como constante privada no `StudentsService`, e a importacao em
+ * lote precisou do mesmo numero. Duas copias de um parametro de SEGURANCA
+ * divergem no primeiro ajuste, e a divergencia seria invisivel: os dois
+ * caminhos continuariam funcionando, com forcas diferentes.
+ */
+export const BCRYPT_COST = 12;

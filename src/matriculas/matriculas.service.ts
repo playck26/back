@@ -9,10 +9,6 @@ import { formatDateOnly, hojeNoFusoDoClube } from '../courts/date-time.util';
 import type { CriarMatriculaDto } from './dto/matricula.dto';
 import type { MatriculaResponseDto } from './dto/matricula-response.dto';
 
-export const CONTRATO_NAO_ACEITO = 'CONTRATO_NAO_ACEITO';
-export const CONTRATO_NAO_PUBLICADO = 'CONTRATO_NAO_PUBLICADO';
-export const PLANO_INATIVO = 'PLANO_INATIVO';
-
 /**
  * SPEC-037 — a matrícula: **esta pessoa contratou este plano, por este prazo,
  * por este valor, tendo aceito este contrato.**
@@ -29,6 +25,19 @@ export const PLANO_INATIVO = 'PLANO_INATIVO';
  * A INV-114 (FK causal) é a garantia; sem as checagens daqui, ela responderia
  * `23503`, que vaza como `500`. **O gestor precisa saber que o aluno não
  * aceitou o contrato** — não que "houve um erro no servidor".
+ */
+/**
+ * **Os `code` sao LITERAIS, e nao constantes exportadas.**
+ *
+ * Parece pior e nao e: o gate `Docs/contrato-spec-x-codigo.py` casa o campo
+ * `code` seguido de uma string literal, e confronta com o que a spec PROMETE.
+ * Atras de uma constante, o codigo existe e o gate nao o ve -- e ele reprova a
+ * spec dizendo "ramo morto no frontend" sobre algo que funciona.
+ *
+ * Foi assim que esta spec reprovou na primeira execucao do gate. E a SEGUNDA
+ * reprovacao foi do comentario que explicava a primeira: ele trazia o padrao
+ * escrito por extenso, e o gate o leu como um codigo chamado `X`. Escrever a
+ * regra sem escrever a forma dela e o conserto.
  */
 @Injectable()
 export class MatriculasService {
@@ -140,7 +149,7 @@ export class MatriculasService {
     if (!plano.ativo) {
       throw new UnprocessableEntityException({
         statusCode: 422,
-        code: PLANO_INATIVO,
+        code: 'PLANO_INATIVO',
         message:
           'Este plano está inativo. Reative-o ou escolha outro antes de matricular.',
       });
@@ -153,7 +162,7 @@ export class MatriculasService {
     if (empresa.contratoVersaoVigente == null) {
       throw new UnprocessableEntityException({
         statusCode: 422,
-        code: CONTRATO_NAO_PUBLICADO,
+        code: 'CONTRATO_NAO_PUBLICADO',
         message:
           'O clube ainda não publicou um contrato. Publique em Configurações antes de matricular.',
       });
@@ -177,7 +186,7 @@ export class MatriculasService {
     if (!aceite) {
       throw new UnprocessableEntityException({
         statusCode: 422,
-        code: CONTRATO_NAO_ACEITO,
+        code: 'CONTRATO_NAO_ACEITO',
         message:
           'Este aluno ainda não aceitou a versão vigente do contrato. Ele precisa entrar no app e aceitar antes da matrícula.',
       });

@@ -7,7 +7,7 @@ Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
 **Números conferidos por comando nesta data, não estimados:** 37 migrations,
-34 tabelas, 92 caminhos / 130 operações no `openapi.json`, 10 triggers
+34 tabelas, 93 caminhos / 131 operações no `openapi.json`, 10 triggers
 não-internas.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
@@ -634,10 +634,10 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**92 caminhos, 130 operações HTTP** (conferido em **2026-09-09** contra o
-`openapi.json`, depois da SPEC-037). A progressão do dia: 85/120 depois da
-SPEC-040, 87/122 com a SPEC-035, 88/124 com a SPEC-036, 92/130 com a
-SPEC-037. As duas medidas aparecem porque "rotas" é
+**93 caminhos, 131 operações HTTP** (conferido em **2026-09-09** contra o
+`openapi.json`, depois da SPEC-038). A progressão do dia: 85/120 depois da
+SPEC-040, 87/122 com a SPEC-035, 88/124 com a SPEC-036, 92/130 com a SPEC-037,
+93/131 com a SPEC-038. As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -652,6 +652,23 @@ para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
 `401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
 `DELETE`: o ledger é append-only, e rota que não existe não precisa ser
 defendida.
+
+**A SPEC-038 acrescenta UMA rota com dois comportamentos**: `POST
+/students/importar`, com `?conferir=true` validando sem escrever. Duas rotas
+separadas diriam a mesma coisa e abririam a chance de a validação de uma
+divergir da outra — e a que divergisse seria justamente a que escreve.
+
+Ela reusa o `@UploadDeMidia()`, e o nome fica largo: CSV não é mídia. **A
+INV-048 vale mais que o nome** — ela existe para não haver duas configurações
+de upload no projeto, e o que vem junto é o teto de 2 MB com os dois portões
+(`Content-Length` e streaming) e os mesmos códigos de erro.
+
+**Só CSV, e é decisão de segurança** (LIM-038a): `.xlsx` custaria uma
+dependência nova para analisar arquivo binário vindo da internet, e o
+analisador de CSV que o projeto precisa cabe em ~50 linhas testáveis. O caso
+que mais dá trabalho ali é o **BOM do Excel**: sem removê-lo, a primeira
+coluna se chama `﻿nome` e a planilha inteira é recusada apontando para
+uma coluna que, na tela do gestor, está escrita certa.
 
 **As rotas da SPEC-037** são cinco, e a mais interessante é a que o banco
 guarda:

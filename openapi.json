@@ -1233,6 +1233,64 @@
         ]
       }
     },
+    "/api/v1/students/importar": {
+      "post": {
+        "operationId": "ImportacaoController_importar",
+        "parameters": [
+          {
+            "name": "conferir",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "arquivo": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RelatorioDeImportacaoDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImportacaoConcluidaDto"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "alunos"
+        ]
+      }
+    },
     "/api/v1/planos": {
       "get": {
         "operationId": "PlanosController_listar",
@@ -6197,6 +6255,151 @@
             "nullable": true
           }
         }
+      },
+      "ErroDeImportacaoDto": {
+        "type": "object",
+        "properties": {
+          "linha": {
+            "type": "number",
+            "example": 47
+          },
+          "coluna": {
+            "type": "string",
+            "example": "email"
+          },
+          "mensagem": {
+            "type": "string",
+            "example": "Ja existe uma conta com este e-mail."
+          }
+        },
+        "required": [
+          "linha",
+          "coluna",
+          "mensagem"
+        ]
+      },
+      "LinhaValidaDto": {
+        "type": "object",
+        "properties": {
+          "linha": {
+            "type": "number",
+            "example": 2
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "example": "ana@clube.local"
+          },
+          "telefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "dataNascimento": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "required": [
+          "linha",
+          "nome",
+          "email",
+          "telefone",
+          "dataNascimento",
+          "emergenciaNome",
+          "emergenciaTelefone",
+          "nivelId"
+        ]
+      },
+      "RelatorioDeImportacaoDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "example": 300,
+            "description": "Linhas de aluno, sem o cabecalho."
+          },
+          "validas": {
+            "type": "number",
+            "example": 298
+          },
+          "erros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErroDeImportacaoDto"
+            }
+          },
+          "linhas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinhaValidaDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "validas",
+          "erros",
+          "linhas"
+        ]
+      },
+      "AlunoImportadoDto": {
+        "type": "object",
+        "properties": {
+          "linha": {
+            "type": "number",
+            "example": 2
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "example": "ana@clube.local"
+          },
+          "senhaTemporaria": {
+            "type": "string",
+            "example": "Kx7-mQ2p",
+            "description": "Sai UMA VEZ. Nenhuma outra rota a devolve -- se o gestor perder, o caminho e regenerar."
+          }
+        },
+        "required": [
+          "linha",
+          "alunoId",
+          "email",
+          "senhaTemporaria"
+        ]
+      },
+      "ImportacaoConcluidaDto": {
+        "type": "object",
+        "properties": {
+          "criados": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoImportadoDto"
+            }
+          }
+        },
+        "required": [
+          "criados"
+        ]
       },
       "PlanoResponseDto": {
         "type": "object",
