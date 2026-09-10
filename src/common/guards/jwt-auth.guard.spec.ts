@@ -113,6 +113,67 @@ describe('JwtAuthGuard — conta inativa (SPEC-013/INV-013)', () => {
     );
   });
 
+  /**
+   * DEF-028 — a mesma coisa, para a EMPRESA.
+   *
+   * Medido antes do conserto: com `empresas.status = 'inativa'`, o access
+   * token seguia abrindo rotas e o refresh renovava a sessao indefinidamente.
+   * `login` recusava, e so.
+   */
+  const prismaEmpresaInativa = (status: string) => ({
+    usuario: {
+      findUnique: jest.fn().mockResolvedValue({
+        senhaTemporaria: false,
+        status: 'ativo',
+        role: 'company_admin',
+        termoVersaoAceita: 1,
+        contratoVersaoAceita: 1,
+        empresa: { contratoVersaoVigente: null, status },
+      }),
+    },
+  });
+
+  it('**DEF-028: barra token de empresa SUSPENSA**', async () => {
+    const guard = new JwtAuthGuard(
+      buildReflector(false),
+      prismaEmpresaInativa('inativa'),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).rejects.toMatchObject({
+      response: { statusCode: 403, code: 'EMPRESA_INATIVA' },
+    });
+  });
+
+  it('DEF-028: e o codigo NAO e `CONTA_INATIVA`', async () => {
+    // A conta da pessoa esta em ordem. "Procure o administrador" mandaria o
+    // gestor procurar a si mesmo — quem resolve suspensao de clube e o
+    // `super_admin`, e a mensagem precisa dizer isso.
+    const guard = new JwtAuthGuard(
+      buildReflector(false),
+      prismaEmpresaInativa('inativa'),
+    );
+
+    try {
+      await guard.canActivate(buildContext('u1'));
+      throw new Error('nao lancou');
+    } catch (e) {
+      const r = (
+        e as { getResponse?: () => { code?: string; message?: string } }
+      ).getResponse?.();
+      expect(r?.code).toBe('EMPRESA_INATIVA');
+      expect(r?.message).toMatch(/suporte da plataforma/i);
+    }
+  });
+
+  it('CONTROLE: empresa ATIVA passa', async () => {
+    const guard = new JwtAuthGuard(
+      buildReflector(false),
+      prismaEmpresaInativa('ativa'),
+    );
+
+    await expect(guard.canActivate(buildContext('u1'))).resolves.toBe(true);
+  });
+
   // O ponto mais facil de errar: `@PermiteSenhaTemporaria` marca
   // /auth/trocar-senha, /auth/me e logout. Se a checagem de status ficasse
   // depois do atalho da marcacao, uma conta inativa trocaria a senha e

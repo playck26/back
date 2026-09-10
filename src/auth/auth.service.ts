@@ -194,6 +194,28 @@ export class AuthService {
       throw new UnauthorizedException();
     }
 
+    // DEF-028 — a mesma checagem para a EMPRESA, e pela razao escrita logo
+    // acima: sem ela a suspensao do clube so valeria ate o access token
+    // expirar, porque a sessao se renovaria sozinha para sempre. Medido:
+    // com a empresa `inativa`, duas renovacoes seguidas responderam `200`.
+    //
+    // **Derruba as sessoes junto**, como a inativacao de conta: suspender um
+    // clube e um gesto comercial (inadimplencia), e meia suspensao e pior que
+    // nenhuma, porque quem suspendeu acredita nela.
+    if (usuario.companyId) {
+      const empresa = await this.prisma.empresa.findUnique({
+        where: { id: usuario.companyId },
+        select: { status: true },
+      });
+      if (!empresa || empresa.status !== 'ativa') {
+        await this.prisma.refreshToken.updateMany({
+          where: { usuarioId: usuario.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        throw new UnauthorizedException();
+      }
+    }
+
     // SPEC-009/AC-019 — sem esta checagem, uma sessão aberta com senha
     // temporária se renovaria indefinidamente por refresh e a validade de
     // 7 dias seria decorativa: o vencimento só barraria login novo, nunca
