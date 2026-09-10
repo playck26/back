@@ -1101,6 +1101,15 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   autenticada (INV-013). A checagem roda **antes** do atalho de
   `@PermiteSenhaTemporaria`, senão a conta inativa trocaria a senha e
   voltaria a operar.
+- **`empresas.status = 'inativa'` recusa o mesmo, desde o DEF-028.** Até
+  2026-09-10 só o `login` lia o campo: quem já estava dentro seguia operando, e
+  o **refresh renovava a sessão indefinidamente** (medido: duas renovações
+  seguidas, `200` nas duas). É a mesma frase que o DEF-001 escreveu para a
+  conta, doze linhas acima de onde faltava. O guard responde **`403
+  EMPRESA_INATIVA`** — código próprio, porque a conta da pessoa está em ordem e
+  quem resolve suspensão de clube é o `super_admin` — e custa **zero consulta a
+  mais**: `empresa` já vinha no `select` por causa do `contratoVersaoVigente`.
+  O `super_admin` não é barrado (`companyId` nulo): é ele quem reativa.
   Guards: `RolesGuard`, `CompanyAdminGuard`, `SuperAdminGuard`, `TenantGuard`.
 - **Escopo por empresa vem sempre do token**, nunca de parâmetro do cliente.
 - Throttle: **a chave é o usuário quando o Bearer token confere**, e o IP
