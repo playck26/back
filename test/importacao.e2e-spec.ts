@@ -85,10 +85,10 @@ describe('Importação de alunos (e2e) — SPEC-038', () => {
 
   it('**o BOM do Excel não quebra o cabeçalho**', async () => {
     const token = await comoAdmin();
-    // Sem removê-lo, a primeira coluna se chamaria `﻿nome` e a planilha
+    // Sem removê-lo, a primeira coluna se chamaria `\uFEFFnome` e a planilha
     // seria recusada apontando para uma coluna que, na tela do gestor, está
     // escrita certa — e ele não teria como descobrir sozinho.
-    const res = await enviar(token, `﻿${PLANILHA}`, true).expect(201);
+    const res = await enviar(token, `\uFEFF${PLANILHA}`, true).expect(201);
     expect(bodyOf<{ validas: number }>(res).validas).toBe(2);
   });
 

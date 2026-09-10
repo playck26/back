@@ -8,7 +8,7 @@ import { analisarCsv, linhasComNumero } from './csv';
  * implementação ingênua (`split(',')`).
  *
  * O caso do **BOM** é o que mais importa: sem removê-lo, a primeira coluna do
- * cabeçalho se chama `﻿nome` e nunca casa com `nome`. A planilha inteira é
+ * cabeçalho se chama `\uFEFFnome` e nunca casa com `nome`. A planilha inteira é
  * recusada com "coluna desconhecida" apontando para uma coluna que, na tela do
  * gestor, está escrita certa — e ele não tem como descobrir sozinho.
  */
@@ -50,9 +50,9 @@ describe('SPEC-038 — analisarCsv', () => {
   });
 
   it('**o BOM do Excel some** — e é o caso mais traiçoeiro', () => {
-    const comBom = '﻿nome,email\nAna,ana@x.com';
+    const comBom = '\uFEFFnome,email\nAna,ana@x.com';
     const [cabecalho] = analisarCsv(comBom);
-    // Sem esta remoção, a primeira coluna se chamaria `﻿nome` e a
+    // Sem esta remoção, a primeira coluna se chamaria `\uFEFFnome` e a
     // planilha inteira seria recusada apontando para uma coluna que, na tela,
     // está escrita certa.
     expect(cabecalho[0]).toBe('nome');
@@ -69,7 +69,7 @@ describe('SPEC-038 — analisarCsv', () => {
   });
 
   it('campo entre aspas com BOM antes: o BOM sai, as aspas funcionam', () => {
-    expect(analisarCsv('﻿"nome"\nAna')).toEqual([['nome'], ['Ana']]);
+    expect(analisarCsv('\uFEFF"nome"\nAna')).toEqual([['nome'], ['Ana']]);
   });
 });
 

@@ -17,10 +17,10 @@
  * | `"ele disse ""oi"""` | aspas escapadas dobrando |
  * | `"linha 1\nlinha 2"` | quebra de linha dentro do campo |
  * | `\r\n` | o Excel do Windows sempre grava assim |
- * | `﻿` no começo | **o BOM**, que o Excel põe e ninguém vê |
+ * | `\uFEFF` no começo | **o BOM**, que o Excel põe e ninguém vê |
  *
  * **O BOM é o mais traiçoeiro dos cinco.** Sem removê-lo, a primeira coluna do
- * cabeçalho se chama `﻿nome` e nunca casa com `nome` — a planilha inteira
+ * cabeçalho se chama `\uFEFFnome` e nunca casa com `nome` — a planilha inteira
  * é recusada com "coluna desconhecida" apontando para uma coluna que, na tela
  * do gestor, está escrita certa.
  *
