@@ -1233,6 +1233,237 @@
         ]
       }
     },
+    "/api/v1/planos": {
+      "get": {
+        "operationId": "PlanosController_listar",
+        "parameters": [
+          {
+            "name": "apenasAtivos",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlanoResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "planos"
+        ]
+      },
+      "post": {
+        "operationId": "PlanosController_criar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriarPlanoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "planos"
+        ]
+      }
+    },
+    "/api/v1/planos/{id}": {
+      "patch": {
+        "operationId": "PlanosController_atualizar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AtualizarPlanoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "planos"
+        ]
+      }
+    },
+    "/api/v1/students/{alunoId}/matriculas": {
+      "get": {
+        "operationId": "MatriculasController_listar",
+        "parameters": [
+          {
+            "name": "alunoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MatriculaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "matriculas"
+        ]
+      },
+      "post": {
+        "operationId": "MatriculasController_criar",
+        "parameters": [
+          {
+            "name": "alunoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriarMatriculaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatriculaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "matriculas"
+        ]
+      }
+    },
+    "/api/v1/me/matricula": {
+      "get": {
+        "operationId": "MeMatriculaController_minhaMatricula",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MatriculaResponseDto"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/_smoke/tenant-check/{companyId}": {
       "get": {
         "operationId": "SmokeController_tenantCheck",
@@ -4876,6 +5107,10 @@
           },
           "nivelId": {
             "type": "string"
+          },
+          "planoId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -5962,6 +6197,194 @@
             "nullable": true
           }
         }
+      },
+      "PlanoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Mensal"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 30000
+          },
+          "prazoMeses": {
+            "type": "number",
+            "example": 1
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "linkHerdado": {
+            "type": "boolean",
+            "example": true
+          },
+          "ativo": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "valorCentavos",
+          "prazoMeses",
+          "linkPagamentoUrl",
+          "linkHerdado",
+          "ativo"
+        ]
+      },
+      "CriarPlanoDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Mensal"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 30000,
+            "description": "Em CENTAVOS, como a carteira."
+          },
+          "prazoMeses": {
+            "type": "number",
+            "example": 1,
+            "minimum": 1,
+            "maximum": 60
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "nome",
+          "valorCentavos",
+          "prazoMeses"
+        ]
+      },
+      "AtualizarPlanoDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "valorCentavos": {
+            "type": "number"
+          },
+          "prazoMeses": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 60
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "ativo": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MatriculaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "planoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "planoNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Mensal"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 25000,
+            "description": "O que foi ACERTADO, congelado."
+          },
+          "valorDeTabelaCentavos": {
+            "type": "number",
+            "example": 30000,
+            "description": "O que o plano cobrava NAQUELE DIA, congelado. Com os dois, o desconto fica visivel; com um so, ninguem distingue desconto de mudanca de preco depois."
+          },
+          "descontoCentavos": {
+            "type": "number",
+            "example": 5000,
+            "description": "CALCULADO na leitura, nunca gravado. Uma coluna seria uma terceira verdade sobre os mesmos dois numeros -- e a primeira a divergir."
+          },
+          "prazoMeses": {
+            "type": "number",
+            "example": 1
+          },
+          "inicio": {
+            "type": "string",
+            "example": "2026-09-10"
+          },
+          "fim": {
+            "type": "string",
+            "example": "2026-10-10",
+            "description": "GRAVADO, nao derivado na leitura: \"quem vence este mes\" viraria varredura com aritmetica de data."
+          },
+          "contratoVersao": {
+            "type": "number",
+            "example": 3,
+            "description": "A versao do contrato aceita. Exigida PELO BANCO (INV-114): matricula sem o aceite correspondente e recusada com `23503`."
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Ja RESOLVIDO pela heranca: o do plano, ou o da empresa quando o plano nao tem proprio."
+          }
+        },
+        "required": [
+          "id",
+          "alunoId",
+          "planoId",
+          "planoNome",
+          "valorCentavos",
+          "valorDeTabelaCentavos",
+          "descontoCentavos",
+          "prazoMeses",
+          "inicio",
+          "fim",
+          "contratoVersao",
+          "linkPagamentoUrl"
+        ]
+      },
+      "CriarMatriculaDto": {
+        "type": "object",
+        "properties": {
+          "planoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inicio": {
+            "type": "string",
+            "example": "2026-09-10"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 25000
+          }
+        },
+        "required": [
+          "planoId"
+        ]
       },
       "SmokeDeTenantResponseDto": {
         "type": "object",

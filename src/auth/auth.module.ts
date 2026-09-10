@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PeopleModule } from '../people/people.module';
+import { MatriculasModule } from '../matriculas/matriculas.module';
 import { StorageModule } from '../storage/storage.module';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -22,6 +23,9 @@ import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
     JwtModule.register({}),
     PeopleModule,
     StorageModule,
+    // SPEC-037/AC-015 — o aceite do convite cria a matricula na MESMA
+    // transacao da conta e do aceite do contrato.
+    MatriculasModule,
   ],
   controllers: [
     AuthController,

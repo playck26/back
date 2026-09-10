@@ -29,4 +29,17 @@ export class CriarConviteDto {
   @IsOptional()
   @UuidNoCorpo()
   nivelId?: string;
+
+  /**
+   * SPEC-037/D8/AC-014 — **o convite carrega o plano, e e ai que a jornada
+   * fecha.**
+   *
+   * O gestor convida ja dizendo qual plano, e o aceite cria conta + aceite do
+   * contrato + MATRICULA na mesma transacao (AC-015). Opcional: convite sem
+   * plano continua sendo o de hoje.
+   */
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @UuidNoCorpo()
+  planoId?: string;
 }

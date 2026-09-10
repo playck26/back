@@ -120,6 +120,12 @@ export const TABELAS_DA_EMPRESA = [
   // SPEC-031/D21: ANTES de `turmas`, `alunos` e `acoes_administrativas` — tem
   // FK RESTRICT para as tres.
   'eventos_de_matricula',
+  // SPEC-037: ANTES de `alunos`, `planos`, `usuarios` e `aceites` — as QUATRO
+  // FKs da matricula sao RESTRICT, inclusive a causal do aceite (INV-114).
+  // Aqui em cima pela mesma razao que trouxe `movimentos_de_credito`: listar
+  // em vez de ordenar foi o erro que quatro rodadas de validacao acharam na
+  // SPEC-031, um pai por vez.
+  'matriculas',
   'turmas',
   'alunos',
   // SPEC-040. **A primeira versao deste comentario dizia que sem esta linha o
@@ -144,6 +150,11 @@ export const TABELAS_DA_EMPRESA = [
   'categorias_de_quadra',
   'niveis',
   'convites_aluno',
+  // SPEC-037: **depois de `matriculas` E de `convites_aluno`**, que apontam
+  // para ca com RESTRICT. A primeira versao desta lista pos `planos` logo
+  // apos `matriculas` e antes do convite -- teria dado `23503` no primeiro
+  // clube que convidasse alguem com plano. Ordem, nao lista.
+  'planos',
   'config_pagamento_empresa',
   // SPEC-031/D22/1b: company-scoped com FK RESTRICT para `empresas`. Sem ela
   // os TRES caminhos de limpeza recebem `23503` no `DELETE FROM empresas` —

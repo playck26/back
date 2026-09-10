@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { registrarAceiteNoCadastro } from '../aceites/registrar-aceite-no-cadastro';
 import { StudentsService } from '../people/students.service';
+import { MatriculasService } from '../matriculas/matriculas.service';
 import { ConviteAceitoResponseDto } from './dto/auth-response.dto';
 import type { AceitarConviteDto } from './dto/aceitar-convite.dto';
 import type { CriarConviteDto } from './dto/criar-convite.dto';
@@ -37,6 +38,12 @@ export class InvitesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly students: StudentsService,
+    /**
+     * SPEC-037 — **por ultimo de proposito.** A licao da SPEC-039: parametro
+     * novo no fim se acrescenta no fim da lista, e nao no meio de argumentos
+     * aninhados que outros arquivos constroem a mao.
+     */
+    private readonly matriculas: MatriculasService,
   ) {}
 
   private hash(token: string): string {
@@ -65,6 +72,8 @@ export class InvitesService {
         nome: dto.nome,
         telefone: dto.telefone,
         nivelId: dto.nivelId,
+        // SPEC-037/AC-014 — o plano viaja no convite.
+        planoId: dto.planoId,
         tokenHash: this.hash(token),
         expiraEm: new Date(Date.now() + VALIDADE_MS),
       },
@@ -194,7 +203,7 @@ export class InvitesService {
       // Convite é iniciativa da empresa: o aluno já nasce aprovado
       // (REQ-008/AC-014). E a senha é dele desde o primeiro minuto, então
       // não há senha temporária nem troca forçada neste caminho.
-      await this.students.criarPerfilDeAluno(tx, {
+      const aluno = await this.students.criarPerfilDeAluno(tx, {
         usuarioId: usuario.id,
         companyId: convite.companyId,
         nivelId: convite.nivelId,
@@ -215,7 +224,41 @@ export class InvitesService {
         contratoVigente: convite.empresa.contratoVersaoVigente ?? null,
       });
 
-      return { usuario: { id: usuario.id, email: usuario.email, nome } };
+      /**
+       * SPEC-037/AC-015 — **a matricula nasce AQUI, e a ordem importa.**
+       *
+       * Depois do aceite, e nao antes: a INV-114 (FK causal) exige o aceite
+       * do contrato daquela versao, e ele acabou de ser gravado nesta mesma
+       * transacao. Invertida, a insercao levaria `23503`.
+       *
+       * Falhar aqui desfaz a conta e o aceite. **E o certo:** uma conta sem
+       * matricula e recuperavel pelo gestor; uma matricula sem contrato
+       * aceito e o buraco juridico que a INV-114 existe para impedir.
+       *
+       * **Plano desativado entre convidar e aceitar devolve `null`** (AC-016):
+       * a conta e criada, a matricula nao, e a resposta avisa. Recusar o
+       * aceite inteiro puniria o aluno por uma mudanca do clube -- ele fez
+       * tudo certo e nao tinha como saber.
+       */
+      let matriculaCriada = true;
+      if (convite.planoId && convite.empresa.contratoVersaoVigente != null) {
+        const matricula = await this.matriculas.criarNoAceite(tx, {
+          companyId: convite.companyId,
+          alunoId: aluno.id,
+          usuarioId: usuario.id,
+          planoId: convite.planoId,
+          contratoVersao: convite.empresa.contratoVersaoVigente,
+          autorId: convite.criadoPorId,
+        });
+        matriculaCriada = matricula !== null;
+      }
+
+      return {
+        usuario: { id: usuario.id, email: usuario.email, nome },
+        // `false` so quando o convite TINHA plano e ele nao pode ser
+        // aplicado. Convite sem plano nao gera aviso nenhum.
+        planoAplicado: convite.planoId ? matriculaCriada : null,
+      };
     });
   }
 }

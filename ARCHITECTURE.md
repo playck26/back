@@ -6,8 +6,9 @@ sucede a SPEC-039 (aula avulsa) e a SPEC-040 (disponibilidade do professor).
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
-**Números conferidos por comando nesta data, não estimados:** 36 migrations,
-88 caminhos / 124 operações no `openapi.json`, 10 triggers não-internas.
+**Números conferidos por comando nesta data, não estimados:** 37 migrations,
+34 tabelas, 92 caminhos / 130 operações no `openapi.json`, 10 triggers
+não-internas.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -633,9 +634,10 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**88 caminhos, 124 operações HTTP** (conferido em **2026-09-09** contra o
-`openapi.json`, depois da SPEC-036 — eram 85/120 depois da SPEC-040 e 87/122
-depois da SPEC-035). As duas medidas aparecem porque "rotas" é
+**92 caminhos, 130 operações HTTP** (conferido em **2026-09-09** contra o
+`openapi.json`, depois da SPEC-037). A progressão do dia: 85/120 depois da
+SPEC-040, 87/122 com a SPEC-035, 88/124 com a SPEC-036, 92/130 com a
+SPEC-037. As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -650,6 +652,32 @@ para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
 `401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
 `DELETE`: o ledger é append-only, e rota que não existe não precisa ser
 defendida.
+
+**As rotas da SPEC-037** são cinco, e a mais interessante é a que o banco
+guarda:
+
+| Rota | O quê |
+|---|---|
+| `GET`/`POST /planos`, `PATCH /planos/:id` | o que o clube vende. **Sem `DELETE`** — plano contratado carrega história, e `ativo: false` é a única forma de sumir com ele |
+| `GET`/`POST /students/:id/matriculas` | matricular. **Sem `PATCH` nem `DELETE`** (INV-112): valor e prazo são imutáveis, e renovar é uma matrícula nova |
+| `GET /me/matricula` | o plano do aluno, ou `null` — nunca `404` |
+
+**A INV-114 é a invariante nova mais forte do dia.** *Não há matrícula sem o
+contrato aceito por aquele usuário naquela versão*, e quem garante é o banco:
+FK composta apontando para uma coluna `GENERATED ALWAYS … STORED` em `aceites`
+que vale `'contrato'` **só** na linha de contrato. É o terceiro uso do
+discriminante constante nesta base (SPEC-033/D5 foi o primeiro).
+
+*O caso que dá sentido ao mecanismo:* sem a coluna gerada, uma `UNIQUE
+(usuario_id, versao)` casaria também o aceite do **termo** de mesma versão — e
+o aluno teria "aceitado o contrato" tendo aceitado outra coisa. Ensaiado com a
+FK ingênua: só o caso do termo fica vermelho; o caso "sem aceite nenhum"
+continua verde com o mecanismo errado.
+
+**E o `fim` da matrícula é calculado PELO POSTGRES.** `2026-01-31 + 1 mês` é
+28 de fevereiro; o `Date` do JavaScript transborda para 3 de março em
+silêncio. Uma coluna gerada resolveria e não pode: `42P17`, a expressão de
+`interval` não é imutável.
 
 **As duas rotas da SPEC-036** (`GET`/`PATCH /me/cadastro`) são o "cadastro
 híbrido": o gestor começa pela ficha, o aluno termina pelo app, **sobre os

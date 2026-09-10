@@ -52,6 +52,8 @@ export interface TxMock {
    * primeira divergência entre eles vira um teste que passa por acaso.
    */
   $queryRaw: jest.Mock;
+  // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
+  configPagamentoEmpresa: { findUnique: jest.Mock };
   ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
   turmaAluno: { findFirst: jest.Mock };
   faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
@@ -78,6 +80,8 @@ export interface PrismaMock {
   configOperacaoEmpresa: { findUnique: jest.Mock; upsert: jest.Mock };
   empresa: {
     findUnique: jest.Mock;
+    // SPEC-037: a matricula le o contrato vigente da empresa antes de decidir.
+    findUniqueOrThrow: jest.Mock;
     findMany: jest.Mock;
     count: jest.Mock;
     create: jest.Mock;
@@ -101,6 +105,18 @@ export interface PrismaMock {
     update: jest.Mock;
   };
   movimentoDeCredito: { findMany: jest.Mock };
+  // SPEC-037: plano, matricula e o aceite que a INV-114 exige.
+  plano: {
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+  };
+  matricula: { findFirst: jest.Mock; findMany: jest.Mock; create: jest.Mock };
+  aceite: { findFirst: jest.Mock };
+  // SPEC-037/D9: o `fim` da matricula e calculado PELO POSTGRES -- o `Date`
+  // do JavaScript transborda 31/01+1mes para 3 de marco, em silencio.
+  $queryRaw: jest.Mock;
   // SPEC-012: a agenda é leitura agregada sobre estes modelos.
   ocupacaoQuadra: {
     groupBy: jest.Mock;
@@ -190,6 +206,9 @@ export function buildPrismaMock(): PrismaMock {
     },
     empresa: {
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        contratoVersaoVigente: null,
+      }),
       findMany: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
@@ -232,6 +251,20 @@ export function buildPrismaMock(): PrismaMock {
       update: jest.fn(),
     },
     movimentoDeCredito: { findMany: jest.fn().mockResolvedValue([]) },
+    plano: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    matricula: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+    },
+    aceite: { findFirst: jest.fn().mockResolvedValue(null) },
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    configPagamentoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
     tx,
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };

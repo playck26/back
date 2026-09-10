@@ -122,6 +122,8 @@ model Empresa {
   acaoAdministrativas       AcaoAdministrativa[]
   faltasAvisadas            FaltaAvisada[]
   disponibilidadeProfessors DisponibilidadeProfessor[]
+  planos                    Plano[]
+  matriculas                Matricula[]
 
   @@map("empresas")
 }
@@ -165,6 +167,9 @@ model Usuario {
   aceites                      Aceite[]
   acoesRegistradas             AcaoAdministrativa[] @relation("AcaoRegistradaPor")
   movimentosDeCreditoAutorados MovimentoDeCredito[] @relation("MovimentoRegistradoPor")
+  /// SPEC-037 — quem matriculou. Nomeada porque `Matricula` tem DUAS pernas
+  /// para `usuarios`: esta (o autor) e a do aceite, que passa por `Aceite`.
+  matriculasCriadas            Matricula[]          @relation("MatriculaCriadaPor")
 
   /// DEF-024 fase 1 — alvo da FK composta de `alunos`. `company_id` aqui e
   /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
@@ -295,6 +300,7 @@ model Aluno {
   eventosDeMatricula  EventoDeMatricula[]
   avaliacoes          AvaliacaoDeAula[]
   presencas           Presenca[]
+  matriculas          Matricula[]
 
   /// DEF-024 fase 1 — alvo das FKs compostas de `presencas` e
   /// `avaliacoes_de_aula`. `id` ja e PK, entao este UNIQUE nunca falha por
@@ -809,6 +815,14 @@ model ConviteAluno {
   empresa   Empresa @relation(fields: [companyId], references: [id])
   criadoPor Usuario @relation("ConviteCriadoPor", fields: [criadoPorId], references: [id])
   nivel     Nivel?  @relation(fields: [nivelId], references: [id])
+  /// SPEC-037/D8 — o convite carrega o plano, e e ai que a jornada fecha: o
+  /// gestor convida ja dizendo qual, e o aceite cria conta + aceite do
+  /// contrato + MATRICULA na mesma transacao (AC-015).
+  ///
+  /// Opcional: convite sem plano continua sendo o de hoje. FK **composta**
+  /// (DEF-024), senao o convite da empresa A poderia apontar para plano da B.
+  planoId   String? @map("plano_id") @db.Uuid
+  plano     Plano?  @relation(fields: [companyId, planoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "convites_plano_fkey")
 
   @@index([companyId])
   @@map("convites_aluno")
@@ -989,11 +1003,105 @@ model Aceite {
   versao    Int
   aceitoEm  DateTime     @default(now()) @map("aceito_em")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// SPEC-037/D5 — **discriminante CONSTANTE**, o mesmo truque da SPEC-033.
+  ///
+  /// Vale `contrato` na linha de contrato e NULO na de termo. E o que permite
+  /// a FK de `matriculas` exigir "o aceite e DO CONTRATO" sem uma trigger:
+  /// sem ela, uma `UNIQUE (usuario_id, versao)` casaria tambem o aceite do
+  /// TERMO de mesma versao, e a matricula apontaria para o aceite errado.
+  ///
+  /// `dbgenerated` porque o Prisma nao emite `GENERATED ALWAYS ... STORED` --
+  /// ele viraria um `DEFAULT CASE` que o Postgres recusa com `0A000`. Quem
+  /// cria a coluna e a migration; aqui esta a REPRESENTACAO.
+  tipoContrato TipoDeAceite? @default(dbgenerated("\nCASE\n    WHEN (tipo = 'contrato'::tipo_de_aceite) THEN 'contrato'::tipo_de_aceite\n    ELSE NULL::tipo_de_aceite\nEND")) @map("tipo_contrato")
+
+  usuario    Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  matriculas Matricula[]
 
   @@unique([usuarioId, tipo, versao], map: "aceites_usuario_tipo_versao_key")
+  @@unique([usuarioId, tipoContrato, versao], map: "aceites_contrato_key")
   @@index([usuarioId])
   @@map("aceites")
+}
+
+/// SPEC-037 — o PLANO que o clube vende.
+///
+/// **Sem contador de versao, e a ausencia e a decisao (D3):** a matricula
+/// congela valor e prazo, entao mudar o preco amanha nao reescreve o que foi
+/// contratado ontem. Um `versao` que nada le seria cerimonia.
+///
+/// `linkPagamentoUrl` NULO = **herda da empresa** (D6), no molde de
+/// `horarios_funcionamento`. Nao e "sem link".
+model Plano {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  nome             String
+  valorCentavos    Int      @map("valor_centavos")
+  prazoMeses       Int      @map("prazo_meses")
+  linkPagamentoUrl String?  @map("link_pagamento_url")
+  /// Plano contratado nao e apagado (INV-115, FK RESTRICT): e desativado.
+  ativo            Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  empresa    Empresa        @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "planos_empresa_fkey")
+  matriculas Matricula[]
+  convites   ConviteAluno[]
+
+  @@unique([companyId, id], map: "planos_company_id_id_key")
+  @@index([companyId], map: "planos_company_idx")
+  @@map("planos")
+}
+
+/// SPEC-037 — a MATRICULA, que e a terceira coisa que este projeto quase
+/// chamou de matricula.
+///
+/// | O que existe | O que e |
+/// |---|---|
+/// | `turma_alunos` | o aluno esta NAQUELA turma |
+/// | `alunos.vinculo` | o clube RECONHECE esta pessoa |
+/// | **esta tabela** | esta pessoa CONTRATOU este plano, por este prazo, por este valor |
+///
+/// **`usuarioId` parece redundante com `alunoId` e nao e:** e a perna da FK do
+/// aceite, porque `aceites` e por USUARIO -- quem assina e a pessoa, nao a
+/// ficha. Sem ela a INV-114 nao teria como existir.
+model Matricula {
+  id                    String   @id @default(uuid()) @db.Uuid
+  companyId             String   @map("company_id") @db.Uuid
+  alunoId               String   @map("aluno_id") @db.Uuid
+  usuarioId             String   @map("usuario_id") @db.Uuid
+  planoId               String   @map("plano_id") @db.Uuid
+  /// O que foi ACERTADO.
+  valorCentavos         Int      @map("valor_centavos")
+  /// O que o plano cobrava NAQUELE DIA (D2). Com os dois, o desconto fica
+  /// visivel; com um so, ninguem distingue desconto de mudanca de preco.
+  valorDeTabelaCentavos Int      @map("valor_de_tabela_centavos")
+  prazoMeses            Int      @map("prazo_meses")
+  inicio                DateTime @db.Date
+  /// GRAVADO, nao derivado na leitura (D9): "quem vence este mes" viraria
+  /// varredura com aritmetica de data.
+  fim                   DateTime @db.Date
+  contratoVersao        Int      @map("contrato_versao")
+  criadoPorId           String   @map("criado_por_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Constante `contrato`, sempre. O lado que APONTA na FK causal.
+  tipoContrato TipoDeAceite? @default(dbgenerated("\nCASE\n    WHEN (contrato_versao IS NOT NULL) THEN 'contrato'::tipo_de_aceite\n    ELSE NULL::tipo_de_aceite\nEND")) @map("tipo_contrato")
+
+  empresa   Empresa @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_empresa_fkey")
+  aluno     Aluno   @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_aluno_fkey")
+  plano     Plano   @relation(fields: [companyId, planoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_plano_fkey")
+  criadoPor Usuario @relation("MatriculaCriadaPor", fields: [criadoPorId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_autor_fkey")
+  /// INV-114 — a FK que da valor legal a tudo isto.
+  /// **Opcional no TIPO, obrigatoria no BANCO.** O Prisma exige relacao
+  /// opcional quando um dos escalares e opcional, e `tipoContrato` e gerada
+  /// (nula na linha de termo). No banco a FK e NOT NULL nas tres colunas: a
+  /// matricula sem aceite de contrato e recusada com `23503`.
+  aceite    Aceite? @relation(fields: [usuarioId, tipoContrato, contratoVersao], references: [usuarioId, tipoContrato, versao], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_contrato_aceito_fkey")
+
+  @@index([companyId, alunoId], map: "matriculas_aluno_idx")
+  @@index([companyId, fim], map: "matriculas_fim_idx")
+  @@map("matriculas")
 }
 
 // ---------------------------------------------------------------------------

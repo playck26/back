@@ -6,6 +6,7 @@ import {
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../people/students.service';
+import type { MatriculasService } from '../matriculas/matriculas.service';
 import { InvitesService } from './invites.service';
 
 // TEST-009 (SPEC-009/REQ-002): convite de uso único, com a claim atômica
@@ -30,12 +31,28 @@ function build() {
     hashSenha: jest.fn().mockResolvedValue('$2b$12$hash'),
     criarPerfilDeAluno: jest.fn().mockResolvedValue({ id: 'a1' }),
   } as unknown as StudentsService;
+  /**
+   * SPEC-037 — duble com `criarNoAceite` espionavel.
+   *
+   * **Nao e `{}`:** os casos abaixo precisam distinguir "o convite tinha
+   * plano e a matricula nasceu" de "nao tinha plano". Um duble vazio faria a
+   * chamada explodir com `is not a function` no caminho novo, e ficar verde
+   * em todos os outros — que e o pior arranjo possivel.
+   */
+  const matriculas = {
+    criarNoAceite: jest.fn().mockResolvedValue({ id: 'm1' }),
+  } as unknown as MatriculasService;
   return {
     prisma: prisma as unknown as PrismaService,
     prismaRaw: prisma,
     tx,
     students,
-    service: new InvitesService(prisma as unknown as PrismaService, students),
+    matriculas,
+    service: new InvitesService(
+      prisma as unknown as PrismaService,
+      students,
+      matriculas,
+    ),
   };
 }
 
