@@ -296,12 +296,16 @@ describe('DEF-027 — o aluno desligado', () => {
     await desligar();
 
     await expect(
-      courts().createBooking(EMPRESA, {
-        quadraId: QUADRA,
-        data: FUTURO,
-        slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
-        alunoId: ALUNO,
-      }),
+      courts().createBooking(
+        EMPRESA,
+        {
+          quadraId: QUADRA,
+          data: FUTURO,
+          slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
+          alunoId: ALUNO,
+        },
+        ADMIN,
+      ),
     ).rejects.toMatchObject({
       response: { statusCode: 422, code: 'ALUNO_INATIVO' },
     });

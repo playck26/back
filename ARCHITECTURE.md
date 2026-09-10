@@ -1,14 +1,22 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-09** (era 2026-08-30).
-**Commit de referência:** a **SPEC-035 completa** (cancelar e reativar), que
-sucede a SPEC-039 (aula avulsa) e a SPEC-040 (disponibilidade do professor).
+**Fonte: análise direta do código.** Data: **2026-09-10** (era 2026-09-09).
+**Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
+defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
+**DEF-027**.
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
 **Números conferidos por comando nesta data, não estimados:** 37 migrations,
-34 tabelas, 93 caminhos / 131 operações no `openapi.json`, 10 triggers
+**33 tabelas**, 93 caminhos / 131 operações no `openapi.json`, 10 triggers
 não-internas.
+
+> **Eram "34 tabelas" aqui, e eram 33.** A contagem anterior incluía
+> `_prisma_migrations`, que é tabela de controle do Prisma e não faz parte do
+> modelo — os 33 `model` do `schema.prisma` batem exatamente com os 33
+> `BASE TABLE` do banco. Nenhuma migration mudou nisto; mudou a contagem. *É a
+> razão de a regra deste projeto pedir número conferido por comando: o errado
+> sobreviveu a três ciclos porque ninguém rodou o `count`.*
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -729,6 +737,22 @@ prometer seria mentir, e é a mesma divisão da janela do professor na SPEC-039.
 `status` era gravado e não fazia mais nada (medido: a ocupação futura ficava
 viva e a quadra bloqueada). Agora inativar cancela a grade futura e reativar a
 regenera — e a regeneração pode ser recusada com `409` + `conflicts[]`.
+
+**E o `status` do ALUNO era o terceiro (DEF-027), com uma diferença: ele
+estava escrito.** A seção do DEF-001, em agosto, nomeou a porta —
+*"`garantirVinculoAprovado` lê `vinculo`, não `status`"* — e a correção de lá
+fechou `login`, `refresh`, `JwtAuthGuard` e a propagação para
+`usuarios.status`, deixando essa aberta. O aluno desligado recebia `401` no
+login e continuava sendo **matriculado em plano pago, reservado e alocado em
+turma pelo gestor**, com o crédito dele sendo gasto. Fechado no **mesmo lugar
+que a SPEC-009 escolheu**: `garantirAlunoOperante` chama
+`garantirVinculoAprovado` e acrescenta o status, e as três escritas passaram a
+usá-la — vínculo primeiro (`403 VINCULO_PENDENTE`), status depois (`422
+ALUNO_INATIVO`). Mais `409 ALUNO_COM_COMPROMISSOS` no `PATCH /students/:id`, e
+`422 PROFESSOR_INATIVO` ao dar **turma** a professor inativo (o código já
+existia para a aula particular). **`MatriculasModule` passou a importar
+`PeopleModule`** por causa dessa trava — sem ciclo: `PeopleModule` importa
+`Frequencia` e `Storage`, e nenhum chega lá.
 
 **E o `status` da QUADRA tinha o mesmo problema, com dinheiro dentro
 (DEF-026).** `moveBooking` filtrava `status: 'ativa'` no destino desde a
