@@ -8,8 +8,9 @@ Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
 **Números conferidos por comando nesta data, não estimados:** 37 migrations,
-**33 tabelas**, 93 caminhos / 131 operações no `openapi.json`, 10 triggers
-não-internas.
+**33 tabelas**, **94 caminhos / 132 operações** no `openapi.json`, 10 triggers
+não-internas. *O caminho novo é o `GET /matriculas/vencimentos` (SPEC-045);
+nenhuma migration, tabela ou trigger mudou — a spec é leitura.*
 
 > **Eram "34 tabelas" aqui, e eram 33.** A contagem anterior incluía
 > `_prisma_migrations`, que é tabela de controle do Prisma e não faz parte do
@@ -737,6 +738,17 @@ prometer seria mentir, e é a mesma divisão da janela do professor na SPEC-039.
 `status` era gravado e não fazia mais nada (medido: a ocupação futura ficava
 viva e a quadra bloqueada). Agora inativar cancela a grade futura e reativar a
 regenera — e a regeneração pode ser recusada com `409` + `conflicts[]`.
+
+**`GET /matriculas/vencimentos` é a primeira rota de matrícula por EMPRESA
+(SPEC-045).** As três que existiam eram por aluno, e a consequência era que o
+gestor abria ficha por ficha para saber quem vence — medido, dez fichas no
+clube de demonstração. Ela mora num controller próprio (`VencimentosController`)
+e **não** em `MatriculasController`: aquele é
+`@Controller('students/:alunoId/matriculas')`, e pendurar uma consulta da
+empresa inteira num caminho que declara um aluno seria mentira de rota. Também
+**não** entrou no `/dashboard`: aquela rota devolve três números agregados e é
+lida a cada abertura do painel; uma lista ali cresceria com o clube. *A tela
+junta as duas — a tela pode; a API não deve.*
 
 **E o `status` do ALUNO era o terceiro (DEF-027), com uma diferença: ele
 estava escrito.** A seção do DEF-001, em agosto, nomeou a porta —
