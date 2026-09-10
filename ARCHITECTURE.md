@@ -6,8 +6,8 @@ sucede a SPEC-039 (aula avulsa) e a SPEC-040 (disponibilidade do professor).
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
-**Números conferidos por comando nesta data, não estimados:** 35 migrations,
-122 operações no `openapi.json`, 10 triggers não-internas no banco.
+**Números conferidos por comando nesta data, não estimados:** 36 migrations,
+88 caminhos / 124 operações no `openapi.json`, 10 triggers não-internas.
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -633,8 +633,9 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**87 caminhos, 122 operações HTTP** (conferido em **2026-09-09** contra o
-`openapi.json`, depois da SPEC-035 — eram 85/120 depois da SPEC-040). As duas medidas aparecem porque "rotas" é
+**88 caminhos, 124 operações HTTP** (conferido em **2026-09-09** contra o
+`openapi.json`, depois da SPEC-036 — eram 85/120 depois da SPEC-040 e 87/122
+depois da SPEC-035). As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -649,6 +650,18 @@ para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
 `401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
 `DELETE`: o ledger é append-only, e rota que não existe não precisa ser
 defendida.
+
+**As duas rotas da SPEC-036** (`GET`/`PATCH /me/cadastro`) são o "cadastro
+híbrido": o gestor começa pela ficha, o aluno termina pelo app, **sobre os
+mesmos sete campos**. O DTO do aluno é o MENOR e o do gestor herda dele — o
+contrário (um DTO só, com o papel decidindo quais campos valem) foi recusado,
+porque campos que ora valem ora não é como nasce escalada de privilégio.
+
+A completude vem **calculada, e não há coluna** (INV-111): a SPEC-037 vai
+acrescentar plano e contrato à matrícula, e uma percentagem gravada estaria
+errada no dia em que isso entrar. **Ela não bloqueia nada**, e há um gate
+(`completude-nao-bloqueia.spec.ts`) que varre `src/` e fica vermelho se alguém
+ler a completude fora do módulo dela.
 
 **As duas rotas da SPEC-035**, e o par delas explica a spec inteira:
 

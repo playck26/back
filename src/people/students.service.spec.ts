@@ -67,6 +67,13 @@ describe('StudentsService', () => {
       expect(prisma.aluno.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { companyId: 'c1' } }),
       );
+      // SPEC-036 — a resposta cresceu, e a LISTA cresceu junto de proposito:
+      // com `cadastro` aqui, a tela do gestor consegue marcar quem esta
+      // incompleto sem uma ida por aluno. O custo sao sete campos anulaveis
+      // por linha.
+      //
+      // **`nome` e `email` preenchidos e o resto vazio da 29%**, que e o piso
+      // real (AC-011) — nao 0%.
       expect(result.data).toEqual([
         {
           id: 'a1',
@@ -75,6 +82,23 @@ describe('StudentsService', () => {
           telefone: null,
           nivelId: null,
           status: 'ativo',
+          dataNascimento: null,
+          emergenciaNome: null,
+          emergenciaTelefone: null,
+          endereco: null,
+          cidade: null,
+          uf: null,
+          observacoesSaude: null,
+          cadastro: {
+            percentual: 29,
+            faltam: [
+              'telefone',
+              'dataNascimento',
+              'emergenciaNome',
+              'emergenciaTelefone',
+              'nivelId',
+            ],
+          },
         },
       ]);
     });

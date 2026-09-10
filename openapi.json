@@ -1173,6 +1173,66 @@
         ]
       }
     },
+    "/api/v1/me/cadastro": {
+      "get": {
+        "operationId": "MeCadastroController_meuCadastro",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "operationId": "MeCadastroController_atualizarMeuCadastro",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CamposDoCadastroDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/_smoke/tenant-check/{companyId}": {
       "get": {
         "operationId": "SmokeController_tenantCheck",
@@ -5178,6 +5238,31 @@
           "ocorrencias"
         ]
       },
+      "CompletudeDoCadastroDto": {
+        "type": "object",
+        "properties": {
+          "percentual": {
+            "type": "number",
+            "example": 71,
+            "description": "Fracao dos SETE campos contaveis, arredondada. O piso real e 29% -- `nome` e `email` sao NOT NULL em `usuarios`, entao todo aluno nasce com dois. Barra em zero mentiria sobre o trabalho ja feito."
+          },
+          "faltam": {
+            "example": [
+              "dataNascimento",
+              "emergenciaTelefone"
+            ],
+            "description": "Os que faltam, NA ORDEM EM QUE A TELA DEVE PEDI-LOS. Vazio quando `percentual` e 100.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "percentual",
+          "faltam"
+        ]
+      },
       "AlunoResponseDto": {
         "type": "object",
         "properties": {
@@ -5209,6 +5294,42 @@
               "ativo",
               "inativo"
             ]
+          },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Beto Souza"
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511988887777"
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true,
+            "example": "Sao Paulo"
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "example": "SP"
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
+          },
+          "cadastro": {
+            "$ref": "#/components/schemas/CompletudeDoCadastroDto"
           }
         },
         "required": [
@@ -5217,7 +5338,15 @@
           "email",
           "telefone",
           "nivelId",
-          "status"
+          "status",
+          "dataNascimento",
+          "emergenciaNome",
+          "emergenciaTelefone",
+          "endereco",
+          "cidade",
+          "uf",
+          "observacoesSaude",
+          "cadastro"
         ]
       },
       "AlunoPaginadoResponseDto": {
@@ -5281,6 +5410,42 @@
               "inativo"
             ]
           },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Beto Souza"
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511988887777"
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true,
+            "example": "Sao Paulo"
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "example": "SP"
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
+          },
+          "cadastro": {
+            "$ref": "#/components/schemas/CompletudeDoCadastroDto"
+          },
           "senhaTemporaria": {
             "type": "string",
             "example": "Xk4p-9Qm2"
@@ -5293,6 +5458,14 @@
           "telefone",
           "nivelId",
           "status",
+          "dataNascimento",
+          "emergenciaNome",
+          "emergenciaTelefone",
+          "endereco",
+          "cidade",
+          "uf",
+          "observacoesSaude",
+          "cadastro",
           "senhaTemporaria"
         ]
       },
@@ -5325,6 +5498,64 @@
           },
           "telefone": {
             "type": "string"
+          },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "AC",
+              "AL",
+              "AP",
+              "AM",
+              "BA",
+              "CE",
+              "DF",
+              "ES",
+              "GO",
+              "MA",
+              "MT",
+              "MS",
+              "MG",
+              "PA",
+              "PB",
+              "PR",
+              "PE",
+              "PI",
+              "RJ",
+              "RN",
+              "RS",
+              "RO",
+              "RR",
+              "SC",
+              "SP",
+              "SE",
+              "TO"
+            ]
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
           },
           "nivelId": {
             "type": "string"
@@ -5660,6 +5891,75 @@
           },
           "ordem": {
             "type": "number"
+          }
+        }
+      },
+      "CamposDoCadastroDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "telefone": {
+            "type": "string"
+          },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "AC",
+              "AL",
+              "AP",
+              "AM",
+              "BA",
+              "CE",
+              "DF",
+              "ES",
+              "GO",
+              "MA",
+              "MT",
+              "MS",
+              "MG",
+              "PA",
+              "PB",
+              "PR",
+              "PE",
+              "PI",
+              "RJ",
+              "RN",
+              "RS",
+              "RO",
+              "RR",
+              "SC",
+              "SP",
+              "SE",
+              "TO"
+            ]
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
           }
         }
       },

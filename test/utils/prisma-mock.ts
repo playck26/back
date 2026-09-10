@@ -11,7 +11,9 @@ export interface TxMock {
   // duplicado **dentro** da transação, para a claim do convite voltar
   // atrás junto se o cadastro não puder ser concluído.
   usuario: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
-  aluno: { create: jest.Mock };
+  // SPEC-036: `update` do aluno passou a escrever os sete campos do cadastro,
+  // e o `PATCH /me/cadastro` reusa o mesmo caminho transacional do gestor.
+  aluno: { create: jest.Mock; update: jest.Mock };
   // SPEC-033/TASK-004: a acao administrativa nasce DENTRO da transacao do
   // lancamento, antes do movimento — `movimentos_acao_fkey` a exige.
   acaoAdministrativa: { create: jest.Mock };
@@ -95,6 +97,8 @@ export interface PrismaMock {
     // de lancamento o rele depois de escrever.
     findFirst: jest.Mock;
     findUnique: jest.Mock;
+    // SPEC-036: a ficha do cadastro completo.
+    update: jest.Mock;
   };
   movimentoDeCredito: { findMany: jest.Mock };
   // SPEC-012: a agenda é leitura agregada sobre estes modelos.
@@ -125,7 +129,7 @@ export interface PrismaMock {
 export function buildPrismaMock(): PrismaMock {
   const tx: TxMock = {
     usuario: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
-    aluno: { create: jest.fn() },
+    aluno: { create: jest.fn(), update: jest.fn() },
     acaoAdministrativa: {
       create: jest.fn().mockResolvedValue({ id: 'acao-credito' }),
     },
@@ -225,6 +229,7 @@ export function buildPrismaMock(): PrismaMock {
       // Padrao: aluno existe, saldo zero. Quem testa saldo sobrescreve.
       findFirst: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
       findUnique: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
+      update: jest.fn(),
     },
     movimentoDeCredito: { findMany: jest.fn().mockResolvedValue([]) },
     tx,

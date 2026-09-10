@@ -252,7 +252,34 @@ model Aluno {
   // pessoa. Fonte de verdade de INV-010, lida do banco no momento da
   // escrita, nunca do JWT (2a validacao cruzada, ACHADO-003).
   vinculo       VinculoAluno  @default(pendente)
-  createdAt     DateTime      @default(now()) @map("created_at")
+
+  /// SPEC-036 — os sete campos do CADASTRO COMPLETO, e o fim do GAP-002.
+  ///
+  /// **Aqui e nao em `usuarios` (D1):** `usuarios` e quem ENTRA, `alunos` e a
+  /// FICHA no clube. Em `usuarios`, estas sete seriam colunas nulas em toda
+  /// conta de gestor e de professor, com um CHECK por papel para defende-las.
+  ///
+  /// **Todas anulaveis, e e o unico jeito:** ha alunos em producao. E
+  /// `NOT NULL DEFAULT ''` transformaria "nao informado" em "informado
+  /// vazio", que e o que o `alunos_texto_nao_vazio` impede daqui pra frente.
+  ///
+  /// **Nao existe coluna de completude, e a ausencia e a decisao**
+  /// (D2/INV-111): a SPEC-037 acrescenta plano e contrato a matricula, e no
+  /// dia em que isso entrar toda percentagem gravada estaria errada.
+  ///
+  /// **Sem CPF** (LIM-036a): o dinheiro nao passa pela plataforma, e
+  /// documento que nada usa e passivo.
+  dataNascimento     DateTime? @map("data_nascimento") @db.Date
+  emergenciaNome     String?   @map("emergencia_nome")
+  emergenciaTelefone String?   @map("emergencia_telefone")
+  endereco           String?
+  cidade             String?
+  /// CHAR(2), e o CHECK `alunos_uf_valida` cobra a lista das 27 — duas letras
+  /// maiusculas nao bastam, `XX` passaria.
+  uf                 String?   @db.Char(2)
+  observacoesSaude   String?   @map("observacoes_saude")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   /// DEF-024 fase 1 — IDENTIDADE, nao autoria: a LIM-032f protege o autor
   /// `super_admin` (que tem `company_id` nulo), e um super admin nunca e

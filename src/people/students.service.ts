@@ -19,6 +19,10 @@ import {
 import type { CreateStudentDto } from './dto/create-student.dto';
 import type { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import type { UpdateStudentDto } from './dto/update-student.dto';
+import { calcularCompletude } from './completude-do-cadastro';
+import type { CamposDoCadastroDto } from './dto/campos-do-cadastro.dto';
+import { normalizarNascimento } from './normalizar-nascimento';
+import { formatDateOnly } from '../courts/date-time.util';
 
 const BCRYPT_COST = 12;
 
@@ -337,6 +341,11 @@ export class StudentsService {
       await this.assertNivelPertenceAEmpresa(companyId, dto.nivelId);
     }
 
+    // SPEC-036/AC-004 — a plausibilidade da data vive na aplicacao E no banco
+    // (`alunos_nascimento_plausivel`). Aqui porque o CHECK devolveria `23514`,
+    // que vaza como `500`; o CHECK porque a aplicacao nao e o unico caminho.
+    const dataNascimento = normalizarNascimento(dto.dataNascimento);
+
     const aluno = await this.prisma.$transaction(async (tx) => {
       if (dto.nome !== undefined || dto.telefone !== undefined) {
         await tx.usuario.update({
@@ -369,12 +378,75 @@ export class StudentsService {
 
       return tx.aluno.update({
         where: { id },
-        data: { nivelId: dto.nivelId, status: dto.status },
+        data: {
+          nivelId: dto.nivelId,
+          status: dto.status,
+          // SPEC-036 — os sete. `undefined` nao mexe, `null` APAGA: sao duas
+          // intencoes diferentes e o Prisma ja as distingue, entao passar o
+          // valor cru e o certo. Foi por isso que o DTO recusa `''` (AC-005) —
+          // se aceitasse, "apagar" teria duas formas e uma delas subiria a
+          // barra de completude.
+          dataNascimento,
+          emergenciaNome: dto.emergenciaNome,
+          emergenciaTelefone: dto.emergenciaTelefone,
+          endereco: dto.endereco,
+          cidade: dto.cidade,
+          uf: dto.uf,
+          observacoesSaude: dto.observacoesSaude,
+        },
         include: { usuario: true },
       });
     });
 
     return this.toResponse(aluno);
+  }
+
+  /**
+   * SPEC-036/REQ-002 — a ficha do aluno LOGADO, achada pelo usuario do token.
+   *
+   * **O `alunoId` nunca vem do cliente**, e e a razao de este metodo existir
+   * ao lado do `findOne`: se viesse, o aluno A leria a ficha do B mandando
+   * outro id. O caminho e `usuario -> aluno`, com `companyId` do token.
+   *
+   * `404` quando nao ha ficha e um estado que o `@Roles('aluno')` ja deveria
+   * impedir — mas "o guard cobre" e premissa, e este projeto ja reprovou uma
+   * spec inteira por confiar em premissa desse tipo.
+   */
+  async meuCadastro(
+    companyId: string,
+    usuarioId: string,
+  ): Promise<AlunoResponseDto> {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { usuarioId, companyId },
+      include: { usuario: true },
+    });
+    if (!aluno) {
+      throw new NotFoundException();
+    }
+    return this.toResponse(aluno);
+  }
+
+  /**
+   * SPEC-036/AC-006 — o aluno escreve os SETE, e so eles.
+   *
+   * **Reusa o `update` do gestor de proposito.** O DTO ja garante que
+   * `nivelId` e `status` nao existem no corpo (D7), entao nao ha campo
+   * privilegiado a filtrar aqui — a garantia e de tipo, nao de vigilancia.
+   * Um `delete dto.status` neste ponto seria a versao fragil da mesma ideia.
+   */
+  async atualizarMeuCadastro(
+    companyId: string,
+    usuarioId: string,
+    dto: CamposDoCadastroDto,
+  ): Promise<AlunoResponseDto> {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { usuarioId, companyId },
+      select: { id: true },
+    });
+    if (!aluno) {
+      throw new NotFoundException();
+    }
+    return this.update(companyId, aluno.id, dto);
   }
 
   private async assertNivelPertenceAEmpresa(
@@ -393,6 +465,13 @@ export class StudentsService {
     id: string;
     nivelId: string | null;
     status: string;
+    dataNascimento?: Date | null;
+    emergenciaNome?: string | null;
+    emergenciaTelefone?: string | null;
+    endereco?: string | null;
+    cidade?: string | null;
+    uf?: string | null;
+    observacoesSaude?: string | null;
     usuario: { nome: string; email: string; telefone: string | null };
   }): AlunoResponseDto {
     return {
@@ -402,6 +481,28 @@ export class StudentsService {
       telefone: aluno.usuario.telefone,
       nivelId: aluno.nivelId,
       status: aluno.status,
+      // SPEC-036 — `?? null` e nao `??? undefined`: quem le a resposta precisa
+      // ver a chave com `null` para saber que o campo existe e esta vazio. Uma
+      // chave ausente e indistinguivel de "esta versao do servidor nao tem
+      // este campo", e a tela nao teria como decidir se pede ou nao.
+      dataNascimento: aluno.dataNascimento
+        ? formatDateOnly(aluno.dataNascimento)
+        : null,
+      emergenciaNome: aluno.emergenciaNome ?? null,
+      emergenciaTelefone: aluno.emergenciaTelefone ?? null,
+      endereco: aluno.endereco ?? null,
+      cidade: aluno.cidade ?? null,
+      uf: aluno.uf ?? null,
+      observacoesSaude: aluno.observacoesSaude ?? null,
+      cadastro: calcularCompletude({
+        nome: aluno.usuario.nome,
+        email: aluno.usuario.email,
+        telefone: aluno.usuario.telefone,
+        dataNascimento: aluno.dataNascimento,
+        emergenciaNome: aluno.emergenciaNome,
+        emergenciaTelefone: aluno.emergenciaTelefone,
+        nivelId: aluno.nivelId,
+      }),
     };
   }
 }
