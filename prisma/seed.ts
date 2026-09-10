@@ -69,6 +69,41 @@ async function seedEtapa1() {
     },
   });
 
+  /**
+   * DEF-025 — **o horario padrao dos sete dias, que este seed nao criava.**
+   *
+   * `CompaniesService.create` semeia isto na criacao de toda empresa, e o
+   * comentario de la ja dizia o que aconteceria sem: *"o admin abriria a tela
+   * de configuracao vazia e nao entenderia de onde vem os horarios que o
+   * aluno enxerga"*.
+   *
+   * **Este seed cria a empresa por `prisma.empresa.upsert`, direto** -- ele
+   * pula o servico, e com ele a semeadura. Em 2026-09-10, testando local, o
+   * Israel abriu a ficha de uma quadra e o bloco de horario nao tinha grade
+   * nenhuma; "Salvar horarios" respondia `400 dias must contain at least 7
+   * elements`, porque a tela mandava de volta a lista vazia que recebeu.
+   *
+   * O servico ganhou uma rede de seguranca para nunca mais devolver lista
+   * vazia. **Esta linha continua sendo necessaria**: sem ela o banco de
+   * demonstracao ficaria num estado que nenhuma empresa de producao tem, e o
+   * proximo defeito encontrado aqui seria de novo do ambiente, nao do
+   * produto.
+   *
+   * `skipDuplicates` porque o seed e idempotente por contrato -- rodar duas
+   * vezes nao pode estourar com `23505`.
+   */
+  await prisma.horarioFuncionamento.createMany({
+    data: Array.from({ length: 7 }, (_, diaSemana) => ({
+      companyId: empresa.id,
+      quadraId: null,
+      diaSemana,
+      horaInicio: new Date('1970-01-01T06:00:00.000Z'),
+      horaFim: new Date('1970-01-01T22:00:00.000Z'),
+      fechado: false,
+    })),
+    skipDuplicates: true,
+  });
+
   const senhaHash = await bcrypt.hash(senhaObrigatoria('SEED_ADMIN_SENHA'), 12);
   await prisma.usuario.upsert({
     where: { email: ADMIN_DEMO_EMAIL },
