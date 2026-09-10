@@ -130,7 +130,11 @@ const QUADRA_ATIVA = { id: 'q1', companyId: 'c1', status: 'ativa' as const };
 function buildStudentsMock() {
   return {
     garantirVinculoAprovado: jest.fn(),
-    exigirVinculoAprovado: jest.fn().mockResolvedValue(undefined),
+    // DEF-027 — a trava inteira (vinculo + status). O duble tem as duas
+    // porque o servico chama a segunda; deixar so a primeira aqui daria
+    // `is not a function` em 16 casos, que foi exatamente o que aconteceu.
+    garantirAlunoOperante: jest.fn(),
+    exigirAlunoOperante: jest.fn().mockResolvedValue(undefined),
   } as unknown as StudentsService;
 }
 
@@ -691,8 +695,12 @@ describe('ClassesService', () => {
     // (INV-003). Cadastro não aprovado não ocupa.
     it('bloqueia alocação de aluno com vínculo pendente (INV-010)', async () => {
       tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
-      tx.aluno.findFirst.mockResolvedValue({ id: 'a1', vinculo: 'pendente' });
-      (studentsService.garantirVinculoAprovado as jest.Mock).mockImplementation(
+      tx.aluno.findFirst.mockResolvedValue({
+        id: 'a1',
+        vinculo: 'pendente',
+        status: 'ativo',
+      });
+      (studentsService.garantirAlunoOperante as jest.Mock).mockImplementation(
         () => {
           throw new ForbiddenException({ code: 'VINCULO_PENDENTE' });
         },

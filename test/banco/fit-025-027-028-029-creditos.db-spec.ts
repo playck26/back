@@ -63,7 +63,7 @@ const ACAO = 'f0330000-0000-4000-8000-000000000007';
 function servico(c: PrismaClient): CourtsService {
   return new CourtsService(
     c as unknown as PrismaService,
-    { exigirVinculoAprovado: () => undefined } as unknown as StudentsService,
+    { exigirAlunoOperante: () => undefined } as unknown as StudentsService,
     new HorarioFuncionamentoService(c as unknown as PrismaService),
     {} as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(c as unknown as PrismaService),

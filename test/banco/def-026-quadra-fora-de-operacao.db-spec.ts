@@ -73,7 +73,7 @@ function courts(): CourtsService {
   const p = db as unknown as PrismaService;
   return new CourtsService(
     p,
-    { exigirVinculoAprovado: () => undefined } as unknown as StudentsService,
+    { exigirAlunoOperante: () => undefined } as unknown as StudentsService,
     new HorarioFuncionamentoService(p),
     // `toQuadraResponse` chama `resolver()` em toda leitura de quadra; um
     // duble vazio explode com "is not a function", e a mensagem nao diz que a

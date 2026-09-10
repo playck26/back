@@ -56,7 +56,7 @@ function servico(db: PrismaClient): CourtsService {
     // (LIM-034a). Os dublês aqui são declaradamente inertes — se algum
     // caminho passar a usá-los, o teste quebra em vez de mentir.
     {
-      exigirVinculoAprovado: () => {
+      exigirAlunoOperante: () => {
         throw new Error('moveBooking nao deve consultar vinculo de aluno');
       },
     } as unknown as StudentsService,

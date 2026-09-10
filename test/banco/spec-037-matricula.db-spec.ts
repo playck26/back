@@ -23,6 +23,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { MatriculasService } from '../../src/matriculas/matriculas.service';
+import { StudentsService } from '../../src/people/students.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(180_000);
@@ -38,7 +39,14 @@ const db = new PrismaClient();
 const q = (sql: string) => db.$executeRawUnsafe(sql);
 
 function servico(): MatriculasService {
-  return new MatriculasService(db as unknown as PrismaService);
+  // DEF-027 — o `StudentsService` entrou como dependencia porque `matricular`
+  // passou a chamar `garantirAlunoOperante`. Aqui vai o servico DE VERDADE,
+  // com o mesmo cliente: um duble devolveria "aprovado e ativo" sempre, e os
+  // casos de DEF-027 passariam sem tocar o banco.
+  return new MatriculasService(
+    db as unknown as PrismaService,
+    new StudentsService(db as unknown as PrismaService),
+  );
 }
 
 async function montar(): Promise<void> {

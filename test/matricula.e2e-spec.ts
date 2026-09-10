@@ -40,9 +40,16 @@ describe('Matrícula (e2e) — SPEC-037', () => {
     const usuario = await buildUsuarioAtivo();
     const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
     prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: false });
+    // DEF-027 — `vinculo` e `status` entraram aqui porque `criar` passou a
+    // chamar `garantirAlunoOperante`. **O duble mentia sobre a linha real:**
+    // as duas colunas sao `NOT NULL` no banco (`vinculo` default `pendente`,
+    // `status` default `ativo`), e sem elas o servico lia `undefined` e
+    // respondia `403` em cinco casos que nada tinham a ver com vinculo.
     prisma.aluno.findFirst.mockResolvedValue({
       id: ALUNO_ID,
       usuarioId: 'u-aluno',
+      vinculo: 'aprovado',
+      status: 'ativo',
     });
     prisma.plano.findFirst.mockResolvedValue({
       id: PLANO_ID,
@@ -64,6 +71,42 @@ describe('Matrícula (e2e) — SPEC-037', () => {
       .post(ROTA)
       .set('Authorization', `Bearer ${token}`)
       .send({ planoId: PLANO_ID, ...corpo });
+
+  // =====================================================================
+  // DEF-027 — o aluno desligado, pela rota
+  // =====================================================================
+
+  it('**DEF-027: matricular um aluno DESLIGADO é 422 `ALUNO_INATIVO`**', async () => {
+    const token = await comoAdmin();
+    prisma.aluno.findFirst.mockResolvedValue({
+      id: ALUNO_ID,
+      usuarioId: 'u-aluno',
+      vinculo: 'aprovado',
+      status: 'inativo',
+    });
+
+    // Medido na instância viva antes do conserto: `201`, num aluno que recebe
+    // `401` no login. Ele pagaria por um plano que não consegue usar.
+    const res = await criar(token).expect(422);
+    expect(bodyOf<{ code: string }>(res).code).toBe('ALUNO_INATIVO');
+  });
+
+  it('DEF-027: e a recusa vem ANTES da conferência do contrato', async () => {
+    const token = await comoAdmin();
+    prisma.aluno.findFirst.mockResolvedValue({
+      id: ALUNO_ID,
+      usuarioId: 'u-aluno',
+      vinculo: 'aprovado',
+      status: 'inativo',
+    });
+    // Sem aceite: se a ordem fosse outra, a resposta seria
+    // `CONTRATO_NAO_ACEITO` e mandaria o gestor pedir ao aluno que **entrasse
+    // no app** — que é justamente o que ele não consegue mais fazer.
+    prisma.aceite.findFirst.mockResolvedValue(null);
+
+    const res = await criar(token).expect(422);
+    expect(bodyOf<{ code: string }>(res).code).toBe('ALUNO_INATIVO');
+  });
 
   it('AC-009: plano INATIVO é 422 `PLANO_INATIVO`', async () => {
     const token = await comoAdmin();

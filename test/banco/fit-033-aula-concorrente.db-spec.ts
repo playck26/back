@@ -63,7 +63,7 @@ function servico(c: PrismaClient): CourtsService {
   const p = c as unknown as PrismaService;
   return new CourtsService(
     p,
-    { exigirVinculoAprovado: () => undefined } as unknown as StudentsService,
+    { exigirAlunoOperante: () => undefined } as unknown as StudentsService,
     new HorarioFuncionamentoService(p),
     {} as unknown as ImagemDaQuadraService,
     new ConfigOperacaoService(p),

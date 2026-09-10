@@ -511,7 +511,12 @@ export class ClassesService {
       // SPEC-009/INV-010 — dentro da transação, com a turma já travada por
       // FOR UPDATE: checar vínculo antes de abrir a transação deixaria
       // janela entre a checagem e a escrita.
-      this.studentsService.garantirVinculoAprovado(aluno);
+      //
+      // **DEF-027:** passou a olhar `status` junto. Alocar um aluno desligado
+      // não era erro de banco — ele entrava na turma e reaparecia na chamada
+      // com `alunoAtivo: false`, que a `frequencia.service` já calcula. A
+      // LEITURA sabia; a escrita não.
+      this.studentsService.garantirAlunoOperante(aluno);
 
       const jaAlocado = await tx.turmaAluno.findFirst({
         where: { turmaId, alunoId },
@@ -784,15 +789,35 @@ export class ClassesService {
     }
   }
 
+  /**
+   * DEF-027 — **o mesmo portao que a SPEC-039 pos na aula particular, aqui.**
+   *
+   * `POST /bookings` com `professorId` recusa professor inativo desde a
+   * SPEC-039 (`422 PROFESSOR_INATIVO`, AC-005). Dar a ele uma TURMA continuava
+   * respondendo `201`, e a turma ficava com um professor que o produto trata
+   * como fora de operacao — a agenda dele e o painel do professor filtram
+   * `status`, entao a turma existia sem ninguem que a enxergasse como sua.
+   *
+   * **O codigo e o mesmo de proposito.** Dois codigos para "este professor nao
+   * atende" fariam a tela ter de conhecer os dois para dizer a mesma frase.
+   */
   private async assertProfessorDaEmpresa(
     companyId: string,
     professorId: string,
   ): Promise<void> {
     const professor = await this.prisma.professor.findFirst({
       where: { id: professorId, companyId },
+      select: { status: true },
     });
     if (!professor) {
       throw new NotFoundException('Professor não encontrado');
+    }
+    if (professor.status !== 'ativo') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'PROFESSOR_INATIVO',
+        message: 'Este professor está inativo e não assume turma.',
+      });
     }
   }
 

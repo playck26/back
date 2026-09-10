@@ -8,9 +8,10 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import type { Prisma, VinculoAluno } from '@prisma/client';
+import type { Prisma, UsuarioStatus, VinculoAluno } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AlunoComSenhaTemporariaResponseDto,
@@ -23,7 +24,11 @@ import type { UpdateStudentDto } from './dto/update-student.dto';
 import { calcularCompletude } from './completude-do-cadastro';
 import type { CamposDoCadastroDto } from './dto/campos-do-cadastro.dto';
 import { normalizarNascimento } from './normalizar-nascimento';
-import { formatDateOnly } from '../courts/date-time.util';
+import {
+  formatDateOnly,
+  formatTimeOnly,
+  hojeNoFusoDoClube,
+} from '../courts/date-time.util';
 
 // SPEC-038 — passou para `common/utils/senha-temporaria` quando a importacao
 // em lote precisou do mesmo numero. Parametro de seguranca em duas copias
@@ -234,24 +239,59 @@ export class StudentsService {
   }
 
   /**
+   * DEF-027 — **a trava inteira: vínculo E status.**
+   *
+   * `vinculo` responde "a empresa reconhece esta pessoa?"; `status` responde
+   * "ela ainda opera aqui?". São coisas diferentes de propósito (SPEC-009), e
+   * **os caminhos de escrita só olhavam a primeira**. Medido contra a
+   * instância local: um aluno desligado — que recebe `401` no login e `403
+   * CONTA_INATIVA` em toda rota — continuava sendo matriculado em plano pago,
+   * posto em turma e tendo o próprio crédito gasto pelo gestor.
+   *
+   * **A ordem importa e é a existente:** vínculo primeiro. Um cadastro
+   * `pendente` nunca chegou a operar, então "ainda em análise" descreve
+   * melhor o estado do que "está inativo".
+   *
+   * **`422` e não `403`**, ao contrário do vínculo: é a mesma família de
+   * `PROFESSOR_INATIVO` (SPEC-039) e `QUADRA_INATIVA` (DEF-026), e quem lê a
+   * resposta precisa reconhecer o mesmo gesto — desativar — pelos três lados.
+   * O `403` do vínculo fica onde está: ali o pedido é de quem ainda não tem
+   * direito; aqui o direito existiu e foi retirado.
+   */
+  garantirAlunoOperante(aluno: {
+    vinculo: VinculoAluno;
+    status: UsuarioStatus;
+  }): void {
+    this.garantirVinculoAprovado(aluno);
+    if (aluno.status !== 'ativo') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'ALUNO_INATIVO',
+        message:
+          'Este aluno está desligado do clube. Reative-o antes de matricular, reservar ou alocar em turma.',
+      });
+    }
+  }
+
+  /**
    * Mesma trava, para quem ainda não carregou o aluno (MOD-005). Aceita um
    * `tx` para rodar dentro da transação de quem chama — checar vínculo
    * fora da transação que cria a reserva abriria janela entre a checagem e
    * a escrita.
    */
-  async exigirVinculoAprovado(
+  async exigirAlunoOperante(
     companyId: string,
     alunoId: string,
     tx: Pick<Prisma.TransactionClient, 'aluno'> = this.prisma,
   ): Promise<void> {
     const aluno = await tx.aluno.findFirst({
       where: { id: alunoId, companyId },
-      select: { vinculo: true },
+      select: { vinculo: true, status: true },
     });
     if (!aluno) {
       throw new NotFoundException('Aluno não encontrado');
     }
-    this.garantirVinculoAprovado(aluno);
+    this.garantirAlunoOperante(aluno);
   }
 
   /**
@@ -348,6 +388,69 @@ export class StudentsService {
     // (`alunos_nascimento_plausivel`). Aqui porque o CHECK devolveria `23514`,
     // que vaza como `500`; o CHECK porque a aplicacao nao e o unico caminho.
     const dataNascimento = normalizarNascimento(dto.dataNascimento);
+
+    /**
+     * DEF-027 — **desligar com compromisso marcado e recusado, e nao cancelado
+     * em silencio.**
+     *
+     * O `POST /students/:id/recusar` responde, para um aluno ja aprovado:
+     * *"Aluno ja aprovado nao e recusado por este fluxo — use inativacao
+     * (status)"*. Ou seja, **o produto manda o gestor vir para ca** — e aqui
+     * nao havia porta nenhuma: respondia `200`, a reserva paga continuava viva
+     * na agenda e o credito ficava parado com quem nao consegue mais entrar.
+     *
+     * **Recusa em vez de cancelar, pela mesma razao do DEF-026:** a reserva foi
+     * paga com credito, e cancela-la devolve saldo. Mover dinheiro nao pode ser
+     * efeito colateral de um botao de status. O gestor cancela (e o credito
+     * volta, medido) e depois desliga.
+     *
+     * **So na inativacao.** Reativar nunca e recusado — senao um aluno
+     * desligado com ocupacao legada ficaria preso fora do clube.
+     *
+     * O corte e `hojeNoFusoDoClube`, nao `now()`: a aula de hoje as 8h ja
+     * aconteceu quando o gestor desliga as 14h.
+     */
+    if (dto.status === 'inativo') {
+      const filtro = {
+        companyId,
+        alunoId: id,
+        statusPagamento: { not: 'cancelado' as const },
+        data: { gte: hojeNoFusoDoClube() },
+      };
+      const marcadas = await this.prisma.ocupacaoQuadra.findMany({
+        where: filtro,
+        orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+        take: 20,
+        select: {
+          id: true,
+          data: true,
+          horaInicio: true,
+          horaFim: true,
+          origemTipo: true,
+        },
+      });
+      if (marcadas.length > 0) {
+        const total = await this.prisma.ocupacaoQuadra.count({ where: filtro });
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'ALUNO_COM_COMPROMISSOS',
+          message:
+            total === 1
+              ? 'Este aluno tem 1 horario marcado daqui para frente. Cancele antes de desligá-lo — cancelar devolve o crédito.'
+              : `Este aluno tem ${total} horarios marcados daqui para frente. Cancele antes de desligá-lo — cancelar devolve o crédito.`,
+          total,
+          // Mesmo teto da amostra do DEF-026: uma tela nao desenha trezentas
+          // linhas, e a contagem ao lado ja diz o tamanho real.
+          amostra: marcadas.map((o) => ({
+            ocupacaoId: o.id,
+            data: formatDateOnly(o.data),
+            horaInicio: formatTimeOnly(o.horaInicio),
+            horaFim: formatTimeOnly(o.horaFim),
+            origemTipo: o.origemTipo,
+          })),
+        });
+      }
+    }
 
     const aluno = await this.prisma.$transaction(async (tx) => {
       if (dto.nome !== undefined || dto.telefone !== undefined) {

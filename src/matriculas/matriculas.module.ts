@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PeopleModule } from '../people/people.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { MatriculasController } from './matriculas.controller';
 import { MatriculasService } from './matriculas.service';
@@ -18,7 +19,12 @@ import { PlanosService } from './planos.service';
  * aceite, ou nenhuma das tres nasce.
  */
 @Module({
-  imports: [PrismaModule],
+  // DEF-027 — `PeopleModule` entra por causa de `StudentsService
+  // .garantirAlunoOperante`: a trava de vinculo+status vive em MOD-003, dono
+  // da tabela `alunos`, e este modulo a CHAMA em vez de reescrever a
+  // comparacao. Sem ciclo: `PeopleModule` importa `Frequencia` e `Storage`, e
+  // nenhum dos dois chega aqui.
+  imports: [PrismaModule, PeopleModule],
   controllers: [PlanosController, MatriculasController, MeMatriculaController],
   providers: [PlanosService, MatriculasService],
   exports: [MatriculasService],

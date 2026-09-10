@@ -48,7 +48,7 @@ const QUADRA = 'd0330000-0000-4000-8000-000000000006';
 const creditos = new CreditosService();
 const courts = new CourtsService(
   db as unknown as PrismaService,
-  { exigirVinculoAprovado: () => undefined } as unknown as StudentsService,
+  { exigirAlunoOperante: () => undefined } as unknown as StudentsService,
   new HorarioFuncionamentoService(db as unknown as PrismaService),
   {} as unknown as ImagemDaQuadraService,
   new ConfigOperacaoService(db as unknown as PrismaService),

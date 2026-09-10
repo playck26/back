@@ -612,7 +612,7 @@ export class CourtsService {
     }
 
     if (dto.alunoId) {
-      await this.studentsService.exigirVinculoAprovado(companyId, dto.alunoId);
+      await this.studentsService.exigirAlunoOperante(companyId, dto.alunoId);
     }
 
     // SPEC-039/D2 — `valor` so vem com `professorId`. Numa reserva de quadra o

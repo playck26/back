@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StudentsService } from '../people/students.service';
 import { formatDateOnly, hojeNoFusoDoClube } from '../courts/date-time.util';
 import type { CriarMatriculaDto } from './dto/matricula.dto';
 import type { MatriculaResponseDto } from './dto/matricula-response.dto';
@@ -41,7 +42,10 @@ import type { MatriculaResponseDto } from './dto/matricula-response.dto';
  */
 @Injectable()
 export class MatriculasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly students: StudentsService,
+  ) {}
 
   /**
    * `inicio + meses`, **calculado pelo Postgres**.
@@ -138,9 +142,19 @@ export class MatriculasService {
   ): Promise<MatriculaResponseDto> {
     const aluno = await this.prisma.aluno.findFirst({
       where: { id: alunoId, companyId },
-      select: { id: true, usuarioId: true },
+      select: { id: true, usuarioId: true, vinculo: true, status: true },
     });
     if (!aluno) throw new NotFoundException();
+    /**
+     * **DEF-027 — e este era o pior dos tres, porque tem preco.**
+     *
+     * Medido: um aluno desligado, que recebe `401` no login e `403
+     * CONTA_INATIVA` em toda rota, era matriculado num plano de R$ 100,00 sem
+     * uma palavra. A conferencia do contrato logo abaixo ate passava — o
+     * aceite dele continua valido, ele so nao pode mais entrar para usar nada
+     * do que estaria pagando.
+     */
+    this.students.garantirAlunoOperante(aluno);
 
     const plano = await this.prisma.plano.findFirst({
       where: { id: dto.planoId, companyId },

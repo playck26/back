@@ -328,7 +328,10 @@ function buildClassesService(tx: Prisma.TransactionClient) {
   const horarios = new HorarioFuncionamentoService(prisma);
   const courts = new CourtsService(
     prisma,
-    { exigirVinculoAprovado: jest.fn() } as unknown as StudentsService,
+    {
+      garantirAlunoOperante: jest.fn(),
+      exigirAlunoOperante: jest.fn(),
+    } as unknown as StudentsService,
     horarios,
     {
       resolver: jest.fn(() => ({ imagemUrl: null })),
@@ -342,7 +345,10 @@ function buildClassesService(tx: Prisma.TransactionClient) {
   return new ClassesService(
     prisma,
     courts,
-    { exigirVinculoAprovado: jest.fn() } as unknown as StudentsService,
+    {
+      garantirAlunoOperante: jest.fn(),
+      exigirAlunoOperante: jest.fn(),
+    } as unknown as StudentsService,
     new ConfigOperacaoService(prisma),
   );
 }
