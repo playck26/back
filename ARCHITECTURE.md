@@ -730,6 +730,25 @@ prometer seria mentir, e é a mesma divisão da janela do professor na SPEC-039.
 viva e a quadra bloqueada). Agora inativar cancela a grade futura e reativar a
 regenera — e a regeneração pode ser recusada com `409` + `conflicts[]`.
 
+**E o `status` da QUADRA tinha o mesmo problema, com dinheiro dentro
+(DEF-026).** `moveBooking` filtrava `status: 'ativa'` no destino desde a
+SPEC-034; **criar não filtrava em lugar nenhum** — `availability` oferecia
+slots, `POST /bookings` respondia `201` com o crédito debitado como `pago`, e
+`agenda.service` (três filtros) escondia a linha do gestor. Cobrado por uma
+quadra fora de operação, e invisível para quem poderia desfazer. Cinco portões
+fecharam: `availability` devolve `estado: 'fechado'` (o vocabulário que as duas
+telas já renderizam — um terceiro estado obrigaria a mexer nos dois
+frontends), reservar e criar/editar turma dão `422 QUADRA_INATIVA` (`422` e não
+`404`: a quadra existe e o gestor sabe, ele mesmo a desativou), `GET /courts`
+filtra **por papel** (`company_admin` vê a inativa, porque é por ela que
+reativa; o aluno não — e não é parâmetro de consulta de propósito, parâmetro
+seria escolha de quem chama), e `PATCH /courts/:id` **recusa desativar** com
+`409 QUADRA_COM_COMPROMISSOS` + `total` e `amostra` quando há compromisso
+futuro. **Ele não cancela nada, e é aqui que a quadra difere da turma:**
+ocorrência de turma não tem valor próprio; reserva de quadra foi paga com
+crédito, e cancelá-la devolve saldo — um botão de status não move dinheiro por
+efeito colateral.
+
 **As duas rotas da disponibilidade** (SPEC-040): `PUT`/`GET
 /teachers/:id/disponibilidade`. Elas são **assimétricas de propósito** — o
 `GET` devolve sempre os sete dias, com `indisponivel: true` calculado nos que
