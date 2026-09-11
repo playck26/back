@@ -628,6 +628,27 @@ export class CourtsService {
       });
     }
 
+    /**
+     * SPEC-047/D3 — **o preço da aula não vem do ALUNO** (fecha o DEF-029).
+     *
+     * A guarda acima é da SPEC-039 e olha o `valor` contra o `professorId`.
+     * **Ela nunca olhou QUEM está mandando** — e medido em 2026-09-11 o aluno
+     * marcou aula particular para si mesmo por R$ 1,00, com a carteira dele
+     * debitando R$ 1,00. O comentário logo acima já dizia *"num campo que a
+     * carteira debita"*; faltava a outra metade da frase.
+     *
+     * **Recusa, e não ignora.** Ignorar o campo faria o app dele mostrar um
+     * preço e o servidor cobrar outro, e a diferença apareceria só no extrato.
+     */
+    if (papelDoAutor === 'aluno' && dto.valor != null) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'VALOR_NAO_E_DO_ALUNO',
+        message:
+          'O preço da aula é definido pelo clube. Escolha o professor e o horário; o valor vem da tabela.',
+      });
+    }
+
     const dataDate = parseDateOnly(dto.data);
     const horarioDoDia = await this.horarios.resolverParaData(
       companyId,
@@ -712,6 +733,39 @@ export class CourtsService {
       );
     }
 
+    /**
+     * SPEC-047/D1 e D2 — o preço RESOLVIDO da aula particular.
+     *
+     * `professor.precoAula` → `config.precoAulaPadrao` → **recusa**. Cair no
+     * preço da quadra seria o pior dos mundos (D2): o aluno pagaria o preço da
+     * quadra por uma aula com professor, e ninguém saberia dizer se foi
+     * intenção ou esquecimento. *Silêncio que cobra é pior que recusa que
+     * explica.*
+     *
+     * **DEPOIS de `exigirProfessorDisponivel`, e não antes.** A primeira
+     * versão resolvia o preço aqui em cima, e as provas da SPEC-039 ficaram
+     * vermelhas: professor de outra empresa passou a receber `AULA_SEM_PRECO`
+     * em vez do `404`, e professor inativo em vez do `422 PROFESSOR_INATIVO`.
+     * A própria SPEC-047 já dizia *"existência antes de preço"* — eu escrevi a
+     * regra e implementei o contrário, e o teste de uma spec anterior é que
+     * cobrou.
+     *
+     * Vale para os DOIS papéis quando o `valor` não veio (AC-015): o gestor
+     * que não digita nada também recebe o preço de tabela, não o da quadra.
+     */
+    let valorResolvido = dto.valor ?? null;
+    if (dto.professorId && valorResolvido == null) {
+      valorResolvido = await this.precoDaAula(companyId, dto.professorId);
+      if (valorResolvido == null) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'AULA_SEM_PRECO',
+          message:
+            'Este professor ainda não tem preço de aula definido. Fale com a recepção.',
+        });
+      }
+    }
+
     // DEF-023 — achado pelo FIT-001 (a) da SPEC-043 (run 33790414789, CI em
     // postgres:18): duas criações concorrentes do mesmo slot podem terminar
     // em DEADLOCK (`40P01`) em vez de violação da EXCLUDE. A transação
@@ -789,9 +843,13 @@ export class CourtsService {
                 // digitou, não `precoHora × horas` — a demanda diz "definido
                 // pelo clube na própria aula". Só é aceito com `professorId`
                 // junto, e a guarda está lá em cima.
+                // SPEC-047 — `valorResolvido` já é `dto.valor` quando o gestor
+                // digitou, e o preço de tabela quando não. **A reserva SEM
+                // professor continua no preço da quadra**, que é o que ela
+                // sempre foi.
                 valor:
-                  dto.valor != null
-                    ? new Prisma.Decimal(dto.valor)
+                  valorResolvido != null
+                    ? new Prisma.Decimal(valorResolvido)
                     : new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
                 pedidoId: pedido?.id,
                 transicaoId,
@@ -2439,6 +2497,39 @@ export class CourtsService {
    * isto é a pré-checagem que faz a resposta dizer **qual** bloco falhou, e a
    * única defesa para a metade que ela não cobre.
    */
+  /**
+   * SPEC-047/D1 — o preço da aula, resolvido: **professor → clube → nada.**
+   *
+   * Devolve `null` quando nenhum dos dois tem preço, e quem chama decide o que
+   * fazer com isso. **Não cai no preço da quadra** (D2), e não devolve zero:
+   * zero é o valor que o ledger recusa, e a aula de graça quebraria na
+   * cobrança depois de a tela ter dito que deu certo.
+   *
+   * Uma consulta só para os dois lados: o preço é lido em toda criação de aula
+   * particular, e duas idas ao banco por reserva é o tipo de custo que ninguém
+   * vê até a agenda de um sábado.
+   */
+  private async precoDaAula(
+    companyId: string,
+    professorId: string,
+  ): Promise<number | null> {
+    const [professor, config] = await Promise.all([
+      this.prisma.professor.findFirst({
+        where: { id: professorId, companyId },
+        select: { precoAula: true },
+      }),
+      this.prisma.configOperacaoEmpresa.findUnique({
+        where: { companyId },
+        select: { precoAulaPadrao: true },
+      }),
+    ]);
+    // Professor de outra empresa cai aqui como `null`, e o `404` correto vem
+    // do `exigirProfessorDisponivel` logo depois — a ordem dos portões é da
+    // SPEC-039 e não muda: existência antes de preço.
+    const preco = professor?.precoAula ?? config?.precoAulaPadrao ?? null;
+    return preco == null ? null : Number(preco);
+  }
+
   private async exigirProfessorDisponivel(
     companyId: string,
     professorId: string,

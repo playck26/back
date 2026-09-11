@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, Min, ValidateIf } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsInt, IsNumber, Min, ValidateIf } from 'class-validator';
 
 /**
  * SPEC-031/REQ-001 — os dois prazos de cancelamento, em horas.
@@ -63,6 +63,33 @@ export class DefinirConfigOperacaoDto {
       'antecedência, mande `null`.',
   })
   prazoCancelamentoReservaHoras!: number | null;
+
+  /**
+   * SPEC-047/D1 — o preço padrão de aula particular, em **reais**.
+   *
+   * Vale para todo professor que não tem preço próprio. **`null` não é
+   * "de graça": é "o clube não vende aula particular por aqui"** — e aí
+   * nenhum professor sem preço próprio aparece para o aluno.
+   *
+   * Zero também não passa (`@Min(0.01)` aqui e `CHECK > 0` no banco): zero é o
+   * valor que o ledger recusa, e a aula de graça quebraria na cobrança depois
+   * de a tela dizer que deu certo.
+   */
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    minimum: 0.01,
+    example: 150,
+    description:
+      'Preco padrao da aula particular, em reais. `null` = o clube nao vende aula particular pelo app.',
+  })
+  @ValidateIf((_objeto, valor) => valor !== null && valor !== undefined)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01, {
+    message:
+      'O preco comeca em R$ 0,01. Para nao vender aula particular, mande `null`.',
+  })
+  precoAulaPadrao?: number | null;
 }
 
 /**
@@ -79,4 +106,6 @@ export class ConfigOperacaoResponseDto {
 
   @ApiProperty({ type: Number, nullable: true, example: 4 })
   prazoCancelamentoReservaHoras!: number | null;
+  @ApiProperty({ type: Number, nullable: true, example: 150 })
+  precoAulaPadrao!: number | null;
 }

@@ -168,6 +168,16 @@ export class ProfessorResponseDto {
   usuarioId!: string | null;
 
   /**
+   * SPEC-047/D1 — o preco da aula particular DESTE professor, em **reais**.
+   *
+   * `null` significa "usa o padrao do clube", nunca "de graca". Sem preco
+   * proprio nem padrao, o professor **nao e oferecido ao aluno** (D2) e a
+   * tentativa direta e recusada com `422 AULA_SEM_PRECO`.
+   */
+  @ApiProperty({ type: Number, nullable: true, example: 150 })
+  precoAula!: number | null;
+
+  /**
    * SPEC-018/TASK-004 — **`fotoKey` nunca sai daqui, `fotoUrl` sai.**
    *
    * A chave crua permitiria montar URL por fora e contornar a conferência do

@@ -218,6 +218,11 @@ model Professor {
   telefone  String?
   email     String?
   status    UsuarioStatus @default(ativo)
+  /// SPEC-047/D1 — o preco da aula particular DESTE professor, em reais.
+  /// **Nulo significa "usa o padrao do clube", nunca "de graca"** — o molde
+  /// que os prazos e o teto de reposicao ja usam. Sem preco proprio nem
+  /// padrao, o professor nao e oferecido ao aluno (D2).
+  precoAula Decimal?      @map("preco_aula") @db.Decimal(10, 2)
   // SPEC-013/INV-014: nulo e o estado normal — professor cadastrado sem
   // acesso continua valido, e a maioria vai ficar assim. `SetNull` no
   // delete: apagar a conta nao apaga a ficha do professor, so o vinculo.
@@ -1293,6 +1298,11 @@ model ConfigOperacaoEmpresa {
   /// seria "nenhuma reposicao permitida", o oposto de "o clube nao configurou".
   reposicoesPorMes              Int?     @map("reposicoes_por_mes")
   reposicaoValidadeDias         Int?     @map("reposicao_validade_dias")
+  /// SPEC-047/D1 — o preco de aula particular quando o professor nao tem o
+  /// seu. Nulo aqui E no professor significa que o clube nao vende aula
+  /// particular pelo app; o aluno nao ve ninguem, e a tentativa direta e
+  /// recusada com `422 AULA_SEM_PRECO`.
+  precoAulaPadrao               Decimal? @map("preco_aula_padrao") @db.Decimal(10, 2)
   createdAt                     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
