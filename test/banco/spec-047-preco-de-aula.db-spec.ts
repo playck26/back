@@ -24,6 +24,8 @@ import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { CourtsService } from '../../src/courts/courts.service';
 import { StudentsService } from '../../src/people/students.service';
+import { ProfessoresParaAlunoService } from '../../src/people/professores-para-aluno.service';
+import type { FotoDeProfessorService } from '../../src/people/foto-de-professor.service';
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { CreditosService } from '../../src/creditos/creditos.service';
@@ -57,6 +59,20 @@ function servico(): CourtsService {
     new ConfigOperacaoService(p),
     new CreditosService(),
     new DisponibilidadeProfessorService(p),
+  );
+}
+
+/**
+ * A lista do aluno. O `FotoDeProfessorService` e duble: assinar URL exige
+ * storage, e **nenhum caso deste arquivo afere foto** — o que se afere e QUEM
+ * aparece e por quanto.
+ */
+function listaDoAluno(): ProfessoresParaAlunoService {
+  return new ProfessoresParaAlunoService(
+    db as unknown as PrismaService,
+    {
+      resolver: () => Promise.resolve({ fotoUrl: null }),
+    } as unknown as FotoDeProfessorService,
   );
 }
 
@@ -355,6 +371,102 @@ describe('SPEC-047 — o preço da aula particular', () => {
     // Reajustar amanhã não reescreve a aula de ontem — mesma decisão da
     // matrícula (SPEC-037/D1).
     expect(Number(depois.valor)).toBe(150);
+  });
+
+  // =====================================================================
+  // REQ-002 — a lista do aluno
+  // =====================================================================
+
+  it('AC-004: lista o professor com preço resolvido', async () => {
+    await q(`UPDATE professores SET preco_aula = 150 WHERE id='${PROF}'`);
+
+    const lista = await listaDoAluno().listarParaAluno(EMPRESA);
+
+    expect(lista).toHaveLength(1);
+    expect(lista[0]).toMatchObject({
+      id: PROF,
+      nome: 'Prof S047',
+      precoAula: 150,
+    });
+  });
+
+  it('**AC-007: e NÃO devolve telefone, e-mail nem `usuarioId`**', async () => {
+    await q(
+      `UPDATE professores SET preco_aula = 150, telefone = '11999999999', email = 'prof@x.com' WHERE id='${PROF}'`,
+    );
+
+    const [linha] = await listaDoAluno().listarParaAluno(EMPRESA);
+
+    // A rota do GESTOR devolve os três. Reusá-la "porque já existe" é como
+    // vazamento de dado começa — o aluno escolhe por nome, rosto e preço.
+    expect(Object.keys(linha).sort()).toEqual([
+      'fotoUrl',
+      'id',
+      'nome',
+      'precoAula',
+    ]);
+  });
+
+  it('**AC-005: professor SEM preço não aparece**', async () => {
+    // Nem próprio, nem padrão. Oferecer o que a criação vai negar com
+    // `AULA_SEM_PRECO` é a forma mais barata de perder a confiança de quem usa.
+    expect(await listaDoAluno().listarParaAluno(EMPRESA)).toEqual([]);
+  });
+
+  it('sem preço próprio, o PADRÃO do clube já o faz aparecer', async () => {
+    await q(
+      `INSERT INTO config_operacao_empresa (id,company_id,preco_aula_padrao,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}',90,now())`,
+    );
+
+    const [linha] = await listaDoAluno().listarParaAluno(EMPRESA);
+    expect(linha.precoAula).toBe(90);
+  });
+
+  it('AC-006: professor INATIVO não aparece', async () => {
+    await q(
+      `UPDATE professores SET preco_aula = 150, status = 'inativo' WHERE id='${PROF}'`,
+    );
+
+    expect(await listaDoAluno().listarParaAluno(EMPRESA)).toEqual([]);
+  });
+
+  it('**a lista e a CRIAÇÃO concordam sobre quem tem preço**', async () => {
+    // A resolução `professor ?? padrão` existe em dois lugares (a lista e o
+    // `createBooking`), e duas cópias da mesma regra divergem no primeiro
+    // ajuste. **Este caso é o que impede a divergência**, e está declarado no
+    // docstring do serviço.
+    expect(await listaDoAluno().listarParaAluno(EMPRESA)).toEqual([]);
+    await expect(
+      servico().createBooking(
+        EMPRESA,
+        pedido('10:00'),
+        USUARIO,
+        undefined,
+        'aluno',
+      ),
+    ).rejects.toMatchObject({ response: { code: 'AULA_SEM_PRECO' } });
+
+    await q(`UPDATE professores SET preco_aula = 150 WHERE id='${PROF}'`);
+
+    expect(await listaDoAluno().listarParaAluno(EMPRESA)).toHaveLength(1);
+    const r = await servico().createBooking(
+      EMPRESA,
+      pedido('11:00'),
+      USUARIO,
+      undefined,
+      'aluno',
+    );
+    expect(Number(reservasDe(r)[0].valor)).toBe(150);
+  });
+
+  it('a empresa vizinha não entra na lista', async () => {
+    await q(`UPDATE professores SET preco_aula = 150 WHERE id='${PROF}'`);
+
+    expect(
+      await listaDoAluno().listarParaAluno(
+        '04700000-0000-4000-8000-0000000000ff',
+      ),
+    ).toEqual([]);
   });
 
   // =====================================================================

@@ -955,6 +955,35 @@
         ]
       }
     },
+    "/api/v1/me/professores": {
+      "get": {
+        "operationId": "MeProfessoresController_listar",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProfessorParaAlunoResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/teachers/{id}/foto": {
       "put": {
         "operationId": "TeacherPhotoController_substituir",
@@ -6280,6 +6309,35 @@
             ]
           }
         }
+      },
+      "ProfessorParaAlunoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Carlos Lima"
+          },
+          "fotoUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "URL assinada, ou `null`. **Fail-soft**: chave corrompida vira `null` e linha no log, nunca erro na listagem (INV-034)."
+          },
+          "precoAula": {
+            "type": "number",
+            "example": 150,
+            "description": "Preco da aula em REAIS, ja resolvido (professor -> padrao do clube). Nunca nulo aqui: quem nao tem preco nao e listado (D2)."
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "fotoUrl",
+          "precoAula"
+        ]
       },
       "FotoDeProfessorResponseDto": {
         "type": "object",
