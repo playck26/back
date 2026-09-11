@@ -89,7 +89,15 @@ export function configurarApp(app: INestApplication): INestApplication {
    * produção e e2e chamam a MESMA função, então divergir deixou de ser
    * possível por construção.
    */
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  //
+  // `getInstance()` devolve `any` e **não é genérico nesta versão do Nest** —
+  // o `tsc` recusou o parâmetro de tipo antes que eu confiasse nele. O `as`
+  // com o tipo mínimo diz exatamente o que se usa, sem arrastar
+  // `@types/express` para um arquivo que não fala de Express em mais nada.
+  const servidorHttp = app.getHttpAdapter().getInstance() as {
+    set(chave: string, valor: unknown): void;
+  };
+  servidorHttp.set('trust proxy', 1);
   // CSP desligado: o CSP padrão do helmet bloqueia o script/style inline que o
   // Swagger UI usa (recomendação da própria doc do NestJS). Demais headers
   // continuam ativos.
