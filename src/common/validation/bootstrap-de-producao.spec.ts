@@ -43,6 +43,9 @@ interface AppDublado extends Partial<INestApplication> {
   useGlobalPipes: jest.Mock<INestApplication, [unknown]>;
   setGlobalPrefix: jest.Mock;
   use: jest.Mock;
+  // DEF-031 — o `set` do Express, por onde o `trust proxy` entra.
+  getHttpAdapter: jest.Mock;
+  set: jest.Mock;
 }
 
 function appDublado(): AppDublado {
@@ -50,14 +53,22 @@ function appDublado(): AppDublado {
     useGlobalPipes: jest.fn<INestApplication, [unknown]>(),
     setGlobalPrefix: jest.fn(),
     use: jest.fn(),
+    getHttpAdapter: jest.fn(),
+    set: jest.fn(),
   };
+}
+
+/** O `express()` por dentro do adapter, que é quem recebe o `set`. */
+function comAdapter(app: AppDublado): AppDublado {
+  app.getHttpAdapter.mockReturnValue({ getInstance: () => ({ set: app.set }) });
+  return app;
 }
 
 describe('o bootstrap de produção nasce com a fronteira aplicada', () => {
   let app: AppDublado;
 
   beforeEach(async () => {
-    app = appDublado();
+    app = comAdapter(appDublado());
     (NestFactory.create as jest.Mock).mockResolvedValue(app);
     await criarAppDeProducao();
   });
@@ -82,6 +93,17 @@ describe('o bootstrap de produção nasce com a fronteira aplicada', () => {
       forbidNonWhitelisted: OPCOES_DE_VALIDACAO.forbidNonWhitelisted,
     });
     expect(pipe.isTransformEnabled).toBe(OPCOES_DE_VALIDACAO.transform);
+  });
+
+  it('**DEF-031: e confiando no primeiro salto do proxy**', () => {
+    // Sem isto, o Express ignora o `X-Forwarded-For` e devolve o IP do socket
+    // — atrás do balanceador, o MESMO para todo visitante. O limite de 10
+    // logins por 15 minutos deixava de ser por pessoa e virava do app inteiro.
+    //
+    // **`1`, e não `true`**: `true` leria o primeiro da cadeia, que é texto
+    // escrito pelo cliente — quem quisesse burlar mandaria um IP falso na
+    // frente e ganharia um balde novo a cada requisição.
+    expect(app.set).toHaveBeenCalledWith('trust proxy', 1);
   });
 
   it('e com o prefixo e os middlewares de rota', () => {

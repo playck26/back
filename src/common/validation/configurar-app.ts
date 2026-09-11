@@ -64,6 +64,40 @@ export const PREFIXO_DA_API = 'api/v1';
  */
 export function configurarApp(app: INestApplication): INestApplication {
   app.setGlobalPrefix(PREFIXO_DA_API);
+
+  /**
+   * DEF-031 — **sem isto, o limite por IP era um limite para o app INTEIRO.**
+   *
+   * O throttle conta por usuário quando há token, e cai no `req.ip` onde a
+   * contagem tem de ser por IP (SPEC-017/TASK-006): `/auth/login` e as rotas
+   * públicas, **10 a cada 15 minutos**. Existe para conter força bruta de quem
+   * ainda não é ninguém.
+   *
+   * Só que o Express, **sem `trust proxy`, ignora o `X-Forwarded-For`** e
+   * devolve o IP do socket. Atrás do balanceador do DigitalOcean App Platform
+   * esse IP é o MESMO para todo visitante — então os 10 não eram por pessoa,
+   * eram do clube inteiro. Numa leva de cadastros, o 11º em 15 minutos leva
+   * `429`, e uma senha digitada errada gasta a cota de outra pessoa.
+   *
+   * **`1`, e não `true`.** `true` confiaria na cadeia inteira de
+   * `X-Forwarded-For`, e esse cabeçalho é texto que o cliente escreve: quem
+   * quisesse burlar o limite mandaria um IP falso na frente e ganharia um balde
+   * novo a cada requisição. `1` confia **só no primeiro salto** — o
+   * balanceador, que é o único que pode falar com a aplicação.
+   *
+   * Fica aqui, e não no `main.ts`, pela mesma razão do resto deste arquivo:
+   * produção e e2e chamam a MESMA função, então divergir deixou de ser
+   * possível por construção.
+   */
+  //
+  // `getInstance()` devolve `any` e **não é genérico nesta versão do Nest** —
+  // o `tsc` recusou o parâmetro de tipo antes que eu confiasse nele. O `as`
+  // com o tipo mínimo diz exatamente o que se usa, sem arrastar
+  // `@types/express` para um arquivo que não fala de Express em mais nada.
+  const servidorHttp = app.getHttpAdapter().getInstance() as {
+    set(chave: string, valor: unknown): void;
+  };
+  servidorHttp.set('trust proxy', 1);
   // CSP desligado: o CSP padrão do helmet bloqueia o script/style inline que o
   // Swagger UI usa (recomendação da própria doc do NestJS). Demais headers
   // continuam ativos.
