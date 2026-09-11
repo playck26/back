@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, type OrigemTipo, type StatusPagamento } from '@prisma/client';
 import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
+import { PrecoDeAulaService } from '../people/preco-de-aula.service';
 import { StudentsService } from '../people/students.service';
 import {
   CreditosService,
@@ -2526,8 +2527,16 @@ export class CourtsService {
     // Professor de outra empresa cai aqui como `null`, e o `404` correto vem
     // do `exigirProfessorDisponivel` logo depois — a ordem dos portões é da
     // SPEC-039 e não muda: existência antes de preço.
-    const preco = professor?.precoAula ?? config?.precoAulaPadrao ?? null;
-    return preco == null ? null : Number(preco);
+    //
+    // **A REGRA saiu daqui; a CONSULTA ficou.** `resolver` é estática de
+    // propósito: injetar o serviço mudaria o construtor, e oito arquivos
+    // constroem o `CourtsService` à mão (ver o comentário no construtor).
+    // O que não pode divergir entre as três cópias é a linha do `??`, e é
+    // exatamente ela que está num lugar só agora.
+    return PrecoDeAulaService.resolver(
+      professor?.precoAula,
+      config?.precoAulaPadrao,
+    );
   }
 
   private async exigirProfessorDisponivel(

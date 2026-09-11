@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { FrequenciaModule } from '../frequencia/frequencia.module';
 import { StorageModule } from '../storage/storage.module';
 import { DisponibilidadeProfessorService } from './disponibilidade-professor.service';
+import { PrecoDeAulaService } from './preco-de-aula.service';
 import { FotoDeProfessorService } from './foto-de-professor.service';
 import { LevelsController } from './levels.controller';
 import { LevelsService } from './levels.service';
@@ -45,6 +46,7 @@ import { TeachersService } from './teachers.service';
     LevelsService,
     FotoDeProfessorService,
     DisponibilidadeProfessorService,
+    PrecoDeAulaService,
   ],
   // SPEC-009/REQ-007: MOD-001 provisiona conta de aluno chamando o método
   // público de MOD-003, então o serviço precisa sair do módulo.
@@ -55,6 +57,10 @@ import { TeachersService } from './teachers.service';
     StudentsService,
     FotoDeProfessorService,
     DisponibilidadeProfessorService,
+    // SPEC-047 — sai do modulo porque a rota de horarios do aluno mora em
+    // `CourtsModule` (a resposta e feita de ocupacao e horario de quadra) e
+    // precisa recusar o professor sem preco antes de oferecer horario dele.
+    PrecoDeAulaService,
   ],
 })
 export class PeopleModule {}

@@ -17,6 +17,8 @@ import {
 import { CourtImageController } from './court-image.controller';
 import { CourtsService } from './courts.service';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
+import { HorariosDeAulaParticularService } from './horarios-de-aula-particular.service';
+import { MeHorariosDeAulaController } from './me-horarios-de-aula.controller';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
 import { CreditosModule } from '../creditos/creditos.module';
@@ -42,10 +44,14 @@ import { CreditosModule } from '../creditos/creditos.module';
     // SPEC-020/TASK-002 — os dois catalogos do clube.
     CourtSportsController,
     CourtCategoriesController,
+    // SPEC-047 — prefixo `me/professores`, mas mora aqui: ver o docstring do
+    // controller. O contrario (rota em `PeopleModule`) seria import circular.
+    MeHorariosDeAulaController,
   ],
   providers: [
     CourtsService,
     HorarioFuncionamentoService,
+    HorariosDeAulaParticularService,
     AgendaService,
     ImagemDaQuadraService,
     EsportesDeQuadraService,
