@@ -649,7 +649,6 @@ export class CourtsService {
       });
     }
 
-
     const dataDate = parseDateOnly(dto.data);
     const horarioDoDia = await this.horarios.resolverParaData(
       companyId,
