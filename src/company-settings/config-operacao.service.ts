@@ -16,6 +16,9 @@ export interface PrazosDaEmpresa {
 const SEM_CONFIGURACAO: ConfigOperacaoResponseDto = {
   prazoCancelamentoAulaHoras: null,
   prazoCancelamentoReservaHoras: null,
+  // SPEC-047 — nulo aqui significa "o clube nao vende aula particular pelo
+  // app", e nao "de graca".
+  precoAulaPadrao: null,
 };
 
 /**
@@ -44,6 +47,17 @@ export const REPOSICAO_PADRAO = { porMes: 2, validadeDias: 30 } as const;
 
 export type RegraDeReposicao = { porMes: number; validadeDias: number };
 
+/**
+ * SPEC-047 — `Decimal` do Prisma vira `number` na resposta.
+ *
+ * Sem isto o JSON sairia como string (`"150"`), e a tela faria `Number()` em
+ * cima — conversao espalhada e como erro de fator 100 nasce. A coluna e
+ * `Decimal(10,2)` em REAIS, e a carteira continua em centavos.
+ */
+function numeroOuNulo(v: { toString(): string } | null): number | null {
+  return v == null ? null : Number(v);
+}
+
 @Injectable()
 export class ConfigOperacaoService {
   constructor(private readonly prisma: PrismaService) {}
@@ -58,9 +72,12 @@ export class ConfigOperacaoService {
       select: {
         prazoCancelamentoAulaHoras: true,
         prazoCancelamentoReservaHoras: true,
+        precoAulaPadrao: true,
       },
     });
-    return linha ?? SEM_CONFIGURACAO;
+    return linha
+      ? { ...linha, precoAulaPadrao: numeroOuNulo(linha.precoAulaPadrao) }
+      : SEM_CONFIGURACAO;
   }
 
   /**
@@ -76,6 +93,11 @@ export class ConfigOperacaoService {
     const valores = {
       prazoCancelamentoAulaHoras: dto.prazoCancelamentoAulaHoras,
       prazoCancelamentoReservaHoras: dto.prazoCancelamentoReservaHoras,
+      // **`?? null` e nao `?? undefined`:** o `PUT` e substituicao total (ver o
+      // DTO), entao campo ausente APAGA o preco. Deixar `undefined` faria o
+      // Prisma preservar o valor antigo, e "salvei sem o campo" viraria "o
+      // preco continua la" — que e o oposto de substituicao.
+      precoAulaPadrao: dto.precoAulaPadrao ?? null,
     };
     const linha = await this.prisma.configOperacaoEmpresa.upsert({
       where: { companyId },
@@ -84,9 +106,10 @@ export class ConfigOperacaoService {
       select: {
         prazoCancelamentoAulaHoras: true,
         prazoCancelamentoReservaHoras: true,
+        precoAulaPadrao: true,
       },
     });
-    return linha;
+    return { ...linha, precoAulaPadrao: numeroOuNulo(linha.precoAulaPadrao) };
   }
 
   /**

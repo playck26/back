@@ -6091,6 +6091,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "precoAula": {
+            "type": "number",
+            "nullable": true,
+            "example": 150
+          },
           "fotoUrl": {
             "type": "string",
             "nullable": true
@@ -6108,6 +6113,7 @@
           "email",
           "status",
           "usuarioId",
+          "precoAula",
           "fotoUrl",
           "createdAt"
         ]
@@ -6194,6 +6200,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "precoAula": {
+            "type": "number",
+            "nullable": true,
+            "example": 150
+          },
           "fotoUrl": {
             "type": "string",
             "nullable": true
@@ -6215,6 +6226,7 @@
           "email",
           "status",
           "usuarioId",
+          "precoAula",
           "fotoUrl",
           "createdAt",
           "senhaTemporaria"
@@ -6307,6 +6319,12 @@
               "ativo",
               "inativo"
             ]
+          },
+          "precoAula": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0.01,
+            "example": 150
           }
         }
       },
@@ -7370,11 +7388,17 @@
             "type": "number",
             "nullable": true,
             "example": 4
+          },
+          "precoAulaPadrao": {
+            "type": "number",
+            "nullable": true,
+            "example": 150
           }
         },
         "required": [
           "prazoCancelamentoAulaHoras",
-          "prazoCancelamentoReservaHoras"
+          "prazoCancelamentoReservaHoras",
+          "precoAulaPadrao"
         ]
       },
       "MinhaEmpresaResponseDto": {
@@ -8227,6 +8251,13 @@
             "minimum": 1,
             "example": 4,
             "description": "Com quantas horas de antecedência o aluno pode cancelar uma reserva avulsa. `null` = sem antecedência mínima."
+          },
+          "precoAulaPadrao": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0.01,
+            "example": 150,
+            "description": "Preco padrao da aula particular, em reais. `null` = o clube nao vende aula particular pelo app."
           }
         },
         "required": [

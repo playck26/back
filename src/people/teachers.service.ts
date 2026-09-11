@@ -39,6 +39,8 @@ type ProfessorCru = {
   usuarioId: string | null;
   fotoKey: string | null;
   usuario?: { fotoKey: string | null } | null;
+  /** SPEC-047 — `Decimal` do Prisma; vira `number` no `comFoto`. */
+  precoAula?: { toString(): string } | null;
 };
 
 @Injectable()
@@ -64,7 +66,7 @@ export class TeachersService {
    * INV-034.
    */
   private async comFoto<T extends ProfessorCru>(professor: T) {
-    const { fotoKey, usuario, ...resto } = professor;
+    const { fotoKey, usuario, precoAula, ...resto } = professor;
     const { fotoUrl } = await this.fotos.resolver({
       id: professor.id,
       companyId: professor.companyId,
@@ -72,7 +74,15 @@ export class TeachersService {
       fotoKey: fotoKey ?? null,
       fotoDoUsuario: usuario?.fotoKey ?? null,
     });
-    return { ...resto, fotoUrl };
+    // SPEC-047 — `precoAula` é `Decimal` no Prisma e sairia como **string**
+    // no JSON. A tela faria `Number()` em cima, e conversão espalhada é como
+    // erro de fator 100 nasce. Converte aqui, num lugar só, como o
+    // `fotoUrl` já faz com a chave.
+    return {
+      ...resto,
+      precoAula: precoAula == null ? null : Number(precoAula),
+      fotoUrl,
+    };
   }
 
   async list(
@@ -186,6 +196,11 @@ export class TeachersService {
           telefone: dto.telefone,
           email: dto.email,
           status: dto.status,
+          // SPEC-047/AC-001 — **`undefined` não mexe, `null` APAGA**, e são
+          // duas intenções diferentes que o Prisma já distingue. É o mesmo
+          // desenho dos sete campos da SPEC-036, e é por isso que o DTO
+          // precisa aceitar `null` explicitamente.
+          precoAula: dto.precoAula,
         },
       });
       return this.comFoto(atualizado);

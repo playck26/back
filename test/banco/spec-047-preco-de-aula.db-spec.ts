@@ -470,6 +470,46 @@ describe('SPEC-047 — o preço da aula particular', () => {
   });
 
   // =====================================================================
+  // REQ-001 — o clube define os preços
+  // =====================================================================
+
+  it('AC-001: `null` no preço do professor volta a usar o PADRÃO', async () => {
+    await q(`UPDATE professores SET preco_aula = 150 WHERE id='${PROF}'`);
+    await q(
+      `INSERT INTO config_operacao_empresa (id,company_id,preco_aula_padrao,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}',90,now())`,
+    );
+    expect((await listaDoAluno().listarParaAluno(EMPRESA))[0].precoAula).toBe(
+      150,
+    );
+
+    // `undefined` não mexe; `null` APAGA. São duas intenções diferentes, e o
+    // Prisma já as distingue — mesmo desenho dos sete campos da SPEC-036.
+    await db.professor.update({
+      where: { id: PROF },
+      data: { precoAula: null },
+    });
+
+    expect((await listaDoAluno().listarParaAluno(EMPRESA))[0].precoAula).toBe(
+      90,
+    );
+  });
+
+  it('**apagar o padrão do clube tira da lista quem dependia dele**', async () => {
+    await q(
+      `INSERT INTO config_operacao_empresa (id,company_id,preco_aula_padrao,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}',90,now())`,
+    );
+    expect(await listaDoAluno().listarParaAluno(EMPRESA)).toHaveLength(1);
+
+    await q(
+      `UPDATE config_operacao_empresa SET preco_aula_padrao = NULL WHERE company_id='${EMPRESA}'`,
+    );
+
+    // O clube deixou de vender aula particular pelo app. É consequência
+    // direta da D2, e é o caso que prova que a herança some junto.
+    expect(await listaDoAluno().listarParaAluno(EMPRESA)).toEqual([]);
+  });
+
+  // =====================================================================
   // INV-122
   // =====================================================================
 
