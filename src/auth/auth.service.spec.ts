@@ -321,6 +321,71 @@ describe('AuthService', () => {
       );
     });
 
+    /**
+     * DEF-028 — **suspender o clube nao suspendia quem ja estava dentro.**
+     *
+     * Medido em 2026-09-10 contra a instancia local: com a empresa `inativa`,
+     * o refresh renovou a sessao DUAS vezes seguidas, `200` nas duas, e o
+     * token novo abriu as rotas. `login` recusava; tudo o mais seguia.
+     *
+     * A razao ja estava escrita no proprio metodo, para a CONTA: *"sem isto,
+     * a inativacao so valeria ate o access token expirar: a sessao se
+     * renovaria sozinha para sempre pelo refresh"*.
+     */
+    async function refreshValido(empresa: { status: string } | null) {
+      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'u1', jti: 'rt1' });
+      const tokenHash = await bcrypt.hash('token-valido', 12);
+      (prisma.refreshToken.findUnique as jest.Mock).mockResolvedValue({
+        id: 'rt1',
+        usuarioId: 'u1',
+        tokenHash,
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 10_000),
+      });
+      (prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({
+        count: 1,
+      });
+      (prisma.usuario.findUniqueOrThrow as jest.Mock).mockResolvedValue({
+        id: 'u1',
+        email: 'x@x.com',
+        nome: 'X',
+        role: 'company_admin',
+        companyId: 'c1',
+      });
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(empresa);
+      (prisma.refreshToken.create as jest.Mock).mockResolvedValue({});
+    }
+
+    it('**DEF-028: empresa suspensa nao renova a sessao**', async () => {
+      await refreshValido({ status: 'inativa' });
+
+      await expect(service.refresh('token-valido')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    });
+
+    it('DEF-028: e derruba as OUTRAS sessoes junto', async () => {
+      await refreshValido({ status: 'inativa' });
+
+      await service.refresh('token-valido').catch(() => undefined);
+
+      // Sem isto, a suspensao seria "meia": cada aba aberta continuaria
+      // renovando a sua propria sessao ate alguem fechar o navegador.
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { usuarioId: 'u1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    it('DEF-028: empresa que sumiu tambem nao renova', async () => {
+      // `!empresa` e o mesmo tratamento do `login`: sem linha, sem sessao.
+      await refreshValido(null);
+
+      await expect(service.refresh('token-valido')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    });
+
     it('rotaciona o refresh token válido e emite novos tokens', async () => {
       (jwt.verify as jest.Mock).mockReturnValue({ sub: 'u1', jti: 'rt1' });
       const tokenHash = await bcrypt.hash('token-valido', 12);
@@ -340,6 +405,12 @@ describe('AuthService', () => {
         nome: 'X',
         role: 'company_admin',
         companyId: 'c1',
+      });
+      // DEF-028 — o `refresh` passou a conferir a empresa, entao o duble
+      // precisa TER uma. Sem isto o servico lia `undefined` e o caso do
+      // caminho feliz falhava por um motivo que nada tem a ver com rotacao.
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+        status: 'ativa',
       });
       (prisma.refreshToken.create as jest.Mock).mockResolvedValue({});
 

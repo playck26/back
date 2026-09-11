@@ -53,6 +53,18 @@ export class EventoDeOcupacaoResponseDto {
       // publicado tem de espelhar `TipoDeAcao` INTEIRO: foi o guarda do
       // DEF-016 que apontou a divergencia no mesmo commit que criou o valor.
       'turma_aluno_removido',
+      // SPEC-035/D7 — os tres gestos do `status` da turma. **Os dois
+      // primeiros aparecem MESMO neste schema**, e nao por completude: uma
+      // ocupacao cancelada por `turma_inativada` vai mostrar exatamente isso
+      // no historico, e e essa a pergunta que o gestor faz quando encontra
+      // uma quadra que ficou livre sozinha.
+      //
+      // **Segunda vez que o guarda do DEF-016 pega esta lista atrasada, e no
+      // mesmo lugar.** Da primeira foi o `turma_aluno_removido`; desta,
+      // tres de uma vez. O gate paga o proprio custo toda vez.
+      'turma_inativada',
+      'turma_reativada',
+      'aula_reativada',
     ],
     description: 'O GESTO humano que provocou o evento.',
   })

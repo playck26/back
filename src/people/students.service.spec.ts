@@ -30,7 +30,13 @@ function buildPrismaMock() {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
-    ocupacaoQuadra: { count: jest.fn() },
+    // DEF-027 — `findMany` entrou porque `update` passou a olhar
+    // compromisso futuro antes de desligar. `[]` como padrao e o caso
+    // "nao tem nada marcado", que e o dos outros testes deste arquivo.
+    ocupacaoQuadra: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     turmaAluno: { count: jest.fn() },
     nivel: { findFirst: jest.fn() },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
@@ -67,6 +73,13 @@ describe('StudentsService', () => {
       expect(prisma.aluno.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { companyId: 'c1' } }),
       );
+      // SPEC-036 — a resposta cresceu, e a LISTA cresceu junto de proposito:
+      // com `cadastro` aqui, a tela do gestor consegue marcar quem esta
+      // incompleto sem uma ida por aluno. O custo sao sete campos anulaveis
+      // por linha.
+      //
+      // **`nome` e `email` preenchidos e o resto vazio da 29%**, que e o piso
+      // real (AC-011) — nao 0%.
       expect(result.data).toEqual([
         {
           id: 'a1',
@@ -75,6 +88,23 @@ describe('StudentsService', () => {
           telefone: null,
           nivelId: null,
           status: 'ativo',
+          dataNascimento: null,
+          emergenciaNome: null,
+          emergenciaTelefone: null,
+          endereco: null,
+          cidade: null,
+          uf: null,
+          observacoesSaude: null,
+          cadastro: {
+            percentual: 29,
+            faltam: [
+              'telefone',
+              'dataNascimento',
+              'emergenciaNome',
+              'emergenciaTelefone',
+              'nivelId',
+            ],
+          },
         },
       ]);
     });
@@ -206,6 +236,107 @@ describe('StudentsService', () => {
       });
     });
 
+    // =================================================================
+    // DEF-027 — desligar com compromisso marcado
+    // =================================================================
+
+    it('**recusa desligar quem tem horario marcado, com 409 e a lista**', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u1',
+      });
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'o1',
+          data: new Date('2026-10-01T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+          horaFim: new Date('1970-01-01T10:00:00.000Z'),
+          origemTipo: 'AVULSO',
+        },
+      ]);
+      (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(3);
+
+      await expect(
+        service.update('c1', 'a1', { status: 'inativo' }),
+      ).rejects.toMatchObject({
+        response: {
+          statusCode: 409,
+          code: 'ALUNO_COM_COMPROMISSOS',
+          total: 3,
+        },
+      });
+
+      // **A recusa vem ANTES da escrita.** Sem esta assercao o teste passaria
+      // com um servico que grava e depois reclama — que e meia inativacao,
+      // exatamente o que o comentario de INV-013 diz ser pior que nenhuma.
+      expect(tx.aluno.update).not.toHaveBeenCalled();
+      expect(tx.usuario.update).not.toHaveBeenCalled();
+    });
+
+    it('a amostra nomeia o horario, e nao so a contagem', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u1',
+      });
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'o1',
+          data: new Date('2026-10-01T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+          horaFim: new Date('1970-01-01T10:00:00.000Z'),
+          origemTipo: 'TURMA',
+        },
+      ]);
+      (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(1);
+
+      // "Tem 1 horario marcado" sem dizer QUAL obriga o gestor a procurar na
+      // agenda dia a dia. O DEF-026 ja tinha pago essa licao na quadra.
+      await expect(
+        service.update('c1', 'a1', { status: 'inativo' }),
+      ).rejects.toMatchObject({
+        response: {
+          amostra: [
+            {
+              ocupacaoId: 'o1',
+              data: '2026-10-01',
+              horaInicio: '09:00',
+              horaFim: '10:00',
+              origemTipo: 'TURMA',
+            },
+          ],
+        },
+      });
+    });
+
+    it('**REATIVAR nunca e recusado, mesmo com ocupacao marcada**', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        id: 'a1',
+        usuarioId: 'u1',
+      });
+      // A mesma ocupacao do caso acima. Se a checagem nao olhasse o valor de
+      // `status`, um aluno desligado com ocupacao legada ficaria preso fora do
+      // clube — sem caminho de volta pela unica rota que o traria.
+      (prisma.ocupacaoQuadra.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'o1',
+          data: new Date('2026-10-01T00:00:00.000Z'),
+          horaInicio: new Date('1970-01-01T09:00:00.000Z'),
+          horaFim: new Date('1970-01-01T10:00:00.000Z'),
+          origemTipo: 'AVULSO',
+        },
+      ]);
+      tx.aluno.update.mockResolvedValue({
+        id: 'a1',
+        nivelId: null,
+        status: 'ativo',
+        usuario: { nome: 'X', email: 'x@x.com', telefone: null },
+      });
+
+      await expect(
+        service.update('c1', 'a1', { status: 'ativo' }),
+      ).resolves.toBeDefined();
+    });
+
     // Reativar devolve o acesso, mas nao ressuscita sessao nenhuma: quem
     // foi desligado e voltou entra de novo pela porta da frente.
     it('reativar propaga status e nao revoga tokens (INV-013)', async () => {
@@ -320,14 +451,47 @@ describe('StudentsService', () => {
       expect(prisma.aluno.update).not.toHaveBeenCalled();
     });
 
-    it('exigirVinculoAprovado carrega do banco e bloqueia pendente (MOD-005)', async () => {
+    it('exigirAlunoOperante carrega do banco e bloqueia pendente (MOD-005)', async () => {
       (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
         vinculo: 'pendente',
+        status: 'ativo',
       });
 
       await expect(
-        service.exigirVinculoAprovado('c1', 'a1'),
+        service.exigirAlunoOperante('c1', 'a1'),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    // DEF-027 — vinculo aprovado e status inativo: a segunda metade da trava.
+    // Antes dela, `garantirAlunoOperante` nem existia e este caso passava
+    // direto para a escrita.
+    it('**e bloqueia o DESLIGADO, com vinculo aprovado**', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        vinculo: 'aprovado',
+        status: 'inativo',
+      });
+
+      await expect(
+        service.exigirAlunoOperante('c1', 'a1'),
+      ).rejects.toMatchObject({
+        response: { statusCode: 422, code: 'ALUNO_INATIVO' },
+      });
+    });
+
+    // **A ordem, e ela nao e arbitraria:** quem esta `pendente` nunca chegou a
+    // operar, entao "ainda em analise" descreve melhor o estado do que "esta
+    // inativo". Sem este caso, inverter a ordem passaria despercebido.
+    it('com os DOIS errados, o vinculo responde primeiro', async () => {
+      (prisma.aluno.findFirst as jest.Mock).mockResolvedValue({
+        vinculo: 'pendente',
+        status: 'inativo',
+      });
+
+      await expect(
+        service.exigirAlunoOperante('c1', 'a1'),
+      ).rejects.toMatchObject({
+        response: { code: 'VINCULO_PENDENTE' },
+      });
     });
   });
 

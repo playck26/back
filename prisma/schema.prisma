@@ -121,7 +121,10 @@ model Empresa {
   chamadas                  Chamada[]
   acaoAdministrativas       AcaoAdministrativa[]
   faltasAvisadas            FaltaAvisada[]
+  reposicoesDeAula          ReposicaoDeAula[]
   disponibilidadeProfessors DisponibilidadeProfessor[]
+  planos                    Plano[]
+  matriculas                Matricula[]
 
   @@map("empresas")
 }
@@ -165,6 +168,9 @@ model Usuario {
   aceites                      Aceite[]
   acoesRegistradas             AcaoAdministrativa[] @relation("AcaoRegistradaPor")
   movimentosDeCreditoAutorados MovimentoDeCredito[] @relation("MovimentoRegistradoPor")
+  /// SPEC-037 — quem matriculou. Nomeada porque `Matricula` tem DUAS pernas
+  /// para `usuarios`: esta (o autor) e a do aceite, que passa por `Aceite`.
+  matriculasCriadas            Matricula[]          @relation("MatriculaCriadaPor")
 
   /// DEF-024 fase 1 — alvo da FK composta de `alunos`. `company_id` aqui e
   /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
@@ -252,7 +258,34 @@ model Aluno {
   // pessoa. Fonte de verdade de INV-010, lida do banco no momento da
   // escrita, nunca do JWT (2a validacao cruzada, ACHADO-003).
   vinculo       VinculoAluno  @default(pendente)
-  createdAt     DateTime      @default(now()) @map("created_at")
+
+  /// SPEC-036 — os sete campos do CADASTRO COMPLETO, e o fim do GAP-002.
+  ///
+  /// **Aqui e nao em `usuarios` (D1):** `usuarios` e quem ENTRA, `alunos` e a
+  /// FICHA no clube. Em `usuarios`, estas sete seriam colunas nulas em toda
+  /// conta de gestor e de professor, com um CHECK por papel para defende-las.
+  ///
+  /// **Todas anulaveis, e e o unico jeito:** ha alunos em producao. E
+  /// `NOT NULL DEFAULT ''` transformaria "nao informado" em "informado
+  /// vazio", que e o que o `alunos_texto_nao_vazio` impede daqui pra frente.
+  ///
+  /// **Nao existe coluna de completude, e a ausencia e a decisao**
+  /// (D2/INV-111): a SPEC-037 acrescenta plano e contrato a matricula, e no
+  /// dia em que isso entrar toda percentagem gravada estaria errada.
+  ///
+  /// **Sem CPF** (LIM-036a): o dinheiro nao passa pela plataforma, e
+  /// documento que nada usa e passivo.
+  dataNascimento     DateTime? @map("data_nascimento") @db.Date
+  emergenciaNome     String?   @map("emergencia_nome")
+  emergenciaTelefone String?   @map("emergencia_telefone")
+  endereco           String?
+  cidade             String?
+  /// CHAR(2), e o CHECK `alunos_uf_valida` cobra a lista das 27 — duas letras
+  /// maiusculas nao bastam, `XX` passaria.
+  uf                 String?   @db.Char(2)
+  observacoesSaude   String?   @map("observacoes_saude")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   /// DEF-024 fase 1 — IDENTIDADE, nao autoria: a LIM-032f protege o autor
   /// `super_admin` (que tem `company_id` nulo), e um super admin nunca e
@@ -265,9 +298,11 @@ model Aluno {
   ocupacoes           OcupacaoQuadra[]
   turmaAlunos         TurmaAluno[]
   faltasAvisadas      FaltaAvisada[]
+  reposicoesDeAula    ReposicaoDeAula[]
   eventosDeMatricula  EventoDeMatricula[]
   avaliacoes          AvaliacaoDeAula[]
   presencas           Presenca[]
+  matriculas          Matricula[]
 
   /// DEF-024 fase 1 — alvo das FKs compostas de `presencas` e
   /// `avaliacoes_de_aula`. `id` ja e PK, entao este UNIQUE nunca falha por
@@ -490,6 +525,8 @@ model OcupacaoQuadra {
   /// origem_tipo)`, entao as duas responsabilidades nao cabem numa so.
   faltasPorTipo FaltaAvisada[]     @relation("FaltaOcupacaoTipo")
   faltas        FaltaAvisada[]     @relation("FaltaOcupacaoEmpresa")
+  reposicoesPorTipo ReposicaoDeAula[] @relation("ReposicaoOcupacaoTipo")
+  reposicoes        ReposicaoDeAula[] @relation("ReposicaoOcupacaoEmpresa")
   // Prisma exige unicidade do par `(id, origem_tipo)` para modelar 1-1, e
   // criar esse UNIQUE seria um índice redundante — `ocupacao_id` já é PK de
   // `chamadas`. Então aqui o tipo é lista e **o banco é que garante uma
@@ -782,6 +819,14 @@ model ConviteAluno {
   empresa   Empresa @relation(fields: [companyId], references: [id])
   criadoPor Usuario @relation("ConviteCriadoPor", fields: [criadoPorId], references: [id])
   nivel     Nivel?  @relation(fields: [nivelId], references: [id])
+  /// SPEC-037/D8 — o convite carrega o plano, e e ai que a jornada fecha: o
+  /// gestor convida ja dizendo qual, e o aceite cria conta + aceite do
+  /// contrato + MATRICULA na mesma transacao (AC-015).
+  ///
+  /// Opcional: convite sem plano continua sendo o de hoje. FK **composta**
+  /// (DEF-024), senao o convite da empresa A poderia apontar para plano da B.
+  planoId   String? @map("plano_id") @db.Uuid
+  plano     Plano?  @relation(fields: [companyId, planoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "convites_plano_fkey")
 
   @@index([companyId])
   @@map("convites_aluno")
@@ -962,11 +1007,105 @@ model Aceite {
   versao    Int
   aceitoEm  DateTime     @default(now()) @map("aceito_em")
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// SPEC-037/D5 — **discriminante CONSTANTE**, o mesmo truque da SPEC-033.
+  ///
+  /// Vale `contrato` na linha de contrato e NULO na de termo. E o que permite
+  /// a FK de `matriculas` exigir "o aceite e DO CONTRATO" sem uma trigger:
+  /// sem ela, uma `UNIQUE (usuario_id, versao)` casaria tambem o aceite do
+  /// TERMO de mesma versao, e a matricula apontaria para o aceite errado.
+  ///
+  /// `dbgenerated` porque o Prisma nao emite `GENERATED ALWAYS ... STORED` --
+  /// ele viraria um `DEFAULT CASE` que o Postgres recusa com `0A000`. Quem
+  /// cria a coluna e a migration; aqui esta a REPRESENTACAO.
+  tipoContrato TipoDeAceite? @default(dbgenerated("\nCASE\n    WHEN (tipo = 'contrato'::tipo_de_aceite) THEN 'contrato'::tipo_de_aceite\n    ELSE NULL::tipo_de_aceite\nEND")) @map("tipo_contrato")
+
+  usuario    Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  matriculas Matricula[]
 
   @@unique([usuarioId, tipo, versao], map: "aceites_usuario_tipo_versao_key")
+  @@unique([usuarioId, tipoContrato, versao], map: "aceites_contrato_key")
   @@index([usuarioId])
   @@map("aceites")
+}
+
+/// SPEC-037 — o PLANO que o clube vende.
+///
+/// **Sem contador de versao, e a ausencia e a decisao (D3):** a matricula
+/// congela valor e prazo, entao mudar o preco amanha nao reescreve o que foi
+/// contratado ontem. Um `versao` que nada le seria cerimonia.
+///
+/// `linkPagamentoUrl` NULO = **herda da empresa** (D6), no molde de
+/// `horarios_funcionamento`. Nao e "sem link".
+model Plano {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  nome             String
+  valorCentavos    Int      @map("valor_centavos")
+  prazoMeses       Int      @map("prazo_meses")
+  linkPagamentoUrl String?  @map("link_pagamento_url")
+  /// Plano contratado nao e apagado (INV-115, FK RESTRICT): e desativado.
+  ativo            Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  empresa    Empresa        @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "planos_empresa_fkey")
+  matriculas Matricula[]
+  convites   ConviteAluno[]
+
+  @@unique([companyId, id], map: "planos_company_id_id_key")
+  @@index([companyId], map: "planos_company_idx")
+  @@map("planos")
+}
+
+/// SPEC-037 — a MATRICULA, que e a terceira coisa que este projeto quase
+/// chamou de matricula.
+///
+/// | O que existe | O que e |
+/// |---|---|
+/// | `turma_alunos` | o aluno esta NAQUELA turma |
+/// | `alunos.vinculo` | o clube RECONHECE esta pessoa |
+/// | **esta tabela** | esta pessoa CONTRATOU este plano, por este prazo, por este valor |
+///
+/// **`usuarioId` parece redundante com `alunoId` e nao e:** e a perna da FK do
+/// aceite, porque `aceites` e por USUARIO -- quem assina e a pessoa, nao a
+/// ficha. Sem ela a INV-114 nao teria como existir.
+model Matricula {
+  id                    String   @id @default(uuid()) @db.Uuid
+  companyId             String   @map("company_id") @db.Uuid
+  alunoId               String   @map("aluno_id") @db.Uuid
+  usuarioId             String   @map("usuario_id") @db.Uuid
+  planoId               String   @map("plano_id") @db.Uuid
+  /// O que foi ACERTADO.
+  valorCentavos         Int      @map("valor_centavos")
+  /// O que o plano cobrava NAQUELE DIA (D2). Com os dois, o desconto fica
+  /// visivel; com um so, ninguem distingue desconto de mudanca de preco.
+  valorDeTabelaCentavos Int      @map("valor_de_tabela_centavos")
+  prazoMeses            Int      @map("prazo_meses")
+  inicio                DateTime @db.Date
+  /// GRAVADO, nao derivado na leitura (D9): "quem vence este mes" viraria
+  /// varredura com aritmetica de data.
+  fim                   DateTime @db.Date
+  contratoVersao        Int      @map("contrato_versao")
+  criadoPorId           String   @map("criado_por_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Constante `contrato`, sempre. O lado que APONTA na FK causal.
+  tipoContrato TipoDeAceite? @default(dbgenerated("\nCASE\n    WHEN (contrato_versao IS NOT NULL) THEN 'contrato'::tipo_de_aceite\n    ELSE NULL::tipo_de_aceite\nEND")) @map("tipo_contrato")
+
+  empresa   Empresa @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_empresa_fkey")
+  aluno     Aluno   @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_aluno_fkey")
+  plano     Plano   @relation(fields: [companyId, planoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_plano_fkey")
+  criadoPor Usuario @relation("MatriculaCriadaPor", fields: [criadoPorId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_autor_fkey")
+  /// INV-114 — a FK que da valor legal a tudo isto.
+  /// **Opcional no TIPO, obrigatoria no BANCO.** O Prisma exige relacao
+  /// opcional quando um dos escalares e opcional, e `tipoContrato` e gerada
+  /// (nula na linha de termo). No banco a FK e NOT NULL nas tres colunas: a
+  /// matricula sem aceite de contrato e recusada com `23503`.
+  aceite    Aceite? @relation(fields: [usuarioId, tipoContrato, contratoVersao], references: [usuarioId, tipoContrato, versao], onDelete: Restrict, onUpdate: NoAction, map: "matriculas_contrato_aceito_fkey")
+
+  @@index([companyId, alunoId], map: "matriculas_aluno_idx")
+  @@index([companyId, fim], map: "matriculas_fim_idx")
+  @@map("matriculas")
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,6 +1189,20 @@ enum TipoDeAcao {
   /// `reserva_cancelada` nao descreve o gesto, e o alvo tecnico dele e uma
   /// MATRICULA, nao uma ocupacao (ver `EventoDeMatricula`).
   turma_aluno_removido
+  /// SPEC-035/D7 — os tres gestos que o `status` da turma passou a fazer, e
+  /// que ate 2026-09-09 nao faziam nada.
+  ///
+  /// **No FIM do enum, e nao junto das irmas `turma_*`**, pela mesma regra
+  /// que o `movida` pagou: `ALTER TYPE ADD VALUE` sem `BEFORE`/`AFTER` anexa
+  /// ao final, e declarar aqui em outra posicao criaria drift permanente.
+  /// Terceira vez que esta regra governa este arquivo.
+  ///
+  /// Reusar `turma_horario_editado` foi recusado: a acao e o GESTO, e um
+  /// extrato que dissesse "horario editado" para quem investigasse uma quadra
+  /// que ficou livre mentiria.
+  turma_inativada
+  turma_reativada
+  aula_reativada
 
   @@map("tipo_de_acao")
 }
@@ -1136,6 +1289,10 @@ model ConfigOperacaoEmpresa {
   companyId                     String   @unique @map("company_id") @db.Uuid
   prazoCancelamentoAulaHoras    Int?     @map("prazo_cancelamento_aula_horas")
   prazoCancelamentoReservaHoras Int?     @map("prazo_cancelamento_reserva_horas")
+  /// SPEC-046/D6 — nulo significa **usa o padrao**, nunca zero. Teto zero
+  /// seria "nenhuma reposicao permitida", o oposto de "o clube nao configurou".
+  reposicoesPorMes              Int?     @map("reposicoes_por_mes")
+  reposicaoValidadeDias         Int?     @map("reposicao_validade_dias")
   createdAt                     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1173,8 +1330,48 @@ model FaltaAvisada {
   /// AC-017: a idempotencia e do BANCO. `createMany({ skipDuplicates })` so
   /// funciona porque esta constraint existe — dois POST simultaneos produzem
   /// UMA linha.
+  /// SPEC-046 — no maximo UMA (INV-118). O `?` do lado da reposicao e o que
+  /// torna o credito derivado possivel: falta sem reposicao E o credito.
+  reposicao ReposicaoDeAula?
+
   @@unique([ocupacaoId, alunoId], map: "faltas_unica")
   @@map("faltas_avisadas")
+}
+
+/// SPEC-046 — a reposicao de aula, que fecha o GAP-008.
+///
+/// **Sem coluna de saldo, de proposito (D1).** Credito e
+/// `faltas_avisadas - reposicoes`, e a INV-118 (`UNIQUE (falta_id)`) e o que
+/// torna essa subtracao segura sob concorrencia: sem ela, dois POST
+/// simultaneos da mesma falta deixariam o credito NEGATIVO.
+model ReposicaoDeAula {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  alunoId    String   @map("aluno_id") @db.Uuid
+  faltaId    String   @map("falta_id") @db.Uuid
+  ocupacaoId String   @map("ocupacao_id") @db.Uuid
+  /// Constante `TURMA` (INV-119), garantida por CHECK — o molde do
+  /// `presencas.origem_tipo`. **Nao e coluna GERADA de proposito:** gerada
+  /// obrigaria este campo a ser opcional, e com ele a relacao inteira, o que
+  /// seria mentira no tipo. Repor em reserva avulsa o banco recusa.
+  origemTipo OrigemTipo @default(TURMA) @map("origem_tipo")
+  criadoEm   DateTime @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  empresa         Empresa        @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_company_fkey")
+  aluno           Aluno          @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_aluno_fkey")
+  ocupacaoPorTipo OcupacaoQuadra @relation("ReposicaoOcupacaoTipo", fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_ocupacao_tipo_fkey")
+  ocupacao        OcupacaoQuadra @relation("ReposicaoOcupacaoEmpresa", fields: [companyId, ocupacaoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_ocupacao_empresa_fkey")
+  falta           FaltaAvisada   @relation(fields: [faltaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_falta_fkey")
+
+  /// INV-118 — `@@unique` com `map` explicito, e nao `@unique` no campo: o
+  /// inline gera `reposicoes_de_aula_falta_id_key` e o `migrate diff` acusa
+  /// drift contra o nome da migration. Terceira vez que este projeto paga
+  /// nome de constraint divergente.
+  @@unique([faltaId], map: "reposicoes_falta_unica")
+  @@unique([ocupacaoId, alunoId], map: "reposicoes_aluno_ocupacao")
+  @@index([companyId, alunoId], map: "reposicoes_aluno_idx")
+  @@index([ocupacaoId], map: "reposicoes_ocupacao_idx")
+  @@map("reposicoes_de_aula")
 }
 
 /// SPEC-031/D21 — o alvo tecnico da remocao administrativa.

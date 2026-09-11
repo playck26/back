@@ -78,7 +78,11 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
         role: true,
         termoVersaoAceita: true,
         contratoVersaoAceita: true,
-        empresa: { select: { contratoVersaoVigente: true } },
+        // DEF-028 — `status` entra NESTE select, ao lado do
+        // `contratoVersaoVigente` que ja vinha: e a mesma linha da mesma
+        // empresa, entao o portao da empresa suspensa custa **zero** consulta
+        // a mais. Era essa a objecao que manteria a checagem de fora.
+        empresa: { select: { contratoVersaoVigente: true, status: true } },
       },
     });
 
@@ -90,6 +94,37 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
         statusCode: 403,
         code: 'CONTA_INATIVA',
         message: 'Esta conta está inativa. Procure o administrador.',
+      });
+    }
+
+    /**
+     * DEF-028 — **a mesma regra, para a EMPRESA.**
+     *
+     * `login` recusa empresa inativa desde sempre. O guard e o `refresh` nao
+     * liam o campo, e a consequencia medida em 2026-09-10 e que **suspender um
+     * clube nao suspendia ninguem que ja estivesse dentro**: o access token
+     * seguia valendo e o refresh renovava a sessao indefinidamente — duas
+     * renovacoes seguidas, com a empresa `inativa`, as duas `200`.
+     *
+     * O raciocinio ja estava escrito, uma linha acima, para a CONTA
+     * (SPEC-013/INV-013): *"sem isto, a inativacao so valeria ate o access
+     * token expirar: a sessao se renovaria sozinha para sempre pelo refresh"*.
+     * Valia igual para a empresa, e nao foi aplicado.
+     *
+     * **Codigo proprio, e nao `CONTA_INATIVA`:** a conta da pessoa esta em
+     * ordem, e mandar "procure o administrador" mandaria o gestor procurar a
+     * si mesmo. Quem resolve isto e o `super_admin`.
+     *
+     * O `super_admin` nao tem empresa (`companyId` nulo), entao o `?.` cobre
+     * o caso sem excecao — e e deliberado que ele NAO seja barrado: e quem
+     * reativa.
+     */
+    if (usuario?.empresa?.status === 'inativa') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'EMPRESA_INATIVA',
+        message:
+          'O acesso deste clube está suspenso. Fale com o suporte da plataforma.',
       });
     }
 

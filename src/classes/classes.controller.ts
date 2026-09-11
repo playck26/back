@@ -35,6 +35,7 @@ import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { AvaliacoesDaTurmaResponseDto } from './dto/avaliacao-de-aula.dto';
+import { AulaCanceladaResponseDto } from './dto/aula-cancelada-response.dto';
 import { CancelarOcorrenciaDto } from './dto/cancelar-ocorrencia.dto';
 import { ClassesService } from './classes.service';
 import { PresencaService } from './presenca.service';
@@ -208,6 +209,26 @@ export class ClassesController {
   }
 
   /**
+   * SPEC-035/TASK-004 — as aulas canceladas que ainda dá para reativar.
+   *
+   * **A porta da rota de reativação.** A agenda esconde o cancelado (os três
+   * filtros de `agenda.service.ts`), então sem esta lista `reactivate` seria
+   * uma rota sem tela — e "funcionalidade que existe e não é alcançável é
+   * funcionalidade que não existe" foi a lição que a SPEC-039 pagou.
+   */
+  @Get(':id/ocorrencias-canceladas')
+  @ApiOkResponse({ type: AulaCanceladaResponseDto, isArray: true })
+  ocorrenciasCanceladas(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.classesService.ocorrenciasCanceladas(
+      user.companyId as string,
+      id,
+    );
+  }
+
+  /**
    * SPEC-034/CON-034.3 — cancelar **uma** ocorrência de turma.
    *
    * `company_admin` apenas (D4). O aluno cancelar a própria participação numa
@@ -226,6 +247,35 @@ export class ClassesController {
     @Body() dto: CancelarOcorrenciaDto,
   ) {
     return this.classesService.cancelarOcorrencia(
+      user.companyId as string,
+      turmaId,
+      ocupacaoId,
+      dto.motivo,
+      user.sub,
+    );
+  }
+
+  /**
+   * SPEC-035/REQ-003 — **desfazer** o cancelamento de uma ocorrência.
+   *
+   * Mesma forma da irmã acima, e de propósito: `company_admin`, `204`, motivo
+   * obrigatório. **O motivo importa mais aqui do que no cancelamento** — a
+   * aula reapareceu na agenda de todo mundo, e quem olhar o extrato três dias
+   * depois precisa saber por quê.
+   *
+   * `POST` e não `PATCH`: é um comando com nome, não a edição de um campo —
+   * a mesma razão pela qual `/cancel` também é `POST`.
+   */
+  @Post(':turmaId/ocorrencias/:ocupacaoId/reactivate')
+  @ApiNoContentResponse()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  reativarOcorrencia(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+    @Body() dto: CancelarOcorrenciaDto,
+  ) {
+    return this.classesService.reativarOcorrencia(
       user.companyId as string,
       turmaId,
       ocupacaoId,

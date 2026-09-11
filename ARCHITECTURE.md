@@ -1,10 +1,25 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: 2026-08-30.
-**Commit de referência:** a **SPEC-017 completa** (TASK-001 a 007) mais a
-**SPEC-018:TASK-001** (as seis colunas de mídia), 2026-08-24/25, a partir de
-`f75615b`. Por nome e não por hash porque este arquivo faz parte do próprio
-commit — um documento não consegue citar o hash que ele ajuda a formar.
+**Fonte: análise direta do código.** Data: **2026-09-10** (era 2026-09-09).
+**Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
+defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
+**DEF-027**.
+Por nome e não por hash porque este arquivo faz parte do próprio commit — um
+documento não consegue citar o hash que ele ajuda a formar.
+
+**Números conferidos por comando nesta data, não estimados:** **38
+migrations, 34 tabelas, 97 caminhos / 136 operações** no `openapi.json`, 10
+triggers não-internas. *A tabela nova é `reposicoes_de_aula` (SPEC-046); as
+rotas novas são `/matriculas/vencimentos` (SPEC-045) e as três de
+`/me/reposicoes`. Nenhuma trigger nova: as invariantes da SPEC-046 são `UNIQUE`
+e `CHECK`, que o Postgres impõe sem função.*
+
+> **Eram "34 tabelas" aqui, e eram 33.** A contagem anterior incluía
+> `_prisma_migrations`, que é tabela de controle do Prisma e não faz parte do
+> modelo — os 33 `model` do `schema.prisma` batem exatamente com os 33
+> `BASE TABLE` do banco. Nenhuma migration mudou nisto; mudou a contagem. *É a
+> razão de a regra deste projeto pedir número conferido por comando: o errado
+> sobreviveu a três ciclos porque ninguém rodou o `count`.*
 
 Esta é a planta **AS-IS**: descreve o que existe. Intenção arquitetural vive
 em `TARGET_ARCHITECTURE.md` (raiz do workspace) + ADRs em `DECISIONS.md`.
@@ -488,6 +503,7 @@ a replicar:
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
+| `reposicoes_de_aula` | MOD-004 | **SPEC-046.** Liga a **falta** ao lugar onde ela será reposta. `origem_tipo` é constante `TURMA` no molde de `presencas` — **`CHECK` e não `GENERATED`**, porque coluna gerada obrigaria o Prisma a declarar o campo opcional e com ele a relação inteira, o que seria mentira no tipo. **`UNIQUE (falta_id)` é a INV-118**, e é ela que torna o crédito derivado (`faltas − reposições`) seguro sob concorrência: sem ela, dois `POST` da mesma falta deixariam o crédito **negativo**. Não há coluna de saldo de propósito — seria uma terceira verdade sobre os mesmos dois fatos |
 | `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida` \| `nao_houve`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção; **`nao_houve` (SPEC-030) é a aula que não aconteceu** — cabeçalho sem nenhuma presença, e é o que tira o dia do vermelho no calendário sem mentir que a aula foi dada |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
 | `termos_da_plataforma` | MOD-009 | SPEC-024. O texto **da plataforma**, versionado. Versão publicada **nunca é editada** — publicar de novo cria versão nova, porque saber que alguém aceitou "a v1" não vale nada se a v1 não puder ser lida depois. A versão vigente é constante em código (`TERMO_VERSAO_VIGENTE`), não `MAX(versao)`: o portão roda em **toda** requisição autenticada, e um `MAX()` por requisição seria uma segunda ida ao banco para responder algo que só muda em deploy |
@@ -537,6 +553,24 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 | `acoes_append_only`, `eventos_append_only` | `BEFORE UPDATE OR DELETE` — recusam alteração e remoção nas duas tabelas de auditoria |
 | `ocupacao_cancelada_exige_evento` | `CONSTRAINT TRIGGER AFTER UPDATE ... DEFERRABLE INITIALLY DEFERRED` — a transição para `cancelado` exige evento **desta transição** |
 | `eventos_matricula_append_only` (SPEC-031/D21) | a **terceira** da família, e a que faltava: `eventos_de_matricula` é auditoria como as outras duas. Consertar só duas deixaria o fluxo funcional verde e a limpeza do CI abortando |
+| `movimentos_append_only`, `movimentos_atualiza_saldo`, `movimentos_consumo_ativo_unico`, `alunos_saldo_so_pelo_ledger`, `ocupacao_cancelada_exige_devolucao` (SPEC-033) | as cinco da carteira — o saldo só muda pelo ledger, e cancelar reserva paga com crédito exige a devolução no mesmo COMMIT |
+| `ocupacao_reativada_exige_evento` (SPEC-035/INV-106) | **a metade que faltava da INV-064.** Espelho literal da `ocupacao_cancelada_exige_evento`, na direção contrária: `cancelado -> não-cancelado` exige evento `reativada` desta transição |
+
+**São dez triggers hoje** (`SELECT tgname FROM pg_trigger WHERE NOT
+tgisinternal`, conferido contra Postgres 18.4 local), e não três — a tabela
+acima estava parada na SPEC-031.
+
+**A INV-106 merece uma linha própria, porque ela conserta um raciocínio e não
+um defeito.** A INV-064 guardava só a ida (`-> cancelado`), e isso estava
+certo **enquanto não existisse caminho que descancelasse**. A SPEC-035 criou o
+primeiro (`POST /classes/:turmaId/ocorrencias/:ocupacaoId/reactivate`), e a
+guarda virou metade de uma. Sem a volta, a linha do tempo de uma ocupação
+mostraria "cancelada por Fulano" sobre uma aula que está no ar.
+
+Ela cobrou na primeira execução: um caso da SPEC-033 (`creditos-reserva`)
+descancelava uma reserva à mão com `UPDATE` solto, para provar que a INV-098
+permite um consumo novo. **O banco recusou o teste**, e o conserto foi a
+simulação passar a gravar o evento — que é o que o produto faz.
 
 **Por que trigger e não `REVOKE`.** Foi a primeira ideia e é inócua: tabela
 nova no Postgres **não concede nada a `PUBLIC`**, e a aplicação conecta como
@@ -612,8 +646,10 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**85 caminhos, 120 operações HTTP** (conferido em **2026-09-09** contra o
-`openapi.json`, depois da SPEC-040). As duas medidas aparecem porque "rotas" é
+**93 caminhos, 131 operações HTTP** (conferido em **2026-09-09** contra o
+`openapi.json`, depois da SPEC-038). A progressão do dia: 85/120 depois da
+SPEC-040, 87/122 com a SPEC-035, 88/124 com a SPEC-036, 92/130 com a SPEC-037,
+93/131 com a SPEC-038. As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -628,6 +664,157 @@ para o gestor — com senha reconferida no ato e `422 SENHA_INVALIDA`, nunca
 `401` — e `GET /me/creditos` para o aluno, **sem `motivo`**. Não há `PATCH` nem
 `DELETE`: o ledger é append-only, e rota que não existe não precisa ser
 defendida.
+
+**A SPEC-038 acrescenta UMA rota com dois comportamentos**: `POST
+/students/importar`, com `?conferir=true` validando sem escrever. Duas rotas
+separadas diriam a mesma coisa e abririam a chance de a validação de uma
+divergir da outra — e a que divergisse seria justamente a que escreve.
+
+Ela reusa o `@UploadDeMidia()`, e o nome fica largo: CSV não é mídia. **A
+INV-048 vale mais que o nome** — ela existe para não haver duas configurações
+de upload no projeto, e o que vem junto é o teto de 2 MB com os dois portões
+(`Content-Length` e streaming) e os mesmos códigos de erro.
+
+**Só CSV, e é decisão de segurança** (LIM-038a): `.xlsx` custaria uma
+dependência nova para analisar arquivo binário vindo da internet, e o
+analisador de CSV que o projeto precisa cabe em ~50 linhas testáveis. O caso
+que mais dá trabalho ali é o **BOM do Excel**: sem removê-lo, a primeira
+coluna se chama `﻿nome` e a planilha inteira é recusada apontando para
+uma coluna que, na tela do gestor, está escrita certa.
+
+**As rotas da SPEC-037** são cinco, e a mais interessante é a que o banco
+guarda:
+
+| Rota | O quê |
+|---|---|
+| `GET`/`POST /planos`, `PATCH /planos/:id` | o que o clube vende. **Sem `DELETE`** — plano contratado carrega história, e `ativo: false` é a única forma de sumir com ele |
+| `GET`/`POST /students/:id/matriculas` | matricular. **Sem `PATCH` nem `DELETE`** (INV-112): valor e prazo são imutáveis, e renovar é uma matrícula nova |
+| `GET /me/matricula` | o plano do aluno, ou `null` — nunca `404` |
+
+**A INV-114 é a invariante nova mais forte do dia.** *Não há matrícula sem o
+contrato aceito por aquele usuário naquela versão*, e quem garante é o banco:
+FK composta apontando para uma coluna `GENERATED ALWAYS … STORED` em `aceites`
+que vale `'contrato'` **só** na linha de contrato. É o terceiro uso do
+discriminante constante nesta base (SPEC-033/D5 foi o primeiro).
+
+*O caso que dá sentido ao mecanismo:* sem a coluna gerada, uma `UNIQUE
+(usuario_id, versao)` casaria também o aceite do **termo** de mesma versão — e
+o aluno teria "aceitado o contrato" tendo aceitado outra coisa. Ensaiado com a
+FK ingênua: só o caso do termo fica vermelho; o caso "sem aceite nenhum"
+continua verde com o mecanismo errado.
+
+**E o `fim` da matrícula é calculado PELO POSTGRES.** `2026-01-31 + 1 mês` é
+28 de fevereiro; o `Date` do JavaScript transborda para 3 de março em
+silêncio. Uma coluna gerada resolveria e não pode: `42P17`, a expressão de
+`interval` não é imutável.
+
+**As duas rotas da SPEC-036** (`GET`/`PATCH /me/cadastro`) são o "cadastro
+híbrido": o gestor começa pela ficha, o aluno termina pelo app, **sobre os
+mesmos sete campos**. O DTO do aluno é o MENOR e o do gestor herda dele — o
+contrário (um DTO só, com o papel decidindo quais campos valem) foi recusado,
+porque campos que ora valem ora não é como nasce escalada de privilégio.
+
+A completude vem **calculada, e não há coluna** (INV-111): a SPEC-037 vai
+acrescentar plano e contrato à matrícula, e uma percentagem gravada estaria
+errada no dia em que isso entrar. **Ela não bloqueia nada**, e há um gate
+(`completude-nao-bloqueia.spec.ts`) que varre `src/` e fica vermelho se alguém
+ler a completude fora do módulo dela.
+
+**As duas rotas da SPEC-035**, e o par delas explica a spec inteira:
+
+| Rota | O quê |
+|---|---|
+| `POST /classes/:turmaId/ocorrencias/:ocupacaoId/reactivate` | desfaz o cancelamento de **uma** aula. `204`, motivo obrigatório, espelho do `/cancel` |
+| `GET /classes/:id/ocorrencias-canceladas` | **a porta da anterior.** Sem ela, `reactivate` seria rota sem tela |
+
+**A segunda é a que não parece necessária e é.** Os três filtros de
+`agenda.service.ts` trazem `status_pagamento <> 'cancelado'` — certo para o
+que a agenda é, e o efeito colateral é que a aula cancelada **some**. Não se
+reativa o que não se vê, e a SPEC-039 já tinha pago essa lição na tela: a aula
+particular existia, funcionava e ninguém a alcançava.
+
+Ela devolve `horarioLivre` calculado na leitura, que **pode envelhecer** entre
+o `GET` e o clique — quem decide é a `EXCLUDE` no `POST`. Guiar reduz o erro;
+prometer seria mentir, e é a mesma divisão da janela do professor na SPEC-039.
+
+**E o `PATCH /classes/:id` mudou de significado sem mudar de forma.** O campo
+`status` era gravado e não fazia mais nada (medido: a ocupação futura ficava
+viva e a quadra bloqueada). Agora inativar cancela a grade futura e reativar a
+regenera — e a regeneração pode ser recusada com `409` + `conflicts[]`.
+
+**A reposição de aula fechou o GAP-008, e a metade dele já tinha caído sem
+ninguém marcar (SPEC-046).** O GAP dizia que remarcar exigia *"um dado novo (ex.
+tabela de ausência por aluno/ocorrência)"* — e a SPEC-031 criou esse dado uma
+semana antes, com `faltas_avisadas`. O que faltava era **repor**, e o que
+impedia era uma linha: `presenca.service.ts` monta a chamada de
+`turmaAluno.findMany`, então visitante de outra turma não era representável.
+
+`reposicoes_de_aula` liga **a falta ao lugar onde ela será reposta**, e o
+crédito é **derivado** (`faltas válidas − reposições`) — sem coluna de saldo,
+pelo mesmo motivo do `descontoCentavos` da SPEC-037, e ao contrário da carteira
+da SPEC-033, onde o saldo é gravado porque dinheiro precisa de extrato com
+ordem. **A `UNIQUE (falta_id)` (INV-118) é o que torna a subtração segura**: sem
+ela, dois `POST` simultâneos da mesma falta deixariam o crédito negativo.
+
+A capacidade de uma ocorrência passou a ser `matriculados − faltas avisadas +
+reposições`, e **a vaga que a reposição usa é a que a falta liberou** — a
+LIM-031d continua verdadeira sobre lista de espera e deixou de ser o fim da
+história. Isso não cabe em `CHECK` nem em `EXCLUDE` (é contagem com subtração),
+e está declarado assim: a garantia é `turmas FOR UPDATE` mais o **FIT-035**.
+
+> **A ordem de lock desta rota é `turmas` (1) → `alunos` (2) →
+> `ocupacoes_quadra` (3)** — um nível a mais que a `FaltaAvisadaService`, que
+> toma 2 → 3 e declara aceita a corrida com `removeStudent`. Aqui não dá:
+> capacidade é contagem, e um `allocateStudent` concorrente entre a contagem e
+> a escrita produz turma acima da capacidade. *A sabotagem provou que essa
+> corrida é a única que o lock da turma protege — reposição × reposição já é
+> serializada pelo lock da ocupação.*
+
+**`GET /matriculas/vencimentos` é a primeira rota de matrícula por EMPRESA
+(SPEC-045).** As três que existiam eram por aluno, e a consequência era que o
+gestor abria ficha por ficha para saber quem vence — medido, dez fichas no
+clube de demonstração. Ela mora num controller próprio (`VencimentosController`)
+e **não** em `MatriculasController`: aquele é
+`@Controller('students/:alunoId/matriculas')`, e pendurar uma consulta da
+empresa inteira num caminho que declara um aluno seria mentira de rota. Também
+**não** entrou no `/dashboard`: aquela rota devolve três números agregados e é
+lida a cada abertura do painel; uma lista ali cresceria com o clube. *A tela
+junta as duas — a tela pode; a API não deve.*
+
+**E o `status` do ALUNO era o terceiro (DEF-027), com uma diferença: ele
+estava escrito.** A seção do DEF-001, em agosto, nomeou a porta —
+*"`garantirVinculoAprovado` lê `vinculo`, não `status`"* — e a correção de lá
+fechou `login`, `refresh`, `JwtAuthGuard` e a propagação para
+`usuarios.status`, deixando essa aberta. O aluno desligado recebia `401` no
+login e continuava sendo **matriculado em plano pago, reservado e alocado em
+turma pelo gestor**, com o crédito dele sendo gasto. Fechado no **mesmo lugar
+que a SPEC-009 escolheu**: `garantirAlunoOperante` chama
+`garantirVinculoAprovado` e acrescenta o status, e as três escritas passaram a
+usá-la — vínculo primeiro (`403 VINCULO_PENDENTE`), status depois (`422
+ALUNO_INATIVO`). Mais `409 ALUNO_COM_COMPROMISSOS` no `PATCH /students/:id`, e
+`422 PROFESSOR_INATIVO` ao dar **turma** a professor inativo (o código já
+existia para a aula particular). **`MatriculasModule` passou a importar
+`PeopleModule`** por causa dessa trava — sem ciclo: `PeopleModule` importa
+`Frequencia` e `Storage`, e nenhum chega lá.
+
+**E o `status` da QUADRA tinha o mesmo problema, com dinheiro dentro
+(DEF-026).** `moveBooking` filtrava `status: 'ativa'` no destino desde a
+SPEC-034; **criar não filtrava em lugar nenhum** — `availability` oferecia
+slots, `POST /bookings` respondia `201` com o crédito debitado como `pago`, e
+`agenda.service` (três filtros) escondia a linha do gestor. Cobrado por uma
+quadra fora de operação, e invisível para quem poderia desfazer. Cinco portões
+fecharam: `availability` devolve `estado: 'fechado'` (o vocabulário que as duas
+telas já renderizam — um terceiro estado obrigaria a mexer nos dois
+frontends), reservar e criar/editar turma dão `422 QUADRA_INATIVA` (`422` e não
+`404`: a quadra existe e o gestor sabe, ele mesmo a desativou), `GET /courts`
+filtra **por papel** (`company_admin` vê a inativa, porque é por ela que
+reativa; o aluno não — e não é parâmetro de consulta de propósito, parâmetro
+seria escolha de quem chama), e `PATCH /courts/:id` **recusa desativar** com
+`409 QUADRA_COM_COMPROMISSOS` + `total` e `amostra` quando há compromisso
+futuro. **Ele não cancela nada, e é aqui que a quadra difere da turma:**
+ocorrência de turma não tem valor próprio; reserva de quadra foi paga com
+crédito, e cancelá-la devolve saldo — um botão de status não move dinheiro por
+efeito colateral.
 
 **As duas rotas da disponibilidade** (SPEC-040): `PUT`/`GET
 /teachers/:id/disponibilidade`. Elas são **assimétricas de propósito** — o
@@ -957,6 +1144,15 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   autenticada (INV-013). A checagem roda **antes** do atalho de
   `@PermiteSenhaTemporaria`, senão a conta inativa trocaria a senha e
   voltaria a operar.
+- **`empresas.status = 'inativa'` recusa o mesmo, desde o DEF-028.** Até
+  2026-09-10 só o `login` lia o campo: quem já estava dentro seguia operando, e
+  o **refresh renovava a sessão indefinidamente** (medido: duas renovações
+  seguidas, `200` nas duas). É a mesma frase que o DEF-001 escreveu para a
+  conta, doze linhas acima de onde faltava. O guard responde **`403
+  EMPRESA_INATIVA`** — código próprio, porque a conta da pessoa está em ordem e
+  quem resolve suspensão de clube é o `super_admin` — e custa **zero consulta a
+  mais**: `empresa` já vinha no `select` por causa do `contratoVersaoVigente`.
+  O `super_admin` não é barrado (`companyId` nulo): é ele quem reativa.
   Guards: `RolesGuard`, `CompanyAdminGuard`, `SuperAdminGuard`, `TenantGuard`.
 - **Escopo por empresa vem sempre do token**, nunca de parâmetro do cliente.
 - Throttle: **a chave é o usuário quando o Bearer token confere**, e o IP

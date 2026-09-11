@@ -110,7 +110,19 @@ function buildMocks() {
   };
 }
 
-const QUADRA_ATIVA = { id: 'q1', companyId: 'c1' };
+/**
+ * DEF-026 — **`status` entrou aqui, e a ausencia dele era o duble mentindo.**
+ *
+ * `quadras.status` e `NOT NULL DEFAULT 'ativa'`: nenhuma linha do banco chega
+ * sem ele. Este objeto chegava, e ninguem notou enquanto o codigo nao lia o
+ * campo -- quando o portao da quadra inativa entrou, DOZE casos ficaram
+ * vermelhos de uma vez, todos por `QUADRA_INATIVA` sobre uma quadra que o
+ * nome da constante ja dizia ser ativa.
+ *
+ * **Segunda vez que este projeto tropeca no mesmo tipo de duble incompleto**;
+ * a primeira foi `turmas.status`, na SPEC-035.
+ */
+const QUADRA_ATIVA = { id: 'q1', companyId: 'c1', status: 'ativa' as const };
 
 // SPEC-009/INV-010: MOD-004 e MOD-005 perguntam a MOD-003 se o aluno está
 // aprovado. O mock devolve "aprovado" por padrão; os testes de vínculo
@@ -118,7 +130,11 @@ const QUADRA_ATIVA = { id: 'q1', companyId: 'c1' };
 function buildStudentsMock() {
   return {
     garantirVinculoAprovado: jest.fn(),
-    exigirVinculoAprovado: jest.fn().mockResolvedValue(undefined),
+    // DEF-027 — a trava inteira (vinculo + status). O duble tem as duas
+    // porque o servico chama a segunda; deixar so a primeira aqui daria
+    // `is not a function` em 16 casos, que foi exatamente o que aconteceu.
+    garantirAlunoOperante: jest.fn(),
+    exigirAlunoOperante: jest.fn().mockResolvedValue(undefined),
   } as unknown as StudentsService;
 }
 
@@ -402,10 +418,21 @@ describe('ClassesService', () => {
   });
 
   describe('update', () => {
+    /**
+     * **`status` entrou com a SPEC-035, e a ausência dele aqui era uma
+     * fixture mentindo sobre a linha real.**
+     *
+     * `turmas.status` é `NOT NULL DEFAULT 'ativa'`: nenhuma linha do banco
+     * chega sem ele. Este objeto chegava, e ninguém notou enquanto o código
+     * não lia o campo — quando a INV-107 passou a amarrar a regeneração da
+     * grade ao status, cinco casos ficaram vermelhos de uma vez com
+     * `Cannot read properties of undefined`, e o defeito estava no dublê.
+     */
     const existente = {
       id: 't1',
       companyId: 'c1',
       quadraId: 'q1',
+      status: 'ativa' as const,
       diaSemana: 2,
       horaInicio: new Date('1970-01-01T14:00:00.000Z'),
       horaFim: new Date('1970-01-01T15:00:00.000Z'),
@@ -668,8 +695,12 @@ describe('ClassesService', () => {
     // (INV-003). Cadastro não aprovado não ocupa.
     it('bloqueia alocação de aluno com vínculo pendente (INV-010)', async () => {
       tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
-      tx.aluno.findFirst.mockResolvedValue({ id: 'a1', vinculo: 'pendente' });
-      (studentsService.garantirVinculoAprovado as jest.Mock).mockImplementation(
+      tx.aluno.findFirst.mockResolvedValue({
+        id: 'a1',
+        vinculo: 'pendente',
+        status: 'ativo',
+      });
+      (studentsService.garantirAlunoOperante as jest.Mock).mockImplementation(
         () => {
           throw new ForbiddenException({ code: 'VINCULO_PENDENTE' });
         },

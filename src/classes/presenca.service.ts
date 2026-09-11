@@ -40,6 +40,19 @@ export interface LinhaDaChamada {
   status: StatusPresenca | null;
   naTurmaHoje: boolean;
   /**
+   * SPEC-046/AC-015 — **este aluno está aqui REPONDO uma falta de outra aula.**
+   *
+   * Campo próprio, e não `naTurmaHoje` reaproveitado: quem vem repor tem
+   * `naTurmaHoje: false` corretamente — ele não é da turma —, e só isso leria
+   * como *"saiu da turma"*. São dois estados diferentes com a mesma marca, que
+   * é exatamente o defeito que a DEF-002 pagou na completude da chamada.
+   *
+   * Ele conta na presença como qualquer outro (AC-016): pode ser marcado
+   * presente ou ausente. O que NÃO muda é a contagem de matriculados da turma
+   * (AC-017) — reposição é visita, não matrícula.
+   */
+  reposicao: boolean;
+  /**
    * SPEC-031/AC-019 — o aluno avisou que ia faltar.
    *
    * **Sobrevive ao cancelamento da aula** (D14): o `GET` devolve a ocorrência
@@ -493,28 +506,40 @@ export class PresencaService {
       ocupacaoId,
     );
 
-    const [presencas, matriculados, cabecalho, faltas] = await Promise.all([
-      this.prisma.presenca.findMany({
-        where: { ocupacaoId },
-        include: {
-          aluno: { include: { usuario: { select: { nome: true } } } },
-        },
-      }),
-      this.prisma.turmaAluno.findMany({
-        where: { turmaId: ocupacao.origemTurmaId },
-        include: {
-          aluno: { include: { usuario: { select: { nome: true } } } },
-        },
-      }),
-      this.prisma.chamada.findUnique({ where: { ocupacaoId } }),
-      // SPEC-031/AC-019. Sem filtro de status da ocupação: a falta de uma aula
-      // cancelada continua aparecendo, que é o D14.
-      this.prisma.faltaAvisada.findMany({
-        where: { ocupacaoId },
-        select: { alunoId: true },
-      }),
-    ]);
+    const [presencas, matriculados, cabecalho, faltas, reposicoes] =
+      await Promise.all([
+        this.prisma.presenca.findMany({
+          where: { ocupacaoId },
+          include: {
+            aluno: { include: { usuario: { select: { nome: true } } } },
+          },
+        }),
+        this.prisma.turmaAluno.findMany({
+          where: { turmaId: ocupacao.origemTurmaId },
+          include: {
+            aluno: { include: { usuario: { select: { nome: true } } } },
+          },
+        }),
+        this.prisma.chamada.findUnique({ where: { ocupacaoId } }),
+        // SPEC-031/AC-019. Sem filtro de status da ocupação: a falta de uma aula
+        // cancelada continua aparecendo, que é o D14.
+        this.prisma.faltaAvisada.findMany({
+          where: { ocupacaoId },
+          select: { alunoId: true },
+        }),
+        // SPEC-046/AC-015 — quem vem REPOR nesta ocorrência. Sem esta consulta o
+        // professor não veria o visitante, e a reposição inteira não serviria
+        // para nada: o aluno chegaria e não estaria na lista.
+        this.prisma.reposicaoDeAula.findMany({
+          where: { ocupacaoId },
+          select: {
+            alunoId: true,
+            aluno: { select: { usuario: { select: { nome: true } } } },
+          },
+        }),
+      ]);
     const avisaram = new Set(faltas.map((f) => f.alunoId));
+    const repondo = new Set(reposicoes.map((r) => r.alunoId));
 
     // SPEC-015/AC-000c — o que devolver depende da **completude declarada
     // pelo cabeçalho**, não de haver ou não linhas em `presencas`.
@@ -558,6 +583,7 @@ export class PresencaService {
       status: p.status,
       naTurmaHoje: matriculados.some((m) => m.alunoId === p.alunoId),
       faltaAvisada: avisaram.has(p.alunoId),
+      reposicao: repondo.has(p.alunoId),
     }));
 
     // INV-020, agora estrita: chamada **completa** não ganha aluno novo ao
@@ -574,6 +600,24 @@ export class PresencaService {
               status: null,
               naTurmaHoje: true,
               faltaAvisada: avisaram.has(m.alunoId),
+              reposicao: false,
+            })),
+          // SPEC-046/AC-015 — quem vem REPOR. Entra pela mesma porta dos
+          // matriculados e obedece à mesma INV-020: chamada **completa** não
+          // ganha visitante ao ser reaberta.
+          //
+          // `naTurmaHoje: false` é a verdade — ele não é da turma —, e é por
+          // isso que `reposicao` precisa existir ao lado: só o primeiro campo
+          // faria a tela dizer "saiu da turma" sobre quem nunca esteve nela.
+          ...reposicoes
+            .filter((r) => !presencas.some((p) => p.alunoId === r.alunoId))
+            .map((r): LinhaDaChamada => ({
+              alunoId: r.alunoId,
+              nome: r.aluno.usuario.nome,
+              status: null,
+              naTurmaHoje: false,
+              faltaAvisada: false,
+              reposicao: true,
             })),
         ];
 

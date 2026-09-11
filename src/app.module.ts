@@ -15,6 +15,7 @@ import { CreditosModule } from './creditos/creditos.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { PaymentConfigModule } from './payment-config/payment-config.module';
 import { PeopleModule } from './people/people.module';
+import { MatriculasModule } from './matriculas/matriculas.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ThrottlerPorUsuario } from './storage/limite-de-upload';
 import { StorageModule } from './storage/storage.module';
@@ -34,6 +35,8 @@ import { StorageModule } from './storage/storage.module';
     AceitesModule,
     CompaniesModule,
     PeopleModule,
+    // SPEC-037 — MOD-012: planos e matriculas.
+    MatriculasModule,
     CourtsModule,
     ClassesModule,
     DashboardModule,

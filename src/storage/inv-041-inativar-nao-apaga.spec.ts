@@ -98,6 +98,18 @@ function capturador() {
     empresa: delegate('Empresa'),
     usuario: delegate('Usuario'),
     refreshToken: { updateMany: jest.fn(() => Promise.resolve({ count: 0 })) },
+    /**
+     * DEF-026 — inativar QUADRA passou a conferir compromisso futuro antes de
+     * escrever. Vazio aqui de proposito: **este arquivo e sobre midia**, e o
+     * que ele guarda e que nenhum `update` de status carrega campo de imagem.
+     * Uma quadra com reserva marcada faria a inativacao ser RECUSADA, e o
+     * teste passaria sem nunca chegar no `update` que ele existe para
+     * inspecionar.
+     */
+    ocupacaoQuadra: {
+      findMany: jest.fn(() => Promise.resolve([])),
+      count: jest.fn(() => Promise.resolve(0)),
+    },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
   };
 

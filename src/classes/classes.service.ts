@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   aulaJaComecou,
@@ -207,6 +208,83 @@ export class ClassesService {
     };
   }
 
+  /**
+   * SPEC-035/TASK-004 — as aulas canceladas que ainda dá para trazer de volta.
+   *
+   * **Existe porque a agenda esconde o cancelado**, nos três filtros de
+   * `agenda.service.ts`. Isso está certo para o que a agenda é — o que vai
+   * acontecer —, e o efeito colateral é que a aula cancelada some da tela.
+   * Reativar sem esta lista seria uma rota sem porta: o mesmo defeito que a
+   * SPEC-039 levou para a tela.
+   *
+   * **Só o futuro** (`data >= hoje`, o mesmo corte de tudo que decide sobre
+   * ocorrência): o passado não reativa, e oferecê-lo seria mostrar um botão
+   * que só sabe recusar.
+   *
+   * `horarioLivre` é calculado aqui e **pode envelhecer** entre esta leitura e
+   * o clique — quem decide é a `EXCLUDE` no `POST`. Ele existe para a tela
+   * avisar antes, como a janela do professor avisa na aula particular.
+   */
+  async ocorrenciasCanceladas(companyId: string, turmaId: string) {
+    await this.assertTurmaDaEmpresa(companyId, turmaId);
+
+    const canceladas = await this.prisma.ocupacaoQuadra.findMany({
+      where: {
+        companyId,
+        origemTipo: 'TURMA',
+        origemTurmaId: turmaId,
+        statusPagamento: 'cancelado',
+        data: { gte: hojeNoFusoDoClube() },
+      },
+      select: {
+        id: true,
+        quadraId: true,
+        data: true,
+        horaInicio: true,
+        horaFim: true,
+        quadra: { select: { nome: true } },
+      },
+      orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+    });
+    if (canceladas.length === 0) return [];
+
+    /**
+     * **Uma consulta para todas, e não uma por aula.** O `OR` repete por
+     * ocorrência a mesma sobreposição semiaberta que um laço faria uma a uma;
+     * o que muda é o número de idas ao banco. É o mesmo N+1 que o DEF-013
+     * baniu em `registerClassOccupancy`, e que já voltou por caminho
+     * diferente três vezes neste projeto.
+     */
+    const ocupados = await this.prisma.ocupacaoQuadra.findMany({
+      where: {
+        companyId,
+        statusPagamento: { not: 'cancelado' },
+        OR: canceladas.map((c) => ({
+          quadraId: c.quadraId,
+          data: c.data,
+          horaInicio: { lt: c.horaFim },
+          horaFim: { gt: c.horaInicio },
+        })),
+      },
+      select: { quadraId: true, data: true, horaInicio: true, horaFim: true },
+    });
+
+    return canceladas.map((c) => ({
+      ocupacaoId: c.id,
+      data: formatDateOnly(c.data),
+      horaInicio: formatTimeOnly(c.horaInicio),
+      horaFim: formatTimeOnly(c.horaFim),
+      quadraNome: c.quadra.nome,
+      horarioLivre: !ocupados.some(
+        (o) =>
+          o.quadraId === c.quadraId &&
+          o.data.getTime() === c.data.getTime() &&
+          o.horaInicio < c.horaFim &&
+          o.horaFim > c.horaInicio,
+      ),
+    }));
+  }
+
   async update(
     companyId: string,
     id: string,
@@ -226,6 +304,37 @@ export class ClassesService {
     const mudouHorario =
       dto.quadraId !== undefined || dto.encontros !== undefined;
 
+    /**
+     * SPEC-035 — **o `status` passa a AGIR, e até aqui ele não agia.**
+     *
+     * Medido antes de escrever (`ensaio-035-estado.db-spec.ts`): o `status`
+     * era gravado na turma e mais nada acontecia. A turma sumia das listas e
+     * **a quadra ficava bloqueada para sempre** — `availability` respondia
+     * `ocupado_turma` apontando para uma turma fora de operação. O item 12 do
+     * backlog dizia "50%, a coluna existe"; a coluna sozinha não é soft
+     * delete.
+     *
+     * **Comparado com `existente.status`, não com `undefined`.** `PATCH` com
+     * o status que a turma já tem é retentativa de rede, não gesto — e criar
+     * ação por retentativa faria a auditoria contar tentativas em vez de
+     * gestos, que é a razão de o `RegistradorDeAcao` ser preguiçoso.
+     */
+    const inativando =
+      dto.status === 'inativa' && existente.status !== 'inativa';
+    const ativando = dto.status === 'ativa' && existente.status !== 'ativa';
+    const statusFinal = dto.status ?? existente.status;
+
+    /**
+     * **INV-107 — grade viva existe se, e somente se, a turma está ativa.**
+     *
+     * As duas metades saem daqui, e a segunda conserta um defeito irmão que
+     * ninguém tinha pedido: editar o horário de uma turma **inativa** gerava
+     * ocupações vivas para ela. Amarrar a regeneração ao status resolve os
+     * dois casos com uma condição só, em vez de dois `if` que podem divergir.
+     */
+    const precisaCancelar = mudouHorario || inativando || ativando;
+    const precisaRegerar = precisaCancelar && statusFinal === 'ativa';
+
     const quadraId = dto.quadraId ?? existente.quadraId;
 
     // `null` enquanto a recorrência não for necessária. **A consulta só
@@ -233,7 +342,7 @@ export class ClassesService {
     // banco para ler encontros que ninguém vai usar.
     let encontros: EncontroDaTurma[] | null = null;
 
-    if (mudouHorario) {
+    if (precisaRegerar) {
       // Só trocar de quadra, sem mexer nos encontros, também regera — as
       // ocupações apontam para a quadra antiga. Aí a recorrência vem do que
       // já está gravado.
@@ -292,7 +401,7 @@ export class ClassesService {
         },
       });
 
-      if (mudouHorario) {
+      if (precisaCancelar) {
         // DEF-020: o corte (`gte`) é hoje NO FUSO DO CLUBE. Em UTC, uma
         // edição feita às 21h30 de segunda tinha corte na terça — e a
         // ocupação de segunda escapava do cancelamento, sobrevivendo com o
@@ -301,6 +410,12 @@ export class ClassesService {
         // O corte precisa ser o mesmo que `gerarDatasSemanaisFuturas` usa
         // logo abaixo para regerar: são as duas metades da mesma operação, e
         // é por isso que as duas passaram a chamar a mesma função.
+        //
+        // SPEC-035/D2 — **e é o mesmo corte que protege o passado.** Inativar
+        // não toca ocorrência que já aconteceu: ela carrega chamada,
+        // avaliação e presença, e cancelá-la retroativamente reescreveria
+        // história já contada. Quem declara que a aula não houve é a
+        // SPEC-030, por afirmação — nunca por cancelamento tardio.
         const hojeUTC = hojeNoFusoDoClube();
 
         // SPEC-032/D2 e INV-078 — **UM registrador para as duas metades.**
@@ -309,11 +424,23 @@ export class ClassesService {
         // (`turma_horario_editado`) com eventos `cancelada` e `criada`.
         // Dois registradores aqui criariam duas acoes para um gesto — e o
         // banco nao reclamaria, e por isso a instancia unica e o mecanismo.
+        //
+        // SPEC-035/D7 — **o TIPO da ação é o gesto, não o efeito.** Os três
+        // caminhos produzem escritas parecidas em `ocupacoes_quadra` e são
+        // gestos diferentes; reusar `turma_horario_editado` para a inativação
+        // faria o extrato dizer "horário editado" para quem investigasse uma
+        // quadra que ficou livre — mentira barata e cara de descobrir. Quando
+        // o `PATCH` faz as duas coisas, vence o gesto maior: ligar ou
+        // desligar a turma.
         const registrador = new RegistradorDeAcao(
           tx,
           companyId,
           autorId,
-          'turma_horario_editado',
+          inativando
+            ? 'turma_inativada'
+            : ativando
+              ? 'turma_reativada'
+              : 'turma_horario_editado',
         );
 
         await this.courtsService.cancelFutureClassOccupancies(
@@ -324,14 +451,32 @@ export class ClassesService {
           registrador,
         );
 
-        await this.courtsService.registerClassOccupancy(
-          tx,
-          companyId,
-          quadraId,
-          id,
-          this.ocorrenciasDosEncontros(encontros ?? []),
-          registrador,
-        );
+        /**
+         * SPEC-035/D3 — **reativar REGENERA; não descancela as linhas
+         * antigas.**
+         *
+         * Entre inativar e reativar passou tempo, e o horizonte de
+         * `gerarDatasSemanaisFuturas` andou junto. Descancelar as mesmas
+         * linhas ressuscitaria ocorrências que hoje estão no passado e
+         * deixaria um buraco à frente — turma "ativa" sem aula nas próximas
+         * semanas, e ninguém olhando descobriria por quê.
+         *
+         * O `cancelFutureClassOccupancies` acima **roda também na
+         * reativação**, e não é redundância: turma inativada ANTES desta spec
+         * ficou com a grade viva (era o defeito), e regerar por cima dela
+         * bateria na `EXCLUDE` contra as próprias linhas. Cancelar primeiro
+         * torna o caminho idempotente para os dois estados de mundo.
+         */
+        if (precisaRegerar) {
+          await this.courtsService.registerClassOccupancy(
+            tx,
+            companyId,
+            quadraId,
+            id,
+            this.ocorrenciasDosEncontros(encontros ?? []),
+            registrador,
+          );
+        }
       }
 
       return atualizada;
@@ -366,7 +511,12 @@ export class ClassesService {
       // SPEC-009/INV-010 — dentro da transação, com a turma já travada por
       // FOR UPDATE: checar vínculo antes de abrir a transação deixaria
       // janela entre a checagem e a escrita.
-      this.studentsService.garantirVinculoAprovado(aluno);
+      //
+      // **DEF-027:** passou a olhar `status` junto. Alocar um aluno desligado
+      // não era erro de banco — ele entrava na turma e reaparecia na chamada
+      // com `alunoAtivo: false`, que a `frequencia.service` já calcula. A
+      // LEITURA sabia; a escrita não.
+      this.studentsService.garantirAlunoOperante(aluno);
 
       const jaAlocado = await tx.turmaAluno.findFirst({
         where: { turmaId, alunoId },
@@ -595,15 +745,35 @@ export class ClassesService {
     }
   }
 
+  /**
+   * DEF-026 — a quadra e da empresa **e esta ativa**.
+   *
+   * Turma nova, ou turma movida para uma quadra fora de operacao, gerava as
+   * oito ocorrencias normalmente -- e a agenda nao mostra quadra inativa,
+   * entao a aula existia e ninguem a via. Mesmo defeito da reserva, medido no
+   * mesmo dia.
+   *
+   * `422 QUADRA_INATIVA` e nao `404`: a quadra existe, e o gestor sabe -- ele
+   * mesmo a desativou.
+   */
   private async assertQuadraDaEmpresa(
     companyId: string,
     quadraId: string,
   ): Promise<void> {
     const quadra = await this.prisma.quadra.findFirst({
       where: { id: quadraId, companyId },
+      select: { status: true },
     });
     if (!quadra) {
       throw new NotFoundException('Quadra não encontrada');
+    }
+    if (quadra.status !== 'ativa') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'QUADRA_INATIVA',
+        message:
+          'Esta quadra está fora de operação. Reative-a antes de marcar turma nela.',
+      });
     }
   }
 
@@ -619,15 +789,35 @@ export class ClassesService {
     }
   }
 
+  /**
+   * DEF-027 — **o mesmo portao que a SPEC-039 pos na aula particular, aqui.**
+   *
+   * `POST /bookings` com `professorId` recusa professor inativo desde a
+   * SPEC-039 (`422 PROFESSOR_INATIVO`, AC-005). Dar a ele uma TURMA continuava
+   * respondendo `201`, e a turma ficava com um professor que o produto trata
+   * como fora de operacao — a agenda dele e o painel do professor filtram
+   * `status`, entao a turma existia sem ninguem que a enxergasse como sua.
+   *
+   * **O codigo e o mesmo de proposito.** Dois codigos para "este professor nao
+   * atende" fariam a tela ter de conhecer os dois para dizer a mesma frase.
+   */
   private async assertProfessorDaEmpresa(
     companyId: string,
     professorId: string,
   ): Promise<void> {
     const professor = await this.prisma.professor.findFirst({
       where: { id: professorId, companyId },
+      select: { status: true },
     });
     if (!professor) {
       throw new NotFoundException('Professor não encontrado');
+    }
+    if (professor.status !== 'ativo') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'PROFESSOR_INATIVO',
+        message: 'Este professor está inativo e não assume turma.',
+      });
     }
   }
 
@@ -880,6 +1070,138 @@ export class ClassesService {
         motivo,
       );
       await this.courtsService.cancelOneClassOccurrence(
+        tx,
+        companyId,
+        ocupacao.id,
+        registrador,
+      );
+    });
+  }
+
+  /**
+   * SPEC-035/REQ-003 — **desfazer o cancelamento de UMA aula.**
+   *
+   * ## Por que aqui é descancelar, e na turma é regerar
+   *
+   * A D3 diz que reativar a **turma** regenera a grade, porque entre inativar
+   * e reativar o horizonte andou. **Aqui não há horizonte que ande:**
+   * ocorrência é uma data específica. Quem cancelou a aula de terça por
+   * engano quer de volta a aula de terça — não uma grade nova a partir de
+   * hoje. É também o único lugar do projeto onde o valor `reativada` do enum
+   * (criado especulativamente pela SPEC-032, para esta spec) passa a
+   * significar algo.
+   *
+   * ## A ordem das quatro recusas, e cada uma tem razão de estar onde está
+   *
+   * 1. **turma `FOR UPDATE`** — raiz de lock única (INV-029), a mesma de
+   *    `cancelarOcorrencia`. Sem ela, cancelar e reativar a mesma ocorrência
+   *    em paralelo decidiriam sobre leituras que já envelheceram.
+   * 2. **os quatro predicados** — sem `origemTurmaId`, a URL da turma A
+   *    alcançaria a ocorrência da B.
+   * 3. **idempotência ANTES do corte temporal**, como na irmã: reativar o que
+   *    já está no ar não é engano do usuário, é rede instável.
+   * 4. **o passado não reativa** — mesmo código e mesma frase de
+   *    `cancelarOcorrencia`. Ressuscitar uma aula que não aconteceu é
+   *    exatamente o que a SPEC-030 existe para impedir: quem declara o que
+   *    houve é a chamada.
+   */
+  async reativarOcorrencia(
+    companyId: string,
+    turmaId: string,
+    ocupacaoId: string,
+    motivo: string,
+    autorId: string,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const turmas = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM turmas
+        WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+        FOR UPDATE
+      `;
+      if (turmas.length === 0) throw new NotFoundException();
+
+      const ocupacao = await tx.ocupacaoQuadra.findFirst({
+        where: {
+          id: ocupacaoId,
+          companyId,
+          origemTipo: 'TURMA',
+          origemTurmaId: turmaId,
+        },
+        select: {
+          id: true,
+          quadraId: true,
+          data: true,
+          horaInicio: true,
+          horaFim: true,
+          statusPagamento: true,
+        },
+      });
+      if (!ocupacao) throw new NotFoundException();
+
+      // Idempotente, e ANTES do corte de propósito — espelho exato da irmã.
+      if (ocupacao.statusPagamento !== 'cancelado') return;
+
+      if (aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'PRAZO_DE_CANCELAMENTO',
+          message:
+            'Esta aula já começou. Para registrar que ela não aconteceu, use a chamada.',
+        });
+      }
+
+      /**
+       * **AC-012 — a pré-checagem existe para a MENSAGEM, não para a
+       * garantia.**
+       *
+       * Quem garante é a `EXCLUDE no_overlap_por_quadra`: o `UPDATE` que
+       * descancela insere a linha no índice, e o Postgres recusa com `23P01`
+       * se houver sobreposição — inclusive contra uma reserva criada por
+       * outra conexão entre este `SELECT` e aquele `UPDATE` (FIT-034).
+       *
+       * O que a pré-checagem acrescenta é **quem** tomou o horário. Sem ela o
+       * gestor receberia "ocupado" e teria de caçar na agenda quem ocupou;
+       * com ela, a resposta já nomeia a ocupação — que é o "recusar **com
+       * aviso**" que o item 13 do backlog pediu, e não só "recusar".
+       *
+       * Sobreposição **semiaberta** (`lt`/`gt`), a mesma regra do resto do
+       * módulo: uma reserva que começa às 10:00 não conflita com uma aula que
+       * termina às 10:00.
+       */
+      const conflitante = await tx.ocupacaoQuadra.findFirst({
+        where: {
+          companyId,
+          quadraId: ocupacao.quadraId,
+          data: ocupacao.data,
+          id: { not: ocupacao.id },
+          statusPagamento: { not: 'cancelado' },
+          horaInicio: { lt: ocupacao.horaFim },
+          horaFim: { gt: ocupacao.horaInicio },
+        },
+        select: { id: true, origemTipo: true },
+      });
+      if (conflitante) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'HORARIO_OCUPADO',
+          message: 'Este horário foi ocupado enquanto a aula estava cancelada.',
+          conflictWith: {
+            ocupacaoId: conflitante.id,
+            origemTipo: conflitante.origemTipo,
+          },
+        });
+      }
+
+      // Preguiçoso (SPEC-032), pela mesma razão da irmã: as duas saídas
+      // idempotentes acima não gravam ação nenhuma.
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        'aula_reativada',
+        motivo,
+      );
+      await this.courtsService.reactivateOneClassOccurrence(
         tx,
         companyId,
         ocupacao.id,

@@ -27,6 +27,42 @@ import { ApiProperty } from '@nestjs/swagger';
  * de ser spec.
  */
 
+/**
+ * SPEC-036/REQ-003 — a completude do cadastro.
+ *
+ * ## Vem CALCULADA, e nao ha coluna (D2/INV-111)
+ *
+ * A SPEC-037 vai acrescentar plano e contrato a matricula. Uma percentagem
+ * gravada estaria errada no dia em que isso entrar -- e seria uma afirmacao
+ * sobre um passado que ninguem consegue localizar.
+ *
+ * ## `faltam` existe porque o numero sozinho nao serve
+ *
+ * `70%` nao diz a ninguem o que fazer. `faltam: ["dataNascimento"]` diz. E a
+ * mesma licao que a SPEC-035 pagou do outro lado: a mensagem crua do servidor
+ * nao dizia QUANTOS conflitos, e sem a contagem o gestor nao sabia se liberava
+ * uma quadra ou seis.
+ *
+ * **Nada e bloqueado por este numero** (SPEC-036/D4, AC-012). Nenhuma rota
+ * passa a exigir cadastro completo, e ha teste so para provar essa ausencia.
+ */
+export class CompletudeDoCadastroDto {
+  @ApiProperty({
+    example: 71,
+    description:
+      'Fracao dos SETE campos contaveis, arredondada. O piso real e 29% -- `nome` e `email` sao NOT NULL em `usuarios`, entao todo aluno nasce com dois. Barra em zero mentiria sobre o trabalho ja feito.',
+  })
+  percentual!: number;
+
+  @ApiProperty({
+    type: [String],
+    example: ['dataNascimento', 'emergenciaTelefone'],
+    description:
+      'Os que faltam, NA ORDEM EM QUE A TELA DEVE PEDI-LOS. Vazio quando `percentual` e 100.',
+  })
+  faltam!: string[];
+}
+
 export class AlunoResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -46,6 +82,37 @@ export class AlunoResponseDto {
 
   @ApiProperty({ type: String, enum: ['ativo', 'inativo'] })
   status!: string;
+
+  /**
+   * SPEC-036 — os sete campos do cadastro completo.
+   *
+   * **Todos anulaveis, e e o estado normal**: ha alunos em producao que nunca
+   * viram estes campos. `null` e ausencia; string vazia nao existe aqui
+   * (INV-108, `CHECK alunos_texto_nao_vazio`).
+   */
+  @ApiProperty({ type: String, nullable: true, example: '1990-05-10' })
+  dataNascimento!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'Beto Souza' })
+  emergenciaNome!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: '+5511988887777' })
+  emergenciaTelefone!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  endereco!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'Sao Paulo' })
+  cidade!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'SP' })
+  uf!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  observacoesSaude!: string | null;
+
+  @ApiProperty({ type: CompletudeDoCadastroDto })
+  cadastro!: CompletudeDoCadastroDto;
 }
 
 /**

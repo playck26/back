@@ -11,7 +11,9 @@ export interface TxMock {
   // duplicado **dentro** da transação, para a claim do convite voltar
   // atrás junto se o cadastro não puder ser concluído.
   usuario: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
-  aluno: { create: jest.Mock };
+  // SPEC-036: `update` do aluno passou a escrever os sete campos do cadastro,
+  // e o `PATCH /me/cadastro` reusa o mesmo caminho transacional do gestor.
+  aluno: { create: jest.Mock; update: jest.Mock };
   // SPEC-033/TASK-004: a acao administrativa nasce DENTRO da transacao do
   // lancamento, antes do movimento — `movimentos_acao_fkey` a exige.
   acaoAdministrativa: { create: jest.Mock };
@@ -50,6 +52,7 @@ export interface TxMock {
    * primeira divergência entre eles vira um teste que passa por acaso.
    */
   $queryRaw: jest.Mock;
+  // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
   ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
   turmaAluno: { findFirst: jest.Mock };
   faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
@@ -76,6 +79,8 @@ export interface PrismaMock {
   configOperacaoEmpresa: { findUnique: jest.Mock; upsert: jest.Mock };
   empresa: {
     findUnique: jest.Mock;
+    // SPEC-037: a matricula le o contrato vigente da empresa antes de decidir.
+    findUniqueOrThrow: jest.Mock;
     findMany: jest.Mock;
     count: jest.Mock;
     create: jest.Mock;
@@ -95,8 +100,39 @@ export interface PrismaMock {
     // de lancamento o rele depois de escrever.
     findFirst: jest.Mock;
     findUnique: jest.Mock;
+    // SPEC-036: a ficha do cadastro completo.
+    update: jest.Mock;
   };
   movimentoDeCredito: { findMany: jest.Mock };
+  // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
+  configPagamentoEmpresa: { findUnique: jest.Mock };
+  // SPEC-038: a importacao le os niveis por NOME, para casar o texto da
+  // planilha com o id -- o gestor nao tem UUID na coluna.
+  nivel: { findMany: jest.Mock };
+  // SPEC-037: plano, matricula e o aceite que a INV-114 exige.
+  plano: {
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+  };
+  matricula: { findFirst: jest.Mock; findMany: jest.Mock; create: jest.Mock };
+  aceite: { findFirst: jest.Mock };
+  // SPEC-046: a reposicao de aula. `faltaAvisada.findMany` e `turmaAluno
+  // .findMany` entram no NIVEL DE CIMA — os que ja existiam eram do `tx`, e a
+  // leitura do credito roda fora de transacao.
+  faltaAvisada: { findMany: jest.Mock };
+  turmaAluno: { findMany: jest.Mock };
+  reposicaoDeAula: {
+    count: jest.Mock;
+    create: jest.Mock;
+    delete: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+  };
+  // SPEC-037/D9: o `fim` da matricula e calculado PELO POSTGRES -- o `Date`
+  // do JavaScript transborda 31/01+1mes para 3 de marco, em silencio.
+  $queryRaw: jest.Mock;
   // SPEC-012: a agenda é leitura agregada sobre estes modelos.
   ocupacaoQuadra: {
     groupBy: jest.Mock;
@@ -125,7 +161,7 @@ export interface PrismaMock {
 export function buildPrismaMock(): PrismaMock {
   const tx: TxMock = {
     usuario: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
-    aluno: { create: jest.fn() },
+    aluno: { create: jest.fn(), update: jest.fn() },
     acaoAdministrativa: {
       create: jest.fn().mockResolvedValue({ id: 'acao-credito' }),
     },
@@ -186,6 +222,9 @@ export function buildPrismaMock(): PrismaMock {
     },
     empresa: {
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        contratoVersaoVigente: null,
+      }),
       findMany: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
@@ -225,8 +264,35 @@ export function buildPrismaMock(): PrismaMock {
       // Padrao: aluno existe, saldo zero. Quem testa saldo sobrescreve.
       findFirst: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
       findUnique: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
+      update: jest.fn(),
     },
     movimentoDeCredito: { findMany: jest.fn().mockResolvedValue([]) },
+    plano: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    matricula: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+    },
+    aceite: { findFirst: jest.fn().mockResolvedValue(null) },
+    // SPEC-046 — o nivel de cima. Os `faltaAvisada`/`turmaAluno` que ja
+    // existiam sao do `tx`, e a leitura do credito roda fora de transacao.
+    faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+    turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+    reposicaoDeAula: {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+      delete: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    configPagamentoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
+    nivel: { findMany: jest.fn().mockResolvedValue([]) },
     tx,
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };

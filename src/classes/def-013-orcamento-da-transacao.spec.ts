@@ -284,7 +284,12 @@ function buildTxContado(
 function buildPrismaForaDaTransacao(tx: Prisma.TransactionClient) {
   return {
     quadra: {
-      findFirst: jest.fn().mockResolvedValue({ id: 'q1', companyId: 'c1' }),
+      // DEF-026 — `status` e `NOT NULL DEFAULT 'ativa'` no banco: um duble sem
+      // ele nao representa linha nenhuma que exista de verdade. A falta so
+      // apareceu quando o portao da quadra inativa passou a ler o campo.
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'q1', companyId: 'c1', status: 'ativa' }),
     },
     nivel: {
       findFirst: jest.fn().mockResolvedValue({ id: 'n1', companyId: 'c1' }),
@@ -323,7 +328,10 @@ function buildClassesService(tx: Prisma.TransactionClient) {
   const horarios = new HorarioFuncionamentoService(prisma);
   const courts = new CourtsService(
     prisma,
-    { exigirVinculoAprovado: jest.fn() } as unknown as StudentsService,
+    {
+      garantirAlunoOperante: jest.fn(),
+      exigirAlunoOperante: jest.fn(),
+    } as unknown as StudentsService,
     horarios,
     {
       resolver: jest.fn(() => ({ imagemUrl: null })),
@@ -337,7 +345,10 @@ function buildClassesService(tx: Prisma.TransactionClient) {
   return new ClassesService(
     prisma,
     courts,
-    { exigirVinculoAprovado: jest.fn() } as unknown as StudentsService,
+    {
+      garantirAlunoOperante: jest.fn(),
+      exigirAlunoOperante: jest.fn(),
+    } as unknown as StudentsService,
     new ConfigOperacaoService(prisma),
   );
 }

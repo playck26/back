@@ -1173,6 +1173,393 @@
         ]
       }
     },
+    "/api/v1/me/cadastro": {
+      "get": {
+        "operationId": "MeCadastroController_meuCadastro",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "operationId": "MeCadastroController_atualizarMeuCadastro",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CamposDoCadastroDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlunoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/students/importar": {
+      "post": {
+        "operationId": "ImportacaoController_importar",
+        "parameters": [
+          {
+            "name": "conferir",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "arquivo": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RelatorioDeImportacaoDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImportacaoConcluidaDto"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "alunos"
+        ]
+      }
+    },
+    "/api/v1/planos": {
+      "get": {
+        "operationId": "PlanosController_listar",
+        "parameters": [
+          {
+            "name": "apenasAtivos",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlanoResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "planos"
+        ]
+      },
+      "post": {
+        "operationId": "PlanosController_criar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriarPlanoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "planos"
+        ]
+      }
+    },
+    "/api/v1/planos/{id}": {
+      "patch": {
+        "operationId": "PlanosController_atualizar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AtualizarPlanoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "planos"
+        ]
+      }
+    },
+    "/api/v1/students/{alunoId}/matriculas": {
+      "get": {
+        "operationId": "MatriculasController_listar",
+        "parameters": [
+          {
+            "name": "alunoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MatriculaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "matriculas"
+        ]
+      },
+      "post": {
+        "operationId": "MatriculasController_criar",
+        "parameters": [
+          {
+            "name": "alunoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriarMatriculaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatriculaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "matriculas"
+        ]
+      }
+    },
+    "/api/v1/me/matricula": {
+      "get": {
+        "operationId": "MeMatriculaController_minhaMatricula",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MatriculaResponseDto"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/matriculas/vencimentos": {
+      "get": {
+        "operationId": "VencimentosController_vencimentos",
+        "parameters": [
+          {
+            "name": "dias",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 365,
+              "default": 30,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VencimentosResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "matriculas"
+        ]
+      }
+    },
     "/api/v1/_smoke/tenant-check/{companyId}": {
       "get": {
         "operationId": "SmokeController_tenantCheck",
@@ -3461,9 +3848,93 @@
         ]
       }
     },
+    "/api/v1/classes/{id}/ocorrencias-canceladas": {
+      "get": {
+        "operationId": "ClassesController_ocorrenciasCanceladas",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AulaCanceladaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes/{turmaId}/ocorrencias/{ocupacaoId}/cancel": {
       "post": {
         "operationId": "ClassesController_cancelarOcorrencia",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelarOcorrenciaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
+    "/api/v1/classes/{turmaId}/ocorrencias/{ocupacaoId}/reactivate": {
+      "post": {
+        "operationId": "ClassesController_reativarOcorrencia",
         "parameters": [
           {
             "name": "turmaId",
@@ -4290,6 +4761,132 @@
         ]
       }
     },
+    "/api/v1/me/reposicoes": {
+      "get": {
+        "operationId": "MeReposicoesController_meuCredito",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditoDeReposicaoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "post": {
+        "operationId": "MeReposicoesController_marcar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarcarReposicaoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReposicaoCriadaResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Sem crédito (`SEM_CREDITO_DE_REPOSICAO`), falta já reposta (`FALTA_JA_REPOSTA`), aula cheia (`TURMA_SEM_VAGA`), teto do mês (`TETO_DE_REPOSICAO`), aula cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`)."
+          },
+          "422": {
+            "description": "Já matriculado na turma de destino (`JA_MATRICULADO_NA_TURMA`) ou turma fora de operação (`TURMA_INATIVA`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/reposicoes/oportunidades": {
+      "get": {
+        "operationId": "MeReposicoesController_oportunidades",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OportunidadeDeReposicaoResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/reposicoes/{id}": {
+      "delete": {
+        "operationId": "MeReposicoesController_desmarcar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "Dentro do prazo de antecedência (`PRAZO_DE_CANCELAMENTO`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/dashboard/evasao": {
       "get": {
         "operationId": "DashboardController_evasao",
@@ -4732,6 +5329,10 @@
           },
           "nivelId": {
             "type": "string"
+          },
+          "planoId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -5094,6 +5695,31 @@
           "ocorrencias"
         ]
       },
+      "CompletudeDoCadastroDto": {
+        "type": "object",
+        "properties": {
+          "percentual": {
+            "type": "number",
+            "example": 71,
+            "description": "Fracao dos SETE campos contaveis, arredondada. O piso real e 29% -- `nome` e `email` sao NOT NULL em `usuarios`, entao todo aluno nasce com dois. Barra em zero mentiria sobre o trabalho ja feito."
+          },
+          "faltam": {
+            "example": [
+              "dataNascimento",
+              "emergenciaTelefone"
+            ],
+            "description": "Os que faltam, NA ORDEM EM QUE A TELA DEVE PEDI-LOS. Vazio quando `percentual` e 100.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "percentual",
+          "faltam"
+        ]
+      },
       "AlunoResponseDto": {
         "type": "object",
         "properties": {
@@ -5125,6 +5751,42 @@
               "ativo",
               "inativo"
             ]
+          },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Beto Souza"
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511988887777"
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true,
+            "example": "Sao Paulo"
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "example": "SP"
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
+          },
+          "cadastro": {
+            "$ref": "#/components/schemas/CompletudeDoCadastroDto"
           }
         },
         "required": [
@@ -5133,7 +5795,15 @@
           "email",
           "telefone",
           "nivelId",
-          "status"
+          "status",
+          "dataNascimento",
+          "emergenciaNome",
+          "emergenciaTelefone",
+          "endereco",
+          "cidade",
+          "uf",
+          "observacoesSaude",
+          "cadastro"
         ]
       },
       "AlunoPaginadoResponseDto": {
@@ -5197,6 +5867,42 @@
               "inativo"
             ]
           },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Beto Souza"
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true,
+            "example": "+5511988887777"
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true,
+            "example": "Sao Paulo"
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "example": "SP"
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
+          },
+          "cadastro": {
+            "$ref": "#/components/schemas/CompletudeDoCadastroDto"
+          },
           "senhaTemporaria": {
             "type": "string",
             "example": "Xk4p-9Qm2"
@@ -5209,6 +5915,14 @@
           "telefone",
           "nivelId",
           "status",
+          "dataNascimento",
+          "emergenciaNome",
+          "emergenciaTelefone",
+          "endereco",
+          "cidade",
+          "uf",
+          "observacoesSaude",
+          "cadastro",
           "senhaTemporaria"
         ]
       },
@@ -5241,6 +5955,64 @@
           },
           "telefone": {
             "type": "string"
+          },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "AC",
+              "AL",
+              "AP",
+              "AM",
+              "BA",
+              "CE",
+              "DF",
+              "ES",
+              "GO",
+              "MA",
+              "MT",
+              "MS",
+              "MG",
+              "PA",
+              "PB",
+              "PR",
+              "PE",
+              "PI",
+              "RJ",
+              "RN",
+              "RS",
+              "RO",
+              "RR",
+              "SC",
+              "SP",
+              "SE",
+              "TO"
+            ]
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
           },
           "nivelId": {
             "type": "string"
@@ -5578,6 +6350,475 @@
             "type": "number"
           }
         }
+      },
+      "CamposDoCadastroDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "telefone": {
+            "type": "string"
+          },
+          "dataNascimento": {
+            "type": "string",
+            "nullable": true,
+            "example": "1990-05-10"
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "endereco": {
+            "type": "string",
+            "nullable": true
+          },
+          "cidade": {
+            "type": "string",
+            "nullable": true
+          },
+          "uf": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "AC",
+              "AL",
+              "AP",
+              "AM",
+              "BA",
+              "CE",
+              "DF",
+              "ES",
+              "GO",
+              "MA",
+              "MT",
+              "MS",
+              "MG",
+              "PA",
+              "PB",
+              "PR",
+              "PE",
+              "PI",
+              "RJ",
+              "RN",
+              "RS",
+              "RO",
+              "RR",
+              "SC",
+              "SP",
+              "SE",
+              "TO"
+            ]
+          },
+          "observacoesSaude": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ErroDeImportacaoDto": {
+        "type": "object",
+        "properties": {
+          "linha": {
+            "type": "number",
+            "example": 47
+          },
+          "coluna": {
+            "type": "string",
+            "example": "email"
+          },
+          "mensagem": {
+            "type": "string",
+            "example": "Ja existe uma conta com este e-mail."
+          }
+        },
+        "required": [
+          "linha",
+          "coluna",
+          "mensagem"
+        ]
+      },
+      "LinhaValidaDto": {
+        "type": "object",
+        "properties": {
+          "linha": {
+            "type": "number",
+            "example": 2
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "email": {
+            "type": "string",
+            "example": "ana@clube.local"
+          },
+          "telefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "dataNascimento": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "emergenciaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "emergenciaTelefone": {
+            "type": "string",
+            "nullable": true
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "required": [
+          "linha",
+          "nome",
+          "email",
+          "telefone",
+          "dataNascimento",
+          "emergenciaNome",
+          "emergenciaTelefone",
+          "nivelId"
+        ]
+      },
+      "RelatorioDeImportacaoDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "example": 300,
+            "description": "Linhas de aluno, sem o cabecalho."
+          },
+          "validas": {
+            "type": "number",
+            "example": 298
+          },
+          "erros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErroDeImportacaoDto"
+            }
+          },
+          "linhas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinhaValidaDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "validas",
+          "erros",
+          "linhas"
+        ]
+      },
+      "AlunoImportadoDto": {
+        "type": "object",
+        "properties": {
+          "linha": {
+            "type": "number",
+            "example": 2
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "example": "ana@clube.local"
+          },
+          "senhaTemporaria": {
+            "type": "string",
+            "example": "Kx7-mQ2p",
+            "description": "Sai UMA VEZ. Nenhuma outra rota a devolve -- se o gestor perder, o caminho e regenerar."
+          }
+        },
+        "required": [
+          "linha",
+          "alunoId",
+          "email",
+          "senhaTemporaria"
+        ]
+      },
+      "ImportacaoConcluidaDto": {
+        "type": "object",
+        "properties": {
+          "criados": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlunoImportadoDto"
+            }
+          }
+        },
+        "required": [
+          "criados"
+        ]
+      },
+      "PlanoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Mensal"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 30000
+          },
+          "prazoMeses": {
+            "type": "number",
+            "example": 1
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "linkHerdado": {
+            "type": "boolean",
+            "example": true
+          },
+          "ativo": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "valorCentavos",
+          "prazoMeses",
+          "linkPagamentoUrl",
+          "linkHerdado",
+          "ativo"
+        ]
+      },
+      "CriarPlanoDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Mensal"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 30000,
+            "description": "Em CENTAVOS, como a carteira."
+          },
+          "prazoMeses": {
+            "type": "number",
+            "example": 1,
+            "minimum": 1,
+            "maximum": 60
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "nome",
+          "valorCentavos",
+          "prazoMeses"
+        ]
+      },
+      "AtualizarPlanoDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "valorCentavos": {
+            "type": "number"
+          },
+          "prazoMeses": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 60
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "ativo": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MatriculaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "planoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "planoNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Mensal"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 25000,
+            "description": "O que foi ACERTADO, congelado."
+          },
+          "valorDeTabelaCentavos": {
+            "type": "number",
+            "example": 30000,
+            "description": "O que o plano cobrava NAQUELE DIA, congelado. Com os dois, o desconto fica visivel; com um so, ninguem distingue desconto de mudanca de preco depois."
+          },
+          "descontoCentavos": {
+            "type": "number",
+            "example": 5000,
+            "description": "CALCULADO na leitura, nunca gravado. Uma coluna seria uma terceira verdade sobre os mesmos dois numeros -- e a primeira a divergir."
+          },
+          "prazoMeses": {
+            "type": "number",
+            "example": 1
+          },
+          "inicio": {
+            "type": "string",
+            "example": "2026-09-10"
+          },
+          "fim": {
+            "type": "string",
+            "example": "2026-10-10",
+            "description": "GRAVADO, nao derivado na leitura: \"quem vence este mes\" viraria varredura com aritmetica de data."
+          },
+          "diasRestantes": {
+            "type": "number",
+            "example": 5,
+            "description": "SPEC-045/AC-009 — dias ate o vencimento, **negativo quando ja venceu**. Calculado no servidor porque \"hoje\" da tela e o relogio do NAVEGADOR, que esta no fuso de quem viaja e nao no do clube. O comentario de `fim` acima ja previa esta spec: a coluna e gravada justamente para que \"quem vence este mes\" nao vire varredura."
+          },
+          "contratoVersao": {
+            "type": "number",
+            "example": 3,
+            "description": "A versao do contrato aceita. Exigida PELO BANCO (INV-114): matricula sem o aceite correspondente e recusada com `23503`."
+          },
+          "linkPagamentoUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Ja RESOLVIDO pela heranca: o do plano, ou o da empresa quando o plano nao tem proprio."
+          }
+        },
+        "required": [
+          "id",
+          "alunoId",
+          "planoId",
+          "planoNome",
+          "valorCentavos",
+          "valorDeTabelaCentavos",
+          "descontoCentavos",
+          "prazoMeses",
+          "inicio",
+          "fim",
+          "diasRestantes",
+          "contratoVersao",
+          "linkPagamentoUrl"
+        ]
+      },
+      "CriarMatriculaDto": {
+        "type": "object",
+        "properties": {
+          "planoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inicio": {
+            "type": "string",
+            "example": "2026-09-10"
+          },
+          "valorCentavos": {
+            "type": "number",
+            "example": 25000
+          }
+        },
+        "required": [
+          "planoId"
+        ]
+      },
+      "VencimentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "alunoNome": {
+            "type": "string",
+            "example": "Maria Silva"
+          },
+          "planoNome": {
+            "type": "string",
+            "example": "Mensal"
+          },
+          "fim": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-10-12"
+          },
+          "diasRestantes": {
+            "type": "number",
+            "example": 5,
+            "description": "Dias ate o vencimento. **Negativo quando ja venceu** — e o mesmo campo, porque \"vence em -3 dias\" e \"venceu ha 3 dias\" sao a mesma informacao e dois campos divergiriam."
+          }
+        },
+        "required": [
+          "alunoId",
+          "alunoNome",
+          "planoNome",
+          "fim",
+          "diasRestantes"
+        ]
+      },
+      "VencimentosResponseDto": {
+        "type": "object",
+        "properties": {
+          "dias": {
+            "type": "number",
+            "example": 30,
+            "description": "A janela usada, ecoada: a tela nao precisa lembrar o padrao."
+          },
+          "vencidas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VencimentoResponseDto"
+            }
+          },
+          "vencendo": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VencimentoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "dias",
+          "vencidas",
+          "vencendo"
+        ]
       },
       "SmokeDeTenantResponseDto": {
         "type": "object",
@@ -6848,7 +8089,10 @@
               "turma_horario_editado",
               "credito_lancado",
               "credito_retirado",
-              "turma_aluno_removido"
+              "turma_aluno_removido",
+              "turma_inativada",
+              "turma_reativada",
+              "aula_reativada"
             ],
             "description": "O GESTO humano que provocou o evento."
           },
@@ -7832,6 +9076,44 @@
           "alunos"
         ]
       },
+      "AulaCanceladaResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "O MESMO id que `POST /classes/:turmaId/ocorrencias/:ocupacaoId/reactivate` aceita — se divergirem, o caminho quebra no último passo (mesma razão da INV-026b)."
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-22"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          },
+          "horarioLivre": {
+            "type": "boolean",
+            "description": "`false` quando outra ocupação já tomou o horário. A tela avisa antes; quem decide é o servidor."
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "quadraNome",
+          "horarioLivre"
+        ]
+      },
       "CancelarOcorrenciaDto": {
         "type": "object",
         "properties": {
@@ -8505,6 +9787,9 @@
           "naTurmaHoje": {
             "type": "boolean"
           },
+          "reposicao": {
+            "type": "boolean"
+          },
           "faltaAvisada": {
             "type": "boolean"
           }
@@ -8514,6 +9799,7 @@
           "nome",
           "status",
           "naTurmaHoje",
+          "reposicao",
           "faltaAvisada"
         ]
       },
@@ -8719,6 +10005,232 @@
           "horaInicio",
           "horaFim",
           "chamada"
+        ]
+      },
+      "ReposicaoMarcadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Iniciante Terça"
+          },
+          "data": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-09-24"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          }
+        },
+        "required": [
+          "id",
+          "turmaNome",
+          "data",
+          "horaInicio"
+        ]
+      },
+      "FaltaParaReporResponseDto": {
+        "type": "object",
+        "properties": {
+          "faltaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "data": {
+            "type": "string",
+            "format": "date"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          },
+          "expiraEm": {
+            "type": "string",
+            "format": "date",
+            "description": "Ate quando da para repor esta falta (D6)."
+          },
+          "expirada": {
+            "type": "boolean",
+            "description": "Passou da validade — nao gera credito."
+          },
+          "aulaCancelada": {
+            "type": "boolean",
+            "description": "O CLUBE cancelou a aula. Nao gera credito porque o aluno nao perdeu nada (AC-003)."
+          },
+          "reposicao": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReposicaoMarcadaResponseDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "faltaId",
+          "turmaNome",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "expiraEm",
+          "expirada",
+          "aulaCancelada",
+          "reposicao"
+        ]
+      },
+      "CreditoDeReposicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "creditos": {
+            "type": "number",
+            "example": 1,
+            "description": "Faltas validas ainda nao repostas."
+          },
+          "porMes": {
+            "type": "number",
+            "example": 2,
+            "description": "Teto do clube, por mes da falta."
+          },
+          "validadeDias": {
+            "type": "number",
+            "example": 30
+          },
+          "usadasNoMes": {
+            "type": "number",
+            "example": 0
+          },
+          "faltas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FaltaParaReporResponseDto"
+            }
+          }
+        },
+        "required": [
+          "creditos",
+          "porMes",
+          "validadeDias",
+          "usadasNoMes",
+          "faltas"
+        ]
+      },
+      "OportunidadeDeReposicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "example": "Iniciante Quinta"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 2"
+          },
+          "data": {
+            "type": "string",
+            "format": "date"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          },
+          "vagas": {
+            "type": "number",
+            "example": 2
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "turmaId",
+          "turmaNome",
+          "quadraNome",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "vagas"
+        ]
+      },
+      "MarcarReposicaoDto": {
+        "type": "object",
+        "properties": {
+          "faltaId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A falta que este gesto consome."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A ocorrencia que ele vai frequentar."
+          }
+        },
+        "required": [
+          "faltaId",
+          "ocupacaoId"
+        ]
+      },
+      "ReposicaoCriadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "faltaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "format": "date"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          }
+        },
+        "required": [
+          "id",
+          "faltaId",
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim"
         ]
       },
       "AlunoEmEvasaoResponseDto": {

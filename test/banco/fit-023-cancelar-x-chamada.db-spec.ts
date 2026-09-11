@@ -77,7 +77,7 @@ function courts(c: PrismaClient): CourtsService {
   return new CourtsService(
     c as unknown as PrismaService,
     {
-      exigirVinculoAprovado: () => {
+      exigirAlunoOperante: () => {
         throw new Error('cancelar ocorrencia nao consulta vinculo');
       },
     } as unknown as StudentsService,

@@ -168,7 +168,11 @@ function comoReserva(resultado: unknown) {
 function buildStudentsMock() {
   return {
     garantirVinculoAprovado: jest.fn(),
-    exigirVinculoAprovado: jest.fn().mockResolvedValue(undefined),
+    // DEF-027 — a trava inteira (vinculo + status). O duble tem as duas
+    // porque o servico chama a segunda; deixar so a primeira aqui daria
+    // `is not a function` em 16 casos, que foi exatamente o que aconteceu.
+    garantirAlunoOperante: jest.fn(),
+    exigirAlunoOperante: jest.fn().mockResolvedValue(undefined),
   } as unknown as StudentsService;
 }
 
@@ -508,7 +512,7 @@ describe('CourtsService', () => {
       // um 404 de recurso — a ordem do serviço valida a quadra primeiro,
       // então o teste precisa passar por essa etapa para provar a trava.
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
-      (studentsService.exigirVinculoAprovado as jest.Mock).mockRejectedValue(
+      (studentsService.exigirAlunoOperante as jest.Mock).mockRejectedValue(
         new ForbiddenException({ code: 'VINCULO_PENDENTE' }),
       );
 

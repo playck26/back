@@ -37,6 +37,7 @@ import {
   parseTimeOnly,
   recorteTemporal,
   aulaJaComecou,
+  hojeNoFusoDoClube,
 } from './date-time.util';
 
 /**
@@ -292,16 +293,37 @@ export class CourtsService {
     return opcao;
   }
 
-  async list(companyId: string, page = 1, pageSize = 20) {
+  /**
+   * DEF-026 — **o aluno nao ve quadra fora de operacao; o gestor ve.**
+   *
+   * A lista era a mesma para os dois papeis, e o aluno recebia a quadra
+   * inativa com todos os horarios livres. Medido em 2026-09-10: com saldo, a
+   * reserva ia ate o fim -- `201`, `status: pago`, credito debitado.
+   *
+   * O gestor PRECISA ver a inativa: e por essa lista que ele a reativa. Sao
+   * duas necessidades opostas sobre a mesma rota, e por isso o filtro depende
+   * do papel e nao de um parametro de consulta -- parametro seria uma escolha
+   * de quem chama, e o aluno nao pode ter essa escolha.
+   */
+  async list(
+    companyId: string,
+    page = 1,
+    pageSize = 20,
+    incluirInativas = true,
+  ) {
+    const where = {
+      companyId,
+      ...(incluirInativas ? {} : { status: 'ativa' as const }),
+    };
     const [data, total] = await Promise.all([
       this.prisma.quadra.findMany({
-        where: { companyId },
+        where,
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
         include: CourtsService.COM_CATALOGOS,
       }),
-      this.prisma.quadra.count({ where: { companyId } }),
+      this.prisma.quadra.count({ where }),
     ]);
 
     return {
@@ -362,6 +384,77 @@ export class CourtsService {
       await this.resolverOpcao('categoria', companyId, dto.categoriaId);
     }
 
+    /**
+     * DEF-026 — **desativar com compromisso futuro e RECUSADO, com a lista.**
+     *
+     * Nao e o mesmo remedio da turma (SPEC-035), e a diferenca e dinheiro:
+     * inativar uma turma cancela ocorrencias que **nao tem valor proprio**
+     * (`ocupacoes_valor_por_origem` mantem `valor` nulo em TURMA); inativar
+     * uma quadra alcancaria reservas **pagas com credito**, e o cancelamento
+     * delas devolve saldo (SPEC-033/AC-011).
+     *
+     * **Um botao de status nao pode mover dinheiro como efeito colateral.**
+     * Recusar devolve a decisao a quem pode tomar: o gestor cancela ou move o
+     * que estiver marcado -- e ai cada devolucao tem um gesto e um autor --
+     * e so entao tira a quadra de operacao.
+     *
+     * *A alternativa — inativar e cancelar tudo, com `confirmar: true` — fica
+     * declarada e nao feita.* Ela e legitima e resolve o caso da quadra que
+     * alagou com trinta reservas marcadas; o que ela exige e uma decisao de
+     * produto sobre devolver saldo em lote, e ninguem a tomou.
+     *
+     * O corte e `hojeNoFusoDoClube` e nao `now()`: reserva de hoje as 8h com o
+     * gestor desativando as 14h ja aconteceu, e nao e impedimento.
+     */
+    if (dto.status === 'inativa') {
+      const marcadas = await this.prisma.ocupacaoQuadra.findMany({
+        where: {
+          companyId,
+          quadraId: id,
+          statusPagamento: { not: 'cancelado' },
+          data: { gte: hojeNoFusoDoClube() },
+        },
+        orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+        take: 20,
+        select: {
+          id: true,
+          data: true,
+          horaInicio: true,
+          horaFim: true,
+          origemTipo: true,
+        },
+      });
+      if (marcadas.length > 0) {
+        const total = await this.prisma.ocupacaoQuadra.count({
+          where: {
+            companyId,
+            quadraId: id,
+            statusPagamento: { not: 'cancelado' },
+            data: { gte: hojeNoFusoDoClube() },
+          },
+        });
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'QUADRA_COM_COMPROMISSOS',
+          message:
+            total === 1
+              ? 'Esta quadra tem 1 horário marcado daqui para frente. Cancele ou mova antes de tirá-la de operação.'
+              : `Esta quadra tem ${total} horários marcados daqui para frente. Cancele ou mova antes de tirá-la de operação.`,
+          total,
+          // A amostra tem teto: uma quadra com trezentas reservas nao pode
+          // devolver trezentas linhas para a tela desenhar. Mesmo teto do
+          // relatorio de impacto do horario (`AMOSTRA_MAXIMA`).
+          amostra: marcadas.map((o) => ({
+            ocupacaoId: o.id,
+            data: formatDateOnly(o.data),
+            horaInicio: formatTimeOnly(o.horaInicio),
+            horaFim: formatTimeOnly(o.horaFim),
+            origemTipo: o.origemTipo,
+          })),
+        });
+      }
+    }
+
     const quadra = await this.prisma.quadra.update({
       where: { id },
       data: {
@@ -383,12 +476,35 @@ export class CourtsService {
     return this.toQuadraResponse(quadra);
   }
 
+  /**
+   * DEF-026 — **quadra fora de operacao nao oferece horario.**
+   *
+   * Ela devolvia a grade inteira: medido em 2026-09-10, 13 slots livres numa
+   * quadra que o gestor tinha acabado de desativar. Agora sai `estado:
+   * 'fechado'` com `slots: []`, que e o vocabulario que as duas telas ja
+   * sabem renderizar -- um terceiro estado obrigaria a mexer nos dois
+   * frontends para dizer o que "fechado" ja diz ao aluno.
+   *
+   * **E e a mesma regra da INV-011/AC-015**, escrita neste arquivo desde a
+   * SPEC-010: a grade vem do mesmo lugar que a validacao de criacao, "e o que
+   * impede a tela oferecer um horario que o servidor recusaria depois". A
+   * quadra inativa era a excecao que ninguem tinha notado.
+   */
   async availability(
     companyId: string,
     quadraId: string,
     data: string,
   ): Promise<DisponibilidadeResponseDto> {
-    await this.assertQuadraDaEmpresa(companyId, quadraId);
+    const quadra = await this.prisma.quadra.findFirst({
+      where: { id: quadraId, companyId },
+      select: { status: true },
+    });
+    if (!quadra) {
+      throw new NotFoundException();
+    }
+    if (quadra.status !== 'ativa') {
+      return { quadraId, data, estado: 'fechado', slots: [] };
+    }
 
     const dataDate = parseDateOnly(data);
     const ocupacoes = await this.prisma.ocupacaoQuadra.findMany({
@@ -496,7 +612,7 @@ export class CourtsService {
     }
 
     if (dto.alunoId) {
-      await this.studentsService.exigirVinculoAprovado(companyId, dto.alunoId);
+      await this.studentsService.exigirAlunoOperante(companyId, dto.alunoId);
     }
 
     // SPEC-039/D2 — `valor` so vem com `professorId`. Numa reserva de quadra o
@@ -817,12 +933,37 @@ export class CourtsService {
     return formatoAntigo ? reservas[0] : { reservas };
   }
 
+  /**
+   * DEF-026 — **e ATIVA**, e este e o portao que faltava.
+   *
+   * O `moveBooking` ja filtrava `status: 'ativa'` no DESTINO desde a SPEC-034,
+   * e o comentario de la explica por que: *"mover para uma quadra inativa
+   * respondia 200 e sumia com a reserva da agenda, que nao mostra quadra
+   * inativa"*.
+   *
+   * **A mesma frase valia para CRIAR, e ninguem tinha olhado.** Medido em
+   * 2026-09-10, com um aluno de verdade e saldo de verdade: reserva numa
+   * quadra fora de operacao respondia `201`, com `status: pago` e o credito
+   * debitado -- e o gestor **nao via** a reserva na agenda, porque os tres
+   * filtros de `agenda.service.ts` excluem quadra inativa.
+   *
+   * Dinheiro cobrado por uma quadra que nao pode ser usada, e invisivel para
+   * quem poderia desfazer.
+   */
   private async buscarQuadraDaEmpresa(companyId: string, quadraId: string) {
     const quadra = await this.prisma.quadra.findFirst({
       where: { id: quadraId, companyId },
     });
     if (!quadra) {
       throw new NotFoundException();
+    }
+    if (quadra.status !== 'ativa') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'QUADRA_INATIVA',
+        message:
+          'Esta quadra está fora de operação e não recebe reserva. Reative-a antes.',
+      });
     }
     return quadra;
   }
@@ -1189,6 +1330,64 @@ export class CourtsService {
       data: { statusPagamento: 'cancelado', transicaoId },
     });
     await registrador.registrar(ocupacaoId, 'cancelada', transicaoId);
+  }
+
+  /**
+   * SPEC-035/TASK-003 — **descancelar** uma ocorrência de turma.
+   *
+   * Espelho de `cancelOneClassOccurrence`, e a mesma divisão de trabalho:
+   * **só a escrita; quem decide é o `ClassesService`**, porque a decisão
+   * depende de segurar `turmas FOR UPDATE`.
+   *
+   * ## A `EXCLUDE` julga de graça, e é ela quem garante
+   *
+   * `no_overlap_por_quadra` tem `WHERE status_pagamento <> 'cancelado'`: este
+   * `UPDATE` **insere a linha no índice**, e se houver sobreposição o Postgres
+   * recusa com `23P01`. A pré-checagem que o `ClassesService` faz antes existe
+   * para a **mensagem** — para o gestor saber QUEM tomou o horário —, nunca
+   * para a garantia. Mesma divisão da INV-001, e por isso a corrida
+   * (FIT-034) tem um vencedor só mesmo quando as duas pré-checagens passam.
+   *
+   * ## E a trigger espelhada exige o evento
+   *
+   * `ocupacao_reativada_exige_evento` (INV-106) recusa este `UPDATE` no
+   * COMMIT se o evento `reativada` desta transição não existir. É por isso que
+   * `registrar` está aqui dentro e não no chamador: separar os dois deixaria
+   * o próximo chamador livre para esquecer, e o `DEFERRABLE` só reclamaria no
+   * fim, longe da causa.
+   */
+  async reactivateOneClassOccurrence(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    ocupacaoId: string,
+    registrador: RegistradorDeAcao,
+  ): Promise<void> {
+    const transicaoId = novaTransicao();
+    try {
+      await tx.ocupacaoQuadra.update({
+        where: { id: ocupacaoId },
+        // Volta para `pendente_pagamento`, e **não** para o status que ela
+        // tinha antes de ser cancelada: ocupação de TURMA nunca teve outro
+        // (`valor` é nulo, CHECK `ocupacoes_valor_por_origem`), e guardar o
+        // status anterior só para restaurá-lo seria coluna nova a serviço de
+        // um caso que não existe.
+        data: { statusPagamento: 'pendente_pagamento', transicaoId },
+      });
+      await registrador.registrar(ocupacaoId, 'reativada', transicaoId);
+    } catch (error) {
+      // Mesma corrida perdida da INV-001, e o mesmo motivo de não haver
+      // P-código dedicado no Prisma para violação de `EXCLUDE`. O que **não**
+      // é corrida — transação expirada, conexão caída — passa direto e
+      // continua sendo 500 (`ehCorridaPerdida`, DEF-013).
+      if (ehCorridaPerdida(error)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'HORARIO_OCUPADO',
+          message: 'Este horário foi ocupado enquanto a aula estava cancelada.',
+        });
+      }
+      throw error;
+    }
   }
 
   // `alunoIdScope` (SPEC-005): quando o chamador é `aluno`, só pode
@@ -2182,15 +2381,36 @@ export class CourtsService {
     return aluno;
   }
 
+  /**
+   * DEF-026 — a quadra e da empresa, e (quando pedido) esta **ATIVA**.
+   *
+   * `exigirAtiva` e explicito no chamador de proposito: LER uma quadra
+   * inativa e legitimo (o gestor precisa para reativa-la), ESCREVER nela nao
+   * e. Um padrao unico para os dois casos erraria um deles.
+   *
+   * **`422 QUADRA_INATIVA` e nao `404`**: a quadra existe, e o gestor sabe
+   * que existe -- ele mesmo a desativou. Um `404` aqui o mandaria procurar um
+   * id errado.
+   */
   private async assertQuadraDaEmpresa(
     companyId: string,
     quadraId: string,
+    exigirAtiva = false,
   ): Promise<void> {
     const quadra = await this.prisma.quadra.findFirst({
       where: { id: quadraId, companyId },
+      select: { status: true },
     });
     if (!quadra) {
       throw new NotFoundException();
+    }
+    if (exigirAtiva && quadra.status !== 'ativa') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'QUADRA_INATIVA',
+        message:
+          'Esta quadra está fora de operação. Reative-a antes de marcar horário nela.',
+      });
     }
   }
 

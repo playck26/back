@@ -15,6 +15,7 @@ import {
 } from './date-time.util';
 import {
   ConfiguracaoDeHorariosResponseDto,
+  DiaDeHorarioResponseDto,
   HorariosDaQuadraResponseDto,
   OcupacaoAfetadaResponseDto,
 } from './dto/horarios-response.dto';
@@ -341,8 +342,16 @@ export class HorarioFuncionamentoService {
       porQuadra.set(l.quadraId as string, atual);
     }
 
+    const padraoGravado = linhas
+      .filter((l) => l.quadraId === null)
+      .map(serializar);
+
     return {
-      padrao: linhas.filter((l) => l.quadraId === null).map(serializar),
+      // DEF-025 — a mesma rede da `listarDaQuadra`, e pelo mesmo motivo: a
+      // tela de Configurações renderiza a grade a partir daqui, e uma lista
+      // vazia produzia um editor sem linhas que só sabia responder `400`.
+      padrao:
+        padraoGravado.length > 0 ? padraoGravado : this.padraoDeSeguranca(),
       // Só aparecem aqui as quadras que **têm** horário próprio. As demais
       // herdam, e herança é ausência de registro — listar todas com o
       // padrão copiado daria a impressão errada de que elas foram
@@ -354,12 +363,56 @@ export class HorarioFuncionamentoService {
   }
 
   /**
+   * DEF-025 — **os sete dias do padrão, quando a empresa não tem nenhum.**
+   *
+   * É a mesma rede de segurança que `resolverDeLinhas` já tinha (6h–22h,
+   * `estado: aberto`), na forma que a TELA precisa: uma grade de sete linhas
+   * editáveis, e não uma resposta sobre um único dia.
+   *
+   * ## O defeito que a criou, achado em uso local em 2026-09-10
+   *
+   * O Israel abriu a ficha de uma quadra e o bloco "Horário de funcionamento"
+   * **não tinha grade nenhuma** — só o texto e o botão. Clicar em "Salvar
+   * horários" respondia **`400 dias must contain at least 7 elements`**.
+   *
+   * A causa: a empresa daquele banco não tinha **nenhuma** linha em
+   * `horarios_funcionamento`, então `listarDaQuadra` devolvia `dias: []`, a
+   * tela renderizava zero linhas e mandava de volta uma lista vazia.
+   *
+   * **O comentário de `CompaniesService` previu isto por escrito** — *"o
+   * admin abriria a tela de configuração vazia e não entenderia de onde vêm
+   * os horários que o aluno enxerga"* — e o remédio de lá (semear na criação)
+   * só cobre quem nasce pelo serviço. Qualquer outro caminho de criação, e
+   * qualquer empresa anterior à SPEC-010, chega aqui sem linha.
+   *
+   * **O caminho do aluno funcionava**, e é isso que fazia o defeito ser
+   * invisível: a agenda caía na rede de segurança e mostrava 6h–22h. Só a
+   * tela de configuração ficava em branco — a leitura e a escrita
+   * discordavam sobre o mesmo estado.
+   */
+  private padraoDeSeguranca(): DiaDeHorarioResponseDto[] {
+    const inicio = `${String(EXPEDIENTE_INICIO_HORA).padStart(2, '0')}:00`;
+    const fim = `${String(EXPEDIENTE_FIM_HORA).padStart(2, '0')}:00`;
+    return Array.from({ length: 7 }, (_, diaSemana) => ({
+      diaSemana,
+      fechado: false,
+      horaInicio: inicio,
+      horaFim: fim,
+    }));
+  }
+
+  /**
    * O que vale para uma quadra hoje, e **de onde vem**.
    *
    * A tela precisa distinguir "esta quadra tem horário próprio" de "esta
    * quadra segue o padrão": sem `origem`, o admin não saberia se está
    * editando a quadra ou vendo o reflexo da configuração da empresa — e
    * mudar o padrão depois pareceria não ter efeito.
+   *
+   * **Nunca devolve lista vazia** (DEF-025). Empresa sem configuração alguma
+   * recebe os sete dias da rede de segurança, com `origem: 'herdado'` — que é
+   * a verdade: ela herda o padrão do sistema, e não o de uma configuração que
+   * não existe.
    */
   async listarDaQuadra(
     companyId: string,
@@ -375,6 +428,10 @@ export class HorarioFuncionamentoService {
     const proprios = linhas.filter((l) => l.quadraId === quadraId);
     const origem = proprios.length > 0 ? 'proprio' : 'herdado';
     const efetivos = proprios.length > 0 ? proprios : linhas;
+
+    if (efetivos.length === 0) {
+      return { origem: 'herdado', dias: this.padraoDeSeguranca() };
+    }
 
     return {
       origem,

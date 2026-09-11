@@ -14,6 +14,8 @@ import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { PresencaService } from './presenca.service';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
 import { FaltaAvisadaService } from './falta-avisada.service';
+import { MeReposicoesController } from './me-reposicoes.controller';
+import { ReposicaoService } from './reposicao.service';
 
 @Module({
   imports: [
@@ -28,8 +30,10 @@ import { FaltaAvisadaService } from './falta-avisada.service';
     MeTeacherClassesController,
     MeTeacherAttendanceController,
     MeTeacherAgendaController,
+    MeReposicoesController,
   ],
   providers: [
+    ReposicaoService,
     FaltaAvisadaService,
     ClassesService,
     AgendaDoProfessorService,

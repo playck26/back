@@ -53,7 +53,7 @@ const TURMA = 'e0390000-0000-4000-8000-00000000000b';
 const prisma = db as unknown as PrismaService;
 const courts = new CourtsService(
   prisma,
-  { exigirVinculoAprovado: () => undefined } as unknown as StudentsService,
+  { exigirAlunoOperante: () => undefined } as unknown as StudentsService,
   new HorarioFuncionamentoService(prisma),
   {} as unknown as ImagemDaQuadraService,
   new ConfigOperacaoService(prisma),
