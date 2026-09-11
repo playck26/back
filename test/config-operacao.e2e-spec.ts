@@ -68,9 +68,12 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
   describe('AC-001 — PUT grava, GET lê', () => {
     it('PUT devolve o que gravou, e o upsert é escopado pela empresa do token', async () => {
       const token = await comoGestor();
+      // SPEC-047 — o duble precisa TER o campo novo: a resposta o converte
+      // de `Decimal` para `number`, e sem ele o servico leria `undefined`.
       prisma.configOperacaoEmpresa.upsert.mockResolvedValue({
         prazoCancelamentoAulaHoras: 2,
         prazoCancelamentoReservaHoras: 4,
+        precoAulaPadrao: null,
       });
 
       const res = await request(app.getHttpServer())
@@ -82,9 +85,13 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         })
         .expect(200);
 
+      // **`toEqual` e nao `toMatchObject`, de proposito** — e o que acusou o
+      // campo novo da SPEC-047 no dia em que ele entrou. Um `toMatchObject`
+      // teria deixado passar em silencio.
       expect(bodyOf<Config>(res)).toEqual({
         prazoCancelamentoAulaHoras: 2,
         prazoCancelamentoReservaHoras: 4,
+        precoAulaPadrao: null,
       });
 
       // O `companyId` vem do TOKEN, nunca do corpo — não há id na URL para
@@ -100,6 +107,7 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
       prisma.configOperacaoEmpresa.findUnique.mockResolvedValue({
         prazoCancelamentoAulaHoras: 3,
         prazoCancelamentoReservaHoras: null,
+        precoAulaPadrao: 150,
       });
 
       const res = await request(app.getHttpServer())
@@ -110,6 +118,9 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
       expect(bodyOf<Config>(res)).toEqual({
         prazoCancelamentoAulaHoras: 3,
         prazoCancelamentoReservaHoras: null,
+        // SPEC-047 — **`150` e nao `"150"`.** A coluna e `Decimal` e sairia
+        // como string no JSON; a conversao mora no servico, num lugar so.
+        precoAulaPadrao: 150,
       });
     });
 
@@ -130,6 +141,10 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
       expect(bodyOf<Config>(res)).toEqual({
         prazoCancelamentoAulaHoras: null,
         prazoCancelamentoReservaHoras: null,
+        // SPEC-047 — e o terceiro nulo tem o mesmo significado dos outros
+        // dois: **ausencia de configuracao**, nao "de graca". Sem preco aqui
+        // nem no professor, o clube nao vende aula particular pelo app.
+        precoAulaPadrao: null,
       });
     });
   });
