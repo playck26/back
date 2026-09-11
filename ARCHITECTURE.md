@@ -513,6 +513,7 @@ a replicar:
 | `acoes_administrativas` | MOD-010 | **SPEC-032.** O **gesto humano**: uma por comando lógico que escreve. Append-only por trigger. A FK do autor **não** carrega a empresa, de propósito — `usuarios.company_id` é nulo para `super_admin`, e uma FK composta o impediria de ser autor de qualquer coisa (LIM-032f) |
 | `eventos_de_ocupacao` | MOD-010 | **SPEC-032.** O **alvo técnico**: N por ação, um por ocupação afetada. A cisão entre as duas existe porque um evento não pode apontar para 40 ocorrências ao mesmo tempo — a v1 da spec tentava, e foi reprovada por isso. `transicao_id` casa com o da ocupação e é o que a trigger confere no `COMMIT` |
 | `movimentos_de_credito` | **MOD-011** | **SPEC-033.** O **ledger da carteira**, append-only. O saldo em `alunos.saldo_creditos` é escrito **pela trigger do ledger**, nunca pelo serviço (INV-071), e a guarda cobre `INSERT` **e** `UPDATE` — a primeira versão só cobria `UPDATE`, e a validação cruzada inseriu um aluno com saldo 12345 e zero movimentos. Duas colunas `GENERATED ALWAYS … STORED` servem de discriminante constante em FK composta: é o que faz a devolução só apontar para um **consumo** do mesmo aluno, ocupação e valor (D5), e o que impede consumo em ocupação de **turma** (INV-097). **Únicas colunas geradas do projeto** — e é por elas que a migration desta spec é SQL manual: o `migrate diff` as transforma num `DEFAULT CASE …` que o Postgres recusa com `0A000` |
+| `professores.preco_aula`, `config_operacao_empresa.preco_aula_padrao` | MOD-003 | **SPEC-047.** O preço da aula particular, **`DECIMAL(10,2)` em reais** — como `quadras.preco_hora`, e não em centavos como a carteira; a conversão mora num lugar só. As duas são **anuláveis, e nulo não é zero**: nulo no professor é *"herda o padrão do clube"*, nulo nos dois é *"este professor não dá aula particular"*. Zero seria o valor que o ledger recusa, e a aula de graça quebraria na cobrança **depois** de a tela dizer que deu certo — por isso a **INV-122** é `CHECK (... IS NULL OR ... > 0)` nas duas |
 | `disponibilidades_professor` | MOD-003 | **SPEC-040.** Quando cada professor atende: uma linha por `(professor, dia_semana)`. E da **ficha**, nao da conta — `professores.usuario_id` e nulavel (INV-014) e a maioria nao tem login. **Nao tem coluna de flag**, e a ausencia dela e a decisao (D6): o molde `horarios_funcionamento` tem `fechado` porque la ha HERANCA e a quadra precisa SOBREPOR um dia aberto herdado; aqui nao ha heranca, entao a flag daria DUAS representacoes de "nao atende" e a SPEC-039 teria de lembrar de filtrar. Primeira tabela a apontar para `professores` com a empresa junto — o `UNIQUE (company_id, id)` de `professores` nasceu nesta migration, sem ele a FK composta morre com `42830` |
 | `arquivos_pendentes_exclusao` | MOD-008 | fila de exclusão de objeto de storage (SPEC-017). **A única tabela sem FK para `empresas`** — precisa sobreviver à exclusão da empresa, que é justamente quando há mais objeto para apagar. `company_id` é amarrado à `key` por CHECK. **Vazia: nada escreve nela até a SPEC-018**, que é quem apaga referência |
 
@@ -646,10 +647,11 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**93 caminhos, 131 operações HTTP** (conferido em **2026-09-09** contra o
-`openapi.json`, depois da SPEC-038). A progressão do dia: 85/120 depois da
+**99 caminhos, 138 operações HTTP** (conferido em **2026-09-11** contra o
+`openapi.json`, depois da SPEC-047). A progressão: 85/120 depois da
 SPEC-040, 87/122 com a SPEC-035, 88/124 com a SPEC-036, 92/130 com a SPEC-037,
-93/131 com a SPEC-038. As duas medidas aparecem porque "rotas" é
+93/131 com a SPEC-038, 97/136 com as SPECs 045 e 046, **99/138 com a SPEC-047**
+(`GET /me/professores` e `GET /me/professores/:id/horarios`). As duas medidas aparecem porque "rotas" é
 ambíguo: uma versão desta planta dizia "41 rotas" contando caminhos, e trocar a
 métrica em silêncio faria o número parecer um salto de escopo.
 
@@ -1070,6 +1072,54 @@ futuros.
 O mesmo valeu para as fixtures: elas usavam `CURRENT_DATE` (data do Postgres,
 que roda em UTC) e **13 provas caíram** na hora da conversão, com
 `AULA_FUTURA`. Ver `test/banco/hoje-no-clube-sql.ts`.
+
+### A aula particular pelo ALUNO, e a rota que a tela pediu (SPEC-047)
+
+**O DEF-029 estava em produção**: `POST /bookings` aceitava `valor` de quem
+mandasse, e o portão que existia (`VALOR_SEM_PROFESSOR`) só exigia que viesse
+junto com `professorId`. Um aluno podia marcar a **própria** aula por R$ 0,01 —
+e a carteira debitava exatamente isso. A trava é `422 VALOR_NAO_E_DO_ALUNO`, e
+ela vem **antes** de qualquer escrita.
+
+O preço passou a ser de tabela: `professor.preco_aula ?? config.preco_aula_padrao`,
+e **não cai no preço da quadra** quando não há nenhum dos dois — `422
+AULA_SEM_PRECO`. Cair na quadra seria cobrar um valor que ninguém definiu, em
+silêncio.
+
+A regra do `??` mora em **`PrecoDeAulaService.resolver`**, estática e pura. Ela
+nasceu duplicada de propósito, com a condição de saída escrita no docstring
+(*"se uma terceira cópia aparecer, aí a extração passa a valer a pena"*); a
+terceira apareceu, e a extração foi o cumprimento daquela frase. **A consulta
+NÃO foi extraída** — as três leem de formas legitimamente diferentes, e injetar
+o serviço no `CourtsService` custaria os oito arquivos que o constroem à mão.
+
+**`GET /me/professores/:id/horarios` existe porque a tela não podia decidir.**
+A LIM-047e tinha declarado que a quadra viria da disponibilidade e que *"a tela
+vai precisar decidir isso"*. Ao ir decidir, a tela descobriu que marcar aula
+depende de três fatos e que o aluno enxerga **um**:
+
+| Fato | Rota do aluno antes |
+|---|---|
+| a quadra está livre | `GET /courts/:id/availability` |
+| o professor atende neste dia e hora | nenhuma — é `CompanyAdminGuard` |
+| o professor já tem compromisso | nenhuma |
+
+A rota nova cruza os três e devolve o horário **com a quadra já escolhida**,
+determinística por nome. Ela não inventa política: os três códigos de recusa
+(`404`, `PROFESSOR_INATIVO`, `AULA_SEM_PRECO`) são os do `createBooking`, e o
+db-spec pega **cada horário oferecido e manda criar de verdade** — se um for
+recusado, a tela está mentindo.
+
+**Mora em `CourtsModule` com prefixo `me/professores`**, ao lado do
+`MeProfessoresController` no caminho e longe dele na pasta: a resposta é feita
+de ocupação e horário de quadra, e `CourtsModule` já importa `PeopleModule`. O
+contrário seria import circular, e `forwardRef` para manter dois controllers na
+mesma pasta é conserto pior que a doença.
+
+**A única recusa que a grade NÃO antecipa é a carteira** (LIM-047f): saldo é do
+aluno, a grade é do professor. Some com o dia inteiro de quem está sem crédito
+trocaria *"faltam R$ 150"* por um desaparecimento sem motivo — quem fecha isso é
+a tela do Cliente, mostrando saldo e preço antes da escolha.
 
 ### Resposta tipada: 16 de 90, e por que a conta começou em zero
 
