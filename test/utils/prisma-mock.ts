@@ -152,7 +152,8 @@ export interface PrismaMock {
   };
   // SPEC-040: `professor.findFirst` e o portao da AC-006 (empresa alheia
   // devolve 404), e a leitura da semana e um `findMany` so.
-  professor: { findFirst: jest.Mock };
+  // SPEC-047: `findMany` e a lista do ALUNO (`GET /me/professores`).
+  professor: { findFirst: jest.Mock; findMany: jest.Mock };
   disponibilidadeProfessor: { findMany: jest.Mock };
   tx: TxMock;
   $transaction: jest.Mock;
@@ -243,7 +244,14 @@ export function buildPrismaMock(): PrismaMock {
     // SPEC-040 — padrao: o professor E da empresa (o caso normal), e a
     // semana esta vazia. Quem testa a AC-006 sobrescreve com `null`, que e
     // exatamente o gesto que a assercao de 404 precisa deixar visivel.
-    professor: { findFirst: jest.fn().mockResolvedValue({ id: 'prof-1' }) },
+    professor: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'prof-1' }),
+      // SPEC-047 — padrao VAZIO, e nao um professor de exemplo: a lista do
+      // aluno tem uma regra de filtro (so quem tem preco), e um padrao com
+      // linha faria todo teste alheio depender de uma regra que ele nao
+      // conhece.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     disponibilidadeProfessor: { findMany: jest.fn().mockResolvedValue([]) },
     ocupacaoQuadra: {
       groupBy: jest.fn().mockResolvedValue([]),

@@ -3446,6 +3446,50 @@
         ]
       }
     },
+    "/api/v1/me/professores/{id}/horarios": {
+      "get": {
+        "operationId": "MeHorariosDeAulaController_listar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "data",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-20",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HorariosDeAulaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/students/{id}/creditos": {
       "get": {
         "operationId": "CreditosController_extrato",
@@ -8449,6 +8493,87 @@
             "description": "Ordena na tela. Default 0."
           }
         }
+      },
+      "JanelaDoProfessorDto": {
+        "type": "object",
+        "properties": {
+          "horaInicio": {
+            "type": "string",
+            "example": "08:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "12:00"
+          }
+        },
+        "required": [
+          "horaInicio",
+          "horaFim"
+        ]
+      },
+      "HorarioDeAulaDto": {
+        "type": "object",
+        "properties": {
+          "horaInicio": {
+            "type": "string",
+            "example": "09:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "10:00"
+          },
+          "quadraId": {
+            "type": "string"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
+          }
+        },
+        "required": [
+          "horaInicio",
+          "horaFim",
+          "quadraId",
+          "quadraNome"
+        ]
+      },
+      "HorariosDeAulaResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "example": "2026-09-15"
+          },
+          "atende": {
+            "type": "boolean"
+          },
+          "janela": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JanelaDoProfessorDto"
+              }
+            ]
+          },
+          "precoAula": {
+            "type": "number",
+            "example": 150
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HorarioDeAulaDto"
+            }
+          }
+        },
+        "required": [
+          "data",
+          "atende",
+          "janela",
+          "precoAula",
+          "slots"
+        ]
       },
       "MovimentoDeCreditoResponseDto": {
         "type": "object",
