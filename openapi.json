@@ -5147,7 +5147,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OcupacaoResponseDto"
+                  "$ref": "#/components/schemas/OcupacaoComDevolucaoResponseDto"
                 }
               }
             }
@@ -10623,6 +10623,79 @@
         },
         "required": [
           "status"
+        ]
+      },
+      "OcupacaoComDevolucaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "origemTipo": {
+            "type": "string",
+            "enum": [
+              "AVULSO",
+              "TURMA"
+            ]
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "statusPagamento": {
+            "type": "string",
+            "enum": [
+              "pendente_pagamento",
+              "pago",
+              "cancelado"
+            ]
+          },
+          "valor": {
+            "type": "number",
+            "nullable": true,
+            "example": 120
+          },
+          "creditoDevolvidoCentavos": {
+            "type": "number",
+            "nullable": true,
+            "description": "Centavos devolvidos à carteira do aluno neste cancelamento, ou null quando não havia consumo ativo (e sempre null ao marcar como pago).",
+            "example": 12000
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "quadraId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "origemTipo",
+          "alunoId",
+          "statusPagamento",
+          "valor",
+          "creditoDevolvidoCentavos"
         ]
       }
     }

@@ -304,6 +304,34 @@ export class DashboardResumoResponseDto {
  * `null` distingue "não havia o que devolver" de `0`, que não acontece hoje e
  * seria uma devolução de valor zero se acontecesse.
  */
+/**
+ * SPEC-048/AC-009 — o `PATCH .../payment-status` responde a ocupação **e**
+ * quanto voltou.
+ *
+ * ## Por que herda em vez de repetir
+ *
+ * A resposta continua sendo a ocupação; o que muda é **um campo a mais**.
+ * Copiar os vinte campos daqui criaria dois lugares para manter, e o primeiro
+ * a divergir seria o que ninguém olha.
+ *
+ * ## Por que `null` e não `0`
+ *
+ * A mesma distinção que a `CancelamentoResponseDto` comprou na SPEC-039:
+ * **`null` é "não havia o que devolver"**, e é o que a tela usa para ficar
+ * calada em vez de prometer um crédito que não voltou. Marcar como `pago` sai
+ * `null` sempre — não é cancelamento, e não devolve nada (AC-010).
+ */
+export class OcupacaoComDevolucaoResponseDto extends OcupacaoResponseDto {
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Centavos devolvidos à carteira do aluno neste cancelamento, ou null quando não havia consumo ativo (e sempre null ao marcar como pago).',
+    example: 12000,
+  })
+  creditoDevolvidoCentavos!: number | null;
+}
+
 export class CancelamentoResponseDto {
   @ApiProperty({
     type: Number,
