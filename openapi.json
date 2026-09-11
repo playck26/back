@@ -438,6 +438,16 @@
                 "recusado"
               ]
             }
+          },
+          {
+            "name": "busca",
+            "required": false,
+            "in": "query",
+            "description": "Filtra por nome do aluno. Vários termos combinam com AND, em qualquer ordem. Não ignora acento (LIM-049a).",
+            "schema": {
+              "example": "silva joao",
+              "type": "string"
+            }
           }
         ],
         "responses": {
