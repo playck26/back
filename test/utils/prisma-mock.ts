@@ -118,6 +118,18 @@ export interface PrismaMock {
   };
   matricula: { findFirst: jest.Mock; findMany: jest.Mock; create: jest.Mock };
   aceite: { findFirst: jest.Mock };
+  // SPEC-046: a reposicao de aula. `faltaAvisada.findMany` e `turmaAluno
+  // .findMany` entram no NIVEL DE CIMA — os que ja existiam eram do `tx`, e a
+  // leitura do credito roda fora de transacao.
+  faltaAvisada: { findMany: jest.Mock };
+  turmaAluno: { findMany: jest.Mock };
+  reposicaoDeAula: {
+    count: jest.Mock;
+    create: jest.Mock;
+    delete: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+  };
   // SPEC-037/D9: o `fim` da matricula e calculado PELO POSTGRES -- o `Date`
   // do JavaScript transborda 31/01+1mes para 3 de marco, em silencio.
   $queryRaw: jest.Mock;
@@ -267,6 +279,17 @@ export function buildPrismaMock(): PrismaMock {
       create: jest.fn(),
     },
     aceite: { findFirst: jest.fn().mockResolvedValue(null) },
+    // SPEC-046 — o nivel de cima. Os `faltaAvisada`/`turmaAluno` que ja
+    // existiam sao do `tx`, e a leitura do credito roda fora de transacao.
+    faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+    turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+    reposicaoDeAula: {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+      delete: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $queryRaw: jest.fn().mockResolvedValue([]),
     configPagamentoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
     nivel: { findMany: jest.fn().mockResolvedValue([]) },

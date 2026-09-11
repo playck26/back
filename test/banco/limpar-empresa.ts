@@ -114,6 +114,13 @@ export const TABELAS_DA_EMPRESA = [
   // `empresas` —, porque as quatro FKs dela sao RESTRICT. Quatro rodadas de
   // validacao acharam um pai faltando, um por vez, por listar em vez de
   // ordenar.
+  // SPEC-046: ANTES de `faltas_avisadas` — a FK `reposicoes_falta_fkey` e
+  // RESTRICT de proposito (apagar a falta deixaria a reposicao orfa e o
+  // credito derivado contaria errado para sempre). **Sem esta linha, a limpeza
+  // morre com `23001` na falta**, e a mensagem culpa `faltas_avisadas` em vez
+  // da tabela que a segura — que e exatamente como a SPEC-035 pagou a licao
+  // com `matriculas` e `planos`.
+  'reposicoes_de_aula',
   'faltas_avisadas',
   'ocupacoes_quadra',
   'pedidos_reserva',

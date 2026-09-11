@@ -30,6 +30,20 @@ const SEM_CONFIGURACAO: ConfigOperacaoResponseDto = {
  * zero horas", que é o oposto de "sem prazo" para quem cancela às 17h uma
  * aula das 19h.
  */
+/**
+ * SPEC-046/D6 — os padrões da reposição, num lugar só.
+ *
+ * **Dois por mês** porque reposição é exceção, não rotina: quem falta toda
+ * semana não está faltando, está em outra turma. **Trinta dias** porque
+ * crédito sem validade acumula, e um dia alguém aparece com dez.
+ *
+ * Os dois são ajustáveis por clube — estes são o ponto de partida de quem não
+ * configurou nada.
+ */
+export const REPOSICAO_PADRAO = { porMes: 2, validadeDias: 30 } as const;
+
+export type RegraDeReposicao = { porMes: number; validadeDias: number };
+
 @Injectable()
 export class ConfigOperacaoService {
   constructor(private readonly prisma: PrismaService) {}
@@ -100,6 +114,34 @@ export class ConfigOperacaoService {
     return {
       aula: prazoDe(linha?.prazoCancelamentoAulaHoras ?? null),
       reserva: prazoDe(linha?.prazoCancelamentoReservaHoras ?? null),
+    };
+  }
+
+  /**
+   * SPEC-046/D6 — teto e validade da reposição.
+   *
+   * **Nulo é "usa o padrão", nunca zero**, e é a mesma armadilha que o
+   * docstring desta classe descreve para os prazos: *"`prazo ?? 0` compila
+   * neste projeto, e produziria prazo de zero horas, que é o oposto de sem
+   * prazo"*. Teto zero seria "nenhuma reposição permitida" — o oposto de "o
+   * clube não configurou".
+   *
+   * Por isso os padrões moram **aqui**, num lugar só, e não espalhados como
+   * `?? 2` em cada chamada: dois lugares divergem no primeiro ajuste.
+   */
+  async reposicaoDaEmpresa(
+    companyId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RegraDeReposicao> {
+    const cliente = tx ?? this.prisma;
+    const linha = await cliente.configOperacaoEmpresa.findUnique({
+      where: { companyId },
+      select: { reposicoesPorMes: true, reposicaoValidadeDias: true },
+    });
+    return {
+      porMes: linha?.reposicoesPorMes ?? REPOSICAO_PADRAO.porMes,
+      validadeDias:
+        linha?.reposicaoValidadeDias ?? REPOSICAO_PADRAO.validadeDias,
     };
   }
 }

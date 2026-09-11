@@ -4761,6 +4761,132 @@
         ]
       }
     },
+    "/api/v1/me/reposicoes": {
+      "get": {
+        "operationId": "MeReposicoesController_meuCredito",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditoDeReposicaoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "post": {
+        "operationId": "MeReposicoesController_marcar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarcarReposicaoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReposicaoCriadaResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Sem crédito (`SEM_CREDITO_DE_REPOSICAO`), falta já reposta (`FALTA_JA_REPOSTA`), aula cheia (`TURMA_SEM_VAGA`), teto do mês (`TETO_DE_REPOSICAO`), aula cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`)."
+          },
+          "422": {
+            "description": "Já matriculado na turma de destino (`JA_MATRICULADO_NA_TURMA`) ou turma fora de operação (`TURMA_INATIVA`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/reposicoes/oportunidades": {
+      "get": {
+        "operationId": "MeReposicoesController_oportunidades",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OportunidadeDeReposicaoResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/reposicoes/{id}": {
+      "delete": {
+        "operationId": "MeReposicoesController_desmarcar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "Dentro do prazo de antecedência (`PRAZO_DE_CANCELAMENTO`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/dashboard/evasao": {
       "get": {
         "operationId": "DashboardController_evasao",
@@ -9661,6 +9787,9 @@
           "naTurmaHoje": {
             "type": "boolean"
           },
+          "reposicao": {
+            "type": "boolean"
+          },
           "faltaAvisada": {
             "type": "boolean"
           }
@@ -9670,6 +9799,7 @@
           "nome",
           "status",
           "naTurmaHoje",
+          "reposicao",
           "faltaAvisada"
         ]
       },
@@ -9875,6 +10005,232 @@
           "horaInicio",
           "horaFim",
           "chamada"
+        ]
+      },
+      "ReposicaoMarcadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Iniciante Terça"
+          },
+          "data": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-09-24"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          }
+        },
+        "required": [
+          "id",
+          "turmaNome",
+          "data",
+          "horaInicio"
+        ]
+      },
+      "FaltaParaReporResponseDto": {
+        "type": "object",
+        "properties": {
+          "faltaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "data": {
+            "type": "string",
+            "format": "date"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          },
+          "expiraEm": {
+            "type": "string",
+            "format": "date",
+            "description": "Ate quando da para repor esta falta (D6)."
+          },
+          "expirada": {
+            "type": "boolean",
+            "description": "Passou da validade — nao gera credito."
+          },
+          "aulaCancelada": {
+            "type": "boolean",
+            "description": "O CLUBE cancelou a aula. Nao gera credito porque o aluno nao perdeu nada (AC-003)."
+          },
+          "reposicao": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReposicaoMarcadaResponseDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "faltaId",
+          "turmaNome",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "expiraEm",
+          "expirada",
+          "aulaCancelada",
+          "reposicao"
+        ]
+      },
+      "CreditoDeReposicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "creditos": {
+            "type": "number",
+            "example": 1,
+            "description": "Faltas validas ainda nao repostas."
+          },
+          "porMes": {
+            "type": "number",
+            "example": 2,
+            "description": "Teto do clube, por mes da falta."
+          },
+          "validadeDias": {
+            "type": "number",
+            "example": 30
+          },
+          "usadasNoMes": {
+            "type": "number",
+            "example": 0
+          },
+          "faltas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FaltaParaReporResponseDto"
+            }
+          }
+        },
+        "required": [
+          "creditos",
+          "porMes",
+          "validadeDias",
+          "usadasNoMes",
+          "faltas"
+        ]
+      },
+      "OportunidadeDeReposicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "turmaNome": {
+            "type": "string",
+            "example": "Iniciante Quinta"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 2"
+          },
+          "data": {
+            "type": "string",
+            "format": "date"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          },
+          "vagas": {
+            "type": "number",
+            "example": 2
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "turmaId",
+          "turmaNome",
+          "quadraNome",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "vagas"
+        ]
+      },
+      "MarcarReposicaoDto": {
+        "type": "object",
+        "properties": {
+          "faltaId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A falta que este gesto consome."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A ocorrencia que ele vai frequentar."
+          }
+        },
+        "required": [
+          "faltaId",
+          "ocupacaoId"
+        ]
+      },
+      "ReposicaoCriadaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "faltaId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "format": "date"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          }
+        },
+        "required": [
+          "id",
+          "faltaId",
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim"
         ]
       },
       "AlunoEmEvasaoResponseDto": {

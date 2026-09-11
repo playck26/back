@@ -183,6 +183,20 @@ export class LinhaDaChamadaResponseDto {
   naTurmaHoje!: boolean;
 
   /**
+   * SPEC-046/AC-015 — **este aluno esta aqui REPONDO uma falta de outra aula.**
+   *
+   * Campo proprio, e nao `naTurmaHoje` reaproveitado: quem vem repor tem
+   * `naTurmaHoje: false` corretamente (nao e da turma), e so isso leria como
+   * *"saiu da turma"*. Dois estados diferentes com a mesma marca e o defeito
+   * que a DEF-002 ja pagou na completude da chamada.
+   *
+   * Ele conta na presenca como qualquer outro (AC-016). O que NAO muda e a
+   * contagem de matriculados da turma (AC-017): reposicao e visita.
+   */
+  @ApiProperty({ type: Boolean })
+  reposicao!: boolean;
+
+  /**
    * SPEC-031/AC-019 — **o aluno avisou que ia faltar.**
    *
    * O professor vê isto antes de lançar a chamada: falta avisada e falta sem

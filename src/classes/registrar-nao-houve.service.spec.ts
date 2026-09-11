@@ -53,6 +53,7 @@ interface TxMock {
   chamada: { upsert: jest.Mock<Promise<unknown>, [ArgsDoUpsert]> };
   // SPEC-031/AC-019.
   faltaAvisada: { findMany: jest.Mock };
+  reposicaoDeAula: { findMany: jest.Mock };
   $queryRaw: jest.Mock;
 }
 
@@ -107,6 +108,8 @@ function buildMocks() {
   const tx: TxMock = {
     presenca: { count: jest.fn().mockResolvedValue(0) },
     faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-046 — a chamada passou a carregar quem vem repor.
+    reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: {
       upsert: jest.fn().mockResolvedValue({
         ocupacaoId: 'oc1',
@@ -524,6 +527,8 @@ describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => 
       presenca: { findMany: jest.fn().mockResolvedValue(presencas) },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
       faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+      // SPEC-046 — a chamada passou a carregar quem vem repor.
+      reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
       chamada: {
         findUnique: jest
           .fn()
@@ -626,6 +631,8 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
         count: jest.fn().mockResolvedValue(0),
       },
       faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+      // SPEC-046 — a chamada passou a carregar quem vem repor.
+      reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
       chamada: {
         findUnique: jest.fn().mockResolvedValue(cabecalho),
         upsert: upsertDoCabecalho,
@@ -654,6 +661,8 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
       turmaAluno: { findMany: jest.fn().mockResolvedValue(MATRICULADOS) },
       chamada: { findUnique: jest.fn().mockResolvedValue(cabecalho) },
       faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+      // SPEC-046 — a chamada passou a carregar quem vem repor.
+      reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
     } as unknown as PrismaService;
     return { service: new PresencaService(prisma), upsertDoCabecalho };

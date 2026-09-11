@@ -23,6 +23,7 @@ import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { MatriculasService } from '../../src/matriculas/matriculas.service';
 import { StudentsService } from '../../src/people/students.service';
+import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(180_000);
@@ -41,7 +42,15 @@ function servico(): MatriculasService {
 
 /** `hoje` no fuso do clube, que é o mesmo corte que o serviço usa. */
 function emDias(dias: number): string {
-  const d = new Date();
+  // **A base é `hojeNoFusoDoClube()`, e não `new Date()`.**
+  //
+  // A primeira versão usava o relógio UTC, e o CI a derrubou às 22h locais:
+  // 01h UTC do dia seguinte faz `emDias(-5)` cair num dia a mais do que o
+  // serviço calcula, e `diasRestantes` vem `-4` onde o teste espera `-5`.
+  // **O defeito era latente**, invisível antes das 21h — que é exatamente a
+  // classe de erro que o gate `fuso-do-clube` existe para impedir no `src/`,
+  // e que o `test/` precisa respeitar por disciplina.
+  const d = hojeNoFusoDoClube();
   d.setUTCDate(d.getUTCDate() + dias);
   return d.toISOString().slice(0, 10);
 }

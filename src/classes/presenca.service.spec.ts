@@ -22,6 +22,7 @@ interface TxMock {
   chamada: { findUnique: jest.Mock; upsert: jest.Mock };
   // SPEC-031/AC-019: a chamada passou a marcar quem avisou falta.
   faltaAvisada: { findMany: jest.Mock };
+  reposicaoDeAula: { findMany: jest.Mock };
   turmaAluno: { findMany: jest.Mock };
   $queryRaw: jest.Mock;
 }
@@ -54,6 +55,11 @@ function buildMocks() {
   const tx: TxMock = {
     presenca: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn() },
     faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-046 — o duble precisa TER o delegate: a chamada passou a
+    // carregar quem vem repor, e sem esta linha 32 casos morrem com
+    // `Cannot read properties of undefined`. **Setima vez neste trabalho
+    // que uma fixture mentiu sobre o cliente real.**
+    reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: {
       findUnique: jest.fn().mockResolvedValue(null),
       upsert: jest.fn(),
@@ -89,6 +95,11 @@ function buildMocks() {
     presenca: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: { findUnique: jest.fn().mockResolvedValue(null) },
     faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-046 — o duble precisa TER o delegate: a chamada passou a
+    // carregar quem vem repor, e sem esta linha 32 casos morrem com
+    // `Cannot read properties of undefined`. **Setima vez neste trabalho
+    // que uma fixture mentiu sobre o cliente real.**
+    reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn((cb: (tx: TxMock) => unknown) => cb(tx)),
   };
   // A matrícula lida DENTRO da transação é a mesma que o teste arma em
