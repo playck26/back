@@ -320,13 +320,69 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
 
     // A garantia não é esta rota conhecer a regra: é a INV-096, que julga o
     // COMMIT. Se este caminho esquecesse a devolução, a trigger recusaria.
-    await courts.updatePaymentStatus(EMPRESA, id, 'cancelado', UADMIN);
+    const resposta = await courts.updatePaymentStatus(
+      EMPRESA,
+      id,
+      'cancelado',
+      UADMIN,
+    );
+
+    // **SPEC-048/AC-009 — e agora ele DIZ quanto voltou.** O valor já era
+    // calculado aqui e descartado: o dinheiro voltava e a tela do gestor não
+    // tinha como falar. `toBe` e não `toBeGreaterThan`: é o mesmo número que
+    // saiu, e "algum crédito voltou" não é a afirmação que a tela precisa.
+    expect(resposta.creditoDevolvidoCentavos).toBe(8_000);
 
     expect(await saldo()).toBe(antesDaReserva);
     expect(await movimentos(id)).toEqual([
       { tipo: 'consumo', valor_centavos: 8_000 },
       { tipo: 'devolucao', valor_centavos: 8_000 },
     ]);
+  });
+
+  it('**SPEC-048/AC-010: marcar como `pago` devolve `null`, não `0`**', async () => {
+    await creditar(10_000);
+    // Hora padrão: o helper fixa `horaFim: '11:00'`, e `proximaData()` já dá
+    // uma data nova a cada reserva — nenhuma esbarra na `EXCLUDE`.
+    const { id } = await reservar('company_admin');
+
+    // Reserva do GESTOR sem saldo suficiente nasce pendente e sem consumo
+    // (PA-04); aqui há saldo, então ela já nasce paga. Marcar como `pago` de
+    // novo não é cancelamento e **não devolve nada**.
+    const resposta = await courts.updatePaymentStatus(
+      EMPRESA,
+      id,
+      'pago',
+      UADMIN,
+    );
+
+    // **`null` e não `0`**: zero seria "devolvi zero centavos", e a tela do
+    // gestor mostraria "R$ 0,00 voltou para a carteira" — prometer devolução
+    // que não houve é o que a SPEC-039 comprou esta distinção para evitar.
+    expect(resposta.creditoDevolvidoCentavos).toBeNull();
+  });
+
+  it('AC-009: cancelar reserva SEM consumo também devolve `null`', async () => {
+    // Reserva sem aluno: não há carteira, não há consumo, não há o que
+    // devolver. A rota cancela e fica calada — é a mesma ausência que o
+    // `cancelBooking` já respondia (SPEC-033/AC-010).
+    const resposta = (await courts.createBooking(
+      EMPRESA,
+      {
+        quadraId: QUADRA,
+        data: proximaData(),
+        slots: [{ horaInicio: '16:00', horaFim: '17:00' }],
+      },
+      UADMIN,
+    )) as { reservas: { id: string }[] };
+
+    const cancelada = await courts.updatePaymentStatus(
+      EMPRESA,
+      resposta.reservas[0].id,
+      'cancelado',
+      UADMIN,
+    );
+    expect(cancelada.creditoDevolvidoCentavos).toBeNull();
   });
 
   it('INV-096: cancelar SEM devolver é impossível — a trigger recusa, e vira 409', async () => {

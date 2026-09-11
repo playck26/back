@@ -1938,6 +1938,15 @@ export class CourtsService {
     // dela: duas leituras na mesma decisao podem cair em minutos diferentes.
     const agora = new Date();
 
+    // **Preenchido DENTRO da transação; lido DEPOIS dela, de propósito** — é o
+    // mesmo molde do `cancelBooking`. Se a transação voltar atrás, nada foi
+    // devolvido, e a resposta não pode afirmar que foi.
+    //
+    // `null` é o estado inicial E a resposta de "não havia o que devolver":
+    // marcar como `pago` nunca entra no ramo abaixo, e sai `null` — que é
+    // exatamente a AC-010.
+    let devolvidoCentavos: number | null = null;
+
     // SPEC-032 — esta rota tambem CANCELA (`status = 'cancelado'`), entao ela
     // dispara a trigger `ocupacao_cancelada_exige_evento` e precisa da mesma
     // atomicidade que o `cancelBooking`. O `pago` nao dispara a trigger, mas
@@ -2108,8 +2117,14 @@ export class CourtsService {
 
         // Passo 7: a devolução, quando este caminho cancela. Marcar como
         // `pago` não devolve nada — não é cancelamento.
+        //
+        // **SPEC-048/AC-009 — o valor sobe agora.** Ele já era calculado aqui
+        // e descartado: o dinheiro voltava para a carteira do aluno e a tela
+        // do gestor não tinha como dizer. O `cancelBooking` resolveu isso na
+        // SPEC-039; este caminho, que cancela pela mesma porta e devolve o
+        // mesmo crédito, ficou para trás.
         if (status === 'cancelado') {
-          await this.devolverCarteira(tx, {
+          devolvidoCentavos = await this.devolverCarteira(tx, {
             companyId,
             ocupacaoId: id,
             autorId,
@@ -2122,7 +2137,13 @@ export class CourtsService {
         return linha;
       })
       .catch(traduzirRecusaDeCancelamento);
-    return this.toOcupacaoResponse(atualizada);
+    return {
+      ...this.toOcupacaoResponse(atualizada),
+      // Campo NOVO num objeto que já existia: quem ignora campo novo não
+      // quebra, e o Admin em produção hoje ignora. É o que torna esta mudança
+      // aditiva de verdade, e não só no nome.
+      creditoDevolvidoCentavos: devolvidoCentavos,
+    };
   }
 
   /**

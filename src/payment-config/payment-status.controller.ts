@@ -6,7 +6,7 @@ import { CourtsService } from '../courts/courts.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
-import { OcupacaoResponseDto } from '../courts/dto/booking-response.dto';
+import { OcupacaoComDevolucaoResponseDto } from '../courts/dto/booking-response.dto';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
 
@@ -24,7 +24,7 @@ export class PaymentStatusController {
   constructor(private readonly courtsService: CourtsService) {}
 
   @Patch(':id/payment-status')
-  @ApiOkResponse({ type: OcupacaoResponseDto })
+  @ApiOkResponse({ type: OcupacaoComDevolucaoResponseDto })
   @Roles('company_admin')
   updateStatus(
     @CurrentUser() user: AccessTokenPayload,
