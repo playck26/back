@@ -5,6 +5,22 @@ import { AppModule } from '../../src/app.module';
 import { configurarApp } from '../../src/common/validation/configurar-app';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
+/**
+ * **`testTimeout` mora em `jest-e2e.json`, e este comentário é o porquê.**
+ *
+ * JSON não aceita comentário, e quem lê `"testTimeout": 30000` lá não tem como
+ * saber de onde o número veio. Ele veio de um caso medido: a suíte rodou no
+ * **default de 5 s** por 23 arquivos, e a 24ª (`me-professores`, SPEC-047) fez
+ * a `classes.e2e-spec.ts` estourar — **não por lentidão dela**, mas porque cada
+ * arquivo aqui **sobe um app Nest inteiro**, e o custo é de contenção entre
+ * workers, não do teste.
+ *
+ * Medido, não deduzido: com 23 arquivos, `pnpm run test:e2e` verde; com 24, a
+ * `classes` falhou por *timeout* e a `classes` sozinha passou 3 de 3.
+ *
+ * 30 s é folga para a contenção **sem esconder um travamento de verdade** —
+ * um teste que passe disso está pendurado, não ocupado.
+ */
 // **Chama `configurarApp`, a MESMA função que o `src/main.ts` chama.**
 //
 // O comentário que estava aqui dizia "replica exatamente o setup de
