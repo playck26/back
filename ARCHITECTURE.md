@@ -7,10 +7,12 @@ defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
-**Números conferidos por comando nesta data, não estimados:** 37 migrations,
-**33 tabelas**, **94 caminhos / 132 operações** no `openapi.json`, 10 triggers
-não-internas. *O caminho novo é o `GET /matriculas/vencimentos` (SPEC-045);
-nenhuma migration, tabela ou trigger mudou — a spec é leitura.*
+**Números conferidos por comando nesta data, não estimados:** **38
+migrations, 34 tabelas, 97 caminhos / 136 operações** no `openapi.json`, 10
+triggers não-internas. *A tabela nova é `reposicoes_de_aula` (SPEC-046); as
+rotas novas são `/matriculas/vencimentos` (SPEC-045) e as três de
+`/me/reposicoes`. Nenhuma trigger nova: as invariantes da SPEC-046 são `UNIQUE`
+e `CHECK`, que o Postgres impõe sem função.*
 
 > **Eram "34 tabelas" aqui, e eram 33.** A contagem anterior incluía
 > `_prisma_migrations`, que é tabela de controle do Prisma e não faz parte do
@@ -501,6 +503,7 @@ a replicar:
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
 | `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
+| `reposicoes_de_aula` | MOD-004 | **SPEC-046.** Liga a **falta** ao lugar onde ela será reposta. `origem_tipo` é constante `TURMA` no molde de `presencas` — **`CHECK` e não `GENERATED`**, porque coluna gerada obrigaria o Prisma a declarar o campo opcional e com ele a relação inteira, o que seria mentira no tipo. **`UNIQUE (falta_id)` é a INV-118**, e é ela que torna o crédito derivado (`faltas − reposições`) seguro sob concorrência: sem ela, dois `POST` da mesma falta deixariam o crédito **negativo**. Não há coluna de saldo de propósito — seria uma terceira verdade sobre os mesmos dois fatos |
 | `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida` \| `nao_houve`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção; **`nao_houve` (SPEC-030) é a aula que não aconteceu** — cabeçalho sem nenhuma presença, e é o que tira o dia do vermelho no calendário sem mentir que a aula foi dada |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
 | `termos_da_plataforma` | MOD-009 | SPEC-024. O texto **da plataforma**, versionado. Versão publicada **nunca é editada** — publicar de novo cria versão nova, porque saber que alguém aceitou "a v1" não vale nada se a v1 não puder ser lida depois. A versão vigente é constante em código (`TERMO_VERSAO_VIGENTE`), não `MAX(versao)`: o portão roda em **toda** requisição autenticada, e um `MAX()` por requisição seria uma segunda ida ao banco para responder algo que só muda em deploy |
@@ -738,6 +741,34 @@ prometer seria mentir, e é a mesma divisão da janela do professor na SPEC-039.
 `status` era gravado e não fazia mais nada (medido: a ocupação futura ficava
 viva e a quadra bloqueada). Agora inativar cancela a grade futura e reativar a
 regenera — e a regeneração pode ser recusada com `409` + `conflicts[]`.
+
+**A reposição de aula fechou o GAP-008, e a metade dele já tinha caído sem
+ninguém marcar (SPEC-046).** O GAP dizia que remarcar exigia *"um dado novo (ex.
+tabela de ausência por aluno/ocorrência)"* — e a SPEC-031 criou esse dado uma
+semana antes, com `faltas_avisadas`. O que faltava era **repor**, e o que
+impedia era uma linha: `presenca.service.ts` monta a chamada de
+`turmaAluno.findMany`, então visitante de outra turma não era representável.
+
+`reposicoes_de_aula` liga **a falta ao lugar onde ela será reposta**, e o
+crédito é **derivado** (`faltas válidas − reposições`) — sem coluna de saldo,
+pelo mesmo motivo do `descontoCentavos` da SPEC-037, e ao contrário da carteira
+da SPEC-033, onde o saldo é gravado porque dinheiro precisa de extrato com
+ordem. **A `UNIQUE (falta_id)` (INV-118) é o que torna a subtração segura**: sem
+ela, dois `POST` simultâneos da mesma falta deixariam o crédito negativo.
+
+A capacidade de uma ocorrência passou a ser `matriculados − faltas avisadas +
+reposições`, e **a vaga que a reposição usa é a que a falta liberou** — a
+LIM-031d continua verdadeira sobre lista de espera e deixou de ser o fim da
+história. Isso não cabe em `CHECK` nem em `EXCLUDE` (é contagem com subtração),
+e está declarado assim: a garantia é `turmas FOR UPDATE` mais o **FIT-035**.
+
+> **A ordem de lock desta rota é `turmas` (1) → `alunos` (2) →
+> `ocupacoes_quadra` (3)** — um nível a mais que a `FaltaAvisadaService`, que
+> toma 2 → 3 e declara aceita a corrida com `removeStudent`. Aqui não dá:
+> capacidade é contagem, e um `allocateStudent` concorrente entre a contagem e
+> a escrita produz turma acima da capacidade. *A sabotagem provou que essa
+> corrida é a única que o lock da turma protege — reposição × reposição já é
+> serializada pelo lock da ocupação.*
 
 **`GET /matriculas/vencimentos` é a primeira rota de matrícula por EMPRESA
 (SPEC-045).** As três que existiam eram por aluno, e a consequência era que o
