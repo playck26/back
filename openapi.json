@@ -4352,6 +4352,9 @@
               }
             }
           },
+          "403": {
+            "description": "Papel diferente de `aluno` — inclusive `professor` (SPEC-052/D6)."
+          },
           "404": {
             "description": "Turma inexistente ou de outra empresa — as duas respondem igual."
           }
@@ -10148,6 +10151,16 @@
             "example": 2,
             "description": "Quantas aulas dele neste dia."
           },
+          "turmas": {
+            "type": "number",
+            "example": 1,
+            "description": "Quantas das `aulas` são aula de TURMA. `aulas = turmas + particulares` (SPEC-052/INV-129)."
+          },
+          "particulares": {
+            "type": "number",
+            "example": 1,
+            "description": "Quantas das `aulas` são aula PARTICULAR (SPEC-039). `aulas = turmas + particulares` (SPEC-052/INV-129)."
+          },
           "pendentes": {
             "type": "number",
             "example": 1,
@@ -10157,6 +10170,8 @@
         "required": [
           "data",
           "aulas",
+          "turmas",
+          "particulares",
           "pendentes"
         ]
       },

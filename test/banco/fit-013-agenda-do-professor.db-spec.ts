@@ -177,7 +177,13 @@ describe('FIT-013 — INV-026a: o calendário só mostra o que é dele', () => {
     const mesDoA = await service.resumoDoMes(EMPRESA, UPROF_A, MES);
 
     expect(mesDoA).toHaveLength(1);
-    expect(mesDoA[0]).toEqual({ data: DIA_1, aulas: 1, pendentes: 1 });
+    expect(mesDoA[0]).toEqual({
+      data: DIA_1,
+      aulas: 1,
+      turmas: 1,
+      particulares: 0,
+      pendentes: 1,
+    });
   });
 
   it('e o professor B vê a dele, não a do A — o outro lado', async () => {
@@ -310,8 +316,8 @@ describe('FIT-013 — o estado da chamada, que é a razão da tela', () => {
     const mes = await service.resumoDoMes(EMPRESA, UPROF_A, MES);
 
     expect(mes).toEqual([
-      { data: DIA_1, aulas: 2, pendentes: 1 },
-      { data: DIA_2, aulas: 1, pendentes: 1 },
+      { data: DIA_1, aulas: 2, turmas: 2, particulares: 0, pendentes: 1 },
+      { data: DIA_2, aulas: 1, turmas: 1, particulares: 0, pendentes: 1 },
     ]);
   });
 });
@@ -555,7 +561,7 @@ describe('FIT-013 — quadra desativada não apaga a aula que aconteceu', () => 
     await q(`UPDATE quadras SET status='inativa' WHERE id='${QUADRA}'`);
 
     expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([
-      { data: DIA_1, aulas: 1, pendentes: 1 },
+      { data: DIA_1, aulas: 1, turmas: 1, particulares: 0, pendentes: 1 },
     ]);
     expect(await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1)).toHaveLength(1);
   });
@@ -710,7 +716,7 @@ describe('FIT-013 — SPEC-027: futura não é pendente', () => {
     );
 
     expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES_FUTURO)).toEqual([
-      { data: DIA_FUTURO, aulas: 1, pendentes: 0 },
+      { data: DIA_FUTURO, aulas: 1, turmas: 1, particulares: 0, pendentes: 0 },
     ]);
   });
 
@@ -786,5 +792,68 @@ describe('FIT-013 — SPEC-027: futura não é pendente', () => {
         [],
       ),
     ).rejects.toMatchObject({ response: { code: 'AULA_FUTURA' } });
+  });
+});
+
+/**
+ * SPEC-052/D1 — **o mês passa a dizer que TIPO de aula há em cada dia.**
+ *
+ * A grade do professor pinta um marcador por tipo (círculo para turma,
+ * quadrado para particular). O dia já trazia `tipo` item a item; o mês só
+ * trazia a soma, e a tela não tinha como saber o que pintar sem abrir cada
+ * dia. `aulas` **não sai**: o Cliente em produção lê esse campo.
+ *
+ * O que está em julgamento é a **partição**: cada aula cai em exatamente um
+ * dos dois contadores, cancelada não cai em nenhum, e a particular nunca é
+ * pendência (a regra da SPEC-039 continua). A INV-129 — `aulas = turmas +
+ * particulares` — é **só aplicação**, e por isso é conferida em TODO dia
+ * devolvido, não só no dia que o caso monta.
+ */
+describe('FIT-013 — SPEC-052: o mês separa turma de aula particular', () => {
+  const particular = (
+    data: string,
+    hora: string,
+    status: 'pago' | 'cancelado' = 'pago',
+  ) =>
+    q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,professor_id,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${data}',TIME '${hora}',TIME '${hora}','AVULSO','${PROF_A}',150,'${status}',now())`,
+    );
+
+  it('AC-001..003: turma, particular e cancelada no mesmo dia; e um dia só de particular', async () => {
+    await montar();
+    // DIA_1: uma aula de turma sem chamada (pendente), uma particular paga e
+    // uma particular CANCELADA.
+    await aula(
+      'f0130000-0000-4000-8000-000000000521',
+      EMPRESA,
+      QUADRA,
+      TURMA_A,
+      DIA_1,
+      '18:00',
+    );
+    await particular(DIA_1, '07:00');
+    await particular(DIA_1, '08:00', 'cancelado');
+    // DIA_2: só particular.
+    await particular(DIA_2, '09:00');
+
+    const mes = await service.resumoDoMes(EMPRESA, UPROF_A, MES);
+
+    expect(mes).toEqual([
+      { data: DIA_1, aulas: 2, turmas: 1, particulares: 1, pendentes: 1 },
+      { data: DIA_2, aulas: 1, turmas: 0, particulares: 1, pendentes: 0 },
+    ]);
+    // INV-129, em todo dia devolvido.
+    for (const dia of mes) {
+      expect(dia.aulas).toBe(dia.turmas + dia.particulares);
+    }
+  });
+
+  it('a particular de OUTRO professor não entra em nenhum contador', async () => {
+    await montar();
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,professor_id,valor,status_pagamento,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}',DATE '${DIA_1}',TIME '10:00',TIME '11:00','AVULSO','${PROF_B}',150,'pago',now())`,
+    );
+
+    expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([]);
   });
 });

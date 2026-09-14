@@ -898,6 +898,12 @@ diferentes, e o `?` acabaria esquecido em alguma chamada.
 **O escopo mora num método só** (`filtroDasAulasDele`): as duas rotas usam o
 mesmo `where`, porque escopo repetido é escopo que um dia diverge.
 
+**SPEC-052 — o resumo do mês diz o TIPO.** `DiaDaAgendaDoProfessorDto` ganhou
+`turmas` e `particulares`, contados **no mesmo laço** de `aulas`, por
+`origemTipo`: é isso que sustenta `aulas = turmas + particulares` (INV-129, só
+aplicação, provada em todo dia devolvido no FIT-013). `aulas` não saiu — o
+Cliente em produção lê esse campo.
+
 **SPEC-039 — o filtro ganhou um `OR`, e as duas origens são diferentes.** Na
 ocorrência de TURMA o professor vem **pela turma**; na aula particular, pela
 coluna da própria ocupação — o `CHECK` proíbe a coluna na linha de turma
@@ -958,7 +964,12 @@ funcionalidade sem porta de entrada. As duas usam o **mesmo corte** de "já
 terminou" — lista que oferece o que o servidor recusa é a armadilha do
 DEF-011 por outra porta.
 
-**A privacidade é estrutural, não um filtro.** Aluno e professor recebem
+**SPEC-052/D6 — o professor não lê mais a média.** `GET /me/classes/:id/avaliacao`
+é `@Roles('aluno')`; o professor recebe `403` sem o serviço ser chamado (INV-130,
+`test/media-da-turma-por-papel.e2e-spec.ts`). Não é conserto de vazamento: a
+mesma média segue pública para os alunos do clube.
+
+**A privacidade é estrutural, não um filtro.** O aluno recebe
 `MediaDaTurmaResponseDto`; o gestor recebe `AvaliacaoParaOGestorDto`. São
 dois DTOs, e não um `if` no meio do caminho, para que acrescentar um campo do
 lado errado seja decisão visível e não vazamento silencioso (INV-025a, com

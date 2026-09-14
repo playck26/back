@@ -127,18 +127,27 @@ export class MeClassesController {
   /**
    * SPEC-025 — a média da TURMA, agregada das notas das aulas dela.
    *
-   * **Aluno e professor recebem esta**, e ela não tem autoria nem comentário
-   * (INV-025a). O professor vê o mesmo número que o aluno: ele precisa saber
-   * como está indo. O que ele não vê é quem disse o quê — a decisão do Israel
-   * diz "somente o painel admin", e ela vale para autoria e comentário.
+   * Sem autoria nem comentário (INV-025a); quem vê quem disse o quê é só o
+   * painel admin.
+   *
+   * **SPEC-052/D6 — só o aluno.** A SPEC-025 abria esta rota também para o
+   * professor; a decisão 7 do Israel (2026-09-14) a fechou: o professor deixa
+   * de ver nota. Não é conserto de vazamento — a mesma média segue pública
+   * para os alunos do clube (`turmas-do-clube`) —, é decisão de produto, e o
+   * mecanismo é este `@Roles` com o `RolesGuard` (INV-130, provado por HTTP
+   * em `test/media-da-turma-por-papel.e2e-spec.ts`).
    */
   @Get(':id/avaliacao')
   @ApiOkResponse({ type: MediaDaTurmaResponseDto })
+  @ApiForbiddenResponse({
+    description:
+      'Papel diferente de `aluno` — inclusive `professor` (SPEC-052/D6).',
+  })
   @ApiNotFoundResponse({
     description:
       'Turma inexistente ou de outra empresa — as duas respondem igual.',
   })
-  @Roles('aluno', 'professor')
+  @Roles('aluno')
   mediaDaTurma(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', UuidCanonicoPipe) turmaId: string,
