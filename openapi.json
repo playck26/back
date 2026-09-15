@@ -8430,6 +8430,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "alunoNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Ana Souza"
+          },
           "statusPagamento": {
             "type": "string",
             "enum": [
@@ -8459,6 +8464,7 @@
           "horaFim",
           "origemTipo",
           "alunoId",
+          "alunoNome",
           "statusPagamento",
           "valor",
           "adicionais"
@@ -8517,6 +8523,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "alunoNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Ana Souza"
+          },
           "statusPagamento": {
             "type": "string",
             "enum": [
@@ -8551,6 +8562,7 @@
           "horaFim",
           "origemTipo",
           "alunoId",
+          "alunoNome",
           "statusPagamento",
           "valor",
           "adicionais",
@@ -11457,6 +11469,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "alunoNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Ana Souza"
+          },
           "statusPagamento": {
             "type": "string",
             "enum": [
@@ -11492,6 +11509,7 @@
           "horaFim",
           "origemTipo",
           "alunoId",
+          "alunoNome",
           "statusPagamento",
           "valor",
           "adicionais",
