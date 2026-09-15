@@ -234,6 +234,13 @@ interface OcupacaoParaResposta {
    * `tsc` não teria como acusar.
    */
   adicionais: ItemDaOcupacaoLido[];
+  /**
+   * SPEC-055/D2 — **obrigatório pelo mesmo motivo dos `adicionais`**: toda
+   * leitura que vira resposta traz o aluno (`INCLUIR_NA_RESPOSTA`). Opcional, uma
+   * leitura esquecida devolveria `alunoNome: null` para uma reserva que TEM
+   * aluno — e o `tsc` não teria como acusar. `null` é a ocupação de turma.
+   */
+  aluno: { usuario: { nome: string } } | null;
 }
 
 /** Um item da reserva como a leitura o traz. */
@@ -255,6 +262,21 @@ const INCLUIR_ADICIONAIS = {
     },
     orderBy: { adicionalId: 'asc' },
   },
+} as const satisfies Prisma.OcupacaoQuadraInclude;
+
+/** SPEC-055/D2 — o dono da reserva, para o `alunoNome`. Na mesma consulta. */
+const INCLUIR_ALUNO = {
+  aluno: { select: { usuario: { select: { nome: true } } } },
+} as const satisfies Prisma.OcupacaoQuadraInclude;
+
+/**
+ * **O `include` que toda leitura de reserva para resposta usa**: os itens
+ * (SPEC-054) e o dono (SPEC-055). Um nome só, para uma leitura nova não pegar
+ * metade.
+ */
+const INCLUIR_NA_RESPOSTA = {
+  ...INCLUIR_ADICIONAIS,
+  ...INCLUIR_ALUNO,
 } as const satisfies Prisma.OcupacaoQuadraInclude;
 
 @Injectable()
@@ -952,6 +974,9 @@ export class CourtsService {
                 pedidoId: pedido?.id,
                 transicaoId,
               },
+              // SPEC-055/D2 — o dono volta junto; os itens são montados abaixo,
+              // porque ainda não existem no instante do `create`.
+              include: INCLUIR_ALUNO,
             });
             // D6 — o adicional vale para CADA ocupação do pedido: cada uma é
             // cancelável e devolvida sozinha. Na mesma transação (D5).
@@ -1089,7 +1114,7 @@ export class CourtsService {
   ) {
     const pedido = await this.prisma.pedidoReserva.findUnique({
       where: { companyId_clientRequestId: { companyId, clientRequestId } },
-      include: { ocupacoes: { include: INCLUIR_ADICIONAIS } },
+      include: { ocupacoes: { include: INCLUIR_NA_RESPOSTA } },
     });
 
     if (pedido) {
@@ -1109,7 +1134,7 @@ export class CourtsService {
     // consulta, um retry que atravessasse o deploy criaria duplicata.
     const legado = await this.prisma.ocupacaoQuadra.findFirst({
       where: { companyId, clientRequestId },
-      include: INCLUIR_ADICIONAIS,
+      include: INCLUIR_NA_RESPOSTA,
     });
     return legado ? [legado] : null;
   }
@@ -1275,7 +1300,7 @@ export class CourtsService {
             take: 1,
             select: { acao: { select: { autorId: true } } },
           },
-          ...INCLUIR_ADICIONAIS,
+          ...INCLUIR_NA_RESPOSTA,
         },
       }),
       this.prisma.ocupacaoQuadra.count({ where }),
@@ -2152,7 +2177,7 @@ export class CourtsService {
           where: { id, companyId },
           // SPEC-054/D8 — o retorno antecipado abaixo ("já está nesse status")
           // também vira resposta de reserva. O `tsc` acusou a falta.
-          include: INCLUIR_ADICIONAIS,
+          include: INCLUIR_NA_RESPOSTA,
         });
 
         // Passo 5 (SPEC-033): a linha travada é a do aluno que foi travado.
@@ -2247,7 +2272,7 @@ export class CourtsService {
         const linha = await tx.ocupacaoQuadra.update({
           where: { id },
           data: { statusPagamento: status, transicaoId },
-          include: INCLUIR_ADICIONAIS,
+          include: INCLUIR_NA_RESPOSTA,
         });
         await registrador.registrar(
           id,
@@ -2545,7 +2570,7 @@ export class CourtsService {
               horaFim: destino.horaFim,
               transicaoId,
             },
-            include: INCLUIR_ADICIONAIS,
+            include: INCLUIR_NA_RESPOSTA,
           });
           await registrador.registrar(id, 'movida', transicaoId);
           return this.toOcupacaoResponse(movida);
@@ -2906,6 +2931,8 @@ export class CourtsService {
       horaFim: formatTimeOnly(ocupacao.horaFim),
       origemTipo: ocupacao.origemTipo,
       alunoId: ocupacao.alunoId,
+      // SPEC-055 — o dono, lido na mesma consulta. `null` na turma.
+      alunoNome: ocupacao.aluno ? ocupacao.aluno.usuario.nome : null,
       statusPagamento: ocupacao.statusPagamento,
       // SPEC-011: o valor **congelado**, não recalculado pelo preço atual
       // da quadra. Sem devolvê-lo, as telas continuariam multiplicando

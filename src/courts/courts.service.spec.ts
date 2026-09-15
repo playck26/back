@@ -564,6 +564,8 @@ describe('CourtsService', () => {
           quadraId: 'q1',
           origemTipo: 'AVULSO',
         }),
+        // SPEC-055/D2 — o dono volta na mesma escrita, para o `alunoNome`.
+        include: { aluno: { select: { usuario: { select: { nome: true } } } } },
       });
       expect(comoReserva(result).statusPagamento).toBe('pendente_pagamento');
     });
@@ -1458,6 +1460,11 @@ describe('CourtsService', () => {
             // congelado). Nenhum dado de autor: a INV-092 continua fechada.
             'adicionais',
             'alunoId',
+            // SPEC-055/D3 — o nome do DONO da reserva, não do autor. O gestor já
+            // o vê na agenda como `responsavel`, e o aluno só recebe as próprias
+            // reservas. Autor continua fora: nem `autor`, nem `autorId`, nem
+            // `autorNome`.
+            'alunoNome',
             'canceladaPorMim',
             'companyId',
             'data',
