@@ -624,8 +624,10 @@ export class CourtsService {
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'VALOR_SEM_PROFESSOR',
+        // SPEC-053/D2 -- esta mensagem chega a tela do gestor, e a tela deixou
+        // de falar em "reserva de quadra" (a quadra e um TIPO de reserva).
         message:
-          'O valor so pode ser definido em aula particular; a reserva de quadra usa o preco da quadra.',
+          'O valor só pode ser definido em aula particular; sem professor, vale o preço da quadra.',
       });
     }
 
