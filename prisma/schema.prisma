@@ -1379,6 +1379,12 @@ model AdicionalDaOcupacao {
   ocupacaoId       String      @map("ocupacao_id") @db.Uuid
   /// Coluna GERADA (`'AVULSO'`): o alvo da FK de origem — item em ocupação de
   /// turma é recusado com `23503` (INV-132). Nunca escrita pelo código.
+  ///
+  /// **O item é inserido por SQL cru, nunca por `adicionalDaOcupacao.create`.**
+  /// A introspecção lê a expressão constante como `@default(AVULSO)`, e com esse
+  /// default o Prisma ENVIA o valor — o Postgres recusa escrever em coluna gerada
+  /// (`428C9`, medido em 2026-09-15). Trocar por `dbgenerated(...)` faz o
+  /// `migrate diff` acusar diferença. Ler pela API de modelo funciona.
   origemDaOcupacao OrigemTipo? @default(AVULSO) @map("origem_da_ocupacao")
   adicionalId      String      @map("adicional_id") @db.Uuid
   quantidade       Int

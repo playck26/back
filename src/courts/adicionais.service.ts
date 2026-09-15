@@ -17,7 +17,8 @@ import {
   tipoNaoEncontrado,
   traduzirRecusaDoCatalogo,
 } from './recusas-do-catalogo';
-import { agruparEmBlocos, type BlocoDeReserva } from './slots.util';
+import { saldosDosAdicionaisNoPedido } from './estoque-de-adicionais';
+import { agruparEmBlocos } from './slots.util';
 
 type Cliente = PrismaService | Prisma.TransactionClient;
 
@@ -174,7 +175,7 @@ export class AdicionaisService {
     if (ativos.length === 0) {
       return [];
     }
-    const saldos = await this.saldosNoPedido(
+    const saldos = await saldosDosAdicionaisNoPedido(
       this.prisma,
       companyId,
       ativos.map((a) => a.id),
@@ -189,51 +190,6 @@ export class AdicionaisService {
       preco: Number(a.preco.toString()),
       disponivel: saldos.get(a.id) ?? 0,
     }));
-  }
-
-  /**
-   * **A conta da trigger, do lado de fora:** `estoque` − soma das quantidades
-   * dos itens em ocupações não canceladas cujo intervalo se sobrepõe ao do
-   * bloco; o menor valor entre os blocos; nunca negativo (o estoque pode ter
-   * sido baixado abaixo do reservado, D13).
-   *
-   * Pública porque a criação de reserva a usa para responder `disponivel`
-   * DEPOIS do `ROLLBACK` da transação recusada (D7).
-   */
-  async saldosNoPedido(
-    cliente: Cliente,
-    companyId: string,
-    adicionalIds: string[],
-    data: string,
-    blocos: BlocoDeReserva[],
-  ): Promise<Map<string, number>> {
-    const saldos = new Map<string, number>();
-    for (const bloco of blocos) {
-      const linhas = await cliente.$queryRaw<
-        { id: string; disponivel: number }[]
-      >`
-        SELECT a.id::text AS id,
-               (a.estoque - coalesce((
-                  SELECT sum(i.quantidade)
-                    FROM adicionais_da_ocupacao i
-                    JOIN ocupacoes_quadra o
-                      ON o.company_id = i.company_id AND o.id = i.ocupacao_id
-                   WHERE i.adicional_id = a.id
-                     AND o.status_pagamento <> 'cancelado'
-                     AND tsrange(o.data + o.hora_inicio, o.data + o.hora_fim)
-                      && tsrange(${data}::date + ${bloco.horaInicio}::time,
-                                 ${data}::date + ${bloco.horaFim}::time)
-               ), 0))::int AS disponivel
-          FROM adicionais a
-         WHERE a.company_id = ${companyId}::uuid
-           AND a.id = ANY(${adicionalIds}::uuid[])`;
-      for (const { id, disponivel } of linhas) {
-        const atual = saldos.get(id);
-        const saldo = Math.max(0, disponivel);
-        saldos.set(id, atual === undefined ? saldo : Math.min(atual, saldo));
-      }
-    }
-    return saldos;
   }
 
   /**

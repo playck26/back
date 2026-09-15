@@ -18,7 +18,21 @@ import {
   traduzirRecusaDeCancelamento,
 } from '../creditos/set-constraints';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
-import { traduzirRecusaDeEstoque } from './recusas-de-estoque';
+import {
+  adicionalDaRecusa,
+  adicionalInativo,
+  estoqueEsgotado,
+  sqlstateDoErro,
+  SQLSTATE_ESTOQUE_ESGOTADO,
+  traduzirRecusaDeEstoque,
+} from './recusas-de-estoque';
+import {
+  inserirItensDaOcupacao,
+  saldosDosAdicionaisNoPedido,
+  travarAdicionais,
+  type ItemParaInserir,
+} from './estoque-de-adicionais';
+import type { AdicionalDoPedidoDto } from './dto/create-booking.dto';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -213,7 +227,35 @@ interface OcupacaoParaResposta {
   statusPagamento: StatusPagamento;
   /** SPEC-011: quanto foi cobrado, congelado na criação. Nulo em turma. */
   valor?: Prisma.Decimal | null;
+  /**
+   * SPEC-054/D8 — **obrigatório**, e é de propósito: toda leitura que vira
+   * resposta de reserva precisa trazer os itens (`INCLUIR_ADICIONAIS`). Opcional,
+   * uma leitura esquecida devolveria `[]` para uma reserva que TEM raquete — e o
+   * `tsc` não teria como acusar.
+   */
+  adicionais: ItemDaOcupacaoLido[];
 }
+
+/** Um item da reserva como a leitura o traz. */
+interface ItemDaOcupacaoLido {
+  adicionalId: string;
+  quantidade: number;
+  valorUnitario: Prisma.Decimal;
+  adicional: { nome: string };
+}
+
+/** O `include` que toda leitura de reserva para resposta usa. */
+const INCLUIR_ADICIONAIS = {
+  adicionais: {
+    select: {
+      adicionalId: true,
+      quantidade: true,
+      valorUnitario: true,
+      adicional: { select: { nome: true } },
+    },
+    orderBy: { adicionalId: 'asc' },
+  },
+} as const satisfies Prisma.OcupacaoQuadraInclude;
 
 @Injectable()
 export class CourtsService {
@@ -600,7 +642,15 @@ export class CourtsService {
     }
 
     const blocos = agruparEmBlocos(slots);
-    const fingerprint = fingerprintDoPedido(dto.quadraId, dto.data, slots);
+    // SPEC-054/D9 — `[]` é ausência, inclusive aqui: sem adicional, a impressão é
+    // byte a byte a de antes, e o replay de chave antiga continua funcionando.
+    const adicionaisDoPedido = dto.adicionais ?? [];
+    const fingerprint = fingerprintDoPedido(
+      dto.quadraId,
+      dto.data,
+      slots,
+      adicionaisDoPedido,
+    );
 
     if (clientRequestId) {
       const jaFeito = await this.pedidoJaAtendido(
@@ -770,6 +820,13 @@ export class CourtsService {
       }
     }
 
+    // SPEC-054/D7 — os portões novos vêm DEPOIS dos que existem: um horário
+    // ocupado ou um professor indisponível é o que se conserta primeiro.
+    const nomesDosAdicionais = await this.exigirAdicionaisDoPedido(
+      companyId,
+      adicionaisDoPedido,
+    );
+
     // DEF-023 — achado pelo FIT-001 (a) da SPEC-043 (run 33790414789, CI em
     // postgres:18): duas criações concorrentes do mesmo slot podem terminar
     // em DEADLOCK (`40P01`) em vez de violação da EXCLUDE. A transação
@@ -806,6 +863,40 @@ export class CourtsService {
           const saldoCentavos = dto.alunoId
             ? await this.creditos.travarESaber(tx, companyId, dto.alunoId)
             : null;
+
+          /**
+           * SPEC-054/D4 — **nível 2b**: os adicionais, em ordem de `id`, depois de
+           * `alunos` e antes de a primeira ocupação nascer. O preço é lido AQUI,
+           * sob a trava, e é o que a reserva congela (D6).
+           */
+          const itens: ItemParaInserir[] = [];
+          let somaDosAdicionais = new Prisma.Decimal(0);
+          if (adicionaisDoPedido.length > 0) {
+            const travados = await travarAdicionais(
+              tx,
+              companyId,
+              adicionaisDoPedido.map((a) => a.adicionalId),
+            );
+            for (const pedido of adicionaisDoPedido) {
+              const travado = travados.get(pedido.adicionalId.toLowerCase());
+              if (!travado) {
+                // Sem `DELETE` de adicional pela API: só some por DDL.
+                throw new NotFoundException({
+                  statusCode: 404,
+                  code: 'ADICIONAL_NAO_ENCONTRADO',
+                  message: 'Adicional não encontrado.',
+                });
+              }
+              itens.push({
+                adicionalId: pedido.adicionalId,
+                quantidade: pedido.quantidade,
+                valorUnitario: new Prisma.Decimal(travado.preco),
+              });
+              somaDosAdicionais = somaDosAdicionais.add(
+                new Prisma.Decimal(travado.preco).mul(pedido.quantidade),
+              );
+            }
+          }
 
           const pedido = clientRequestId
             ? await tx.pedidoReserva.create({
@@ -851,16 +942,32 @@ export class CourtsService {
                 // digitou, e o preço de tabela quando não. **A reserva SEM
                 // professor continua no preço da quadra**, que é o que ela
                 // sempre foi.
-                valor:
-                  valorResolvido != null
-                    ? new Prisma.Decimal(valorResolvido)
-                    : new Prisma.Decimal(quadra.precoHora).mul(bloco.horas),
+                // SPEC-054/D6 — **o adicional está DENTRO do `valor`**: base (a
+                // quadra, a aula ou o digitado, inclusive zero) + Σ preço ×
+                // quantidade. Débito, saldo, devolução e baixa não mudam uma linha.
+                valor: (valorResolvido != null
+                  ? new Prisma.Decimal(valorResolvido)
+                  : new Prisma.Decimal(quadra.precoHora).mul(bloco.horas)
+                ).add(somaDosAdicionais),
                 pedidoId: pedido?.id,
                 transicaoId,
               },
             });
+            // D6 — o adicional vale para CADA ocupação do pedido: cada uma é
+            // cancelável e devolvida sozinha. Na mesma transação (D5).
+            await inserirItensDaOcupacao(tx, companyId, ocupacao.id, itens);
             await registrador.registrar(ocupacao.id, 'criada', transicaoId);
-            resultado.push(ocupacao);
+            resultado.push({
+              ...ocupacao,
+              adicionais: itens.map((item) => ({
+                adicionalId: item.adicionalId,
+                quantidade: item.quantidade,
+                valorUnitario: item.valorUnitario,
+                adicional: {
+                  nome: nomesDosAdicionais.get(item.adicionalId) ?? '',
+                },
+              })),
+            });
           }
 
           await this.debitarCarteira({
@@ -903,6 +1010,25 @@ export class CourtsService {
         // SPEC-054/D11 — **a recusa de estoque vem antes de tudo.** Ela não é
         // corrida: retentar repete a mesma recusa, e depois da segunda tentativa
         // o erro subiria cru como `500`.
+        //
+        // SPEC-054/D7 — na CRIAÇÃO, a resposta traz `disponivel`, lido numa
+        // consulta nova: a transação recusada já foi desfeita, e dentro dela não
+        // havia mais o que ler.
+        if (sqlstateDoErro(error) === SQLSTATE_ESTOQUE_ESGOTADO) {
+          const adicionalId = adicionalDaRecusa(error);
+          const disponivel = adicionalId
+            ? (
+                await saldosDosAdicionaisNoPedido(
+                  this.prisma,
+                  companyId,
+                  [adicionalId],
+                  dto.data,
+                  blocos,
+                )
+              ).get(adicionalId)
+            : undefined;
+          throw estoqueEsgotado(adicionalId, disponivel);
+        }
         traduzirRecusaDeEstoque(error);
         if (ehTravaDoProfessor(error)) {
           throw new ConflictException({
@@ -963,7 +1089,7 @@ export class CourtsService {
   ) {
     const pedido = await this.prisma.pedidoReserva.findUnique({
       where: { companyId_clientRequestId: { companyId, clientRequestId } },
-      include: { ocupacoes: true },
+      include: { ocupacoes: { include: INCLUIR_ADICIONAIS } },
     });
 
     if (pedido) {
@@ -983,6 +1109,7 @@ export class CourtsService {
     // consulta, um retry que atravessasse o deploy criaria duplicata.
     const legado = await this.prisma.ocupacaoQuadra.findFirst({
       where: { companyId, clientRequestId },
+      include: INCLUIR_ADICIONAIS,
     });
     return legado ? [legado] : null;
   }
@@ -1148,6 +1275,7 @@ export class CourtsService {
             take: 1,
             select: { acao: { select: { autorId: true } } },
           },
+          ...INCLUIR_ADICIONAIS,
         },
       }),
       this.prisma.ocupacaoQuadra.count({ where }),
@@ -2022,6 +2150,9 @@ export class CourtsService {
         }
         const ocupacao = await tx.ocupacaoQuadra.findFirstOrThrow({
           where: { id, companyId },
+          // SPEC-054/D8 — o retorno antecipado abaixo ("já está nesse status")
+          // também vira resposta de reserva. O `tsc` acusou a falta.
+          include: INCLUIR_ADICIONAIS,
         });
 
         // Passo 5 (SPEC-033): a linha travada é a do aluno que foi travado.
@@ -2116,6 +2247,7 @@ export class CourtsService {
         const linha = await tx.ocupacaoQuadra.update({
           where: { id },
           data: { statusPagamento: status, transicaoId },
+          include: INCLUIR_ADICIONAIS,
         });
         await registrador.registrar(
           id,
@@ -2254,6 +2386,26 @@ export class CourtsService {
       const tentativaAtual: { destino?: DestinoDeMovimento } = {};
       try {
         return await this.prisma.$transaction(async (tx) => {
+          /**
+           * SPEC-054/D4 — **o nível 2b vem ANTES da ocupação (nível 3).** Os itens
+           * são lidos SEM trava — é seguro: o item só nasce na transação da
+           * ocupação e não muda depois (D5). Com a trava antecipada, o movimento
+           * pede `adicionais` antes de tocar a ocupação, e uma criação que já
+           * detém o adicional não fecha ciclo com ele. A reconferência do estoque
+           * é da trigger `ocupacao_com_adicionais_confere_estoque`, no `UPDATE`.
+           */
+          const itensDaReserva = await tx.adicionalDaOcupacao.findMany({
+            where: { companyId, ocupacaoId: id },
+            select: { adicionalId: true },
+          });
+          if (itensDaReserva.length > 0) {
+            await travarAdicionais(
+              tx,
+              companyId,
+              itensDaReserva.map((i) => i.adicionalId),
+            );
+          }
+
           // `FOR UPDATE` não é expressável no query builder do Prisma —
           // raw necessária, mesmo idioma de `classes.service.ts:335`.
           const linhas = await tx.$queryRaw<
@@ -2393,6 +2545,7 @@ export class CourtsService {
               horaFim: destino.horaFim,
               transicaoId,
             },
+            include: INCLUIR_ADICIONAIS,
           });
           await registrador.registrar(id, 'movida', transicaoId);
           return this.toOcupacaoResponse(movida);
@@ -2759,7 +2912,60 @@ export class CourtsService {
       // `preco_hora × horas` por conta própria — e mostrariam um número
       // diferente do cobrado assim que a escola reajustasse o preço.
       valor: ocupacao.valor != null ? Number(ocupacao.valor) : null,
+      // SPEC-054/D8 — o `valorUnitario` congelado na criação, não o preço atual.
+      adicionais: ocupacao.adicionais.map((item) => ({
+        adicionalId: item.adicionalId,
+        nome: item.adicional.nome,
+        quantidade: item.quantidade,
+        valorUnitario: Number(item.valorUnitario),
+      })),
     };
+  }
+
+  /**
+   * SPEC-054/D7 — **os portões 11, 12 e 13**, antes da transação: repetido,
+   * inexistente (ou de outra empresa — as duas respostas iguais) e inativo.
+   *
+   * Devolve o NOME de cada adicional, para a resposta — o preço, não: o preço é
+   * lido **sob a trava**, dentro da transação (D6). Um adicional desativado entre
+   * este portão e a trava é recusado pela trigger (`P3304`), com o mesmo `422`.
+   */
+  private async exigirAdicionaisDoPedido(
+    companyId: string,
+    pedidos: readonly AdicionalDoPedidoDto[],
+  ): Promise<Map<string, string>> {
+    const nomes = new Map<string, string>();
+    if (pedidos.length === 0) {
+      return nomes;
+    }
+    const ids = pedidos.map((p) => p.adicionalId);
+    if (new Set(ids).size !== ids.length) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'ADICIONAL_REPETIDO',
+        message:
+          'O mesmo adicional apareceu duas vezes no pedido. Some as quantidades numa linha só.',
+      });
+    }
+    const encontrados = await this.prisma.adicional.findMany({
+      where: { companyId, id: { in: ids } },
+      select: { id: true, nome: true, ativo: true },
+    });
+    if (encontrados.length !== ids.length) {
+      throw new NotFoundException({
+        statusCode: 404,
+        code: 'ADICIONAL_NAO_ENCONTRADO',
+        message: 'Adicional não encontrado.',
+      });
+    }
+    const inativo = encontrados.find((a) => !a.ativo);
+    if (inativo) {
+      throw adicionalInativo(inativo.id);
+    }
+    for (const a of encontrados) {
+      nomes.set(a.id, a.nome);
+    }
+    return nomes;
   }
 }
 

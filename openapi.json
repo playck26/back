@@ -8286,6 +8286,24 @@
           "horaFim"
         ]
       },
+      "AdicionalDoPedidoDto": {
+        "type": "object",
+        "properties": {
+          "adicionalId": {
+            "type": "string"
+          },
+          "quantidade": {
+            "type": "number",
+            "example": 2,
+            "minimum": 1,
+            "maximum": 99
+          }
+        },
+        "required": [
+          "adicionalId",
+          "quantidade"
+        ]
+      },
       "CreateBookingDto": {
         "type": "object",
         "properties": {
@@ -8321,11 +8339,46 @@
           "valor": {
             "type": "number",
             "example": 120
+          },
+          "adicionais": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDoPedidoDto"
+            }
           }
         },
         "required": [
           "quadraId",
           "data"
+        ]
+      },
+      "AdicionalDaReservaDto": {
+        "type": "object",
+        "properties": {
+          "adicionalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson"
+          },
+          "quantidade": {
+            "type": "number",
+            "example": 2
+          },
+          "valorUnitario": {
+            "type": "number",
+            "example": 15,
+            "description": "Em reais."
+          }
+        },
+        "required": [
+          "adicionalId",
+          "nome",
+          "quantidade",
+          "valorUnitario"
         ]
       },
       "OcupacaoResponseDto": {
@@ -8379,6 +8432,12 @@
             "type": "number",
             "nullable": true,
             "example": 120
+          },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
           }
         },
         "required": [
@@ -8391,7 +8450,8 @@
           "origemTipo",
           "alunoId",
           "statusPagamento",
-          "valor"
+          "valor",
+          "adicionais"
         ]
       },
       "ReservasCriadasResponseDto": {
@@ -8460,6 +8520,12 @@
             "nullable": true,
             "example": 120
           },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
+          },
           "canceladaPorMim": {
             "type": "boolean",
             "nullable": true,
@@ -8477,6 +8543,7 @@
           "alunoId",
           "statusPagamento",
           "valor",
+          "adicionais",
           "canceladaPorMim"
         ]
       },
@@ -8825,6 +8892,12 @@
             "type": "string",
             "nullable": true,
             "example": "Gabriel"
+          },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
           }
         },
         "required": [
@@ -8839,7 +8912,8 @@
           "statusPagamento",
           "valor",
           "criadaPor",
-          "canceladaPor"
+          "canceladaPor",
+          "adicionais"
         ]
       },
       "DiaComItensResponseDto": {
@@ -11386,6 +11460,12 @@
             "nullable": true,
             "example": 120
           },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
+          },
           "creditoDevolvidoCentavos": {
             "type": "number",
             "nullable": true,
@@ -11404,6 +11484,7 @@
           "alunoId",
           "statusPagamento",
           "valor",
+          "adicionais",
           "creditoDevolvidoCentavos"
         ]
       }
