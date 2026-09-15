@@ -18,6 +18,7 @@ import {
 } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { CONTAGEM_POR_IP } from '../common/throttle/contagem-por-ip';
+import { chaveDoVisitante } from '../common/throttle/ip-do-visitante';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 
 /**
@@ -135,7 +136,9 @@ export class ThrottlerPorUsuario extends ThrottlerGuard {
         return `${PREFIXO_USUARIO}${sub}`;
       }
     }
-    return `${PREFIXO_IP}${req.ip ?? 'desconhecido'}`;
+    // DEF-031 — o VISITANTE (`do-connecting-ip`, IPv6 por /64), não o socket,
+    // que no App Platform é o balanceador, o mesmo para todo mundo.
+    return `${PREFIXO_IP}${chaveDoVisitante(req)}`;
   }
 
   /**
