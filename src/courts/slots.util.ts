@@ -112,15 +112,30 @@ export function agruparEmBlocos(slots: SlotSolicitado[]): BlocoDeReserva[] {
  * Normaliza antes de calcular: a mesma seleção enviada em ordem diferente
  * é o **mesmo** pedido, e um retry não deve virar `422` por causa da ordem
  * em que a tela montou o array.
+ *
+ * **SPEC-054/D9 — sem adicional, o texto é byte a byte o de antes.** A
+ * comparação da idempotência é por igualdade estrita: acrescentar um segmento
+ * vazio em todo pedido faria o replay de uma chave gravada antes do deploy
+ * responder `422 IDEMPOTENCY_KEY_REUSED`. Lista vazia é ausência — as telas
+ * omitem o campo, e o código antigo recusa até `[]` pela `whitelist`.
  */
 export function fingerprintDoPedido(
   quadraId: string,
   data: string,
   slots: SlotSolicitado[],
+  adicionais?: readonly { adicionalId: string; quantidade: number }[],
 ): string {
   const normalizado = [...slots]
     .map((s) => `${s.horaInicio}-${s.horaFim}`)
     .sort()
     .join(',');
-  return `${quadraId}|${data}|${normalizado}`;
+  const base = `${quadraId}|${data}|${normalizado}`;
+  if (!adicionais || adicionais.length === 0) {
+    return base;
+  }
+  const itens = [...adicionais]
+    .sort((a, b) => (a.adicionalId < b.adicionalId ? -1 : 1))
+    .map((a) => `${a.adicionalId}:${a.quantidade}`)
+    .join(',');
+  return `${base}|adicionais=${itens}`;
 }
