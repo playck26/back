@@ -1,13 +1,20 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-10** (era 2026-09-09).
+**Fonte: análise direta do código.** Data: **2026-09-15** (era 2026-09-10).
 **Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
 defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
 **DEF-027**.
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
-**Números conferidos por comando nesta data, não estimados:** **38
+**Números conferidos por comando em 2026-09-15, com a SPEC-054 (Entrega B):**
+**40 migrations, 37 tabelas, 105 caminhos / 147 operações** no `openapi.json`,
+**17 triggers** não-internas (`ls -d prisma/migrations/*/`, `pg_tables` sem
+`_prisma_migrations`, `pg_trigger` sem as internas). *A SPEC-054 somou 1
+migration, 3 tabelas (`tipos_de_adicional`, `adicionais`,
+`adicionais_da_ocupacao`), 6 caminhos / 9 operações e 7 triggers.*
+
+*Registro de 2026-09-10:* **38
 migrations, 34 tabelas, 97 caminhos / 136 operações** no `openapi.json`, 10
 triggers não-internas. *A tabela nova é `reposicoes_de_aula` (SPEC-046); as
 rotas novas são `/matriculas/vencimentos` (SPEC-045) e as três de
@@ -556,10 +563,21 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 | `eventos_matricula_append_only` (SPEC-031/D21) | a **terceira** da família, e a que faltava: `eventos_de_matricula` é auditoria como as outras duas. Consertar só duas deixaria o fluxo funcional verde e a limpeza do CI abortando |
 | `movimentos_append_only`, `movimentos_atualiza_saldo`, `movimentos_consumo_ativo_unico`, `alunos_saldo_so_pelo_ledger`, `ocupacao_cancelada_exige_devolucao` (SPEC-033) | as cinco da carteira — o saldo só muda pelo ledger, e cancelar reserva paga com crédito exige a devolução no mesmo COMMIT |
 | `ocupacao_reativada_exige_evento` (SPEC-035/INV-106) | **a metade que faltava da INV-064.** Espelho literal da `ocupacao_cancelada_exige_evento`, na direção contrária: `cancelado -> não-cancelado` exige evento `reativada` desta transição |
+| `adicional_cabe_no_estoque`, `ocupacao_com_adicionais_confere_estoque` (SPEC-054/INV-133) | **o estoque conferido pelo banco no momento em que a unidade é tomada** — na inserção do item e quando a ocupação com item muda de intervalo ou sai de `cancelado`. `FOR UPDATE` no adicional e a soma em instrução separada de função `VOLATILE`: sob `READ COMMITTED` a segunda instrução enxerga quem venceu a espera. Recusam com `P3303` (esgotado) e `P3304` (inativo, só na inserção), e a mensagem nomeia o adicional |
+| `ocupacao_marca_transacao_de_criacao`, `ocupacao_transacao_de_criacao_imutavel`, `adicionais_da_ocupacao_append_only` (SPEC-054/INV-134) | **o item só nasce na transação da reserva e não muda.** O marcador é do banco (sobrescreve o valor enviado — forjar no `INSERT` não basta) e a inserção do item exige `transacao_de_criacao IS NOT DISTINCT FROM txid_current()` |
+| `adicionais_cabem_no_valor`, `valor_com_adicionais_imutavel` (SPEC-054/INV-135) | a soma dos itens cabe no `valor` da ocupação, e o `valor` de ocupação com item não muda |
 
-**São dez triggers hoje** (`SELECT tgname FROM pg_trigger WHERE NOT
-tgisinternal`, conferido contra Postgres 18.4 local), e não três — a tabela
-acima estava parada na SPEC-031.
+**São dezessete triggers desde a SPEC-054** (eram dez; `SELECT tgname FROM
+pg_trigger WHERE NOT tgisinternal`, conferido contra Postgres 18.4 local). *A
+tabela chegou a ficar parada na SPEC-031 com três.*
+
+**A SPEC-054 é a primeira em que a trigger RECUSA POR REGRA DE NEGÓCIO** — as
+anteriores guardam auditoria e dinheiro contra erro de caminho. Por isso a
+Entrega A (tradução de `P3303`/`P3304` no catch da criação e do movimento) subiu
+**antes** da migration: o código anterior tratava a recusa como corrida perdida e
+respondia `500`. Medido no ensaio de rollback: **com o código anterior a A, mover
+reserva com item para horário sem estoque dá `500`; com A, `409
+ESTOQUE_ESGOTADO`.**
 
 **A INV-106 merece uma linha própria, porque ela conserta um raciocínio e não
 um defeito.** A INV-064 guardava só a ida (`-> cancelado`), e isso estava
@@ -1083,6 +1101,33 @@ futuros.
 O mesmo valeu para as fixtures: elas usavam `CURRENT_DATE` (data do Postgres,
 que roda em UTC) e **13 provas caíram** na hora da conversão, com
 `AULA_FUTURA`. Ver `test/banco/hoje-no-clube-sql.ts`.
+
+### Adicionais da reserva: o estoque é do banco, a ordem é da aplicação (SPEC-054)
+
+Rotas em `API_CONTRACTS.md` (CON-005.14 a .19). O que a planta precisa guardar:
+
+- **O valor do adicional está DENTRO de `ocupacoes_quadra.valor`.** Débito,
+  `SALDO_INSUFICIENTE`, devolução, prazo e baixa não mudaram uma linha; o preço é
+  lido sob a trava e congelado em `valor_unitario`.
+- **Nível 2b** (`DATA_MODEL.md`): a criação trava `alunos` → `adicionais` (em ordem
+  de `id`, **uma instrução por linha**, `estoque-de-adicionais.ts`) → ocupação; o
+  movimento lê os itens sem trava e trava `adicionais` antes da ocupação. **A
+  trava da aplicação não é o que dá correção** — tirá-la deixou o FIT-046 verde —;
+  ela dá ORDEM: tirada a função de ordenar, a prova determinística
+  (`spec-054-ordem-de-travas.db-spec.ts`, barreira observada em `pg_locks`) dá
+  `40P01` toda vez.
+- **O item é inserido por SQL cru.** A introspecção vê a coluna gerada
+  `origem_da_ocupacao` como `@default(AVULSO)`, e com esse default o Prisma envia
+  o valor e o Postgres recusa (`428C9`); `dbgenerated(...)` quebra o `migrate
+  diff`. Ler pela API de modelo funciona.
+- **A impressão digital do pedido sem adicional é byte a byte a de antes** (D9):
+  replay de chave gravada pelo código anterior devolve o original, e o inverso
+  também (ensaiado).
+- **O classificador de recusas do catálogo classifica pela OPERAÇÃO**
+  (`recusas-do-catalogo.ts`), não pelo nome da constraint, que o Prisma nem sempre
+  entrega; só o `23514` de `CHECK` vira `400 VALOR_INVALIDO`.
+- **Rollback:** de B para A é seguro; para antes de A, com itens no banco, é
+  proibido — runbook em `OPERATIONS.md`.
 
 ### A aula particular pelo ALUNO, e a rota que a tela pediu (SPEC-047)
 

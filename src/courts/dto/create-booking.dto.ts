@@ -5,8 +5,10 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
+  IsInt,
   IsNumber,
   IsOptional,
+  Max,
   Min,
   Matches,
   ValidateNested,
@@ -23,6 +25,19 @@ export class SlotDto {
   @ApiProperty({ example: '10:00' })
   @Matches(HORA_REGEX, { message: 'horaFim deve estar no formato HH:mm' })
   horaFim!: string;
+}
+
+/** SPEC-054/D7 — um adicional do pedido: qual e quantas unidades. */
+export class AdicionalDoPedidoDto {
+  @ApiProperty()
+  @UuidNoCorpo()
+  adicionalId!: string;
+
+  @ApiProperty({ example: 2, minimum: 1, maximum: 99 })
+  @IsInt()
+  @Min(1)
+  @Max(99)
+  quantidade!: number;
 }
 
 export class CreateBookingDto {
@@ -102,4 +117,22 @@ export class CreateBookingDto {
   @IsNumber()
   @Min(0)
   valor?: number;
+
+  /**
+   * SPEC-054/D7 — **o que o clube aluga junto com a reserva**, no máximo 10.
+   *
+   * Vale para **cada** reserva do pedido (D6): um pedido de 9h e 15h vira duas
+   * reservas, e cada uma leva os seus itens, com o seu valor e a sua devolução.
+   *
+   * **Lista vazia é ausência** (D9) — inclusive na impressão digital. As telas
+   * omitem o campo quando não há adicional: o `back` anterior à SPEC-054 recusa
+   * até `[]` com `400` pela `whitelist` (LIM-054h).
+   */
+  @ApiPropertyOptional({ type: [AdicionalDoPedidoDto], maxItems: 10 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AdicionalDoPedidoDto)
+  adicionais?: AdicionalDoPedidoDto[];
 }

@@ -12,6 +12,24 @@ import { ApiProperty } from '@nestjs/swagger';
  * impede alguém "simplificar" a tela recalculando de novo.
  */
 
+/**
+ * SPEC-054/D8 — um item da reserva, **congelado** como o `valor`: o preço que o
+ * adicional tinha na confirmação, não o de hoje (AC-011).
+ */
+export class AdicionalDaReservaDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  adicionalId!: string;
+
+  @ApiProperty({ type: String, example: 'Raquete Wilson' })
+  nome!: string;
+
+  @ApiProperty({ type: Number, example: 2 })
+  quantidade!: number;
+
+  @ApiProperty({ type: Number, example: 15, description: 'Em reais.' })
+  valorUnitario!: number;
+}
+
 export class OcupacaoResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -69,6 +87,14 @@ export class OcupacaoResponseDto {
    */
   @ApiProperty({ type: Number, nullable: true, example: 120 })
   valor!: number | null;
+
+  /**
+   * SPEC-054/D8 — os adicionais da reserva, **já somados em `valor`** (D6). Lista
+   * vazia quando não há. *O `back` anterior à SPEC-054 não manda o campo — a
+   * tela trata ausência como lista vazia durante o rollout.*
+   */
+  @ApiProperty({ type: [AdicionalDaReservaDto] })
+  adicionais!: AdicionalDaReservaDto[];
 }
 
 /**
@@ -271,6 +297,10 @@ export class ItemDaAgendaResponseDto {
    */
   @ApiProperty({ type: String, nullable: true, example: 'Gabriel' })
   canceladaPor!: string | null;
+
+  /** SPEC-054/D12 — os adicionais da reserva, já somados em `valor`. */
+  @ApiProperty({ type: [AdicionalDaReservaDto] })
+  adicionais!: AdicionalDaReservaDto[];
 }
 
 /**

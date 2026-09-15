@@ -85,6 +85,17 @@ const INCLUDE_DO_ITEM = {
     },
     orderBy: { criadoEm: 'asc' },
   },
+  // SPEC-054/D12 — os adicionais aparecem no diálogo do dia: o gestor que olha a
+  // reserva precisa saber que vai entregar duas raquetes.
+  adicionais: {
+    select: {
+      adicionalId: true,
+      quantidade: true,
+      valorUnitario: true,
+      adicional: { select: { nome: true } },
+    },
+    orderBy: { adicionalId: 'asc' },
+  },
 } satisfies Prisma.OcupacaoQuadraInclude;
 
 type OcupacaoDoItem = Prisma.OcupacaoQuadraGetPayload<{
@@ -335,6 +346,12 @@ export class AgendaService {
       // uma ocupação pode ser cancelada mais de uma vez, e quem pergunta
       // "quem cancelou isto?" quer saber do estado atual.
       canceladaPor: autorDo(o.eventos, 'cancelada', 'ultimo'),
+      adicionais: o.adicionais.map((item) => ({
+        adicionalId: item.adicionalId,
+        nome: item.adicional.nome,
+        quantidade: item.quantidade,
+        valorUnitario: Number(item.valorUnitario),
+      })),
     };
   }
 

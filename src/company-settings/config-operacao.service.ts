@@ -2,9 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { Prisma } from '@prisma/client';
 import {
+  type ConfigOperacaoComNomesResponseDto,
   type ConfigOperacaoResponseDto,
   type DefinirConfigOperacaoDto,
+  type DefinirNomesDeTipoDto,
+  NOMES_DE_TIPO_PADRAO,
 } from './dto/config-operacao.dto';
+import { traduzirRecusaDoCatalogo } from '../courts/recusas-do-catalogo';
 import { prazoDe, type PrazoDeCancelamento } from './prazo-de-cancelamento';
 
 /** O que a política precisa saber sobre a empresa, já em tipo soma. */
@@ -13,12 +17,15 @@ export interface PrazosDaEmpresa {
   readonly reserva: PrazoDeCancelamento;
 }
 
-const SEM_CONFIGURACAO: ConfigOperacaoResponseDto = {
+const SEM_CONFIGURACAO: ConfigOperacaoComNomesResponseDto = {
   prazoCancelamentoAulaHoras: null,
   prazoCancelamentoReservaHoras: null,
   // SPEC-047 — nulo aqui significa "o clube nao vende aula particular pelo
   // app", e nao "de graca".
   precoAulaPadrao: null,
+  // SPEC-054/D1 — sem configuracao, os nomes padrao, ja resolvidos.
+  nomeTipoQuadra: NOMES_DE_TIPO_PADRAO.quadra,
+  nomeTipoAula: NOMES_DE_TIPO_PADRAO.aula,
 };
 
 /**
@@ -66,18 +73,56 @@ export class ConfigOperacaoService {
    * Empresa sem linha devolve os dois `null` — **não `404`**. Ver o docstring
    * de `ConfigOperacaoResponseDto`.
    */
-  async ler(companyId: string): Promise<ConfigOperacaoResponseDto> {
+  async ler(companyId: string): Promise<ConfigOperacaoComNomesResponseDto> {
     const linha = await this.prisma.configOperacaoEmpresa.findUnique({
       where: { companyId },
       select: {
         prazoCancelamentoAulaHoras: true,
         prazoCancelamentoReservaHoras: true,
         precoAulaPadrao: true,
+        nomeTipoQuadra: true,
+        nomeTipoAula: true,
       },
     });
     return linha
-      ? { ...linha, precoAulaPadrao: numeroOuNulo(linha.precoAulaPadrao) }
+      ? {
+          ...linha,
+          precoAulaPadrao: numeroOuNulo(linha.precoAulaPadrao),
+          // SPEC-054/D8 — resolvidos aqui, num lugar so: nulo e o padrao.
+          nomeTipoQuadra: linha.nomeTipoQuadra ?? NOMES_DE_TIPO_PADRAO.quadra,
+          nomeTipoAula: linha.nomeTipoAula ?? NOMES_DE_TIPO_PADRAO.aula,
+        }
       : SEM_CONFIGURACAO;
+  }
+
+  /**
+   * SPEC-054/D8 — grava **so as duas colunas dos nomes**, e nunca os prazos nem
+   * o preco (AC-006). O `update` enumera os dois campos; o `create` so preenche
+   * os nomes, e os demais nascem nulos, que e o estado de quem nao configurou.
+   *
+   * `null` apaga o nome e volta ao padrao — por isso `?? null` nao existe aqui:
+   * o DTO ja exige os dois campos, e `null` e o valor.
+   */
+  async gravarNomesDeTipo(
+    companyId: string,
+    dto: DefinirNomesDeTipoDto,
+  ): Promise<ConfigOperacaoComNomesResponseDto> {
+    const nomes = {
+      nomeTipoQuadra: dto.nomeTipoQuadra,
+      nomeTipoAula: dto.nomeTipoAula,
+    };
+    try {
+      await this.prisma.configOperacaoEmpresa.upsert({
+        where: { companyId },
+        create: { companyId, ...nomes },
+        update: nomes,
+        select: { id: true },
+      });
+    } catch (error) {
+      // `23514` do `CHECK` dos nomes -> `400 VALOR_INVALIDO` (D10).
+      return traduzirRecusaDoCatalogo(error, 'nomes-de-tipo');
+    }
+    return this.ler(companyId);
   }
 
   /**

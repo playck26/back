@@ -1,5 +1,10 @@
 import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -12,8 +17,10 @@ import { DefinirHorariosDto } from './dto/definir-horarios.dto';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import {
+  ConfigOperacaoComNomesResponseDto,
   ConfigOperacaoResponseDto,
   DefinirConfigOperacaoDto,
+  DefinirNomesDeTipoDto,
 } from '../company-settings/dto/config-operacao.dto';
 
 /**
@@ -59,9 +66,27 @@ export class CompanySettingsController {
    * prazo e um estado normal, e e a maioria das empresas hoje.
    */
   @Get('operacao')
-  @ApiOkResponse({ type: ConfigOperacaoResponseDto })
+  // SPEC-054/D8 — a leitura ganha os nomes de tipo, já resolvidos.
+  @ApiOkResponse({ type: ConfigOperacaoComNomesResponseDto })
   lerOperacao(@CurrentUser() user: AccessTokenPayload) {
     return this.operacao.ler(user.companyId as string);
+  }
+
+  /**
+   * SPEC-054/D8 — os nomes de exibição de Quadra e Aula particular. Os dois
+   * campos são obrigatórios no corpo, `null` = padrão; substitui só as duas
+   * colunas (AC-006).
+   */
+  @Put('nomes-de-tipo')
+  @ApiOkResponse({ type: ConfigOperacaoComNomesResponseDto })
+  @ApiBadRequestResponse({
+    description: 'campo ausente ou inválido, ou `VALOR_INVALIDO`',
+  })
+  definirNomesDeTipo(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: DefinirNomesDeTipoDto,
+  ) {
+    return this.operacao.gravarNomesDeTipo(user.companyId as string, dto);
   }
 
   /**

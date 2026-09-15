@@ -87,6 +87,8 @@ describe('Agenda (e2e) - TEST-012', () => {
           aluno: null,
           origemTurma: { nome: 'Turma das 14h' },
           statusPagamento: 'pendente_pagamento',
+          // SPEC-054/D12 — o include do item do dia traz os adicionais.
+          adicionais: [],
         },
       ]);
 

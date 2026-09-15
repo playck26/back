@@ -108,6 +108,8 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         prazoCancelamentoAulaHoras: 3,
         prazoCancelamentoReservaHoras: null,
         precoAulaPadrao: 150,
+        nomeTipoQuadra: 'Espaço',
+        nomeTipoAula: null,
       });
 
       const res = await request(app.getHttpServer())
@@ -121,6 +123,10 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         // SPEC-047 — **`150` e nao `"150"`.** A coluna e `Decimal` e sairia
         // como string no JSON; a conversao mora no servico, num lugar so.
         precoAulaPadrao: 150,
+        // SPEC-054/D8 — a LEITURA ganha os nomes, ja resolvidos: o gravado
+        // aparece, e o nulo vira o padrao.
+        nomeTipoQuadra: 'Espaço',
+        nomeTipoAula: 'Aula particular',
       });
     });
 
@@ -145,6 +151,9 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         // dois: **ausencia de configuracao**, nao "de graca". Sem preco aqui
         // nem no professor, o clube nao vende aula particular pelo app.
         precoAulaPadrao: null,
+        // SPEC-054/D8 — sem configuracao, os nomes padrao, nunca `null`.
+        nomeTipoQuadra: 'Quadra',
+        nomeTipoAula: 'Aula particular',
       });
     });
   });

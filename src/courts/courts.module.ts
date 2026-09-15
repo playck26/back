@@ -15,6 +15,12 @@ import {
   CourtSportsController,
 } from './court-catalogs.controller';
 import { CourtImageController } from './court-image.controller';
+import {
+  AdicionaisController,
+  TiposDeAdicionalController,
+} from './adicionais.controller';
+import { AdicionaisService } from './adicionais.service';
+import { TiposDeAdicionalService } from './tipos-de-adicional.service';
 import { CourtsService } from './courts.service';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { HorariosDeAulaParticularService } from './horarios-de-aula-particular.service';
@@ -47,6 +53,10 @@ import { CreditosModule } from '../creditos/creditos.module';
     // SPEC-047 — prefixo `me/professores`, mas mora aqui: ver o docstring do
     // controller. O contrario (rota em `PeopleModule`) seria import circular.
     MeHorariosDeAulaController,
+    // SPEC-054 — o catalogo de adicionais e dos tipos. MOD-005: o item mora na
+    // reserva, e so este modulo escreve em `ocupacoes_quadra` (ADR-009).
+    TiposDeAdicionalController,
+    AdicionaisController,
   ],
   providers: [
     CourtsService,
@@ -56,6 +66,8 @@ import { CreditosModule } from '../creditos/creditos.module';
     ImagemDaQuadraService,
     EsportesDeQuadraService,
     CategoriasDeQuadraService,
+    TiposDeAdicionalService,
+    AdicionaisService,
   ],
   exports: [CourtsService, HorarioFuncionamentoService, ImagemDaQuadraService],
 })

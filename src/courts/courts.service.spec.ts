@@ -491,6 +491,7 @@ describe('CourtsService', () => {
         origemTipo: 'AVULSO',
         alunoId: null,
         statusPagamento: 'pendente_pagamento',
+        adicionais: [],
       });
 
       const result = await service.createBooking(
@@ -1392,6 +1393,7 @@ describe('CourtsService', () => {
             statusPagamento: 'cancelado',
             valor: 150,
             eventos: autorId ? [{ acao: { autorId } }] : [],
+            adicionais: [],
           },
         ]);
         (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(1);
@@ -1452,6 +1454,9 @@ describe('CourtsService', () => {
         // fraco: um segundo gestor vazando passaria verde.
         expect(Object.keys(item).sort()).toEqual(
           [
+            // SPEC-054/D8 — os itens da reserva (adicional, quantidade, preço
+            // congelado). Nenhum dado de autor: a INV-092 continua fechada.
+            'adicionais',
             'alunoId',
             'canceladaPorMim',
             'companyId',
@@ -1813,6 +1818,7 @@ describe('CourtsService', () => {
         horaFim: new Date('1970-01-01T10:00:00.000Z'),
         origemTipo: 'AVULSO',
         alunoId: 'a1',
+        adicionais: [],
       };
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         ...base,
@@ -1836,6 +1842,8 @@ describe('CourtsService', () => {
           statusPagamento: 'pago',
           transicaoId: expect.any(String),
         },
+        // SPEC-054/D8 — a resposta leva os itens da reserva.
+        include: expect.objectContaining({ adicionais: expect.any(Object) }),
       });
       expect(result.statusPagamento).toBe('pago');
     });
@@ -1851,6 +1859,7 @@ describe('CourtsService', () => {
         origemTipo: 'AVULSO',
         alunoId: 'a1',
         statusPagamento: 'pago',
+        adicionais: [],
       });
 
       const result = await service.updatePaymentStatus(
@@ -1995,6 +2004,7 @@ describe('CourtsService', () => {
       horaInicio: parseTimeOnly('09:00'),
       horaFim: parseTimeOnly('10:00'),
       alunoId: 'a1',
+      adicionais: [],
     };
 
     // O buraco mais grave: a constraint EXCLUDE ignora linhas canceladas,
@@ -2209,6 +2219,7 @@ describe('CourtsService', () => {
             origemTipo: 'AVULSO',
             alunoId: null,
             statusPagamento: 'pendente_pagamento',
+            adicionais: [],
           },
         ],
       });
@@ -2265,6 +2276,7 @@ describe('CourtsService', () => {
             origemTipo: 'AVULSO',
             alunoId: null,
             statusPagamento: 'pendente_pagamento',
+            adicionais: [],
           },
         ],
       });
@@ -2370,6 +2382,7 @@ describe('CourtsService', () => {
         statusPagamento: 'pago',
         // Reservada quando a hora custava R$ 80.
         valor: 160,
+        adicionais: [],
       };
       // A quadra hoje custa R$ 100 — se o valor fosse derivado, viraria 200.
       (prisma.quadra.findFirst as jest.Mock).mockResolvedValue({

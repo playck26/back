@@ -125,6 +125,7 @@ model Empresa {
   disponibilidadeProfessors DisponibilidadeProfessor[]
   planos                    Plano[]
   matriculas                Matricula[]
+  tiposDeAdicional          TipoDeAdicional[]
 
   @@map("empresas")
 }
@@ -454,32 +455,32 @@ enum StatusPagamento {
 // `EXCLUDE USING gist` adicionada manualmente na migration (não
 // expressável no schema.prisma) logo abaixo do CREATE TABLE gerado.
 model OcupacaoQuadra {
-  id              String          @id @default(uuid()) @db.Uuid
-  companyId       String          @map("company_id") @db.Uuid
-  quadraId        String          @map("quadra_id") @db.Uuid
-  data            DateTime        @db.Date
-  horaInicio      DateTime        @map("hora_inicio") @db.Time
-  horaFim         DateTime        @map("hora_fim") @db.Time
-  origemTipo      OrigemTipo      @map("origem_tipo")
-  origemTurmaId   String?         @map("origem_turma_id") @db.Uuid
+  id                 String          @id @default(uuid()) @db.Uuid
+  companyId          String          @map("company_id") @db.Uuid
+  quadraId           String          @map("quadra_id") @db.Uuid
+  data               DateTime        @db.Date
+  horaInicio         DateTime        @map("hora_inicio") @db.Time
+  horaFim            DateTime        @map("hora_fim") @db.Time
+  origemTipo         OrigemTipo      @map("origem_tipo")
+  origemTurmaId      String?         @map("origem_turma_id") @db.Uuid
   /// SPEC-039 — a aula particular. **Nao e um `origem_tipo` novo** (D1): a
   /// ocupacao continua `AVULSO`, e o professor e ATRIBUTO dela. Um terceiro
   /// valor no enum quebraria a FK de 4 colunas da carteira e o
   /// `CHECK ocupacoes_valor_por_origem` -- ver o comentario da migration.
-  professorId     String?         @map("professor_id") @db.Uuid
-  alunoId         String?         @map("aluno_id") @db.Uuid
-  statusPagamento StatusPagamento @default(pendente_pagamento) @map("status_pagamento")
+  professorId        String?         @map("professor_id") @db.Uuid
+  alunoId            String?         @map("aluno_id") @db.Uuid
+  statusPagamento    StatusPagamento @default(pendente_pagamento) @map("status_pagamento")
   /// SPEC-011: quanto foi cobrado, congelado na criação. **Nulo para
   /// origem TURMA** — aula recorrente não tem cobrança própria (CON-006),
   /// e `NOT NULL` global quebraria a criação de turma. Garantido por CHECK
   /// escrito à mão na migration.
-  valor           Decimal?        @db.Decimal(10, 2)
+  valor              Decimal?        @db.Decimal(10, 2)
   /// SPEC-011: agrupa os blocos criados por um mesmo pedido. Nulo em
   /// linhas anteriores à spec e em ocupações de turma.
-  pedidoId        String?         @map("pedido_id") @db.Uuid
+  pedidoId           String?         @map("pedido_id") @db.Uuid
   /// Mecanismo de idempotência anterior à SPEC-011, mantido para as linhas
   /// já criadas. Escrita nova deixa nulo e usa `pedidoId`.
-  clientRequestId String?         @map("client_request_id")
+  clientRequestId    String?         @map("client_request_id")
   /// SPEC-032/INV-064 — a IDENTIDADE DA TRANSICAO, trocada a cada mudanca de
   /// estado. Nulavel porque as linhas anteriores a spec nunca tiveram uma
   /// (LIM-032a): so entra na exigencia quando alguem cancelar.
@@ -489,9 +490,15 @@ model OcupacaoQuadra {
   /// INICIO da transacao, nao a identidade dela (o evento de uma transacao
   /// concorrente satisfazia a outra), e `cancelar -> reativar -> cancelar` na
   /// mesma transacao passava com um evento so.
-  transicaoId     String?         @map("transicao_id") @db.Uuid
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
+  transicaoId        String?         @map("transicao_id") @db.Uuid
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+  /// SPEC-054/D5 — o id da transação que criou a ocupação. **Nenhum código o
+  /// escreve:** a trigger `ocupacao_marca_transacao_de_criacao` grava
+  /// `txid_current()` ignorando o valor enviado, e outra trigger recusa mudá-lo.
+  /// O default fica como documentação; o mecanismo é a trigger. Nulo = reserva
+  /// anterior à migration, que não pode ganhar adicional.
+  transacaoDeCriacao BigInt?         @default(dbgenerated("txid_current()")) @map("transacao_de_criacao")
 
   empresa             Empresa              @relation(fields: [companyId], references: [id])
   /// DEF-022 (validação cruzada da SPEC-026, achado 3) — **FK COMPOSTA.**
@@ -523,20 +530,23 @@ model OcupacaoQuadra {
   origemTurma         Turma?               @relation(fields: [companyId, origemTurmaId], references: [companyId, id], onDelete: Restrict, map: "ocupacoes_quadra_origem_turma_fkey")
   avaliacoes          AvaliacaoDeAula[]
 
-  presencas     Presenca[]
-  eventos       EventoDeOcupacao[]
+  presencas         Presenca[]
+  eventos           EventoDeOcupacao[]
   /// Duas relacoes para a MESMA tabela: a FK de `origem_tipo` (INV-067) e a
   /// de tenant. `ocupacoes_quadra` nao tem `UNIQUE (company_id, id,
   /// origem_tipo)`, entao as duas responsabilidades nao cabem numa so.
-  faltasPorTipo FaltaAvisada[]     @relation("FaltaOcupacaoTipo")
-  faltas        FaltaAvisada[]     @relation("FaltaOcupacaoEmpresa")
-  reposicoesPorTipo ReposicaoDeAula[] @relation("ReposicaoOcupacaoTipo")
-  reposicoes        ReposicaoDeAula[] @relation("ReposicaoOcupacaoEmpresa")
+  faltasPorTipo     FaltaAvisada[]        @relation("FaltaOcupacaoTipo")
+  faltas            FaltaAvisada[]        @relation("FaltaOcupacaoEmpresa")
+  reposicoesPorTipo ReposicaoDeAula[]     @relation("ReposicaoOcupacaoTipo")
+  reposicoes        ReposicaoDeAula[]     @relation("ReposicaoOcupacaoEmpresa")
+  /// SPEC-054/INV-132 — as mesmas duas responsabilidades: tenant e avulsa.
+  adicionaisPorTipo AdicionalDaOcupacao[] @relation("AdicionalOcupacaoTipo")
+  adicionais        AdicionalDaOcupacao[] @relation("AdicionalOcupacaoEmpresa")
   // Prisma exige unicidade do par `(id, origem_tipo)` para modelar 1-1, e
   // criar esse UNIQUE seria um índice redundante — `ocupacao_id` já é PK de
   // `chamadas`. Então aqui o tipo é lista e **o banco é que garante uma
   // chamada por ocorrência**, pela PK. Mesmo caminho de `presencas`.
-  chamadas      Chamada[]
+  chamadas          Chamada[]
 
   @@unique([id, origemTipo], map: "ocupacoes_quadra_id_origem_tipo_key")
   /// SPEC-032 — alvo da FK composta de `eventos_de_ocupacao`. Redundante como
@@ -1303,12 +1313,91 @@ model ConfigOperacaoEmpresa {
   /// particular pelo app; o aluno nao ve ninguem, e a tentativa direta e
   /// recusada com `422 AULA_SEM_PRECO`.
   precoAulaPadrao               Decimal? @map("preco_aula_padrao") @db.Decimal(10, 2)
+  /// SPEC-054/D1 — os nomes de exibição dos dois tipos fixos. Nulo = o padrão
+  /// ("Quadra", "Aula particular"). Gravados SÓ por
+  /// `PUT /company-settings/nomes-de-tipo`: o `gravar` da operação enumera os
+  /// seus campos e nunca os toca, para um Admin antigo não os apagar.
+  nomeTipoQuadra                String?  @map("nome_tipo_quadra")
+  nomeTipoAula                  String?  @map("nome_tipo_aula")
   createdAt                     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   empresa Empresa @relation(fields: [companyId], references: [id], onDelete: Restrict, map: "config_operacao_empresa_company_id_fkey")
 
   @@map("config_operacao_empresa")
+}
+
+/// SPEC-054/D1 — o catálogo LIVRE de tipos de adicional do clube ("Raquetes",
+/// "Bolas"). O gestor dá nome; não inventa regra: cobrança, trava e devolução
+/// são do comportamento Adicional, que é código.
+model TipoDeAdicional {
+  id        String   @id @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  nome      String
+  ordem     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  empresa    Empresa     @relation(fields: [companyId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "tipos_de_adicional_company_id_fkey")
+  adicionais Adicional[]
+
+  @@unique([companyId, id], map: "tipos_de_adicional_company_id_id_key")
+  @@unique([companyId, nome], map: "tipos_de_adicional_nome_key")
+  @@map("tipos_de_adicional")
+}
+
+/// SPEC-054 — o que o clube aluga junto com a reserva, com preço e estoque.
+/// **Sem `DELETE` pela API:** tirar de oferta é `ativo: false`, porque o item de
+/// reserva aponta para cá com `RESTRICT` e guarda o que foi cobrado.
+model Adicional {
+  id        String   @id @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  tipoId    String   @map("tipo_id") @db.Uuid
+  nome      String
+  preco     Decimal  @db.Decimal(10, 2)
+  /// D13 — baixar abaixo do já reservado é permitido; as reservas feitas não
+  /// são tocadas. O banco confere o estoque só no momento em que a unidade é
+  /// tomada (INV-133).
+  estoque   Int
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tipo      TipoDeAdicional       @relation(fields: [companyId, tipoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "adicionais_tipo_fkey")
+  ocupacoes AdicionalDaOcupacao[]
+
+  @@unique([companyId, id], map: "adicionais_company_id_id_key")
+  @@unique([companyId, nome], map: "adicionais_nome_key")
+  @@map("adicionais")
+}
+
+/// SPEC-054/D5 — o item de uma reserva: **imutável, e só nasce na transação
+/// que criou a ocupação** (INV-134). O `valorUnitario` congela o preço lido sob
+/// a trava (D6); mudar o preço do adicional depois não muda a reserva feita.
+model AdicionalDaOcupacao {
+  id               String      @id @db.Uuid
+  companyId        String      @map("company_id") @db.Uuid
+  ocupacaoId       String      @map("ocupacao_id") @db.Uuid
+  /// Coluna GERADA (`'AVULSO'`): o alvo da FK de origem — item em ocupação de
+  /// turma é recusado com `23503` (INV-132). Nunca escrita pelo código.
+  ///
+  /// **O item é inserido por SQL cru, nunca por `adicionalDaOcupacao.create`.**
+  /// A introspecção lê a expressão constante como `@default(AVULSO)`, e com esse
+  /// default o Prisma ENVIA o valor — o Postgres recusa escrever em coluna gerada
+  /// (`428C9`, medido em 2026-09-15). Trocar por `dbgenerated(...)` faz o
+  /// `migrate diff` acusar diferença. Ler pela API de modelo funciona.
+  origemDaOcupacao OrigemTipo? @default(AVULSO) @map("origem_da_ocupacao")
+  adicionalId      String      @map("adicional_id") @db.Uuid
+  quantidade       Int
+  valorUnitario    Decimal     @map("valor_unitario") @db.Decimal(10, 2)
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  adicional       Adicional       @relation(fields: [companyId, adicionalId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "adicionais_da_ocupacao_company_id_adicional_id_fkey")
+  ocupacao        OcupacaoQuadra  @relation("AdicionalOcupacaoEmpresa", fields: [companyId, ocupacaoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "adicionais_da_ocupacao_company_id_ocupacao_id_fkey")
+  ocupacaoPorTipo OcupacaoQuadra? @relation("AdicionalOcupacaoTipo", fields: [ocupacaoId, origemDaOcupacao], references: [id, origemTipo], onDelete: Restrict, onUpdate: NoAction, map: "adicionais_da_ocupacao_ocupacao_id_origem_da_ocupacao_fkey")
+
+  @@unique([ocupacaoId, adicionalId], map: "adicionais_da_ocupacao_ocupacao_id_adicional_id_key")
+  @@index([adicionalId], map: "adicionais_da_ocupacao_adicional_idx")
+  @@map("adicionais_da_ocupacao")
 }
 
 /// SPEC-031/D13 — a falta que o aluno avisa sem sair da turma.
@@ -1355,17 +1444,17 @@ model FaltaAvisada {
 /// torna essa subtracao segura sob concorrencia: sem ela, dois POST
 /// simultaneos da mesma falta deixariam o credito NEGATIVO.
 model ReposicaoDeAula {
-  id         String   @id @default(uuid()) @db.Uuid
-  companyId  String   @map("company_id") @db.Uuid
-  alunoId    String   @map("aluno_id") @db.Uuid
-  faltaId    String   @map("falta_id") @db.Uuid
-  ocupacaoId String   @map("ocupacao_id") @db.Uuid
+  id         String     @id @default(uuid()) @db.Uuid
+  companyId  String     @map("company_id") @db.Uuid
+  alunoId    String     @map("aluno_id") @db.Uuid
+  faltaId    String     @map("falta_id") @db.Uuid
+  ocupacaoId String     @map("ocupacao_id") @db.Uuid
   /// Constante `TURMA` (INV-119), garantida por CHECK — o molde do
   /// `presencas.origem_tipo`. **Nao e coluna GERADA de proposito:** gerada
   /// obrigaria este campo a ser opcional, e com ele a relacao inteira, o que
   /// seria mentira no tipo. Repor em reserva avulsa o banco recusa.
   origemTipo OrigemTipo @default(TURMA) @map("origem_tipo")
-  criadoEm   DateTime @default(now()) @map("criado_em") @db.Timestamptz(6)
+  criadoEm   DateTime   @default(now()) @map("criado_em") @db.Timestamptz(6)
 
   empresa         Empresa        @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_company_fkey")
   aluno           Aluno          @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, onUpdate: NoAction, map: "reposicoes_aluno_fkey")

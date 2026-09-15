@@ -74,19 +74,37 @@ export function traduzirRecusaDeEstoque(error: unknown): void {
   ) {
     return;
   }
-  const adicionalId =
-    ADICIONAL_NA_MENSAGEM.exec((error as Error).message)?.[1] ?? undefined;
+  const adicionalId = adicionalDaRecusa(error);
 
   if (sqlstate === SQLSTATE_ESTOQUE_ESGOTADO) {
-    throw new ConflictException({
-      statusCode: 409,
-      code: 'ESTOQUE_ESGOTADO',
-      message:
-        'Um adicional desta reserva não tem unidade livre neste horário.',
-      adicionalId,
-    });
+    throw estoqueEsgotado(adicionalId);
   }
-  throw new UnprocessableEntityException({
+  throw adicionalInativo(adicionalId);
+}
+
+/** O adicional que a trigger nomeou na mensagem, se ela nomeou. */
+export function adicionalDaRecusa(error: unknown): string | undefined {
+  return error instanceof Error
+    ? ADICIONAL_NA_MENSAGEM.exec(error.message)?.[1]
+    : undefined;
+}
+
+/**
+ * `409 ESTOQUE_ESGOTADO`. `disponivel` só vem da criação (SPEC-054/D7), que o lê
+ * numa consulta nova depois do `ROLLBACK` — o movimento não o calcula.
+ */
+export function estoqueEsgotado(adicionalId?: string, disponivel?: number) {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'ESTOQUE_ESGOTADO',
+    message: 'Um adicional desta reserva não tem unidade livre neste horário.',
+    adicionalId,
+    disponivel,
+  });
+}
+
+export function adicionalInativo(adicionalId?: string) {
+  return new UnprocessableEntityException({
     statusCode: 422,
     code: 'ADICIONAL_INATIVO',
     message: 'Um adicional desta reserva não está mais sendo oferecido.',
