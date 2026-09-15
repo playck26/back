@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
   TurmaDoProfessorDetalheResponseDto,
@@ -11,6 +11,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { ClassesService } from './classes.service';
+import { MinhasTurmasQueryDto } from './dto/minhas-turmas-query.dto';
 
 /**
  * SPEC-013 — leitura do professor, separada tanto do CRUD administrativo
@@ -31,10 +32,14 @@ export class MeTeacherClassesController {
   @Get()
   @ApiOkResponse({ type: [TurmaDoProfessorResponseDto] })
   @Roles('professor')
-  minhasTurmas(@CurrentUser() user: AccessTokenPayload) {
+  minhasTurmas(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: MinhasTurmasQueryDto,
+  ) {
     return this.classesService.myTeachingClasses(
       user.companyId as string,
       user.sub,
+      query.incluirInativas === true,
     );
   }
 

@@ -22,6 +22,7 @@ import {
   type PapelDoAutor,
 } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
@@ -887,11 +888,31 @@ export class ClassesService {
   async myTeachingClasses(
     companyId: string,
     usuarioId: string,
+    incluirInativas = false,
   ): Promise<TurmaDoProfessorResponseDto[]> {
     const professor = await this.professorDoUsuario(companyId, usuarioId);
 
+    // SPEC-056/D2 — **a inativa entra só com aula nos últimos 90 dias ou no
+    // futuro**, de qualquer status. É o caso do GAP-015: inativada antes da
+    // primeira aula, ela só tem aulas canceladas — e a SPEC-031/AC-019b exige
+    // que o professor chegue a elas. Sem janela, a lista cresceria para sempre
+    // com turma encerrada há anos. 90 é o teto que a rota de aulas já aceita.
+    const inicioDaJanela = hojeNoFusoDoClube();
+    inicioDaJanela.setUTCDate(inicioDaJanela.getUTCDate() - 90);
+    const filtroDeStatus: Prisma.TurmaWhereInput = incluirInativas
+      ? {
+          OR: [
+            { status: 'ativa' },
+            {
+              status: 'inativa',
+              ocupacoes: { some: { data: { gte: inicioDaJanela } } },
+            },
+          ],
+        }
+      : { status: 'ativa' };
+
     const turmas = await this.prisma.turma.findMany({
-      where: { companyId, professorId: professor.id, status: 'ativa' },
+      where: { companyId, professorId: professor.id, ...filtroDeStatus },
       include: {
         quadra: { select: { nome: true } },
         nivel: { select: { nome: true } },
@@ -917,6 +938,7 @@ export class ClassesService {
       nivelNome: turma.nivel?.nome ?? null,
       capacidade: turma.capacidade,
       totalAlunos: turma._count.alunos,
+      status: turma.status,
     }));
   }
 
@@ -971,6 +993,8 @@ export class ClassesService {
         nome: vinculo.aluno.usuario.nome,
         nivelNome: vinculo.aluno.nivel?.nome ?? null,
       })),
+      // SPEC-056 — a ficha abre turma inativa por id desde sempre; agora diz.
+      status: turma.status,
     };
   }
   /**
