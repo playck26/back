@@ -34,6 +34,37 @@ import {
 // em lote precisou do mesmo numero. Parametro de seguranca em duas copias
 // diverge em silencio, com os dois caminhos continuando a funcionar.
 
+/**
+ * SPEC-049/D2 — **a busca, por palavra e com `AND`.**
+ *
+ * Digitar `silva joao` acha `João da Silva`, e a ordem do que foi digitado não
+ * importa — o gestor não sabe se o clube cadastrou "João Silva" ou "Silva,
+ * João". Um `contains` na frase inteira erraria os dois.
+ *
+ * **String vazia ou só espaços NÃO filtra** (AC-005): é o estado inicial do
+ * campo, não um pedido de "nenhum resultado". Tratar como filtro faria a tela
+ * abrir vazia e parecer que o clube não tem aluno.
+ *
+ * **Não ignora acento** (LIM-049a/D3): `CREATE EXTENSION unaccent` falha no
+ * Postgres embarcado que roda a suíte de banco deste projeto (`0A000`), e subir
+ * uma migration que funciona na Neon e quebra a suíte local seria trocar a
+ * prova pelo conforto. O contorno cabe numa frase na tela: digite o trecho sem
+ * a letra acentuada — `jo` acha `João`.
+ */
+function filtroDeBusca(busca?: string) {
+  const termos = (busca ?? '').trim().split(/\s+/).filter(Boolean);
+  if (termos.length === 0) return {};
+  return {
+    AND: termos.map((termo) => ({
+      usuario: {
+        // `mode: 'insensitive'` vira `ILIKE` — é o que dispensa o gestor de
+        // acertar a caixa do que o clube digitou no cadastro.
+        is: { nome: { contains: termo, mode: 'insensitive' as const } },
+      },
+    })),
+  };
+}
+
 @Injectable()
 export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -94,9 +125,14 @@ export class StudentsService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     // SPEC-009/AC-015: `?vinculo=pendente` é a fila de aprovação do admin.
+    //
+    // SPEC-049/REQ-001 — **e `?busca=` é o que faz o seletor do Admin alcançar
+    // além do centésimo aluno.** O `pageSize` para em `@Max(100)` e continua
+    // parando (D5): o teto protege o banco, e a saída é buscar.
     const where = {
       companyId,
       ...(query.vinculo ? { vinculo: query.vinculo } : {}),
+      ...filtroDeBusca(query.busca),
     };
 
     const [rows, total] = await Promise.all([

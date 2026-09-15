@@ -58,6 +58,21 @@ export class OcupacaoResponseDto {
   alunoId!: string | null;
 
   /**
+   * SPEC-055/D1 — **o nome do aluno DONO da reserva**, lido de `usuarios.nome`.
+   * `null` em ocupação de turma, como o `alunoId`.
+   *
+   * Existe para a tela não montar o nome por lista: o `court-manager` fazia
+   * `listStudents(1, 100)`, e com 101+ alunos a reserva do aluno 101 aparecia
+   * sem nome (LIM-049e).
+   *
+   * **É o dono, não o autor** (D3): a INV-092 continua fechada para quem
+   * cancelou. E o aluno só recebe as próprias reservas, então só o próprio nome.
+   * É leitura, não cópia: renomear o aluno muda aqui (LIM-055a).
+   */
+  @ApiProperty({ type: String, nullable: true, example: 'Ana Souza' })
+  alunoNome!: string | null;
+
+  /**
    * **DEF-016 — este campo dizia `'pendente'`, e o valor não existe.**
    *
    * O enum do banco é `pendente_pagamento` (`schema.prisma`, `StatusPagamento`),

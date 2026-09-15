@@ -2,6 +2,7 @@ import { ValidationPipe, type ValidationPipeOptions } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { diagnosticoDeIp } from '../throttle/diagnostico-de-ip';
 
 /**
  * **A configuração de app-level que produção e e2e compartilham.**
@@ -64,6 +65,8 @@ export const PREFIXO_DA_API = 'api/v1';
  */
 export function configurarApp(app: INestApplication): INestApplication {
   app.setGlobalPrefix(PREFIXO_DA_API);
+  // DEF-031 — TEMPORÁRIO: mede os cabeçalhos de IP só das sondas. Ver o arquivo.
+  app.use(diagnosticoDeIp);
   // CSP desligado: o CSP padrão do helmet bloqueia o script/style inline que o
   // Swagger UI usa (recomendação da própria doc do NestJS). Demais headers
   // continuam ativos.
