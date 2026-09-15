@@ -1,7 +1,6 @@
 import { ValidationPipe } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { diagnosticoDeIp } from '../throttle/diagnostico-de-ip';
 import { criarAppDeProducao, OPCOES_DE_VALIDACAO } from './configurar-app';
 
 /**
@@ -89,8 +88,8 @@ describe('o bootstrap de produção nasce com a fronteira aplicada', () => {
     // Sem estes, `configurarApp` poderia encolher para só o pipe e nenhuma
     // prova notaria — o prefixo é o que faz `/api/v1/...` existir.
     expect(app.setGlobalPrefix).toHaveBeenCalledWith('api/v1');
-    // helmet, cookie-parser e — TEMPORÁRIO, DEF-031 — o diagnóstico de IP.
-    expect(app.use).toHaveBeenCalledTimes(3);
-    expect(app.use).toHaveBeenCalledWith(diagnosticoDeIp);
+    // helmet e cookie-parser. (O diagnóstico de IP do DEF-031 saiu depois da
+    // medição em produção.)
+    expect(app.use).toHaveBeenCalledTimes(2);
   });
 });

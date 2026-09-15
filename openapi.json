@@ -4902,7 +4902,17 @@
     "/api/v1/me/teacher/classes": {
       "get": {
         "operationId": "MeTeacherClassesController_minhasTurmas",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "incluirInativas",
+            "required": false,
+            "in": "query",
+            "description": "Inclui as turmas INATIVAS do professor com alguma aula nos últimos 90 dias ou no futuro (SPEC-056/D2). Sem o parâmetro, só as ativas.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -10603,6 +10613,13 @@
           },
           "totalAlunos": {
             "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
           }
         },
         "required": [
@@ -10612,7 +10629,8 @@
           "quadraNome",
           "nivelNome",
           "capacidade",
-          "totalAlunos"
+          "totalAlunos",
+          "status"
         ]
       },
       "AlunoDoProfessorResponseDto": {
@@ -10667,6 +10685,13 @@
             "items": {
               "$ref": "#/components/schemas/AlunoDoProfessorResponseDto"
             }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
           }
         },
         "required": [
@@ -10676,7 +10701,8 @@
           "quadraNome",
           "nivelNome",
           "capacidade",
-          "alunos"
+          "alunos",
+          "status"
         ]
       },
       "OcorrenciaDaTurmaResponseDto": {

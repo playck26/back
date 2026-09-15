@@ -145,6 +145,14 @@ export class TurmaDoProfessorResponseDto {
 
   @ApiProperty({ type: Number })
   totalAlunos!: number;
+
+  /**
+   * SPEC-056/D1 — **o status real da turma.** O índice só traz inativa com
+   * `incluirInativas`, e a tela precisa saber qual é qual: a ficha dizia "Turma
+   * ativa" fixo, até para turma inativa aberta pelo link.
+   */
+  @ApiProperty({ type: String, enum: ['ativa', 'inativa'] })
+  status!: 'ativa' | 'inativa';
 }
 
 export class AlunoDoProfessorResponseDto {
@@ -197,4 +205,12 @@ export class TurmaDoProfessorDetalheResponseDto {
    */
   @ApiProperty({ type: [AlunoDoProfessorResponseDto] })
   alunos!: AlunoDoProfessorResponseDto[];
+
+  /**
+   * SPEC-056/D1 — **o status real da turma.** O índice só traz inativa com
+   * `incluirInativas`, e a tela precisa saber qual é qual: a ficha dizia "Turma
+   * ativa" fixo, até para turma inativa aberta pelo link.
+   */
+  @ApiProperty({ type: String, enum: ['ativa', 'inativa'] })
+  status!: 'ativa' | 'inativa';
 }

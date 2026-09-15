@@ -337,4 +337,45 @@ describe('turmas (e2e) — SPEC-019', () => {
       expect(res.body).not.toHaveProperty('diaSemana');
     });
   });
+
+  /**
+   * SPEC-056/D1 — o parâmetro `incluirInativas` na fronteira HTTP. Query string
+   * chega como texto, e `Boolean('false')` é `true`: o `"false"` tem de virar
+   * `false`, e não ligar justamente o que foi pedido para desligar.
+   */
+  describe('GET /me/teacher/classes?incluirInativas= — SPEC-056', () => {
+    const pedir = (sufixo: string) =>
+      request(app.getHttpServer())
+        .get(`/api/v1/me/teacher/classes${sufixo}`)
+        .set('Authorization', `Bearer ${token('professor')}`);
+
+    beforeEach(() => {
+      classesMock.myTeachingClasses.mockReset().mockResolvedValue([]);
+    });
+
+    it.each([
+      ['', false],
+      ['?incluirInativas=true', true],
+      ['?incluirInativas=false', false],
+    ])('`%s` chega ao serviço como %s', async (sufixo, esperado) => {
+      await pedir(sufixo).expect(200);
+      expect(classesMock.myTeachingClasses).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        esperado,
+      );
+    });
+
+    it('valor desconhecido cai no PADRÃO (só ativas), e não vira pedido de inativas', async () => {
+      // Medido: o `Transform` do molde (`excluirCanceladas`) trata tudo que não
+      // é `"true"` como `false`. Minha 1ª versão deste caso esperava `400` e
+      // ficou vermelha — o comportamento é o padrão seguro, e é o que fica.
+      await pedir('?incluirInativas=talvez').expect(200);
+      expect(classesMock.myTeachingClasses).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        false,
+      );
+    });
+  });
 });

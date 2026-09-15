@@ -80,6 +80,20 @@ class PublicaController {
   }
 }
 
+/**
+ * DEF-031 — uma rota de força bruta própria, para os visitantes medidos em
+ * produção não dividirem balde com os casos acima (que usam o IP do socket).
+ */
+@Controller('login-simulado')
+class LoginSimuladoController {
+  @Get()
+  @Throttle({ default: { limit: TETO, ttl: 60_000 } })
+  @ContagemPorIp()
+  ok() {
+    return { ok: true };
+  }
+}
+
 /** A mesma rota SEM a marca, para provar que a marca é quem faz a diferença. */
 @Controller('publica-sem-marca')
 class PublicaSemMarcaController {
@@ -104,6 +118,7 @@ class PublicaSemMarcaController {
     ProtegidaController,
     PublicaController,
     PublicaSemMarcaController,
+    LoginSimuladoController,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerPorUsuario }],
 })
@@ -203,6 +218,60 @@ describe('throttle por usuário — com a forma do AppModule', () => {
       .get('/protegida')
       .set('Authorization', `Bearer ${forjado}`)
       .expect(429);
+  });
+
+  /**
+   * DEF-031 — **medido em produção:** atrás do App Platform, o socket (`req.ip`)
+   * é o servidor de entrada da DigitalOcean, o mesmo para todo visitante, e
+   * `do-connecting-ip` traz o visitante (a plataforma sobrescreve o valor que o
+   * cliente manda). Aqui o socket é um só para todos os pedidos — como lá.
+   */
+  describe('DEF-031 — o balde é do VISITANTE, não do balanceador', () => {
+    const tentar = (ip: string, extra: Record<string, string> = {}) => {
+      let pedido = request(app.getHttpServer())
+        .get('/login-simulado')
+        .set('do-connecting-ip', ip);
+      for (const [nome, valor] of Object.entries(extra)) {
+        pedido = pedido.set(nome, valor);
+      }
+      return pedido;
+    };
+
+    it('dois visitantes atrás do mesmo balanceador têm baldes separados — o defeito', async () => {
+      for (let i = 0; i < TETO; i++) {
+        await tentar('203.0.113.10').expect(200);
+      }
+      await tentar('203.0.113.10').expect(429);
+
+      // Antes da correção, este era 429: a senha errada de um gastava a cota
+      // do outro, e o 11º cadastro em 15 minutos do clube inteiro era barrado.
+      await tentar('198.51.100.20').expect(200);
+    });
+
+    it('o limite continua existindo — não virou "tirei o limite"', async () => {
+      for (let i = 0; i < TETO; i++) {
+        await tentar('203.0.113.30').expect(200);
+      }
+      await tentar('203.0.113.30').expect(429);
+    });
+
+    it('IPv6: trocar de endereço dentro do mesmo /64 NÃO compra balde novo', async () => {
+      for (let i = 0; i < TETO; i++) {
+        await tentar(`2804:8aa4:3e19:5600::${i + 1}`).expect(200);
+      }
+      await tentar('2804:8aa4:3e19:5600:f4f4:824f:9fb1:ea9d').expect(429);
+      // Outro /64 é outra pessoa.
+      await tentar('2804:8aa4:3e19:5601::1').expect(200);
+    });
+
+    it('`X-Forwarded-For` forjado não compra balde novo', async () => {
+      for (let i = 0; i < TETO; i++) {
+        await tentar('203.0.113.50').expect(200);
+      }
+      await tentar('203.0.113.50', { 'X-Forwarded-For': '192.0.2.88' }).expect(
+        429,
+      );
+    });
   });
 });
 
