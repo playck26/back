@@ -2120,7 +2120,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConfigOperacaoResponseDto"
+                  "$ref": "#/components/schemas/ConfigOperacaoComNomesResponseDto"
                 }
               }
             }
@@ -2923,7 +2923,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConfigOperacaoResponseDto"
+                  "$ref": "#/components/schemas/ConfigOperacaoComNomesResponseDto"
                 }
               }
             }
@@ -2961,6 +2961,45 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "company-settings"
+        ]
+      }
+    },
+    "/api/v1/company-settings/nomes-de-tipo": {
+      "put": {
+        "operationId": "CompanySettingsController_definirNomesDeTipo",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinirNomesDeTipoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOperacaoComNomesResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "campo ausente ou inválido, ou `VALOR_INVALIDO`"
           }
         },
         "security": [
@@ -3497,6 +3536,337 @@
         ],
         "tags": [
           "me"
+        ]
+      }
+    },
+    "/api/v1/tipos-de-adicional": {
+      "get": {
+        "operationId": "TiposDeAdicionalController_listar",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TipoDeAdicionalResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "tipos-de-adicional"
+        ]
+      },
+      "post": {
+        "operationId": "TiposDeAdicionalController_criar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriarTipoDeAdicionalDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TipoDeAdicionalResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validação, ou `VALOR_INVALIDO`"
+          },
+          "409": {
+            "description": "`TIPO_JA_EXISTE`"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "tipos-de-adicional"
+        ]
+      }
+    },
+    "/api/v1/tipos-de-adicional/{id}": {
+      "patch": {
+        "operationId": "TiposDeAdicionalController_renomear",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditarTipoDeAdicionalDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TipoDeAdicionalResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validação, ou `VALOR_INVALIDO`"
+          },
+          "404": {
+            "description": "`TIPO_NAO_ENCONTRADO`"
+          },
+          "409": {
+            "description": "`TIPO_JA_EXISTE`"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "tipos-de-adicional"
+        ]
+      },
+      "delete": {
+        "operationId": "TiposDeAdicionalController_apagar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "`TIPO_NAO_ENCONTRADO`"
+          },
+          "422": {
+            "description": "`TIPO_EM_USO`, com `adicionais`: a contagem"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "tipos-de-adicional"
+        ]
+      }
+    },
+    "/api/v1/adicionais/disponiveis": {
+      "get": {
+        "operationId": "AdicionaisController_disponiveis",
+        "parameters": [
+          {
+            "name": "data",
+            "required": true,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-10-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "slots",
+            "required": true,
+            "in": "query",
+            "description": "Os horários do pedido, `HH:mm-HH:mm` separados por vírgula. Horários contíguos viram um bloco, como no `POST /bookings`.",
+            "schema": {
+              "example": "09:00-10:00,10:00-11:00",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdicionalDisponivelResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "adicionais"
+        ]
+      }
+    },
+    "/api/v1/adicionais": {
+      "get": {
+        "operationId": "AdicionaisController_listar",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdicionalResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "adicionais"
+        ]
+      },
+      "post": {
+        "operationId": "AdicionaisController_criar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriarAdicionalDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdicionalResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validação, ou `VALOR_INVALIDO`"
+          },
+          "404": {
+            "description": "`TIPO_NAO_ENCONTRADO`"
+          },
+          "409": {
+            "description": "`ADICIONAL_JA_EXISTE`"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "adicionais"
+        ]
+      }
+    },
+    "/api/v1/adicionais/{id}": {
+      "patch": {
+        "operationId": "AdicionaisController_editar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditarAdicionalDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdicionalEditadoResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validação, ou `VALOR_INVALIDO`"
+          },
+          "404": {
+            "description": "`ADICIONAL_NAO_ENCONTRADO` ou `TIPO_NAO_ENCONTRADO`"
+          },
+          "409": {
+            "description": "`ADICIONAL_JA_EXISTE`"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "adicionais"
         ]
       }
     },
@@ -4362,6 +4732,9 @@
               }
             }
           },
+          "403": {
+            "description": "Papel diferente de `aluno` — inclusive `professor` (SPEC-052/D6)."
+          },
           "404": {
             "description": "Turma inexistente ou de outra empresa — as duas respondem igual."
           }
@@ -5157,7 +5530,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OcupacaoResponseDto"
+                  "$ref": "#/components/schemas/OcupacaoComDevolucaoResponseDto"
                 }
               }
             }
@@ -7430,7 +7803,7 @@
           "logoUrl"
         ]
       },
-      "ConfigOperacaoResponseDto": {
+      "ConfigOperacaoComNomesResponseDto": {
         "type": "object",
         "properties": {
           "prazoCancelamentoAulaHoras": {
@@ -7447,12 +7820,22 @@
             "type": "number",
             "nullable": true,
             "example": 150
+          },
+          "nomeTipoQuadra": {
+            "type": "string",
+            "example": "Quadra"
+          },
+          "nomeTipoAula": {
+            "type": "string",
+            "example": "Aula particular"
           }
         },
         "required": [
           "prazoCancelamentoAulaHoras",
           "prazoCancelamentoReservaHoras",
-          "precoAulaPadrao"
+          "precoAulaPadrao",
+          "nomeTipoQuadra",
+          "nomeTipoAula"
         ]
       },
       "MinhaEmpresaResponseDto": {
@@ -7913,6 +8296,24 @@
           "horaFim"
         ]
       },
+      "AdicionalDoPedidoDto": {
+        "type": "object",
+        "properties": {
+          "adicionalId": {
+            "type": "string"
+          },
+          "quantidade": {
+            "type": "number",
+            "example": 2,
+            "minimum": 1,
+            "maximum": 99
+          }
+        },
+        "required": [
+          "adicionalId",
+          "quantidade"
+        ]
+      },
       "CreateBookingDto": {
         "type": "object",
         "properties": {
@@ -7948,11 +8349,46 @@
           "valor": {
             "type": "number",
             "example": 120
+          },
+          "adicionais": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDoPedidoDto"
+            }
           }
         },
         "required": [
           "quadraId",
           "data"
+        ]
+      },
+      "AdicionalDaReservaDto": {
+        "type": "object",
+        "properties": {
+          "adicionalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson"
+          },
+          "quantidade": {
+            "type": "number",
+            "example": 2
+          },
+          "valorUnitario": {
+            "type": "number",
+            "example": 15,
+            "description": "Em reais."
+          }
+        },
+        "required": [
+          "adicionalId",
+          "nome",
+          "quantidade",
+          "valorUnitario"
         ]
       },
       "OcupacaoResponseDto": {
@@ -8006,6 +8442,12 @@
             "type": "number",
             "nullable": true,
             "example": 120
+          },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
           }
         },
         "required": [
@@ -8018,7 +8460,8 @@
           "origemTipo",
           "alunoId",
           "statusPagamento",
-          "valor"
+          "valor",
+          "adicionais"
         ]
       },
       "ReservasCriadasResponseDto": {
@@ -8087,6 +8530,12 @@
             "nullable": true,
             "example": 120
           },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
+          },
           "canceladaPorMim": {
             "type": "boolean",
             "nullable": true,
@@ -8104,6 +8553,7 @@
           "alunoId",
           "statusPagamento",
           "valor",
+          "adicionais",
           "canceladaPorMim"
         ]
       },
@@ -8289,6 +8739,27 @@
           "quadrasComHorarioProprio"
         ]
       },
+      "DefinirNomesDeTipoDto": {
+        "type": "object",
+        "properties": {
+          "nomeTipoQuadra": {
+            "type": "string",
+            "nullable": true,
+            "example": "Espaço",
+            "maxLength": 30
+          },
+          "nomeTipoAula": {
+            "type": "string",
+            "nullable": true,
+            "example": null,
+            "maxLength": 30
+          }
+        },
+        "required": [
+          "nomeTipoQuadra",
+          "nomeTipoAula"
+        ]
+      },
       "DefinirConfigOperacaoDto": {
         "type": "object",
         "properties": {
@@ -8317,6 +8788,31 @@
         "required": [
           "prazoCancelamentoAulaHoras",
           "prazoCancelamentoReservaHoras"
+        ]
+      },
+      "ConfigOperacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "prazoCancelamentoAulaHoras": {
+            "type": "number",
+            "nullable": true,
+            "example": 2
+          },
+          "prazoCancelamentoReservaHoras": {
+            "type": "number",
+            "nullable": true,
+            "example": 4
+          },
+          "precoAulaPadrao": {
+            "type": "number",
+            "nullable": true,
+            "example": 150
+          }
+        },
+        "required": [
+          "prazoCancelamentoAulaHoras",
+          "prazoCancelamentoReservaHoras",
+          "precoAulaPadrao"
         ]
       },
       "DiaDaAgendaResponseDto": {
@@ -8406,6 +8902,12 @@
             "type": "string",
             "nullable": true,
             "example": "Gabriel"
+          },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
           }
         },
         "required": [
@@ -8420,7 +8922,8 @@
           "statusPagamento",
           "valor",
           "criadaPor",
-          "canceladaPor"
+          "canceladaPor",
+          "adicionais"
         ]
       },
       "DiaComItensResponseDto": {
@@ -8583,6 +9086,274 @@
           "janela",
           "precoAula",
           "slots"
+        ]
+      },
+      "TipoDeAdicionalResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquetes"
+          },
+          "ordem": {
+            "type": "number",
+            "example": 0
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "ordem"
+        ]
+      },
+      "CriarTipoDeAdicionalDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Raquetes",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "ordem": {
+            "type": "number",
+            "example": 0,
+            "description": "Ordena na tela. Default 0."
+          }
+        },
+        "required": [
+          "nome"
+        ]
+      },
+      "EditarTipoDeAdicionalDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Raquetes",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "ordem": {
+            "type": "number",
+            "example": 0
+          }
+        }
+      },
+      "AdicionalDisponivelResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipoId": {
+            "type": "string"
+          },
+          "tipoNome": {
+            "type": "string",
+            "example": "Raquetes"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson"
+          },
+          "preco": {
+            "type": "number",
+            "example": 15,
+            "description": "Em reais."
+          },
+          "disponivel": {
+            "type": "number",
+            "example": 2,
+            "description": "O MENOR saldo entre os blocos do pedido — o quanto o `POST /bookings` aceitaria agora. Nunca negativo."
+          }
+        },
+        "required": [
+          "id",
+          "tipoId",
+          "tipoNome",
+          "nome",
+          "preco",
+          "disponivel"
+        ]
+      },
+      "AdicionalResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipoId": {
+            "type": "string"
+          },
+          "tipoNome": {
+            "type": "string",
+            "example": "Raquetes"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson"
+          },
+          "preco": {
+            "type": "number",
+            "example": 15,
+            "description": "Em reais."
+          },
+          "estoque": {
+            "type": "number",
+            "example": 4
+          },
+          "ativo": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "id",
+          "tipoId",
+          "tipoNome",
+          "nome",
+          "preco",
+          "estoque",
+          "ativo"
+        ]
+      },
+      "CriarAdicionalDto": {
+        "type": "object",
+        "properties": {
+          "tipoId": {
+            "type": "string"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "preco": {
+            "type": "number",
+            "example": 15,
+            "minimum": 0.01
+          },
+          "estoque": {
+            "type": "number",
+            "example": 4,
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tipoId",
+          "nome",
+          "preco",
+          "estoque"
+        ]
+      },
+      "EditarAdicionalDto": {
+        "type": "object",
+        "properties": {
+          "tipoId": {
+            "type": "string"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "preco": {
+            "type": "number",
+            "example": 15,
+            "minimum": 0.01
+          },
+          "estoque": {
+            "type": "number",
+            "example": 3,
+            "minimum": 0
+          },
+          "ativo": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "HorarioAcimaDoEstoqueDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "example": "2026-10-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "09:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "10:00"
+          },
+          "reservado": {
+            "type": "number",
+            "example": 4,
+            "description": "Unidades reservadas que se sobrepõem a este horário."
+          }
+        },
+        "required": [
+          "data",
+          "horaInicio",
+          "horaFim",
+          "reservado"
+        ]
+      },
+      "AdicionalEditadoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tipoId": {
+            "type": "string"
+          },
+          "tipoNome": {
+            "type": "string",
+            "example": "Raquetes"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Raquete Wilson"
+          },
+          "preco": {
+            "type": "number",
+            "example": 15,
+            "description": "Em reais."
+          },
+          "estoque": {
+            "type": "number",
+            "example": 4
+          },
+          "ativo": {
+            "type": "boolean",
+            "example": true
+          },
+          "horariosAcimaDoEstoque": {
+            "description": "D13 — reservas futuras, não canceladas, em que a soma sobreposta passou do estoque novo. Vazio quando nada ficou acima.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HorarioAcimaDoEstoqueDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "tipoId",
+          "tipoNome",
+          "nome",
+          "preco",
+          "estoque",
+          "ativo",
+          "horariosAcimaDoEstoque"
         ]
       },
       "MovimentoDeCreditoResponseDto": {
@@ -10158,6 +10929,16 @@
             "example": 2,
             "description": "Quantas aulas dele neste dia."
           },
+          "turmas": {
+            "type": "number",
+            "example": 1,
+            "description": "Quantas das `aulas` são aula de TURMA. `aulas = turmas + particulares` (SPEC-052/INV-129)."
+          },
+          "particulares": {
+            "type": "number",
+            "example": 1,
+            "description": "Quantas das `aulas` são aula PARTICULAR (SPEC-039). `aulas = turmas + particulares` (SPEC-052/INV-129)."
+          },
           "pendentes": {
             "type": "number",
             "example": 1,
@@ -10167,6 +10948,8 @@
         "required": [
           "data",
           "aulas",
+          "turmas",
+          "particulares",
           "pendentes"
         ]
       },
@@ -10633,6 +11416,86 @@
         },
         "required": [
           "status"
+        ]
+      },
+      "OcupacaoComDevolucaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "18:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "origemTipo": {
+            "type": "string",
+            "enum": [
+              "AVULSO",
+              "TURMA"
+            ]
+          },
+          "alunoId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "statusPagamento": {
+            "type": "string",
+            "enum": [
+              "pendente_pagamento",
+              "pago",
+              "cancelado"
+            ]
+          },
+          "valor": {
+            "type": "number",
+            "nullable": true,
+            "example": 120
+          },
+          "adicionais": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdicionalDaReservaDto"
+            }
+          },
+          "creditoDevolvidoCentavos": {
+            "type": "number",
+            "nullable": true,
+            "description": "Centavos devolvidos à carteira do aluno neste cancelamento, ou null quando não havia consumo ativo (e sempre null ao marcar como pago).",
+            "example": 12000
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "quadraId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "origemTipo",
+          "alunoId",
+          "statusPagamento",
+          "valor",
+          "adicionais",
+          "creditoDevolvidoCentavos"
         ]
       }
     }

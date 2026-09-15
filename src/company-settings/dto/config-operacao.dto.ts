@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsNumber, Min, ValidateIf } from 'class-validator';
+import {
+  IsInt,
+  IsNumber,
+  IsString,
+  Length,
+  Matches,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 
 /**
  * SPEC-031/REQ-001 — os dois prazos de cancelamento, em horas.
@@ -108,4 +116,67 @@ export class ConfigOperacaoResponseDto {
   prazoCancelamentoReservaHoras!: number | null;
   @ApiProperty({ type: Number, nullable: true, example: 150 })
   precoAulaPadrao!: number | null;
+}
+
+/** SPEC-054/D1 — os nomes que o clube não configurou. */
+export const NOMES_DE_TIPO_PADRAO = {
+  quadra: 'Quadra',
+  aula: 'Aula particular',
+} as const;
+
+/**
+ * SPEC-054/D8 — **a leitura** da configuração ganha os dois nomes, **já
+ * resolvidos**: nunca `null`, porque quem desenha a tela não deveria saber qual
+ * é o padrão.
+ *
+ * **Estende** o DTO de hoje, e não o substitui: o `PUT /company-settings/operacao`
+ * continua devolvendo os três campos — ele não grava nomes, e responder com
+ * eles faria parecer que grava.
+ */
+export class ConfigOperacaoComNomesResponseDto extends ConfigOperacaoResponseDto {
+  @ApiProperty({ example: 'Quadra' })
+  nomeTipoQuadra!: string;
+
+  @ApiProperty({ example: 'Aula particular' })
+  nomeTipoAula!: string;
+}
+
+/** Mesma regra do `CHECK` do banco: sem espaço nas pontas, 1 a 30. */
+const NOME_DE_TIPO = /^\S(?:[\s\S]*\S)?$/;
+
+/**
+ * SPEC-054/D8 — **os dois campos são OBRIGATÓRIOS no corpo**, e `null` é o
+ * padrão. Mesma razão dos prazos acima: com um só, *"mandei só o da quadra"*
+ * seria ambíguo entre "deixe a aula como está" e "volte a aula ao padrão".
+ * Um campo ausente dá `400`.
+ *
+ * Rota PRÓPRIA, e não o `PUT /company-settings/operacao`: o `gravar` daquele
+ * enumera os seus campos, e um Admin antigo salvando prazos não conhece os nomes
+ * — nem os apaga (AC-006).
+ */
+export class DefinirNomesDeTipoDto {
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'Espaço',
+    maxLength: 30,
+  })
+  // `ValidateIf(v !== null)`: `null` passa (é o padrão); AUSENTE não passa — sem
+  // o campo, `@IsString` recusa `undefined` e a rota responde 400.
+  @ValidateIf((_objeto, valor) => valor !== null)
+  @IsString()
+  @Length(1, 30)
+  @Matches(NOME_DE_TIPO, {
+    message: 'o nome não pode começar nem terminar com espaço',
+  })
+  nomeTipoQuadra!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: null, maxLength: 30 })
+  @ValidateIf((_objeto, valor) => valor !== null)
+  @IsString()
+  @Length(1, 30)
+  @Matches(NOME_DE_TIPO, {
+    message: 'o nome não pode começar nem terminar com espaço',
+  })
+  nomeTipoAula!: string | null;
 }

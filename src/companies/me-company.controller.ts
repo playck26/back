@@ -18,7 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { UpdateMinhaEmpresaDto } from './dto/update-minha-empresa.dto';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
-import { ConfigOperacaoResponseDto } from '../company-settings/dto/config-operacao.dto';
+import { ConfigOperacaoComNomesResponseDto } from '../company-settings/dto/config-operacao.dto';
 
 /**
  * DEF-003 — a empresa precisa saber o próprio `slug` para divulgar o link
@@ -54,11 +54,13 @@ export class MeCompanyController {
    * e esse 404 que o rollout usa como sinal de versao.
    */
   @Get('operacao')
-  @ApiOkResponse({ type: ConfigOperacaoResponseDto })
+  // SPEC-054/D8 — com os nomes de Quadra e Aula particular, ja resolvidos: e
+  // daqui que o `/reservas/nova` do Cliente os le.
+  @ApiOkResponse({ type: ConfigOperacaoComNomesResponseDto })
   @Roles('company_admin', 'aluno', 'professor')
   operacaoDaMinhaEmpresa(
     @CurrentUser() user: AccessTokenPayload,
-  ): Promise<ConfigOperacaoResponseDto> {
+  ): Promise<ConfigOperacaoComNomesResponseDto> {
     return this.operacao.ler(user.companyId as string);
   }
 

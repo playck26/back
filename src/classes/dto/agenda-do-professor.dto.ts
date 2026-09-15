@@ -15,6 +15,25 @@ export class DiaDaAgendaDoProfessorDto {
   @ApiProperty({ example: 2, description: 'Quantas aulas dele neste dia.' })
   aulas!: number;
 
+  /**
+   * SPEC-052/D1 — a partição de `aulas` por tipo, para a grade pintar um
+   * marcador por tipo sem abrir cada dia. `aulas = turmas + particulares`
+   * (INV-129, só aplicação: os três saem do mesmo laço).
+   */
+  @ApiProperty({
+    example: 1,
+    description:
+      'Quantas das `aulas` são aula de TURMA. `aulas = turmas + particulares` (SPEC-052/INV-129).',
+  })
+  turmas!: number;
+
+  @ApiProperty({
+    example: 1,
+    description:
+      'Quantas das `aulas` são aula PARTICULAR (SPEC-039). `aulas = turmas + particulares` (SPEC-052/INV-129).',
+  })
+  particulares!: number;
+
   @ApiProperty({
     example: 1,
     description:

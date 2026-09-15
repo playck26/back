@@ -362,6 +362,11 @@ describe('SPEC-039/TASK-002 — os portões da aula particular', () => {
   it('D2: `valor` SEM `professorId` é recusado — o preço da quadra é da quadra', async () => {
     const r = await recusa(reservar({ valor: 999 }));
     expect(r.code).toBe('VALOR_SEM_PROFESSOR');
+    // SPEC-053/D2, AC-003 -- a mensagem chega a tela do gestor (`parseError` usa
+    // `body.message`), e deixa de falar em "reserva de quadra".
+    expect(r.message).toBe(
+      'O valor só pode ser definido em aula particular; sem professor, vale o preço da quadra.',
+    );
     const [{ n }] = await db.$queryRawUnsafe<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM ocupacoes_quadra WHERE company_id = '${EMPRESA}'`,
     );

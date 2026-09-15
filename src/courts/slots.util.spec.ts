@@ -117,3 +117,68 @@ describe('fingerprintDoPedido (SPEC-011/AC-010)', () => {
     ).not.toBe(base);
   });
 });
+
+/**
+ * SPEC-054/D9 — **a impressão digital preserva o formato antigo.**
+ *
+ * A idempotência compara com `!==` (`pedidoJaAtendido`). Um segmento a mais em
+ * TODO pedido faria o replay de uma chave gravada antes do deploy, com o mesmo
+ * corpo, responder `422 IDEMPOTENCY_KEY_REUSED`. Por isso as asserções de
+ * pedido sem adicional são LITERAIS, e não "igual à outra chamada": comparar
+ * duas saídas da função nova passaria com qualquer formato.
+ */
+describe('fingerprintDoPedido com adicionais (SPEC-054/D9)', () => {
+  const ADIC_A = '00000000-0000-4000-8000-00000000000a';
+  const ADIC_B = '00000000-0000-4000-8000-00000000000b';
+
+  it('sem adicional: byte a byte o formato de antes da SPEC-054', () => {
+    expect(
+      fingerprintDoPedido('q1', '2026-08-24', [
+        slot('15:00', '16:00'),
+        slot('09:00', '10:00'),
+      ]),
+    ).toBe('q1|2026-08-24|09:00-10:00,15:00-16:00');
+  });
+
+  it('lista vazia é ausência — o mesmo texto de sem adicional', () => {
+    expect(
+      fingerprintDoPedido('q1', '2026-08-24', [slot('09:00', '10:00')], []),
+    ).toBe('q1|2026-08-24|09:00-10:00');
+  });
+
+  it('com adicional: segmento próprio, na ordem de adicionalId', () => {
+    const esperado = `q1|2026-08-24|09:00-10:00|adicionais=${ADIC_A}:2,${ADIC_B}:1`;
+    expect(
+      fingerprintDoPedido(
+        'q1',
+        '2026-08-24',
+        [slot('09:00', '10:00')],
+        [
+          { adicionalId: ADIC_B, quantidade: 1 },
+          { adicionalId: ADIC_A, quantidade: 2 },
+        ],
+      ),
+    ).toBe(esperado);
+  });
+
+  it('mesmos horários com adicionais diferentes são pedidos diferentes (AC-012)', () => {
+    const um = fingerprintDoPedido(
+      'q1',
+      '2026-08-24',
+      [slot('09:00', '10:00')],
+      [{ adicionalId: ADIC_A, quantidade: 1 }],
+    );
+    const dois = fingerprintDoPedido(
+      'q1',
+      '2026-08-24',
+      [slot('09:00', '10:00')],
+      [{ adicionalId: ADIC_A, quantidade: 2 }],
+    );
+    const sem = fingerprintDoPedido('q1', '2026-08-24', [
+      slot('09:00', '10:00'),
+    ]);
+
+    expect(um).not.toBe(dois);
+    expect(um).not.toBe(sem);
+  });
+});

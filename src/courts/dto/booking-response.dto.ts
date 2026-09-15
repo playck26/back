@@ -12,6 +12,24 @@ import { ApiProperty } from '@nestjs/swagger';
  * impede alguém "simplificar" a tela recalculando de novo.
  */
 
+/**
+ * SPEC-054/D8 — um item da reserva, **congelado** como o `valor`: o preço que o
+ * adicional tinha na confirmação, não o de hoje (AC-011).
+ */
+export class AdicionalDaReservaDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  adicionalId!: string;
+
+  @ApiProperty({ type: String, example: 'Raquete Wilson' })
+  nome!: string;
+
+  @ApiProperty({ type: Number, example: 2 })
+  quantidade!: number;
+
+  @ApiProperty({ type: Number, example: 15, description: 'Em reais.' })
+  valorUnitario!: number;
+}
+
 export class OcupacaoResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -69,6 +87,14 @@ export class OcupacaoResponseDto {
    */
   @ApiProperty({ type: Number, nullable: true, example: 120 })
   valor!: number | null;
+
+  /**
+   * SPEC-054/D8 — os adicionais da reserva, **já somados em `valor`** (D6). Lista
+   * vazia quando não há. *O `back` anterior à SPEC-054 não manda o campo — a
+   * tela trata ausência como lista vazia durante o rollout.*
+   */
+  @ApiProperty({ type: [AdicionalDaReservaDto] })
+  adicionais!: AdicionalDaReservaDto[];
 }
 
 /**
@@ -271,6 +297,10 @@ export class ItemDaAgendaResponseDto {
    */
   @ApiProperty({ type: String, nullable: true, example: 'Gabriel' })
   canceladaPor!: string | null;
+
+  /** SPEC-054/D12 — os adicionais da reserva, já somados em `valor`. */
+  @ApiProperty({ type: [AdicionalDaReservaDto] })
+  adicionais!: AdicionalDaReservaDto[];
 }
 
 /**
@@ -304,6 +334,34 @@ export class DashboardResumoResponseDto {
  * `null` distingue "não havia o que devolver" de `0`, que não acontece hoje e
  * seria uma devolução de valor zero se acontecesse.
  */
+/**
+ * SPEC-048/AC-009 — o `PATCH .../payment-status` responde a ocupação **e**
+ * quanto voltou.
+ *
+ * ## Por que herda em vez de repetir
+ *
+ * A resposta continua sendo a ocupação; o que muda é **um campo a mais**.
+ * Copiar os vinte campos daqui criaria dois lugares para manter, e o primeiro
+ * a divergir seria o que ninguém olha.
+ *
+ * ## Por que `null` e não `0`
+ *
+ * A mesma distinção que a `CancelamentoResponseDto` comprou na SPEC-039:
+ * **`null` é "não havia o que devolver"**, e é o que a tela usa para ficar
+ * calada em vez de prometer um crédito que não voltou. Marcar como `pago` sai
+ * `null` sempre — não é cancelamento, e não devolve nada (AC-010).
+ */
+export class OcupacaoComDevolucaoResponseDto extends OcupacaoResponseDto {
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Centavos devolvidos à carteira do aluno neste cancelamento, ou null quando não havia consumo ativo (e sempre null ao marcar como pago).',
+    example: 12000,
+  })
+  creditoDevolvidoCentavos!: number | null;
+}
+
 export class CancelamentoResponseDto {
   @ApiProperty({
     type: Number,

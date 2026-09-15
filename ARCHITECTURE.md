@@ -1,13 +1,20 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-10** (era 2026-09-09).
+**Fonte: análise direta do código.** Data: **2026-09-15** (era 2026-09-10).
 **Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
 defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
 **DEF-027**.
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
-**Números conferidos por comando nesta data, não estimados:** **38
+**Números conferidos por comando em 2026-09-15, com a SPEC-054 (Entrega B):**
+**40 migrations, 37 tabelas, 105 caminhos / 147 operações** no `openapi.json`,
+**17 triggers** não-internas (`ls -d prisma/migrations/*/`, `pg_tables` sem
+`_prisma_migrations`, `pg_trigger` sem as internas). *A SPEC-054 somou 1
+migration, 3 tabelas (`tipos_de_adicional`, `adicionais`,
+`adicionais_da_ocupacao`), 6 caminhos / 9 operações e 7 triggers.*
+
+*Registro de 2026-09-10:* **38
 migrations, 34 tabelas, 97 caminhos / 136 operações** no `openapi.json`, 10
 triggers não-internas. *A tabela nova é `reposicoes_de_aula` (SPEC-046); as
 rotas novas são `/matriculas/vencimentos` (SPEC-045) e as três de
@@ -494,7 +501,7 @@ a replicar:
 | `usuarios` | MOD-001 | identidade. E-mail único **global** (INV-004). `senha_temporaria` tranca a conta até a troca (INV-008). `foto_key` (SPEC-018) é a foto de quem **tem conta**; CHECK exige empresa, então `super_admin` não tem foto |
 | `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira |
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
-| `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload |
+| `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload. **SPEC-054/D9:** pedido sem adicional (ou com lista vazia) grava `quadraId\|data\|slots` byte a byte como antes; com adicional, ganha `\|adicionais=<id>:<q>,…` em ordem de id — a comparação é `!==`, e mudar o formato de todo pedido quebraria o replay de chaves já gravadas |
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
 | `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
 | `niveis` | MOD-003 | único por `(company_id, nome)` |
@@ -556,10 +563,21 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 | `eventos_matricula_append_only` (SPEC-031/D21) | a **terceira** da família, e a que faltava: `eventos_de_matricula` é auditoria como as outras duas. Consertar só duas deixaria o fluxo funcional verde e a limpeza do CI abortando |
 | `movimentos_append_only`, `movimentos_atualiza_saldo`, `movimentos_consumo_ativo_unico`, `alunos_saldo_so_pelo_ledger`, `ocupacao_cancelada_exige_devolucao` (SPEC-033) | as cinco da carteira — o saldo só muda pelo ledger, e cancelar reserva paga com crédito exige a devolução no mesmo COMMIT |
 | `ocupacao_reativada_exige_evento` (SPEC-035/INV-106) | **a metade que faltava da INV-064.** Espelho literal da `ocupacao_cancelada_exige_evento`, na direção contrária: `cancelado -> não-cancelado` exige evento `reativada` desta transição |
+| `adicional_cabe_no_estoque`, `ocupacao_com_adicionais_confere_estoque` (SPEC-054/INV-133) | **o estoque conferido pelo banco no momento em que a unidade é tomada** — na inserção do item e quando a ocupação com item muda de intervalo ou sai de `cancelado`. `FOR UPDATE` no adicional e a soma em instrução separada de função `VOLATILE`: sob `READ COMMITTED` a segunda instrução enxerga quem venceu a espera. Recusam com `P3303` (esgotado) e `P3304` (inativo, só na inserção), e a mensagem nomeia o adicional |
+| `ocupacao_marca_transacao_de_criacao`, `ocupacao_transacao_de_criacao_imutavel`, `adicionais_da_ocupacao_append_only` (SPEC-054/INV-134) | **o item só nasce na transação da reserva e não muda.** O marcador é do banco (sobrescreve o valor enviado — forjar no `INSERT` não basta) e a inserção do item exige `transacao_de_criacao IS NOT DISTINCT FROM txid_current()` |
+| `adicionais_cabem_no_valor`, `valor_com_adicionais_imutavel` (SPEC-054/INV-135) | a soma dos itens cabe no `valor` da ocupação, e o `valor` de ocupação com item não muda |
 
-**São dez triggers hoje** (`SELECT tgname FROM pg_trigger WHERE NOT
-tgisinternal`, conferido contra Postgres 18.4 local), e não três — a tabela
-acima estava parada na SPEC-031.
+**São dezessete triggers desde a SPEC-054** (eram dez; `SELECT tgname FROM
+pg_trigger WHERE NOT tgisinternal`, conferido contra Postgres 18.4 local). *A
+tabela chegou a ficar parada na SPEC-031 com três.*
+
+**A SPEC-054 é a primeira em que a trigger RECUSA POR REGRA DE NEGÓCIO** — as
+anteriores guardam auditoria e dinheiro contra erro de caminho. Por isso a
+Entrega A (tradução de `P3303`/`P3304` no catch da criação e do movimento) subiu
+**antes** da migration: o código anterior tratava a recusa como corrida perdida e
+respondia `500`. Medido no ensaio de rollback: **com o código anterior a A, mover
+reserva com item para horário sem estoque dá `500`; com A, `409
+ESTOQUE_ESGOTADO`.**
 
 **A INV-106 merece uma linha própria, porque ela conserta um raciocínio e não
 um defeito.** A INV-064 guardava só a ida (`-> cancelado`), e isso estava
@@ -898,6 +916,12 @@ diferentes, e o `?` acabaria esquecido em alguma chamada.
 **O escopo mora num método só** (`filtroDasAulasDele`): as duas rotas usam o
 mesmo `where`, porque escopo repetido é escopo que um dia diverge.
 
+**SPEC-052 — o resumo do mês diz o TIPO.** `DiaDaAgendaDoProfessorDto` ganhou
+`turmas` e `particulares`, contados **no mesmo laço** de `aulas`, por
+`origemTipo`: é isso que sustenta `aulas = turmas + particulares` (INV-129, só
+aplicação, provada em todo dia devolvido no FIT-013). `aulas` não saiu — o
+Cliente em produção lê esse campo.
+
 **SPEC-039 — o filtro ganhou um `OR`, e as duas origens são diferentes.** Na
 ocorrência de TURMA o professor vem **pela turma**; na aula particular, pela
 coluna da própria ocupação — o `CHECK` proíbe a coluna na linha de turma
@@ -958,7 +982,12 @@ funcionalidade sem porta de entrada. As duas usam o **mesmo corte** de "já
 terminou" — lista que oferece o que o servidor recusa é a armadilha do
 DEF-011 por outra porta.
 
-**A privacidade é estrutural, não um filtro.** Aluno e professor recebem
+**SPEC-052/D6 — o professor não lê mais a média.** `GET /me/classes/:id/avaliacao`
+é `@Roles('aluno')`; o professor recebe `403` sem o serviço ser chamado (INV-130,
+`test/media-da-turma-por-papel.e2e-spec.ts`). Não é conserto de vazamento: a
+mesma média segue pública para os alunos do clube.
+
+**A privacidade é estrutural, não um filtro.** O aluno recebe
 `MediaDaTurmaResponseDto`; o gestor recebe `AvaliacaoParaOGestorDto`. São
 dois DTOs, e não um `if` no meio do caminho, para que acrescentar um campo do
 lado errado seja decisão visível e não vazamento silencioso (INV-025a, com
@@ -1072,6 +1101,33 @@ futuros.
 O mesmo valeu para as fixtures: elas usavam `CURRENT_DATE` (data do Postgres,
 que roda em UTC) e **13 provas caíram** na hora da conversão, com
 `AULA_FUTURA`. Ver `test/banco/hoje-no-clube-sql.ts`.
+
+### Adicionais da reserva: o estoque é do banco, a ordem é da aplicação (SPEC-054)
+
+Rotas em `API_CONTRACTS.md` (CON-005.14 a .19). O que a planta precisa guardar:
+
+- **O valor do adicional está DENTRO de `ocupacoes_quadra.valor`.** Débito,
+  `SALDO_INSUFICIENTE`, devolução, prazo e baixa não mudaram uma linha; o preço é
+  lido sob a trava e congelado em `valor_unitario`.
+- **Nível 2b** (`DATA_MODEL.md`): a criação trava `alunos` → `adicionais` (em ordem
+  de `id`, **uma instrução por linha**, `estoque-de-adicionais.ts`) → ocupação; o
+  movimento lê os itens sem trava e trava `adicionais` antes da ocupação. **A
+  trava da aplicação não é o que dá correção** — tirá-la deixou o FIT-046 verde —;
+  ela dá ORDEM: tirada a função de ordenar, a prova determinística
+  (`spec-054-ordem-de-travas.db-spec.ts`, barreira observada em `pg_locks`) dá
+  `40P01` toda vez.
+- **O item é inserido por SQL cru.** A introspecção vê a coluna gerada
+  `origem_da_ocupacao` como `@default(AVULSO)`, e com esse default o Prisma envia
+  o valor e o Postgres recusa (`428C9`); `dbgenerated(...)` quebra o `migrate
+  diff`. Ler pela API de modelo funciona.
+- **A impressão digital do pedido sem adicional é byte a byte a de antes** (D9):
+  replay de chave gravada pelo código anterior devolve o original, e o inverso
+  também (ensaiado).
+- **O classificador de recusas do catálogo classifica pela OPERAÇÃO**
+  (`recusas-do-catalogo.ts`), não pelo nome da constraint, que o Prisma nem sempre
+  entrega; só o `23514` de `CHECK` vira `400 VALOR_INVALIDO`.
+- **Rollback:** de B para A é seguro; para antes de A, com itens no banco, é
+  proibido — runbook em `OPERATIONS.md`.
 
 ### A aula particular pelo ALUNO, e a rota que a tela pediu (SPEC-047)
 
@@ -1219,7 +1275,7 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 | Só o módulo dono escreve na sua tabela; os outros chamam método público dele | testes provam a delegação (ex.: MOD-001 não chama `tx.aluno.create`) |
 | Invariante crítica é constraint de banco, não `if` de aplicação | ensaio de migration tenta violar cada constraint antes de aplicar |
 | **Nada dentro de `$transaction` custa uma ida ao banco por item de uma lista.** O laço que consulta por ocorrência cabe no timeout enquanto a lista é pequena, e estoura quando o produto deixa a lista crescer — foi o DEF-013 | `def-013-orcamento-da-transacao.spec.ts` monta `ClassesService`, `CourtsService` e `HorarioFuncionamentoService` de verdade e conta as idas: o teto não pode crescer com o número de encontros |
-| **Erro do Prisma só vira 409 se for de dado.** Transação expirada e conexão caída não são corrida perdida — traduzi-las em "conflito de horário" faz o produto mentir sobre uma quadra vazia | `ehCorridaPerdida()` em `courts.service.ts`, com teste de P2028 nos dois caminhos de escrita |
+| **Erro do Prisma só vira 409 se for de dado.** Transação expirada e conexão caída não são corrida perdida — traduzi-las em "conflito de horário" faz o produto mentir sobre uma quadra vazia | `ehCorridaPerdida()` em `courts.service.ts`, com teste de P2028 nos dois caminhos de escrita. **SPEC-054/D11 — e a ordem do catch é contrato, nos dois caminhos (criar e mover):** (1) `traduzirRecusaDeEstoque` (`P3303` → `409 ESTOQUE_ESGOTADO`, `P3304` → `422 ADICIONAL_INATIVO`), (2) `ehTravaDoProfessor` → `409 PROFESSOR_INDISPONIVEL`, (3) só então corrida perdida. Recusa de negócio antes de corrida, porque retentar repete a mesma recusa e a segunda tentativa relança cru como `500` — o movimento não tinha o passo 2 e respondia `500` (**DEF-032**, reproduzido por execução em 2026-09-15). O SQLSTATE sai de `sqlstateDoErro` (`recusas-de-estoque.ts`), que lê as **duas** representações do Prisma: `meta.code` do `P2010` (SQL cru) e a mensagem do `PrismaClientUnknownRequestError` (API de modelo, sem `code`). Provas: `spec-054-entrega-a.db-spec.ts` (trigger de teste real, contagem de disparos contra retentativa) e `def-032-mover-aula-com-professor-ocupado.db-spec.ts` |
 | Rota autenticada nova nasce coberta por INV-008 | está no `JwtAuthGuard`; sair da trava exige `@PermiteSenhaTemporaria()` explícito |
 | **Comparação de UUID em memória não depende da grafia.** Onde os dois lados vêm do banco não há o que fazer; onde um lado vem de fora, ele é normalizado no ponto de comparação — `resolverDeLinhas` (corpo de `POST /classes`) e `TenantGuard` (params crus, porque guard roda antes de pipe) | `horario-funcionamento.service.spec.ts` ("a grafia do `quadraId` não decide a herança") e `tenant.guard.spec.ts`, os dois com par positivo e negativo e fixture de UUID **com letra hexadecimal** — `1111-…` não tem caixa, e `toUpperCase()` sobre ele é no-op |
 | **UUID de rota e de corpo chegam ao handler na grafia do banco** (`UuidCanonicoPipe` em todo `@Param` de id; `@UuidNoCorpo` em todo DTO de entrada) | **Quatro camadas, e o limite de cada uma declarado ao lado dela — foi anunciar cobertura que uma camada não tinha que produziu sete rodadas de achado.** (1) **Declaração:** os dois gates leem metadado de runtime, exigem **identidade exata** do pipe com nada depois dele na cadeia, e `@Transform` que roda em `PLAIN_TO_CLASS` (um `{ toPlainOnly: true }` satisfazia a versão anterior sem normalizar nada). (2) **Descoberta:** controllers pelo grafo de módulos, métodos pelo **`MetadataScanner` do próprio Nest** — `getOwnPropertyNames` via 56 parâmetros onde o Nest registra 60, perdendo o que `CourtSportsController`/`CourtCategoriesController` herdam de `CatalogoController`; DTOs pelos `design:paramtypes` das rotas. (3) **Resultado:** `fronteira-do-uuid.http.spec.ts`, por HTTP. (4) **Bootstrap:** `bootstrap-de-producao.spec.ts` executa `criarAppDeProducao`, a função que o `main.ts` chama. **Limite que fica:** guard roda antes de pipe e precisa de prova própria (só o `TenantGuard` lê `params` hoje), e nada impede o `main.ts` mexer no app depois de recebê-lo |

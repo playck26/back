@@ -155,6 +155,8 @@ describe('AgendaService (SPEC-012)', () => {
       statusPagamento: 'pendente_pagamento',
       // SPEC-011: valor congelado na criação.
       valor: 160,
+      // SPEC-054/D12 — o include traz os itens.
+      adicionais: [],
     };
 
     it('AC-003: devolve quadra, horário, origem, responsável e status', async () => {
@@ -184,6 +186,7 @@ describe('AgendaService (SPEC-012)', () => {
         // (LIM-032a): a tela mostra "sem historico", nao "criada por —".
         criadaPor: null,
         canceladaPor: null,
+        adicionais: [],
       });
     });
 

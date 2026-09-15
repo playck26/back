@@ -125,11 +125,28 @@ export class AgendaDoProfessorService {
       },
     });
 
-    const porDia = new Map<string, { aulas: number; pendentes: number }>();
+    const porDia = new Map<
+      string,
+      { aulas: number; turmas: number; particulares: number; pendentes: number }
+    >();
     for (const o of ocupacoes) {
       const dia = o.data.toISOString().slice(0, 10);
-      const atual = porDia.get(dia) ?? { aulas: 0, pendentes: 0 };
+      const atual = porDia.get(dia) ?? {
+        aulas: 0,
+        turmas: 0,
+        particulares: 0,
+        pendentes: 0,
+      };
       atual.aulas += 1;
+      // SPEC-052/D1 — a partição por tipo sai DESTE laço, e não de uma
+      // segunda consulta: é o que sustenta `aulas = turmas + particulares`
+      // (INV-129). O critério é o mesmo de `filtroDasAulasDele`, que só
+      // devolve TURMA dele e AVULSO com `professor_id` dele.
+      if (o.origemTipo === 'AVULSO') {
+        atual.particulares += 1;
+      } else {
+        atual.turmas += 1;
+      }
       // SPEC-027 — só conta como pendência a aula que JÁ TERMINOU sem
       // chamada. `futura` e `em_andamento` não são esquecimento, e pintar o
       // ponto vermelho nelas fazia o calendário cobrar o professor por uma
