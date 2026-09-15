@@ -18,6 +18,7 @@ import {
   traduzirRecusaDeCancelamento,
 } from '../creditos/set-constraints';
 import { agruparEmBlocos, fingerprintDoPedido } from './slots.util';
+import { traduzirRecusaDeEstoque } from './recusas-de-estoque';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -898,6 +899,11 @@ export class CourtsService {
         // A pré-checagem já recusa o caso conhecido; isto cobre a corrida
         // entre dois pedidos simultâneos, que é o que a `EXCLUDE` existe para
         // resolver e nenhuma pré-checagem alcança.
+        //
+        // SPEC-054/D11 — **a recusa de estoque vem antes de tudo.** Ela não é
+        // corrida: retentar repete a mesma recusa, e depois da segunda tentativa
+        // o erro subiria cru como `500`.
+        traduzirRecusaDeEstoque(error);
         if (ehTravaDoProfessor(error)) {
           throw new ConflictException({
             statusCode: 409,
@@ -2392,6 +2398,21 @@ export class CourtsService {
           return this.toOcupacaoResponse(movida);
         });
       } catch (error) {
+        // SPEC-054/D11 — a recusa de estoque da trigger não é corrida.
+        traduzirRecusaDeEstoque(error);
+        // SPEC-054/AC-029 — **DEF-032.** A `no_overlap_por_professor` também
+        // levanta `23P01`. Sem esta tradução o erro caía no `findConflito`
+        // abaixo, que só olha a QUADRA — e a outra aula do professor está em
+        // outra quadra, por definição do caso —, retentava e subia como `500`.
+        // A criação sempre traduziu; o movimento não. Reproduzido por execução
+        // em 2026-09-15, antes deste conserto.
+        if (ehTravaDoProfessor(error)) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'PROFESSOR_INDISPONIVEL',
+            message: 'O professor já tem compromisso neste horário.',
+          });
+        }
         if (ehCorridaPerdida(error)) {
           // **Mesma disciplina do `createBooking` (linhas 573-612), e ela
           // faltava aqui.** Corrida perdida com o conflito JA VISIVEL e 409
