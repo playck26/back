@@ -83,6 +83,9 @@ const APPEND_ONLY: ReadonlySet<string> = new Set([
   'eventos_de_matricula',
   // SPEC-033/INV-070: o ledger da carteira e a QUARTA da familia.
   'movimentos_de_credito',
+  // SPEC-054/INV-134: o item da reserva e a QUINTA. So ela: `adicionais` e
+  // `tipos_de_adicional` sao catalogo, e o gestor os edita.
+  'adicionais_da_ocupacao',
 ]);
 
 /**
@@ -110,6 +113,9 @@ export const TABELAS_DA_EMPRESA = [
   // devolucao juntos. A consequencia e para quem vier depois: **partir esta
   // limpeza em dois comandos quebraria**, e o `23503` nao diria isso.
   'movimentos_de_credito',
+  // SPEC-054: ANTES de `ocupacoes_quadra` e de `adicionais` — as tres FKs do
+  // item sao RESTRICT (tenant, origem e adicional).
+  'adicionais_da_ocupacao',
   // SPEC-031/D18: ANTES dos TRES pais — `ocupacoes_quadra`, `alunos` e
   // `empresas` —, porque as quatro FKs dela sao RESTRICT. Quatro rodadas de
   // validacao acharam um pai faltando, um por vez, por listar em vez de
@@ -124,6 +130,10 @@ export const TABELAS_DA_EMPRESA = [
   'faltas_avisadas',
   'ocupacoes_quadra',
   'pedidos_reserva',
+  // SPEC-054: DEPOIS do item (que aponta para `adicionais`), e `adicionais`
+  // ANTES de `tipos_de_adicional` — a `adicionais_tipo_fkey` e RESTRICT.
+  'adicionais',
+  'tipos_de_adicional',
   // SPEC-031/D21: ANTES de `turmas`, `alunos` e `acoes_administrativas` — tem
   // FK RESTRICT para as tres.
   'eventos_de_matricula',

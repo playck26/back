@@ -244,6 +244,15 @@ jobs:
           -- RESTRICT -- e sem desligar a trigger dele o DELETE e recusado
           -- antes de a FK sequer ser avaliada.
           ALTER TABLE movimentos_de_credito DISABLE TRIGGER movimentos_append_only;
+          -- SPEC-054: a QUINTA da familia append-only -- o item da reserva.
+          ALTER TABLE adicionais_da_ocupacao DISABLE TRIGGER adicionais_da_ocupacao_append_only;
+          -- SPEC-054: o item da reserva antes de TUDO que ele referencia --
+          -- ocupacao e adicional, com RESTRICT. O ledger nao aponta para ele.
+          DELETE FROM adicionais_da_ocupacao WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
+                OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
+          DELETE FROM adicionais_da_ocupacao WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-033: o ledger PRIMEIRO. Ele aponta para ocupacao, acao,
           -- aluno e usuario, as quatro com RESTRICT. A autorreferencia do
           -- estorno so nao quebra porque consumo e devolucao da MESMA
@@ -301,6 +310,10 @@ jobs:
           DELETE FROM config_pagamento_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-031/D22/1b: company-scoped com FK RESTRICT. Sem esta linha o
           -- DELETE FROM empresas abaixo recebe 23503.
+          -- SPEC-054: o catalogo de adicionais -- o adicional antes do tipo
+          -- (adicionais_tipo_fkey e RESTRICT), os dois antes da empresa.
+          DELETE FROM adicionais WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
+          DELETE FROM tipos_de_adicional WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM config_operacao_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM contratos_da_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM categorias_de_quadra WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
@@ -330,6 +343,7 @@ jobs:
           ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
           ALTER TABLE eventos_de_matricula ENABLE TRIGGER eventos_matricula_append_only;
           ALTER TABLE movimentos_de_credito ENABLE TRIGGER movimentos_append_only;
+          ALTER TABLE adicionais_da_ocupacao ENABLE TRIGGER adicionais_da_ocupacao_append_only;
           COMMIT;
           SQL
 
@@ -772,6 +786,14 @@ jobs:
           -- RESTRICT -- e sem desligar a trigger dele o DELETE e recusado
           -- antes de a FK sequer ser avaliada.
           ALTER TABLE movimentos_de_credito DISABLE TRIGGER movimentos_append_only;
+          -- SPEC-054: a QUINTA da familia append-only -- o item da reserva.
+          ALTER TABLE adicionais_da_ocupacao DISABLE TRIGGER adicionais_da_ocupacao_append_only;
+          -- SPEC-054: o item da reserva primeiro, como no bloco de residuos.
+          DELETE FROM adicionais_da_ocupacao WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
+                OR origem_turma_id = '$CLASS_ID');
+          DELETE FROM adicionais_da_ocupacao WHERE company_id = '$COMPANY_ID';
           -- SPEC-033: o ledger PRIMEIRO, como no bloco de residuos. O
           -- smoke agora lanca credito e reserva consumindo, entao a empresa
           -- do run TEM movimentos -- nao e caso latente.
@@ -814,6 +836,9 @@ jobs:
           DELETE FROM quadras WHERE company_id = '$COMPANY_ID';
           DELETE FROM config_pagamento_empresa WHERE company_id = '$COMPANY_ID';
           -- SPEC-031/D22/1b: antes do DELETE FROM empresas logo abaixo.
+          -- SPEC-054: idem ao bloco de cima -- adicional, tipo, e so entao a empresa.
+          DELETE FROM adicionais WHERE company_id = '$COMPANY_ID';
+          DELETE FROM tipos_de_adicional WHERE company_id = '$COMPANY_ID';
           DELETE FROM config_operacao_empresa WHERE company_id = '$COMPANY_ID';
           DELETE FROM contratos_da_empresa WHERE company_id = '$COMPANY_ID';
           DELETE FROM categorias_de_quadra WHERE company_id = '$COMPANY_ID';
@@ -835,6 +860,7 @@ jobs:
           ALTER TABLE acoes_administrativas ENABLE TRIGGER acoes_append_only;
           ALTER TABLE eventos_de_matricula ENABLE TRIGGER eventos_matricula_append_only;
           ALTER TABLE movimentos_de_credito ENABLE TRIGGER movimentos_append_only;
+          ALTER TABLE adicionais_da_ocupacao ENABLE TRIGGER adicionais_da_ocupacao_append_only;
           COMMIT;
           SQL
 
