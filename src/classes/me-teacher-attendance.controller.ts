@@ -1,10 +1,8 @@
 import {
   Body,
   Controller,
-  DefaultValuePipe,
   Get,
   Param,
-  ParseIntPipe,
   Put,
   Query,
   UseGuards,
@@ -23,7 +21,7 @@ import {
 } from './dto/me-response.dto';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
-import { PaginationQueryDto } from '../people/dto/pagination-query.dto';
+import { OcorrenciasDaTurmaQueryDto } from './dto/ocorrencias-da-turma-query.dto';
 import { PresencaService } from './presenca.service';
 
 /**
@@ -46,21 +44,29 @@ export class MeTeacherAttendanceController {
   ocorrencias(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', UuidCanonicoPipe) id: string,
-    // Default de 30 e teto de 90: sem limite, o endpoint cresce junto com o
-    // histórico e um dia devolve anos de aula (ressalva da validação).
-    @Query('dias', new DefaultValuePipe(30), ParseIntPipe) dias: number,
     // SPEC-027: paginacao por cima da janela de dias. As duas coexistem de
     // proposito — `dias` limita QUANTO HISTORICO existe, `page` limita
     // quanto vem por vez. Trocar uma pela outra perderia a metade util.
-    @Query() paginacao: PaginationQueryDto,
+    //
+    // **DEF-034 — `dias` mora no DTO, e não pode voltar a ser `@Query('dias')`
+    // solto.** Ao lado de um `@Query()` de objeto, a validação global
+    // (`forbidNonWhitelisted`) confere o DTO contra a query INTEIRA e derruba
+    // o que não for propriedade dele: a query que o app manda respondia
+    // `400 property dias should not exist`, e a lista de aulas do professor
+    // nunca funcionou em produção. Coberto por
+    // `test/me-teacher-ocorrencias.e2e-spec.ts` — que é o primeiro teste desta
+    // rota pela camada HTTP.
+    @Query() query: OcorrenciasDaTurmaQueryDto,
   ) {
     return this.presencas.ocorrenciasDaTurma(
       user.companyId as string,
       user.sub,
       id,
-      Math.min(Math.max(dias, 1), 90),
-      paginacao.page,
-      paginacao.pageSize,
+      // Default de 30 e teto de 90: sem limite, o endpoint cresce junto com o
+      // histórico e um dia devolve anos de aula (ressalva da validação).
+      Math.min(Math.max(query.dias ?? 30, 1), 90),
+      query.page,
+      query.pageSize,
     );
   }
 

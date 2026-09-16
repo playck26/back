@@ -230,6 +230,17 @@ as rotas não registradas, e o defeito só apareceria como 404 em produção. Po
 isso o primeiro teste de `court-catalogs.e2e-spec.ts` chama-se *"A ROTA
 EXISTE"*.
 
+**E "a rota existe" não basta: ela precisa aceitar a query que o app manda
+(DEF-034, 2026-09-16).** `GET /me/teacher/classes/:id/ocorrencias` declarava
+`dias` por `@Query('dias', …)` **ao lado** de um `@Query()` de objeto. A
+validação global roda com `forbidNonWhitelisted: true`, que confere o DTO
+contra a query **inteira** — então a rota respondia `400 property dias should
+not exist` para a única query que o app monta, e **a lista de aulas do
+professor nunca funcionou em produção**. O db-spec exercitava o serviço; os
+unitários montavam o controller **sem pipe**; os dois passavam. **Parâmetro de
+query mora no DTO** — varredura feita, era a única rota do projeto com a
+mistura, e o teste de HTTP dela é `test/me-teacher-ocorrencias.e2e-spec.ts`.
+
 **Uma sabotagem que passou mudou o teste, não o código.** Trocar o `mode:
 'insensitive'` do serviço não derrubava nada: o dublê do e2e comparava com
 `toLowerCase()` **sempre**, então o comportamento central da task não era
