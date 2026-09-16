@@ -214,3 +214,67 @@ export class TurmaDoProfessorDetalheResponseDto {
   @ApiProperty({ type: String, enum: ['ativa', 'inativa'] })
   status!: 'ativa' | 'inativa';
 }
+
+/**
+ * SPEC-057/TASK-002 (card 5352) — **um colega de turma, visto pelo aluno.**
+ *
+ * **Sem `id`, de propósito.** O nome é o que a tela mostra; um id é uma alça
+ * para pedir outra coisa depois. E `souEu` existe para a tela marcar a
+ * própria linha **sem** que o servidor devolva identificador de ninguém.
+ */
+export class ColegaDeTurmaResponseDto {
+  @ApiProperty({ type: String, example: 'João Silva' })
+  nome!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  nivelNome!: string | null;
+
+  @ApiProperty({ type: Boolean })
+  souEu!: boolean;
+}
+
+/**
+ * SPEC-057/TASK-002 (card 5352) — **a ficha da turma, do lado do aluno.**
+ *
+ * Autorizado por resposta literal do Israel (2026-09-16): *"Sim, nome e
+ * nível"*. **É superfície de dado pessoal de terceiro**, e a INV-139 é o
+ * limite: nome e nível dos colegas, e nada mais.
+ *
+ * **DTO próprio, e não reuso do `TurmaDetalheResponseDto`** (o do gestor):
+ * aquele carrega **e-mail** do aluno. Reusar seria vazamento direto, e a
+ * economia de vinte linhas não paga isso.
+ *
+ * O mecanismo que sustenta a INV-139 é **só aplicação** — projeção explícita
+ * aqui, mais o escopo de matrícula no `WHERE`. Não há constraint de banco que
+ * impeça um `include` a mais amanhã; o que impede é o teste de **conjunto
+ * exato de chaves** em `test/me-classes-detalhe.e2e-spec.ts`.
+ */
+export class TurmaDoAlunoDetalheResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ type: String })
+  nome!: string;
+
+  @ApiProperty({ type: String, enum: ['ativa', 'inativa'] })
+  status!: 'ativa' | 'inativa';
+
+  @ApiProperty({ type: Number })
+  capacidade!: number;
+
+  @ApiProperty({ type: [TurmaEncontroResponseDto] })
+  encontros!: TurmaEncontroResponseDto[];
+
+  @ApiProperty({ type: String })
+  quadraNome!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  nivelNome!: string | null;
+
+  /** `null` quando a turma não tem professor atribuído. */
+  @ApiProperty({ type: String, nullable: true })
+  professorNome!: string | null;
+
+  @ApiProperty({ type: [ColegaDeTurmaResponseDto] })
+  colegas!: ColegaDeTurmaResponseDto[];
+}

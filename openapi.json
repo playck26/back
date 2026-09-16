@@ -4511,7 +4511,28 @@
     "/api/v1/me/classes": {
       "get": {
         "operationId": "MeClassesController_myUpcomingClasses",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "de",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "ate",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-07",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -4609,6 +4630,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErroDeMatriculaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "get": {
+        "operationId": "MeClassesController_minhaTurma",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaDoAlunoDetalheResponseDto"
                 }
               }
             }
@@ -10407,6 +10461,83 @@
           "statusCode",
           "code",
           "message"
+        ]
+      },
+      "ColegaDeTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "João Silva"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "souEu": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "nome",
+          "nivelNome",
+          "souEu"
+        ]
+      },
+      "TurmaDoAlunoDetalheResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "capacidade": {
+            "type": "number"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "quadraNome": {
+            "type": "string"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "professorNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "colegas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ColegaDeTurmaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "status",
+          "capacidade",
+          "encontros",
+          "quadraNome",
+          "nivelNome",
+          "professorNome",
+          "colegas"
         ]
       },
       "AulaAnteriorResponseDto": {

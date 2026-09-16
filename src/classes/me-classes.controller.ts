@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -21,6 +22,11 @@ import {
 } from '@nestjs/swagger';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
+import { TurmaDoAlunoDetalheResponseDto } from './dto/turma-response.dto';
+import {
+  MAXIMO_DE_DIAS_DA_JANELA,
+  MinhasAulasQueryDto,
+} from './dto/minhas-aulas-query.dto';
 import {
   ErroDeMatriculaResponseDto,
   MatriculaDoAlunoResponseDto,
@@ -46,6 +52,41 @@ import { FaltaAvisadaService } from './falta-avisada.service';
 
 // CON-004.5 (SPEC-005) — exclusivo do aluno, separado do CRUD
 // administrativo de turmas em ClassesController (company_admin).
+/**
+ * SPEC-057/TASK-002/D11 — **as fronteiras da janela.**
+ *
+ * O DTO valida cada data como DIA DO CALENDÁRIO; o que ele não consegue
+ * julgar é a relação entre as duas. Estas três regras ficam aqui, e não no
+ * serviço, porque são contrato: quem erra recebe `400`, não uma lista
+ * silenciosamente diferente da que pediu.
+ *
+ * - **os dois juntos**: meia janela é ambígua — "de 01/09" até quando?
+ * - **não invertida**;
+ * - **no máximo 90 dias**: sem teto, um pedido de dois anos carrega o
+ *   histórico inteiro de um aluno antigo numa tela de 390px.
+ */
+function janelaValidada(
+  query: MinhasAulasQueryDto,
+): { de: string; ate: string } | undefined {
+  const { de, ate } = query;
+  if (!de && !ate) return undefined;
+  if (!de || !ate) {
+    throw new BadRequestException('Informe `de` e `ate` juntos.');
+  }
+  if (de > ate) {
+    throw new BadRequestException('`de` não pode ser depois de `ate`.');
+  }
+  const dias =
+    (Date.parse(`${ate}T00:00:00.000Z`) - Date.parse(`${de}T00:00:00.000Z`)) /
+    86_400_000;
+  if (dias > MAXIMO_DE_DIAS_DA_JANELA) {
+    throw new BadRequestException(
+      `A janela não pode passar de ${MAXIMO_DE_DIAS_DA_JANELA} dias.`,
+    );
+  }
+  return { de, ate };
+}
+
 @ApiTags('me')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -61,10 +102,14 @@ export class MeClassesController {
   @Get()
   @ApiOkResponse({ type: [AulaDoAlunoResponseDto] })
   @Roles('aluno')
-  myUpcomingClasses(@CurrentUser() user: AccessTokenPayload) {
+  myUpcomingClasses(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: MinhasAulasQueryDto,
+  ) {
     return this.classesService.myUpcomingClasses(
       user.companyId as string,
       user.sub,
+      janelaValidada(query),
     );
   }
 
@@ -109,6 +154,28 @@ export class MeClassesController {
    * `GET /me/classes` devolve só o futuro. Sem esta, não haveria como chegar
    * até a aula para dar nota.
    */
+  /**
+   * SPEC-057/TASK-002 (card 5352) — **a ficha da turma do aluno.**
+   *
+   * Declarada DEPOIS de `disponiveis` e `anteriores`: rota com segmento fixo
+   * tem de vir antes da que casa `:id`, senão `/me/classes/anteriores` entra
+   * aqui com `id = "anteriores"` e o pipe de UUID responde 400 para uma rota
+   * que existe.
+   */
+  @Get(':id')
+  @ApiOkResponse({ type: TurmaDoAlunoDetalheResponseDto })
+  @Roles('aluno')
+  minhaTurma(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.classesService.myStudentClassDetail(
+      user.companyId as string,
+      user.sub,
+      id,
+    );
+  }
+
   @Get('anteriores')
   @ApiOkResponse({ type: AulasAnterioresPaginadasResponseDto })
   @Roles('aluno')

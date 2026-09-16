@@ -12,6 +12,7 @@ import {
   gerarDatasSemanaisFuturas,
   hojeNoFusoDoClube,
   parseTimeOnly,
+  parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
@@ -33,6 +34,7 @@ import type {
   TurmaDoProfessorDetalheResponseDto,
   TurmaDoProfessorResponseDto,
   TurmaResponseDto,
+  TurmaDoAlunoDetalheResponseDto,
 } from './dto/turma-response.dto';
 
 /**
@@ -649,9 +651,17 @@ export class ClassesService {
   // (não tem aluno_id próprio), então remarcar/cancelar uma ocorrência
   // individual não é suportado nesta rodada (GAP-008,
   // TARGET_ARCHITECTURE.md) — CON-004.6/004.7 ficam para depois do MVP.
+  /**
+   * SPEC-057/TASK-002/D11 — **a janela por data.**
+   *
+   * Sem `janela`, o comportamento é o de sempre: do dia corrente em diante. É
+   * isso que mantém o Cliente anterior a esta task funcionando enquanto o
+   * novo não sobe — o contrato **expande**, não troca.
+   */
   async myUpcomingClasses(
     companyId: string,
     usuarioId: string,
+    janela?: { de: string; ate: string },
   ): Promise<AulaDoAlunoResponseDto[]> {
     const aluno = await this.prisma.aluno.findFirst({
       where: { usuarioId, companyId },
@@ -682,7 +692,13 @@ export class ClassesService {
         origemTipo: 'TURMA',
         origemTurmaId: { in: turmaIds },
         statusPagamento: { not: 'cancelado' },
-        data: { gte: hojeUTC },
+        // A janela é **inclusiva nos dois extremos**: `lte` na data, e não
+        // `lt` no dia seguinte. As duas dariam o mesmo resultado aqui
+        // (`data` é dia, sem hora), e a primeira é a que se lê igual ao
+        // contrato publicado.
+        data: janela
+          ? { gte: parseDateOnly(janela.de), lte: parseDateOnly(janela.ate) }
+          : { gte: hojeUTC },
       },
       // SPEC-044 — `select`, e não `include`. Com `include: { origemTurma:
       // true, quadra: true }` cada ocorrência trazia a turma e a quadra
@@ -940,6 +956,91 @@ export class ClassesService {
       totalAlunos: turma._count.alunos,
       status: turma.status,
     }));
+  }
+
+  /**
+   * SPEC-057/TASK-002 (card 5352) — **a ficha da turma, para o ALUNO.**
+   *
+   * > *"gostaria de ver o que tem na minha turma: professor, outros alunos,
+   * > nível da turma"*
+   *
+   * **O escopo de matrícula vai no `WHERE`**, e não é conferido depois de
+   * buscar: turma de que ele não participa responde **404, não 403** — `403`
+   * confirmaria que ela existe, e quem está de fora não tem direito nem a
+   * essa confirmação. É o mesmo desenho do `myTeachingClassDetail` acima.
+   *
+   * **A projeção é explícita** (`select`, não `include` largo) porque aqui
+   * mora a INV-139: nome e nível dos colegas, e nada mais. Este é o primeiro
+   * lugar do produto em que um aluno lê dado de outro aluno — autorizado pelo
+   * Israel em 2026-09-16 —, e o limite é **só aplicação**. O que o sustenta é
+   * o teste de conjunto exato de chaves, não uma constraint.
+   */
+  async myStudentClassDetail(
+    companyId: string,
+    usuarioId: string,
+    turmaId: string,
+  ): Promise<TurmaDoAlunoDetalheResponseDto> {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { usuarioId, companyId },
+      select: { id: true },
+    });
+    if (!aluno) {
+      throw new ForbiddenException();
+    }
+
+    const turma = await this.prisma.turma.findFirst({
+      where: {
+        id: turmaId,
+        companyId,
+        alunos: { some: { alunoId: aluno.id } },
+      },
+      select: {
+        id: true,
+        nome: true,
+        status: true,
+        capacidade: true,
+        quadra: { select: { nome: true } },
+        nivel: { select: { nome: true } },
+        professor: { select: { nome: true } },
+        encontros: {
+          select: { diaSemana: true, horaInicio: true, horaFim: true },
+          orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }],
+        },
+        alunos: {
+          select: {
+            aluno: {
+              select: {
+                id: true,
+                usuario: { select: { nome: true } },
+                nivel: { select: { nome: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!turma) {
+      throw new NotFoundException();
+    }
+
+    return {
+      id: turma.id,
+      nome: turma.nome,
+      status: turma.status,
+      capacidade: turma.capacidade,
+      encontros: paraEncontrosDaResposta(turma.encontros),
+      quadraNome: turma.quadra.nome,
+      nivelNome: turma.nivel ? turma.nivel.nome : null,
+      professorNome: turma.professor ? turma.professor.nome : null,
+      // O `id` do colega é lido para decidir `souEu` e **não sai na
+      // resposta**: a tela precisa marcar a própria linha, não endereçar
+      // ninguém.
+      colegas: turma.alunos.map((vinculo) => ({
+        nome: vinculo.aluno.usuario.nome,
+        nivelNome: vinculo.aluno.nivel ? vinculo.aluno.nivel.nome : null,
+        souEu: vinculo.aluno.id === aluno.id,
+      })),
+    };
   }
 
   async myTeachingClassDetail(
