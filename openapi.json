@@ -4986,14 +4986,6 @@
             }
           },
           {
-            "name": "dias",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
             "name": "page",
             "required": false,
             "in": "query",
@@ -5008,6 +5000,16 @@
             "in": "query",
             "schema": {
               "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "dias",
+            "required": false,
+            "in": "query",
+            "description": "Janela de histórico em dias, contada para trás a partir de hoje. Cortada em 90 pelo servidor.",
+            "schema": {
+              "default": 30,
               "type": "number"
             }
           }
