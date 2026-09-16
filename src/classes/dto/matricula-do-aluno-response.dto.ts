@@ -72,10 +72,10 @@ export class TurmaDisponivelResponseDto {
    * aparece para todo mundo (INV-141). O filtro é de EXIBIÇÃO — o servidor
    * não recusa entrada por nível (D14).
    */
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
   nivelId!: string | null;
 
-  @ApiPropertyOptional({ example: 'Iniciante', nullable: true })
+  @ApiProperty({ type: String, example: 'Iniciante', nullable: true })
   nivelNome!: string | null;
 
   @ApiProperty({ type: [EncontroDaTurmaDisponivelDto] })

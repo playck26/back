@@ -10354,12 +10354,12 @@
             "description": "Por que não pode entrar. `null` quando pode."
           },
           "nivelId": {
-            "type": "object",
+            "type": "string",
             "format": "uuid",
             "nullable": true
           },
           "nivelNome": {
-            "type": "object",
+            "type": "string",
             "example": "Iniciante",
             "nullable": true
           },
@@ -10378,6 +10378,8 @@
           "matriculados",
           "jaEstouNela",
           "podeEntrar",
+          "nivelId",
+          "nivelNome",
           "encontros"
         ]
       },
@@ -11220,12 +11222,12 @@
             "example": "Iniciante Quinta"
           },
           "nivelId": {
-            "type": "object",
+            "type": "string",
             "format": "uuid",
             "nullable": true
           },
           "nivelNome": {
-            "type": "object",
+            "type": "string",
             "example": "Iniciante",
             "nullable": true
           },
@@ -11254,6 +11256,8 @@
           "ocupacaoId",
           "turmaId",
           "turmaNome",
+          "nivelId",
+          "nivelNome",
           "quadraNome",
           "data",
           "horaInicio",
