@@ -448,6 +448,23 @@
               "example": "silva joao",
               "type": "string"
             }
+          },
+          {
+            "name": "nivelId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "semNivel",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10336,6 +10353,16 @@
             ],
             "description": "Por que não pode entrar. `null` quando pode."
           },
+          "nivelId": {
+            "type": "object",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "object",
+            "example": "Iniciante",
+            "nullable": true
+          },
           "encontros": {
             "type": "array",
             "items": {
@@ -11191,6 +11218,16 @@
           "turmaNome": {
             "type": "string",
             "example": "Iniciante Quinta"
+          },
+          "nivelId": {
+            "type": "object",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "object",
+            "example": "Iniciante",
+            "nullable": true
           },
           "quadraNome": {
             "type": "string",
