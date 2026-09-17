@@ -51,40 +51,6 @@ export class MinhaAvaliacaoResponseDto {
   updatedAt!: Date | null;
 }
 
-/**
- * **INV-025a vive nesta forma.** Nada de autoria, nada de comentário.
- *
- * É o que aluno e professor recebem. O gestor tem outra rota, e o que
- * distingue as duas não é um filtro no meio do caminho: são dois DTOs
- * diferentes, para que acrescentar um campo aqui por engano seja uma decisão
- * visível e não um vazamento silencioso.
- */
-export class MediaDaTurmaResponseDto {
-  /**
-   * SPEC-028 — **`null` agora significa "ninguém avaliou ainda"**, e só isso.
-   *
-   * Antes significava também "há avaliações, mas menos que o mínimo de 3".
-   * Esse mínimo foi removido por decisão do Israel em 2026-08-30 — a média sai
-   * desde a primeira nota. Ver `AvaliacaoDeAulaService`, onde o que se perdeu
-   * está registrado.
-   */
-  @ApiProperty({
-    type: Number,
-    nullable: true,
-    example: 4.3,
-    description:
-      'null quando ainda não há nenhuma avaliação. Uma casa decimal: a tela desenha estrelas, e precisão maior seria falsa.',
-  })
-  media!: number | null;
-
-  @ApiProperty({
-    example: 7,
-    description:
-      'Quantas avaliações compõem a média. A tela mostra ao lado dela — média sem o tamanho da amostra faz 5,0 de uma nota parecer 5,0 de vinte.',
-  })
-  quantidade!: number;
-}
-
 /** **Só o gestor recebe isto.** */
 export class AvaliacaoParaOGestorDto {
   @ApiProperty({ example: 'Ana Souza' })

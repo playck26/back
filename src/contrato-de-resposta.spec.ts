@@ -443,7 +443,6 @@ describe('DEF-016 — todo enum publicado tem origem conferível', () => {
  */
 const ROTAS_QUE_PRECISAM_DECLARAR_404: [string, string][] = [
   ['/api/v1/classes/{id}/avaliacoes', 'get'],
-  ['/api/v1/me/classes/{id}/avaliacao', 'get'],
   ['/api/v1/me/classes/aulas/{ocupacaoId}/avaliacao', 'put'],
 ];
 

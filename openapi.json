@@ -4817,47 +4817,6 @@
         ]
       }
     },
-    "/api/v1/me/classes/{id}/avaliacao": {
-      "get": {
-        "operationId": "MeClassesController_mediaDaTurma",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MediaDaTurmaResponseDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Papel diferente de `aluno` — inclusive `professor` (SPEC-052/D6)."
-          },
-          "404": {
-            "description": "Turma inexistente ou de outra empresa — as duas respondem igual."
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "me"
-        ]
-      }
-    },
     "/api/v1/me/classes/aulas/{ocupacaoId}/avaliacao": {
       "put": {
         "operationId": "MeClassesController_avaliarAula",
@@ -10841,26 +10800,6 @@
           "page",
           "pageSize",
           "total"
-        ]
-      },
-      "MediaDaTurmaResponseDto": {
-        "type": "object",
-        "properties": {
-          "media": {
-            "type": "number",
-            "nullable": true,
-            "example": 4.3,
-            "description": "null quando ainda não há nenhuma avaliação. Uma casa decimal: a tela desenha estrelas, e precisão maior seria falsa."
-          },
-          "quantidade": {
-            "type": "number",
-            "example": 7,
-            "description": "Quantas avaliações compõem a média. A tela mostra ao lado dela — média sem o tamanho da amostra faz 5,0 de uma nota parecer 5,0 de vinte."
-          }
-        },
-        "required": [
-          "media",
-          "quantidade"
         ]
       },
       "AvaliarAulaDto": {
