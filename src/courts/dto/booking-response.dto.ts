@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PALETA_DE_QUADRA } from '../paleta-de-quadra';
 
 /**
  * SPEC-021/TASK-005 — o **contrato de resposta de reserva e agenda**.
@@ -316,6 +317,98 @@ export class ItemDaAgendaResponseDto {
   /** SPEC-054/D12 — os adicionais da reserva, já somados em `valor`. */
   @ApiProperty({ type: [AdicionalDaReservaDto] })
   adicionais!: AdicionalDaReservaDto[];
+
+  /**
+   * SPEC-057/TASK-005/D19 — a cor AUXILIAR da quadra, uma das seis da paleta.
+   * **Nunca é o único identificador** (INV-140): a grade sempre escreve
+   * `quadraNome` + `Q-<quadraCodigoAgenda>`, e duas quadras podem ter a mesma
+   * cor e o mesmo nome.
+   */
+  @ApiProperty({ type: String, enum: [...PALETA_DE_QUADRA] })
+  quadraCor!: string;
+
+  /** SPEC-057/TASK-005/D19 — ver `QuadraResponseDto.codigoAgenda`. */
+  @ApiProperty({ type: String, example: '12', pattern: '^[1-9][0-9]*$' })
+  quadraCodigoAgenda!: string;
+
+  /**
+   * SPEC-057/TASK-005/D19 — **o tipo que a tela desenha**, derivado aqui para
+   * nenhum frontend repetir a regra: `TURMA` pela origem; `PARTICULAR` é a
+   * `AVULSO` com professor; `AVULSO` nos demais. Não é valor de banco — não
+   * existe origem nova em `ocupacoes_quadra`.
+   */
+  @ApiProperty({ type: String, enum: ['TURMA', 'AVULSO', 'PARTICULAR'] })
+  tipoVisual!: 'TURMA' | 'AVULSO' | 'PARTICULAR';
+
+  /**
+   * SPEC-057/TASK-005/D17 — **a ocupação desta aula**, só em `TURMA`; nulo nas
+   * demais. `capacidade` é a da turma.
+   *
+   * São duas perguntas diferentes, e a tela mostra as duas separadas:
+   * *"Matrículas `matriculados`/`capacidade`"* (vaga de matrícula) e
+   * *"Ocupação desta aula `ocupados`/`capacidade`"* (vaga de reposição). A
+   * definição exata de cada campo está em `ocupacao-da-ocorrencia.ts`.
+   */
+  @ApiProperty({ type: Number, nullable: true, example: 8 })
+  capacidade!: number | null;
+
+  /** `|M|` — matrículas atuais da turma. */
+  @ApiProperty({ type: Number, nullable: true, example: 8 })
+  matriculados!: number | null;
+
+  /** `|M ∩ F|` — faltas avisadas de quem ainda é da turma. */
+  @ApiProperty({ type: Number, nullable: true, example: 1 })
+  faltasAvisadas!: number | null;
+
+  /** `|V|` — todos os visitantes com reposição ativa nesta aula. */
+  @ApiProperty({ type: Number, nullable: true, example: 2 })
+  reposicoesMarcadas!: number | null;
+
+  /**
+   * `|V menos (M menos F)|` — visitantes que ainda não estavam contados como
+   * membro presente. **É esta, e não `reposicoesMarcadas`, que entra na soma
+   * da ocupação.**
+   */
+  @ApiProperty({ type: Number, nullable: true, example: 2 })
+  reposicoesNaOcupacao!: number | null;
+
+  /** `|(M menos F) ∪ V|` — pode passar da capacidade; o excedente aparece. */
+  @ApiProperty({ type: Number, nullable: true, example: 9 })
+  ocupados!: number | null;
+
+  /** `max(0, capacidade − ocupados)`. */
+  @ApiProperty({ type: Number, nullable: true, example: 0 })
+  vagasNaOcorrencia!: number | null;
+}
+
+/**
+ * SPEC-057/TASK-005/D17 — **um visitante da aula**, para o diálogo do gestor.
+ *
+ * Rota própria (`GET /agenda/ocorrencias/:ocupacaoId/visitantes`), carregada
+ * ao abrir o diálogo, e não um campo do item: a SPEC-034/AC-001 exige o item
+ * da semana igual, campo a campo, ao do dia, e a D17 proíbe carregar nomes por
+ * item semanal.
+ *
+ * **Sem contato** — nome e nível, que é o que o gestor precisa para saber quem
+ * vem. Os matriculados continuam vindo do detalhe da turma (`GET
+ * /classes/:id`), que o diálogo reusa.
+ */
+export class VisitanteDaOcorrenciaResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  alunoId!: string;
+
+  @ApiProperty({ type: String, example: 'Ana Souza' })
+  nome!: string;
+
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  nivelId!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: 'Intermediário' })
+  nivelNome!: string | null;
+
+  /** Hoje só existe um tipo; o campo existe para a tela rotular sem supor. */
+  @ApiProperty({ type: String, enum: ['reposicao'] })
+  tipo!: 'reposicao';
 }
 
 /**

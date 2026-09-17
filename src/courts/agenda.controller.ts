@@ -3,12 +3,14 @@ import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { AgendaService } from './agenda.service';
 import {
   DiaComItensResponseDto,
   DiaDaAgendaResponseDto,
   ItemDaAgendaResponseDto,
+  VisitanteDaOcorrenciaResponseDto,
 } from './dto/booking-response.dto';
 import { AgendaQueryDto, SemanaDaAgendaQueryDto } from './dto/agenda-query.dto';
 import { DataDaAgendaParamDto } from './dto/data-do-calendario.dto';
@@ -58,6 +60,22 @@ export class AgendaController {
     @Query() query: SemanaDaAgendaQueryDto,
   ) {
     return this.agenda.semanaDe(user.companyId as string, query.inicio);
+  }
+
+  /**
+   * SPEC-057/TASK-005/D17 — os visitantes de uma aula de turma, ao abrir o
+   * diálogo. Três segmentos: não disputa com `:data`, que tem um só.
+   */
+  @Get('ocorrencias/:ocupacaoId/visitantes')
+  @ApiOkResponse({ type: [VisitanteDaOcorrenciaResponseDto] })
+  visitantes(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.agenda.visitantesDaOcorrencia(
+      user.companyId as string,
+      ocupacaoId,
+    );
   }
 
   /**

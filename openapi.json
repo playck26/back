@@ -3109,6 +3109,44 @@
         ]
       }
     },
+    "/api/v1/agenda/ocorrencias/{ocupacaoId}/visitantes": {
+      "get": {
+        "operationId": "AgendaController_visitantes",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VisitanteDaOcorrenciaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "agenda"
+        ]
+      }
+    },
     "/api/v1/agenda/{data}": {
       "get": {
         "operationId": "AgendaController_dia",
@@ -8063,6 +8101,23 @@
           "imagemUrl": {
             "type": "string",
             "nullable": true
+          },
+          "cor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ],
+            "example": "#00763A"
+          },
+          "codigoAgenda": {
+            "type": "string",
+            "example": "12",
+            "pattern": "^[1-9][0-9]*$"
           }
         },
         "required": [
@@ -8074,7 +8129,9 @@
           "precoHora",
           "status",
           "createdAt",
-          "imagemUrl"
+          "imagemUrl",
+          "cor",
+          "codigoAgenda"
         ]
       },
       "QuadraPaginadaResponseDto": {
@@ -8124,6 +8181,18 @@
           },
           "precoHora": {
             "type": "number"
+          },
+          "cor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ],
+            "description": "Ausente: usa o padrão #00763A."
           }
         },
         "required": [
@@ -8156,6 +8225,18 @@
               "ativa",
               "inativa"
             ]
+          },
+          "cor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ],
+            "description": "Ausente: preserva a cor atual. null é recusado."
           }
         }
       },
@@ -9003,6 +9084,65 @@
             "items": {
               "$ref": "#/components/schemas/AdicionalDaReservaDto"
             }
+          },
+          "quadraCor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ]
+          },
+          "quadraCodigoAgenda": {
+            "type": "string",
+            "example": "12",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "tipoVisual": {
+            "type": "string",
+            "enum": [
+              "TURMA",
+              "AVULSO",
+              "PARTICULAR"
+            ]
+          },
+          "capacidade": {
+            "type": "number",
+            "nullable": true,
+            "example": 8
+          },
+          "matriculados": {
+            "type": "number",
+            "nullable": true,
+            "example": 8
+          },
+          "faltasAvisadas": {
+            "type": "number",
+            "nullable": true,
+            "example": 1
+          },
+          "reposicoesMarcadas": {
+            "type": "number",
+            "nullable": true,
+            "example": 2
+          },
+          "reposicoesNaOcupacao": {
+            "type": "number",
+            "nullable": true,
+            "example": 2
+          },
+          "ocupados": {
+            "type": "number",
+            "nullable": true,
+            "example": 9
+          },
+          "vagasNaOcorrencia": {
+            "type": "number",
+            "nullable": true,
+            "example": 0
           }
         },
         "required": [
@@ -9018,7 +9158,17 @@
           "valor",
           "criadaPor",
           "canceladaPor",
-          "adicionais"
+          "adicionais",
+          "quadraCor",
+          "quadraCodigoAgenda",
+          "tipoVisual",
+          "capacidade",
+          "matriculados",
+          "faltasAvisadas",
+          "reposicoesMarcadas",
+          "reposicoesNaOcupacao",
+          "ocupados",
+          "vagasNaOcorrencia"
         ]
       },
       "DiaComItensResponseDto": {
@@ -9042,6 +9192,42 @@
           "data",
           "fechado",
           "itens"
+        ]
+      },
+      "VisitanteDaOcorrenciaResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Intermediário"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "reposicao"
+            ]
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "nivelId",
+          "nivelNome",
+          "tipo"
         ]
       },
       "ImagemDaQuadraResponseDto": {

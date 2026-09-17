@@ -35,6 +35,7 @@ import {
 import type { AdicionalDoPedidoDto } from './dto/create-booking.dto';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { validarCorDeQuadra } from './paleta-de-quadra';
 import {
   novaTransicao,
   RegistradorDeAcao,
@@ -401,6 +402,9 @@ export class CourtsService {
   }
 
   async create(companyId: string, dto: CreateCourtDto) {
+    // SPEC-057/D19 — antes de qualquer leitura: entrada inválida não custa ida
+    // ao banco e não deixa nada pela metade.
+    const cor = validarCorDeQuadra(dto.cor);
     const esporte = await this.resolverOpcao(
       'esporte',
       companyId,
@@ -421,6 +425,8 @@ export class CourtsService {
         esporteId: esporte.id,
         categoriaId: dto.categoriaId ?? null,
         precoHora: dto.precoHora,
+        // Ausente → o DEFAULT do banco (#00763A). O default não distribui cores.
+        ...(cor === undefined ? {} : { cor }),
       },
       include: CourtsService.COM_CATALOGOS,
     });
@@ -440,6 +446,8 @@ export class CourtsService {
 
   async update(companyId: string, id: string, dto: UpdateCourtDto) {
     await this.assertQuadraDaEmpresa(companyId, id);
+    // SPEC-057/D19 — ausente preserva a cor; `null` e fora da paleta → 400.
+    const cor = validarCorDeQuadra(dto.cor);
 
     const esporte =
       dto.esporteId === undefined
@@ -536,6 +544,7 @@ export class CourtsService {
           : { categoriaId: dto.categoriaId }),
         precoHora: dto.precoHora,
         status: dto.status,
+        ...(cor === undefined ? {} : { cor }),
       },
       include: CourtsService.COM_CATALOGOS,
     });
@@ -2886,6 +2895,8 @@ export class CourtsService {
     precoHora: Prisma.Decimal;
     status: string;
     createdAt: Date;
+    cor: string;
+    codigoAgenda: number;
     imagemKey?: string | null;
     esporteRef?: { id: string; nome: string } | null;
     categoriaRef?: { id: string; nome: string } | null;
@@ -2916,6 +2927,8 @@ export class CourtsService {
         companyId: quadra.companyId,
         imagemKey: quadra.imagemKey ?? null,
       }).imagemUrl,
+      cor: quadra.cor,
+      codigoAgenda: String(quadra.codigoAgenda),
     };
   }
 

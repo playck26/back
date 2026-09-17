@@ -26,11 +26,26 @@ function build(opts: {
   quadras?: { id: string }[];
   linhas?: unknown[];
   ocupacoes?: unknown[];
+  matriculas?: { turmaId: string; alunoId: string }[];
+  faltas?: { ocupacaoId: string; alunoId: string }[];
+  reposicoes?: unknown[];
+  ocorrenciaDeTurma?: { id: string } | null;
 }) {
   const prisma = {
     ocupacaoQuadra: {
       groupBy: jest.fn().mockResolvedValue(opts.grupos ?? []),
       findMany: jest.fn().mockResolvedValue(opts.ocupacoes ?? []),
+      findFirst: jest.fn().mockResolvedValue(opts.ocorrenciaDeTurma ?? null),
+    },
+    // SPEC-057/TASK-005/D17 — os três conjuntos da ocupação da aula.
+    turmaAluno: {
+      findMany: jest.fn().mockResolvedValue(opts.matriculas ?? []),
+    },
+    faltaAvisada: {
+      findMany: jest.fn().mockResolvedValue(opts.faltas ?? []),
+    },
+    reposicaoDeAula: {
+      findMany: jest.fn().mockResolvedValue(opts.reposicoes ?? []),
     },
     quadra: {
       findMany: jest.fn().mockResolvedValue(opts.quadras ?? [{ id: 'q1' }]),
@@ -149,7 +164,8 @@ describe('AgendaService (SPEC-012)', () => {
   describe('detalheDoDia', () => {
     const base = {
       id: 'o1',
-      quadra: { nome: 'Quadra 1' },
+      quadra: { nome: 'Quadra 1', cor: '#31658C', codigoAgenda: 7 },
+      professorId: null,
       horaInicio: parseTimeOnly('09:00'),
       horaFim: parseTimeOnly('10:00'),
       statusPagamento: 'pendente_pagamento',
@@ -187,6 +203,19 @@ describe('AgendaService (SPEC-012)', () => {
         criadaPor: null,
         canceladaPor: null,
         adicionais: [],
+        // SPEC-057/TASK-005/D19 — a quadra se identifica por nome + código,
+        // e a cor é auxiliar.
+        quadraCor: '#31658C',
+        quadraCodigoAgenda: '7',
+        tipoVisual: 'AVULSO',
+        // SPEC-057/TASK-005/D17 — ocupação da aula só existe em TURMA.
+        capacidade: null,
+        matriculados: null,
+        faltasAvisadas: null,
+        reposicoesMarcadas: null,
+        reposicoesNaOcupacao: null,
+        ocupados: null,
+        vagasNaOcorrencia: null,
       });
     });
 
@@ -249,6 +278,281 @@ describe('AgendaService (SPEC-012)', () => {
         { where: { companyId: string } },
       ];
       expect(args.where.companyId).toBe(COMPANY);
+    });
+  });
+
+  describe('SPEC-057/TASK-005 — a aula de turma na agenda do gestor', () => {
+    let seq = 0;
+    function item(
+      over: Record<string, unknown> & { dia?: string } = {},
+    ): Record<string, unknown> {
+      seq += 1;
+      const { dia, ...resto } = over;
+      return {
+        id: `oc${seq}`,
+        quadraId: 'q1',
+        quadra: { nome: 'Quadra 1', cor: '#00763A', codigoAgenda: 3 },
+        data: new Date(`${dia ?? '2026-09-20'}T00:00:00.000Z`),
+        horaInicio: parseTimeOnly('09:00'),
+        horaFim: parseTimeOnly('10:00'),
+        origemTipo: 'TURMA',
+        origemTurmaId: 't1',
+        origemTurma: { nome: 'Turma das 9h', capacidade: 3 },
+        professorId: null,
+        aluno: null,
+        statusPagamento: 'pendente_pagamento',
+        valor: null,
+        eventos: [],
+        adicionais: [],
+        ...resto,
+      };
+    }
+
+    it('D17: TURMA traz as sete contagens pelos conjuntos M/F/V', async () => {
+      const { service } = build({
+        ocupacoes: [item({ id: 'oc-a' })],
+        // M = {a, b}; F = {b, x} (x saiu da turma e a falta ficou); V = {b, c}.
+        matriculas: [
+          { turmaId: 't1', alunoId: 'a' },
+          { turmaId: 't1', alunoId: 'b' },
+        ],
+        faltas: [
+          { ocupacaoId: 'oc-a', alunoId: 'b' },
+          { ocupacaoId: 'oc-a', alunoId: 'x' },
+        ],
+        reposicoes: [
+          { ocupacaoId: 'oc-a', alunoId: 'b' },
+          { ocupacaoId: 'oc-a', alunoId: 'c' },
+        ],
+      });
+
+      const [aula] = await service.detalheDoDia(COMPANY, '2026-09-20');
+
+      expect(aula).toMatchObject({
+        tipoVisual: 'TURMA',
+        capacidade: 3,
+        matriculados: 2,
+        faltasAvisadas: 1,
+        reposicoesMarcadas: 2,
+        reposicoesNaOcupacao: 2,
+        ocupados: 3,
+        vagasNaOcorrencia: 0,
+      });
+    });
+
+    it('D19: tipoVisual — PARTICULAR é AVULSO com professor; sem professor é AVULSO', async () => {
+      const { service } = build({
+        ocupacoes: [
+          item({
+            id: 'com-prof',
+            origemTipo: 'AVULSO',
+            origemTurmaId: null,
+            origemTurma: null,
+            professorId: 'p1',
+            aluno: { usuario: { nome: 'Ana' } },
+          }),
+          item({
+            id: 'sem-prof',
+            origemTipo: 'AVULSO',
+            origemTurmaId: null,
+            origemTurma: null,
+            aluno: { usuario: { nome: 'Bia' } },
+          }),
+        ],
+      });
+
+      const itens = await service.detalheDoDia(COMPANY, '2026-09-20');
+
+      expect(itens.map((i) => [i.id, i.tipoVisual])).toEqual([
+        ['com-prof', 'PARTICULAR'],
+        ['sem-prof', 'AVULSO'],
+      ]);
+    });
+
+    it('sem TURMA na janela, os conjuntos NÃO são consultados', async () => {
+      const { service, prisma } = build({
+        ocupacoes: [
+          item({
+            origemTipo: 'AVULSO',
+            origemTurmaId: null,
+            origemTurma: null,
+            aluno: { usuario: { nome: 'Ana' } },
+          }),
+        ],
+      });
+
+      await service.detalheDoDia(COMPANY, '2026-09-20');
+
+      expect(prisma.turmaAluno.findMany).not.toHaveBeenCalled();
+      expect(prisma.faltaAvisada.findMany).not.toHaveBeenCalled();
+      expect(prisma.reposicaoDeAula.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([20, 200])(
+      'NFR-001: semana com %i aulas de turma custa exatamente três consultas a mais',
+      async (n) => {
+        const dias = ['2026-09-20', '2026-09-21', '2026-09-22'];
+        const { service, prisma } = build({
+          ocupacoes: Array.from({ length: n }, (_, i) =>
+            item({ dia: dias[i % 3], origemTurmaId: `t${i % 7}` }),
+          ),
+        });
+
+        await service.semanaDe(COMPANY, '2026-09-20');
+
+        expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.turmaAluno.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.faltaAvisada.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.reposicaoDeAula.findMany).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each([20, 200])(
+      'NFR-001: dia com %i aulas de turma custa exatamente três consultas a mais',
+      async (n) => {
+        const { service, prisma } = build({
+          ocupacoes: Array.from({ length: n }, (_, i) =>
+            item({ origemTurmaId: `t${i % 7}` }),
+          ),
+        });
+
+        await service.detalheDoDia(COMPANY, '2026-09-20');
+
+        expect(prisma.ocupacaoQuadra.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.turmaAluno.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.faltaAvisada.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.reposicaoDeAula.findMany).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('NFR-001: o mês continua sem nenhuma consulta de participante', async () => {
+      const { service, prisma } = build({});
+
+      await service.resumoDoMes(COMPANY, '2026-09');
+
+      expect(prisma.turmaAluno.findMany).not.toHaveBeenCalled();
+      expect(prisma.faltaAvisada.findMany).not.toHaveBeenCalled();
+      expect(prisma.reposicaoDeAula.findMany).not.toHaveBeenCalled();
+    });
+
+    it('SPEC-034/AC-001 continua: o item da semana é igual, campo a campo, ao do dia', async () => {
+      const dados = () => ({
+        ocupacoes: [item({ id: 'mesma' })],
+        matriculas: [{ turmaId: 't1', alunoId: 'a' }],
+        reposicoes: [{ ocupacaoId: 'mesma', alunoId: 'z' }],
+      });
+
+      const doDia = await build(dados()).service.detalheDoDia(
+        COMPANY,
+        '2026-09-20',
+      );
+      const daSemana = await build(dados()).service.semanaDe(
+        COMPANY,
+        '2026-09-20',
+      );
+
+      expect(daSemana[0].itens[0]).toEqual(doDia[0]);
+    });
+
+    it('D17: nomes de visitantes NÃO vêm no item', async () => {
+      const { service } = build({ ocupacoes: [item()] });
+
+      const [aula] = await service.detalheDoDia(COMPANY, '2026-09-20');
+
+      expect(Object.keys(aula)).not.toContain('visitantes');
+    });
+
+    describe('visitantesDaOcorrencia', () => {
+      it('lista nome e nível, identificados como reposição, em ordem alfabética', async () => {
+        const { service } = build({
+          ocorrenciaDeTurma: { id: 'oc-x' },
+          reposicoes: [
+            {
+              alunoId: 'a2',
+              aluno: { nivelId: null, nivel: null, usuario: { nome: 'Zeca' } },
+            },
+            {
+              alunoId: 'a1',
+              aluno: {
+                nivelId: 'n1',
+                nivel: { nome: 'Intermediário' },
+                usuario: { nome: 'Ana' },
+              },
+            },
+          ],
+        });
+
+        const r = await service.visitantesDaOcorrencia(COMPANY, 'oc-x');
+
+        expect(r).toEqual([
+          {
+            alunoId: 'a1',
+            nome: 'Ana',
+            nivelId: 'n1',
+            nivelNome: 'Intermediário',
+            tipo: 'reposicao',
+          },
+          {
+            alunoId: 'a2',
+            nome: 'Zeca',
+            nivelId: null,
+            nivelNome: null,
+            tipo: 'reposicao',
+          },
+        ]);
+      });
+
+      it('escopo: a ocorrência de TURMA e as visitas são procuradas pela empresa do token', async () => {
+        const { service, prisma } = build({
+          ocorrenciaDeTurma: { id: 'oc-x' },
+        });
+
+        await service.visitantesDaOcorrencia(COMPANY, 'oc-x');
+
+        const [oc] = prisma.ocupacaoQuadra.findFirst.mock.calls[0] as [
+          { where: Record<string, unknown> },
+        ];
+        expect(oc.where).toEqual({
+          id: 'oc-x',
+          companyId: COMPANY,
+          origemTipo: 'TURMA',
+        });
+        const [rep] = prisma.reposicaoDeAula.findMany.mock.calls[0] as [
+          { where: Record<string, unknown> },
+        ];
+        expect(rep.where).toEqual({ companyId: COMPANY, ocupacaoId: 'oc-x' });
+      });
+
+      it('ocorrência de outra empresa, inexistente ou AVULSO → 404, sem ler visitas', async () => {
+        const { service, prisma } = build({ ocorrenciaDeTurma: null });
+
+        await expect(
+          service.visitantesDaOcorrencia(COMPANY, 'oc-x'),
+        ).rejects.toMatchObject({ status: 404 });
+        expect(prisma.reposicaoDeAula.findMany).not.toHaveBeenCalled();
+      });
+
+      it('não expõe contato: as chaves são exatamente as cinco do contrato', async () => {
+        const { service } = build({
+          ocorrenciaDeTurma: { id: 'oc-x' },
+          reposicoes: [
+            {
+              alunoId: 'a1',
+              aluno: {
+                nivelId: null,
+                nivel: null,
+                usuario: { nome: 'Ana', email: 'ana@x.com' },
+              },
+            },
+          ],
+        });
+
+        const [v] = await service.visitantesDaOcorrencia(COMPANY, 'oc-x');
+
+        expect(Object.keys(v).sort()).toEqual(
+          ['alunoId', 'nivelId', 'nivelNome', 'nome', 'tipo'].sort(),
+        );
+      });
     });
   });
 });

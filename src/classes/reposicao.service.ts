@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
+import { calcularOcupacao, carregarConjuntos } from './ocupacao-da-ocorrencia';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import type {
@@ -206,10 +207,12 @@ export class ReposicaoService {
   /**
    * REQ-002 — onde ele pode repor.
    *
-   * A vaga é o cálculo da D2, e ele é a razão de a LIM-031d deixar de ser o fim
-   * da história: `matriculados − faltas avisadas nela + reposições nela`. Sem
-   * subtrair as faltas, turma cheia nunca teria reposição — e a
-   * funcionalidade nasceria morta onde ela mais importa.
+   * A vaga é a da D2 — falta avisada libera lugar, e sem isso turma cheia
+   * nunca teria reposição. **Desde a SPEC-057/TASK-005/D17 a conta é por
+   * conjuntos**, na projeção compartilhada com a agenda do gestor e com o
+   * `POST` (`ocupacao-da-ocorrencia.ts`): a soma de contagens da SPEC-046
+   * subtraía a falta de quem já saiu da turma e contava duas vezes o membro
+   * que também é visitante.
    */
   async oportunidades(
     companyId: string,
@@ -251,22 +254,32 @@ export class ReposicaoService {
             // com a mesma regra da lista de turmas.
             nivelId: true,
             nivel: { select: { nome: true } },
-            _count: { select: { alunos: true } },
           },
         },
         quadra: { select: { nome: true } },
-        _count: { select: { faltas: true, reposicoes: true } },
       },
       orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
       take: 200,
     });
 
+    // SPEC-057/TASK-005/NFR-001 — três consultas para as até 200 ocorrências,
+    // nunca uma por ocorrência.
+    const conjuntos = await carregarConjuntos(
+      this.prisma,
+      companyId,
+      ocorrencias.flatMap((o) =>
+        o.origemTurmaId ? [{ id: o.id, turmaId: o.origemTurmaId }] : [],
+      ),
+    );
+
     return ocorrencias
       .map((o) => {
-        const ocupados =
-          (o.origemTurma?._count.alunos ?? 0) -
-          o._count.faltas +
-          o._count.reposicoes;
+        const doItem = conjuntos.get(o.id);
+        const vagas =
+          o.origemTurma && doItem
+            ? calcularOcupacao(o.origemTurma.capacidade, doItem)
+                .vagasNaOcorrencia
+            : 0;
         return {
           ocupacaoId: o.id,
           turmaId: o.origemTurmaId as string,
@@ -277,7 +290,7 @@ export class ReposicaoService {
           data: formatDateOnly(o.data),
           horaInicio: formatTimeOnly(o.horaInicio),
           horaFim: formatTimeOnly(o.horaFim),
-          vagas: (o.origemTurma?.capacidade ?? 0) - ocupados,
+          vagas,
         };
       })
       .filter((o) => o.vagas > 0);
@@ -463,14 +476,15 @@ export class ReposicaoService {
         });
       }
 
-      // AC-010 — a vaga, pelo cálculo da D2. Com `turmas` e a ocorrência
-      // travadas, esta contagem é a verdade até o COMMIT.
-      const [matriculados, faltasNela, reposicoesNela] = await Promise.all([
-        tx.turmaAluno.count({ where: { turmaId: alvo.origemTurmaId } }),
-        tx.faltaAvisada.count({ where: { ocupacaoId } }),
-        tx.reposicaoDeAula.count({ where: { ocupacaoId } }),
+      // AC-010 — a vaga. Com `turmas` e a ocorrência travadas, esta leitura é
+      // a verdade até o COMMIT. SPEC-057/TASK-005/D17 — pela MESMA projeção
+      // que a agenda e as oportunidades mostram: a recusa não pode dizer
+      // "cheia" numa aula que a tela anunciou com vaga, nem o contrário.
+      const conjuntos = await carregarConjuntos(tx, companyId, [
+        { id: ocupacaoId, turmaId: alvo.origemTurmaId },
       ]);
-      if (matriculados - faltasNela + reposicoesNela >= turma.capacidade) {
+      const daAula = conjuntos.get(ocupacaoId);
+      if (!daAula || calcularOcupacao(turma.capacidade, daAula).cheia) {
         throw new ConflictException({
           statusCode: 409,
           code: 'TURMA_SEM_VAGA',

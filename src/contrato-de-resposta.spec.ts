@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PALETA_DE_QUADRA } from './courts/paleta-de-quadra';
 
 /**
  * SPEC-021/TASK-005 — **o gate que faz a dívida encolher, e nunca crescer.**
@@ -335,6 +336,19 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
     // aconteceu, e a nota entraria na media da turma para sempre.
     ['NAO_MATRICULADO', 'AULA_NAO_TERMINOU', 'AULA_NAO_REALIZADA'],
   ],
+  // SPEC-057/TASK-005/D19 — a paleta da quadra. A origem é a constante
+  // `PALETA_DE_QUADRA`, importada e não copiada: a mesma lista mora no CHECK
+  // `quadras_cor_paleta_check`, e a db-spec da D19 prova que os dois recusam
+  // o que está fora dela.
+  ['QuadraResponseDto.cor', [...PALETA_DE_QUADRA]],
+  ['ItemDaAgendaResponseDto.quadraCor', [...PALETA_DE_QUADRA]],
+  // SPEC-057/TASK-005/D19 — o tipo que a grade desenha, derivado em
+  // `AgendaService.mapearItem` e NÃO gravado: `PARTICULAR` é a `AVULSO` com
+  // professor. Não existe valor novo de origem no banco, por decisão.
+  ['ItemDaAgendaResponseDto.tipoVisual', ['TURMA', 'AVULSO', 'PARTICULAR']],
+  // SPEC-057/TASK-005/D17 — hoje só há um tipo de visitante, e o campo existe
+  // para a tela rotular sem supor. Vem de `AgendaService.visitantesDaOcorrencia`.
+  ['VisitanteDaOcorrenciaResponseDto.tipo', ['reposicao']],
 ]);
 
 function enumsPublicadosEmRespostas(): {
