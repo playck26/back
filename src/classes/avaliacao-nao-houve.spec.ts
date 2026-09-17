@@ -211,20 +211,11 @@ describe('SPEC-030 — a nota de uma aula `nao_houve` sai da média', () => {
     }),
   };
 
-  it('a MÉDIA da turma exclui as aulas não realizadas', async () => {
-    const { service, aggregate } = servicoParaAgregacao();
-
-    await service.mediaDaTurma(EMPRESA, 'turma-1');
-
-    expect(aggregate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining(FILTRO) }),
-    );
-  });
-
-  it('a LISTA do gestor exclui as mesmas', async () => {
-    // As duas leituras, e não só a média: o gestor caça detrator por esta
-    // lista, e uma nota de aula que não houve o mandaria conversar com o
-    // professor sobre uma terça-feira que não existiu.
+  it('a LISTA do gestor exclui as aulas não realizadas', async () => {
+    // O gestor caça detrator por esta lista, e uma nota de aula que não houve
+    // o mandaria conversar com o professor sobre uma terça-feira que não
+    // existiu. (A média do aluno, que tinha o mesmo filtro, saiu na
+    // SPEC-057/TASK-002/D12.)
     const { service, findMany } = servicoParaAgregacao();
 
     await service.listarParaOGestor(EMPRESA, 'turma-1');

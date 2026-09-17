@@ -1,5 +1,9 @@
 import type { CompletudeChamada } from '@prisma/client';
-import { aulaJaComecou, aulaJaTerminou } from '../courts/date-time.util';
+import {
+  aulaJaComecou,
+  aulaJaTerminou,
+  instanteNoFusoDoClube,
+} from '../courts/date-time.util';
 
 /**
  * SPEC-030:TASK-002 — **o estado da chamada, num lugar só** (INV-030b).
@@ -55,7 +59,14 @@ export type EstadoDaChamada =
   /** Cabeçalho de antes da SPEC-015, com `completude = desconhecida`. */
   | 'legada'
   /** SPEC-030: alguém declarou que a aula não aconteceu. Sem vermelho. */
-  | 'nao_houve';
+  | 'nao_houve'
+  /**
+   * SPEC-057/TASK-001/D4: terminou DEPOIS do corte da presença automática,
+   * sem cabeçalho, e não havia ninguém para fechar — nem matriculado nem
+   * visitante. Não cobra ninguém e não entra no denominador de preenchimento;
+   * a aula continua contando no total físico (INV-129).
+   */
+  | 'sem_participantes';
 
 /**
  * O que o resolvedor precisa saber. Deliberadamente **não é** uma linha do
@@ -75,6 +86,18 @@ export interface OcorrenciaParaEstado {
   data: Date;
   horaInicio: Date;
   horaFim: Date;
+  /**
+   * SPEC-057/TASK-001/D4 — o corte da presença automática (`ativada_em`), ou
+   * `null`/ausente num ambiente que nunca a ativou. Aula que termina em ou
+   * antes do corte segue a regra legada, inclusive a pendência.
+   */
+  corte?: Date | null;
+  /**
+   * SPEC-057/TASK-001/D4 — `|M ∪ V|` deduplicado (matriculados atuais +
+   * visitantes com reposição ativa). Ausente quando o chamador não precisou
+   * contar — só importa para aula sem cabeçalho, terminada e pós-corte.
+   */
+  participantes?: number;
 }
 
 /**
@@ -109,7 +132,49 @@ export function resolverEstadoDaChamada(
   // acontecendo agora".
   if (!aulaJaComecou(o.data, o.horaInicio, agora)) return 'futura';
   if (!aulaJaTerminou(o.data, o.horaFim, agora)) return 'em_andamento';
+  // SPEC-057/TASK-001/D4 — **só aqui, e só pós-corte.** Os consumidores não
+  // repetem este predicado: passam o corte e a contagem, e o estado sai daqui
+  // igual para o calendário, a lista da turma, o histórico e a frequência.
+  if (o.participantes === 0 && terminouDepoisDoCorte(o)) {
+    return 'sem_participantes';
+  }
   return 'pendente';
+}
+
+function terminouDepoisDoCorte(o: OcorrenciaParaEstado): boolean {
+  return (
+    !!o.corte &&
+    instanteNoFusoDoClube(o.data, o.horaFim).getTime() > o.corte.getTime()
+  );
+}
+
+/**
+ * SPEC-057/TASK-001/D4 — **precisa contar participantes para resolver?**
+ *
+ * Verdadeiro exatamente quando a contagem pode mudar a resposta: sem
+ * cabeçalho, terminada, não cancelada e pós-corte. É o que permite ao
+ * consumidor carregar `M ∪ V` só das candidatas sem repetir a regra — ele
+ * pergunta aqui, conta, e devolve a contagem ao resolvedor.
+ */
+export function candidataASemParticipantes(
+  o: OcorrenciaParaEstado,
+  agora: Date = new Date(),
+): boolean {
+  return (
+    resolverEstadoDaChamada({ ...o, participantes: undefined }, agora) ===
+      'pendente' && terminouDepoisDoCorte(o)
+  );
+}
+
+/**
+ * SPEC-057/TASK-001/D6 — pendência **legada** ou **atual**.
+ *
+ * Sem cabeçalho e fora de `sem_participantes`: a aula que terminou em ou
+ * antes do corte — ou num ambiente que nunca ativou — é pendência legada; a
+ * que terminou depois dele é atual (o job ainda não passou, ou vai passar).
+ */
+export function pendenciaLegada(o: OcorrenciaParaEstado): boolean {
+  return !terminouDepoisDoCorte(o);
 }
 
 /**

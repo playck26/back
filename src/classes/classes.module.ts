@@ -16,6 +16,7 @@ import { CompanySettingsModule } from '../company-settings/company-settings.modu
 import { FaltaAvisadaService } from './falta-avisada.service';
 import { MeReposicoesController } from './me-reposicoes.controller';
 import { ReposicaoService } from './reposicao.service';
+import { PresencaAutomaticaModule } from '../presenca-automatica/presenca-automatica.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { ReposicaoService } from './reposicao.service';
     CourtsModule,
     PeopleModule,
     FrequenciaModule,
+    PresencaAutomaticaModule,
   ],
   controllers: [
     ClassesController,

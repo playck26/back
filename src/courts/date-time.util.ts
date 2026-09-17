@@ -100,6 +100,49 @@ export function agoraNoFusoDoClube(agora: Date = new Date()): {
   };
 }
 
+/**
+ * SPEC-057/TASK-001 — **o instante absoluto de `data` + `hora` no fuso do
+ * clube.**
+ *
+ * As regras de relógio anteriores comparavam só dia e minuto, porque o outro
+ * lado era "agora". A presença automática precisa comparar o fim da aula com
+ * um `timestamptz` gravado pelo banco (o corte da ativação), e para isso o fim
+ * tem de virar instante.
+ *
+ * O deslocamento é lido do próprio fuso para aquela data, e não fixado em
+ * UTC-3: São Paulo não tem horário de verão desde 2019, mas uma regra que
+ * embute isso num número quebraria calada no dia em que voltar a ter.
+ */
+export function instanteNoFusoDoClube(data: Date, hora: Date): Date {
+  const ingenuo = Date.UTC(
+    data.getUTCFullYear(),
+    data.getUTCMonth(),
+    data.getUTCDate(),
+    0,
+    minutosDaHora(hora),
+  );
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: FUSO_DO_CLUBE,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(new Date(ingenuo));
+  const valor = (tipo: string) =>
+    Number(partes.find((p) => p.type === tipo)?.value ?? 0);
+  const comoLocal = Date.UTC(
+    valor('year'),
+    valor('month') - 1,
+    valor('day'),
+    valor('hour') % 24,
+    valor('minute'),
+  );
+  // `ingenuo` lido no fuso deu `comoLocal`; a diferença é o deslocamento.
+  return new Date(ingenuo + (ingenuo - comoLocal));
+}
+
 /** Minutos desde a meia-noite de uma coluna `@db.Time`. */
 export function minutosDaHora(hora: Date): number {
   return hora.getUTCHours() * 60 + hora.getUTCMinutes();

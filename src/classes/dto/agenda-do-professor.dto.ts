@@ -90,6 +90,9 @@ export class AulaDoDiaDoProfessorDto {
       'feita',
       'legada',
       'nao_houve',
+      // SPEC-057/TASK-001/D4 — sem cabeçalho, terminada pós-corte e com
+      // `M ∪ V` vazio: não cobra ninguém.
+      'sem_participantes',
     ],
     description:
       '`futura` = ainda não começou; a chamada **não** pode ser lançada. ' +
@@ -98,6 +101,9 @@ export class AulaDoDiaDoProfessorDto {
       '`legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. ' +
       '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); ' +
       '**não** é pendência e não pinta o ponto vermelho. ' +
+      '`sem_participantes` = terminou depois do corte da presença automática, ' +
+      'sem chamada e sem ninguém matriculado nem repondo (SPEC-057); não é ' +
+      'pendência. ' +
       '`cancelada` não aparece aqui: o filtro do calendário a exclui antes. ' +
       '**`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem ' +
       'chamada, e resolver um estado ali pintaria `pendente` numa aula que ' +

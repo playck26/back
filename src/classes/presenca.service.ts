@@ -29,9 +29,37 @@ import {
   hojeNoFusoDoClube,
 } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  CorteDaPresenca,
+  participantesDasCandidatas,
+} from '../presenca-automatica/corte-da-presenca';
 
 /** SPEC-014/INV-017: janela em que a chamada pode ser lançada. */
 export const JANELA_RETROATIVA_DIAS = 7;
+
+/**
+ * SPEC-057/TASK-001/D5 — a janela de correção da chamada que **nasceu
+ * automática**, contada do fechamento automático e não da data da aula.
+ * O mesmo número da INV-017, mas outro relógio: retomada tardia fecha aula
+ * antiga, e cada fechamento abre a sua própria janela (LIM-057l).
+ */
+export const JANELA_DA_AUTOMATICA_DIAS = 7;
+
+/** SPEC-057/TASK-001/D1 — as origens que uma pessoa grava. */
+export type OrigemHumana = 'professor' | 'gestor';
+
+/** O cabeçalho relido sob o lock da turma, com o relógio do banco. */
+export interface CabecalhoSobLock {
+  origem: string;
+  origemInicial: string;
+  fechadaAutomaticamenteEm: Date | null;
+  /**
+   * `fechada_automaticamente_em + 7 dias > clock_timestamp()`, calculado
+   * **pelo banco** (INV-143): o relógio do processo não decide o prazo.
+   * `null` quando a chamada não nasceu automática.
+   */
+  dentroDaJanelaAutomatica: boolean | null;
+}
 
 /** Uma linha da tela de chamada: o aluno e o que está marcado para ele. */
 export interface LinhaDaChamada {
@@ -79,7 +107,12 @@ export interface ItemChamada {
  */
 @Injectable()
 export class PresencaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly corteDaPresenca: CorteDaPresenca = new CorteDaPresenca(
+      prisma,
+    ),
+  ) {}
 
   /**
    * SPEC-014/INV-017 — "hoje" na única data operacional que o produto tem.
@@ -124,7 +157,13 @@ export class PresencaService {
   private versaoDe(
     linhas: { updatedAt: Date }[],
     cabecalho: { updatedAt: Date; completude?: string } | null,
-    matriculados: { alunoId: string }[],
+    /**
+     * SPEC-057/TASK-001/D4 — `M ∪ V`: matriculados **e** visitantes com
+     * reposição nesta ocorrência. Era só `M`, e o visitante que marcava ou
+     * desmarcava entre o `GET` e o `PUT` mudava a lista sem mudar a versão.
+     * `S` já entra pelas `linhas`.
+     */
+    observaveis: { alunoId: string }[],
   ): string {
     const base =
       linhas.length === 0
@@ -156,7 +195,7 @@ export class PresencaService {
     if (cabecalho?.completude === 'completa') {
       return comCabecalho;
     }
-    const ids = matriculados.map((m) => m.alunoId).sort();
+    const ids = [...new Set(observaveis.map((m) => m.alunoId))].sort();
     const digest = createHash('sha1')
       .update(ids.join(','))
       .digest('hex')
@@ -237,6 +276,7 @@ export class PresencaService {
     horaInicio: Date;
     statusPagamento: string;
     professorId: string | null;
+    cabecalho: CabecalhoSobLock | null;
   }> {
     // (0a) descobrir a turma da ocorrência e TRAVAR a linha.
     // `origem_turma_id` é gravado na criação e nunca alterado — os três
@@ -343,6 +383,20 @@ export class PresencaService {
       });
     }
 
+    // SPEC-057/TASK-001/D5 — o cabeçalho, relido **com o lock na mão** pela
+    // mesma razão da releitura acima. A origem inicial decide qual relógio
+    // guarda a janela, e o prazo da automática é calculado pelo banco.
+    const [cabecalho] = await tx.$queryRaw<CabecalhoSobLock[]>`
+      SELECT c.origem                      AS "origem",
+             c.origem_inicial              AS "origemInicial",
+             c.fechada_automaticamente_em  AS "fechadaAutomaticamenteEm",
+             (c.fechada_automaticamente_em
+                + make_interval(days => ${JANELA_DA_AUTOMATICA_DIAS}::int)
+                > clock_timestamp())       AS "dentroDaJanelaAutomatica"
+        FROM chamadas c
+       WHERE c.ocupacao_id = ${ocupacaoId}::uuid
+    `;
+
     // INV-017. O limite futuro impede a chamada de virar previsão — o caso
     // real é banal: o professor abre a grade da semana e toca na linha
     // errada. O limite passado existe porque a turma de hoje deixa de ser um
@@ -372,6 +426,20 @@ export class PresencaService {
         message: 'Esta aula ainda não aconteceu.',
       });
     }
+    // SPEC-057/TASK-001/D5 — **a chamada que nasceu automática usa
+    // exclusivamente o relógio do fechamento**, inclusive depois de
+    // ratificada. A data da aula não entra: a retomada tardia fecha aula de
+    // semanas atrás, e o registro não pode nascer já incorrigível.
+    if (cabecalho?.origemInicial === 'automatica') {
+      if (!cabecalho.dentroDaJanelaAutomatica) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'AULA_ANTIGA',
+          message: `A chamada fechada automaticamente pode ser corrigida em até ${JANELA_DA_AUTOMATICA_DIAS} dias após o fechamento.`,
+        });
+      }
+      return { ...ocupacao, cabecalho };
+    }
     if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
       throw new UnprocessableEntityException({
         statusCode: 422,
@@ -380,7 +448,7 @@ export class PresencaService {
       });
     }
 
-    return ocupacao;
+    return { ...ocupacao, cabecalho: cabecalho ?? null };
   }
 
   /**
@@ -438,7 +506,13 @@ export class PresencaService {
         // presenças saía `feita` num e `pendente` no outro, com o mesmo
         // vocabulário na resposta. Agora as duas perguntam ao mesmo
         // resolvedor, e ele precisa do cabeçalho.
-        chamadas: { select: { completude: true } },
+        chamadas: {
+          select: {
+            completude: true,
+            origemInicial: true,
+            fechadaAutomaticamenteEm: true,
+          },
+        },
       },
       // SPEC-027 — `id` como desempate: `data` + `horaInicio` não é ordem
       // total, e com `skip`/`take` isso faz linha aparecer em duas páginas e
@@ -447,14 +521,37 @@ export class PresencaService {
     });
 
     const hoje = this.hoje();
+    const agora = new Date();
+    const paraEstado = (o: (typeof ocorrencias)[number]) => ({
+      cancelada: o.statusPagamento === 'cancelado',
+      completude: o.chamadas[0]?.completude,
+      data: o.data,
+      horaInicio: o.horaInicio,
+      horaFim: o.horaFim,
+    });
+    // SPEC-057/TASK-001/D4 — corte e `|M ∪ V|` só das candidatas.
+    const corte = await this.corteDaPresenca.ler();
+    const participantes = await participantesDasCandidatas(
+      this.prisma,
+      companyId,
+      corte,
+      ocorrencias.map((o) => ({
+        ...paraEstado(o),
+        id: o.id,
+        turmaId: turmaId,
+      })),
+      agora,
+    );
     const data = ocorrencias.map((o) => {
-      const estado = resolverEstadoDaChamada({
-        cancelada: o.statusPagamento === 'cancelado',
-        completude: o.chamadas[0]?.completude,
-        data: o.data,
-        horaInicio: o.horaInicio,
-        horaFim: o.horaFim,
-      });
+      const estado = resolverEstadoDaChamada(
+        {
+          ...paraEstado(o),
+          corte,
+          participantes: participantes.get(o.id),
+        },
+        agora,
+      );
+      const cab = o.chamadas[0];
       return {
         ocupacaoId: o.id,
         data: formatDateOnly(o.data),
@@ -473,11 +570,18 @@ export class PresencaService {
         // presença de uma aula que ninguém tinha dado ainda. Agora o limite de
         // cima é a HORA DE INÍCIO; o limite de baixo (janela retroativa)
         // continua por dia, que é como a INV-017 foi escrita.
+        //
+        // SPEC-057/TASK-001/D5 — a chamada que nasceu automática usa o prazo
+        // do fechamento. Aqui é só a dica da tela; o portão é o do `PUT`,
+        // pelo relógio do banco.
         podeLancar:
           o.statusPagamento !== 'cancelado' &&
           aulaJaComecou(o.data, o.horaInicio) &&
-          o.data.getTime() >=
-            hoje.getTime() - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000,
+          (cab?.origemInicial === 'automatica' && cab.fechadaAutomaticamenteEm
+            ? prazoDaAutomatica(cab.fechadaAutomaticamenteEm).getTime() >
+              agora.getTime()
+            : o.data.getTime() >=
+              hoje.getTime() - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000),
         /**
          * SPEC-027 — o mesmo vocabulário do calendário, para a tela não ter de
          * deduzir. Se ela deduzisse a partir de `podeLancar` + `chamadaFeita`,
@@ -585,6 +689,8 @@ export class PresencaService {
       faltaAvisada: avisaram.has(p.alunoId),
       reposicao: repondo.has(p.alunoId),
     }));
+    const noSnapshot = new Set(presencas.map((p) => p.alunoId));
+    const naTurma = new Set(matriculados.map((m) => m.alunoId));
 
     // INV-020, agora estrita: chamada **completa** não ganha aluno novo ao
     // ser reaberta.
@@ -593,14 +699,16 @@ export class PresencaService {
       : [
           ...doSnapshot,
           ...matriculados
-            .filter((m) => !presencas.some((p) => p.alunoId === m.alunoId))
+            .filter((m) => !noSnapshot.has(m.alunoId))
             .map((m): LinhaDaChamada => ({
               alunoId: m.alunoId,
               nome: m.aluno.usuario.nome,
               status: null,
               naTurmaHoje: true,
               faltaAvisada: avisaram.has(m.alunoId),
-              reposicao: false,
+              // SPEC-057/TASK-001/D4 — `M ∩ V`: matriculado depois de marcar
+              // a reposição. Uma linha só, com as duas marcas verdadeiras.
+              reposicao: repondo.has(m.alunoId),
             })),
           // SPEC-046/AC-015 — quem vem REPOR. Entra pela mesma porta dos
           // matriculados e obedece à mesma INV-020: chamada **completa** não
@@ -609,8 +717,12 @@ export class PresencaService {
           // `naTurmaHoje: false` é a verdade — ele não é da turma —, e é por
           // isso que `reposicao` precisa existir ao lado: só o primeiro campo
           // faria a tela dizer "saiu da turma" sobre quem nunca esteve nela.
+          // SPEC-057/TASK-001/D4 — **a lista nunca repete ID**: quem já está
+          // no snapshot ou em `M` não entra de novo por `V`.
           ...reposicoes
-            .filter((r) => !presencas.some((p) => p.alunoId === r.alunoId))
+            .filter(
+              (r) => !noSnapshot.has(r.alunoId) && !naTurma.has(r.alunoId),
+            )
             .map((r): LinhaDaChamada => ({
               alunoId: r.alunoId,
               nome: r.aluno.usuario.nome,
@@ -629,7 +741,18 @@ export class PresencaService {
       horaFim: formatTimeOnly(ocupacao.horaFim),
       cancelada: ocupacao.statusPagamento === 'cancelado',
       completude,
-      versao: this.versaoDe(presencas, cabecalho, matriculados),
+      origem: cabecalho?.origem ?? null,
+      origemInicial: cabecalho?.origemInicial ?? null,
+      corrigivelAte:
+        cabecalho?.origemInicial === 'automatica' &&
+        cabecalho.fechadaAutomaticamenteEm
+          ? prazoDaAutomatica(cabecalho.fechadaAutomaticamenteEm).toISOString()
+          : null,
+      // SPEC-057/TASK-001/D4 — `M ∪ V ∪ S`, o mesmo conjunto do `PUT`.
+      versao: this.versaoDe(presencas, cabecalho, [
+        ...matriculados,
+        ...reposicoes,
+      ]),
       alunos: alunos.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
     };
   }
@@ -687,13 +810,22 @@ export class PresencaService {
       // também não pode declarar que não houve aula.
       // A URL precisa dizer a verdade sobre o que altera, e a conferência
       // roda DENTRO do portão, no grupo dos 404 — ver o comentário lá.
-      await this.travarEValidarOcorrencia(
+      const { cabecalho: atual } = await this.travarEValidarOcorrencia(
         tx,
         companyId,
         ocupacaoId,
         professorIdScope,
         turmaIdDaRota,
       );
+      const origem: OrigemHumana = comoProfessor ? 'professor' : 'gestor';
+
+      // SPEC-057/TASK-001/D5 — **a exceção estreita.** A chamada automática
+      // que ninguém revisou é presunção, não registro de quem esteve lá: se a
+      // aula não aconteceu, quem podia lançar pode dizer isso, e as presenças
+      // presumidas saem. O prazo (fechamento + 7 dias) já foi conferido pelo
+      // portão acima, sob o mesmo lock. Automática **ratificada** não entra
+      // aqui: uma pessoa afirmou a lista, e vale a LIM-030d de sempre.
+      const automaticaNaoRatificada = atual?.origem === 'automatica';
 
       // LIM-030d — **não sobrescreve chamada com presença.** O AC-012 já
       // decidiu que cancelar depois não desfaz quem esteve lá; apagar
@@ -704,7 +836,9 @@ export class PresencaService {
       // mesmo assim está corrigindo um engano, e o caminho é apagar a
       // chamada primeiro — explicitamente.
       const comPresenca = await tx.presenca.count({ where: { ocupacaoId } });
-      if (comPresenca > 0) {
+      if (comPresenca > 0 && automaticaNaoRatificada) {
+        await tx.presenca.deleteMany({ where: { ocupacaoId } });
+      } else if (comPresenca > 0) {
         throw new UnprocessableEntityException({
           statusCode: 422,
           code: 'CHAMADA_COM_PRESENCA',
@@ -729,14 +863,21 @@ export class PresencaService {
           origemTipo: 'TURMA',
           companyId,
           registradaPor: usuarioId,
+          // SPEC-057/TASK-001/D1 — código novo declara as duas origens.
+          origem,
+          origemInicial: origem,
           completude: 'nao_houve',
           esperados: null,
         },
         // REQ-004a/D1b — `registradaPor` é reescrito também no update: quem
         // registrou por ÚLTIMO é a resposta útil quando o gestor fecha a
         // aula de um professor que saiu do clube.
+        //
+        // SPEC-057/TASK-001/D1 — `origemInicial` **não** é escrita no update:
+        // como a chamada nasceu não muda (LIM-057j).
         update: {
           registradaPor: usuarioId,
+          origem,
           completude: 'nao_houve',
           esperados: null,
         },
@@ -886,27 +1027,42 @@ export class PresencaService {
         professor.id,
       );
 
-      const [atuais, cabecalhoAtual, matriculados] = await Promise.all([
-        tx.presenca.findMany({
-          where: { ocupacaoId },
-          select: { alunoId: true, updatedAt: true },
-        }),
-        tx.chamada.findUnique({ where: { ocupacaoId } }),
-        tx.turmaAluno.findMany({
-          where: { turmaId: ocupacao.origemTurmaId },
-          select: { alunoId: true },
-        }),
-      ]);
+      const [atuais, cabecalhoAtual, matriculados, visitantes] =
+        await Promise.all([
+          tx.presenca.findMany({
+            where: { ocupacaoId },
+            select: { alunoId: true, updatedAt: true },
+          }),
+          tx.chamada.findUnique({ where: { ocupacaoId } }),
+          tx.turmaAluno.findMany({
+            where: { turmaId: ocupacao.origemTurmaId },
+            select: { alunoId: true },
+          }),
+          // SPEC-057/TASK-001/D4 — `V`, lido sob a mesma raiz: os escritores
+          // de reposição também começam por `turmas FOR UPDATE`.
+          tx.reposicaoDeAula.findMany({
+            where: { ocupacaoId },
+            select: { alunoId: true },
+          }),
+        ]);
+      const observaveis = [...matriculados, ...visitantes];
 
       // INV-019 — controle otimista, e é a PRIMEIRA regra a rodar. Qualquer
       // recusa de domínio antes dela poderia estar julgando uma tela velha
       // com o estado novo.
-      if (this.versaoDe(atuais, cabecalhoAtual, matriculados) !== versao) {
+      if (this.versaoDe(atuais, cabecalhoAtual, observaveis) !== versao) {
+        // SPEC-057/TASK-001/D2 — o sinal diz **por que** pode ter mudado. Só
+        // afirma o fechamento automático quando a chamada nasceu dele; fora
+        // disso a mensagem não atribui a mudança a ninguém.
+        const fechamentoAutomatico =
+          ocupacao.cabecalho?.origemInicial === 'automatica';
         throw new ConflictException({
           statusCode: 409,
           code: 'CHAMADA_DESATUALIZADA',
-          message:
-            'Esta chamada mudou desde que você abriu. Recarregue para ver o estado atual.',
+          fechamentoAutomatico,
+          message: fechamentoAutomatico
+            ? 'Esta aula foi fechada automaticamente e a chamada mudou desde sua leitura. Revise a versão atual.'
+            : 'Esta chamada mudou desde que você abriu. Revise a versão atual.',
         });
       }
 
@@ -914,8 +1070,11 @@ export class PresencaService {
       // para os dois papéis era o defeito: com cabeçalho `completa` o `GET`
       // devolve o snapshot, e a escrita exigia a união — então salvar de
       // volta o que a tela mostrou virava 422.
+      //
+      // SPEC-057/TASK-001/D4 — o teto é `M ∪ V ∪ S`. Sem `V`, o visitante que
+      // o `GET` mostrou voltava no `PUT` como `ALUNO_FORA_DA_TURMA`.
       const permitidos = new Set([
-        ...matriculados.map((m) => m.alunoId),
+        ...observaveis.map((m) => m.alunoId),
         ...atuais.map((p) => p.alunoId),
       ]);
       const forasteiros = idsRecebidos.filter((id) => !permitidos.has(id));
@@ -956,14 +1115,22 @@ export class PresencaService {
           origemTipo: 'TURMA',
           companyId,
           registradaPor: usuarioId,
+          origem: 'professor',
+          origemInicial: 'professor',
           completude: 'completa',
           esperados: itens.length,
         },
         // Promoção de `desconhecida` para `completa` num **único** UPDATE:
         // os dois campos andam juntos, e o CHECK do banco recusa o estado
         // intermediário (achado da 4ª validação cruzada).
+        //
+        // SPEC-057/TASK-001/D5 — **isto é a ratificação.** Sobre a chamada
+        // automática, o professor assume a lista inteira: a origem atual vira
+        // `professor`, e a inicial — como a chamada nasceu — fica. O autor de
+        // cada linha é escrito abaixo, no mesmo laço de sempre.
         update: {
           registradaPor: usuarioId,
+          origem: 'professor',
           completude: 'completa',
           esperados: itens.length,
         },
@@ -995,7 +1162,7 @@ export class PresencaService {
       ]);
       return {
         ocupacaoId,
-        versao: this.versaoDe(depois, cabecalhoDepois, matriculados),
+        versao: this.versaoDe(depois, cabecalhoDepois, observaveis),
         total: itens.length,
       };
     });
@@ -1051,12 +1218,31 @@ export class PresencaService {
         chamadas: {
           select: {
             completude: true,
+            origem: true,
+            origemInicial: true,
             registrante: { select: { nome: true } },
           },
         },
       },
       orderBy: [{ data: 'desc' }],
     });
+    const agora = new Date();
+    const paraEstado = (o: (typeof ocorrencias)[number]) => ({
+      cancelada: o.statusPagamento === 'cancelado',
+      completude: o.chamadas[0]?.completude,
+      data: o.data,
+      horaInicio: o.horaInicio,
+      horaFim: o.horaFim,
+    });
+    // SPEC-057/TASK-001/D4 — o mesmo estado que o professor vê.
+    const corte = await this.corteDaPresenca.ler();
+    const participantes = await participantesDasCandidatas(
+      this.prisma,
+      companyId,
+      corte,
+      ocorrencias.map((o) => ({ ...paraEstado(o), id: o.id, turmaId })),
+      agora,
+    );
 
     const matriculados = await this.prisma.turmaAluno.findMany({
       where: { turmaId },
@@ -1066,13 +1252,10 @@ export class PresencaService {
 
     return ocorrencias.map((o) => {
       const cabecalho = o.chamadas[0];
-      const estado = resolverEstadoDaChamada({
-        cancelada: o.statusPagamento === 'cancelado',
-        completude: cabecalho?.completude,
-        data: o.data,
-        horaInicio: o.horaInicio,
-        horaFim: o.horaFim,
-      });
+      const estado = resolverEstadoDaChamada(
+        { ...paraEstado(o), corte, participantes: participantes.get(o.id) },
+        agora,
+      );
       return {
         ocupacaoId: o.id,
         data: formatDateOnly(o.data),
@@ -1088,10 +1271,15 @@ export class PresencaService {
         // `nao_houve`, que não tem nenhuma presença. As presenças ficam como
         // segunda fonte para as chamadas antigas — as de antes da SPEC-015
         // (`legada`) podem ter presença sem cabeçalho registrado por ninguém.
+        //
+        // SPEC-057/TASK-001/D1 — na automática não há autor em lugar nenhum,
+        // e `null` é a verdade: `origem` ao lado diz por quê.
         registradoPor:
-          cabecalho?.registrante.nome ??
-          o.presencas[0]?.registrante.nome ??
+          cabecalho?.registrante?.nome ??
+          o.presencas[0]?.registrante?.nome ??
           null,
+        origem: cabecalho?.origem ?? null,
+        origemInicial: cabecalho?.origemInicial ?? null,
         alunos: o.presencas
           .map((p) => ({
             alunoId: p.alunoId,
@@ -1107,4 +1295,11 @@ export class PresencaService {
       };
     });
   }
+}
+
+/** SPEC-057/TASK-001/D5 — fechamento automático + janela, para exibição. */
+function prazoDaAutomatica(fechadaEm: Date): Date {
+  const prazo = new Date(fechadaEm);
+  prazo.setUTCDate(prazo.getUTCDate() + JANELA_DA_AUTOMATICA_DIAS);
+  return prazo;
 }

@@ -15,28 +15,30 @@ import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
- * SPEC-052/AC-010 — **quem lê a média da turma, por HTTP.**
+ * SPEC-057/TASK-002/D12/AC-017 — **a média da turma saiu do aluno, e a rota
+ * saiu depois.**
  *
- * A SPEC-025 abriu `GET /me/classes/:id/avaliacao` para `aluno` e `professor`.
- * A decisão 7 do Israel (2026-09-14) fecha para o professor: ele deixa de ver
- * nota de avaliação. O mecanismo é **só aplicação** — `@Roles('aluno')` e o
- * `RolesGuard` (INV-130) —, e decorator não se prova lendo o decorator: prova-se
- * mandando o token e olhando o status.
+ * Histórico, para quem chegar aqui pelo nome do arquivo: a SPEC-025 abriu
+ * `GET /me/classes/:id/avaliacao` para aluno e professor; a SPEC-052/D6 fechou
+ * para o professor; a SPEC-057/TASK-002 tirou a nota da tela do aluno e, pela
+ * ordem de uma contração, **só removeu a rota depois que o Cliente que parou de
+ * pedi-la estava no ar** (publicado em 2026-09-17, conferido pelo bundle).
  *
- * O serviço é dublê: a média em si tem prova própria no `fit-012`, contra
- * Postgres real. Aqui o que está em julgamento é **quem chega ao serviço**.
- * Por isso a asserção do `403` inclui **zero chamadas** ao serviço: um `403`
- * devolvido depois de calcular a média ainda teria lido o dado.
+ * A AC-017 pede **ausência e 404**, e não 403 de rota mantida: um `@Roles`
+ * vazio deixaria o contrato publicado prometendo uma rota que ninguém pode
+ * chamar. E pede também que o `PUT` de avaliar continue: o aluno avalia, o
+ * gestor lê pela lista dele.
  */
 
 const SEGREDO = 'segredo-de-teste-media-por-papel';
 const EMPRESA = '11111111-1111-4111-8111-111000520001';
 const TURMA = '33333333-3333-4333-8333-333000520003';
+const AULA = '44444444-4444-4444-8444-444000520004';
 
-describe('média da turma por papel (e2e) — SPEC-052/AC-010', () => {
+describe('média da turma removida do aluno (e2e) — SPEC-057/AC-017', () => {
   let app: INestApplication<App>;
   let jwt: JwtService;
-  const mediaDaTurma = jest.fn();
+  const avaliar = jest.fn();
 
   beforeAll(async () => {
     process.env.JWT_ACCESS_SECRET = SEGREDO;
@@ -61,7 +63,7 @@ describe('média da turma por papel (e2e) — SPEC-052/AC-010', () => {
         JwtAccessStrategy,
         { provide: ClassesService, useValue: {} },
         { provide: MatriculaDoAlunoService, useValue: {} },
-        { provide: AvaliacaoDeAulaService, useValue: { mediaDaTurma } },
+        { provide: AvaliacaoDeAulaService, useValue: { avaliar } },
         { provide: FaltaAvisadaService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
       ],
@@ -82,8 +84,12 @@ describe('média da turma por papel (e2e) — SPEC-052/AC-010', () => {
   });
 
   beforeEach(() => {
-    mediaDaTurma.mockReset();
-    mediaDaTurma.mockResolvedValue({ media: 4.5, avaliacoes: 3 });
+    avaliar.mockReset();
+    avaliar.mockResolvedValue({
+      nota: 5,
+      comentario: null,
+      updatedAt: new Date('2026-09-17T12:00:00.000Z'),
+    });
   });
 
   afterAll(async () => {
@@ -96,26 +102,26 @@ describe('média da turma por papel (e2e) — SPEC-052/AC-010', () => {
       { secret: SEGREDO, expiresIn: '5m' },
     );
 
-  const ler = (role: string) =>
-    request(app.getHttpServer())
-      .get(`/api/v1/me/classes/${TURMA}/avaliacao`)
-      .set('Authorization', `Bearer ${token(role)}`);
+  it.each(['aluno', 'professor', 'company_admin'])(
+    'AC-017: GET da média responde 404 para %s — a rota não existe mais',
+    async (role) => {
+      await request(app.getHttpServer())
+        .get(`/api/v1/me/classes/${TURMA}/avaliacao`)
+        .set('Authorization', `Bearer ${token(role)}`)
+        .expect(404);
+    },
+  );
 
-  it('professor recebe 403, e o serviço nem é chamado', async () => {
-    await ler('professor').expect(403);
-    expect(mediaDaTurma).not.toHaveBeenCalled();
-  });
+  it('AC-017: o PUT de avaliar a aula continua sendo do aluno', async () => {
+    await request(app.getHttpServer())
+      .put(`/api/v1/me/classes/aulas/${AULA}/avaliacao`)
+      .set('Authorization', `Bearer ${token('aluno')}`)
+      .send({ nota: 5 })
+      .expect(200);
 
-  it('aluno continua recebendo a média', async () => {
-    const res = await ler('aluno').expect(200);
-    expect(res.body).toEqual({ media: 4.5, avaliacoes: 3 });
-    expect(mediaDaTurma).toHaveBeenCalledWith(EMPRESA, TURMA);
-  });
-
-  it('gestor não passa a ter a rota por consequência', async () => {
-    // A lista com autoria e comentário é outra rota (`GET /classes/:id/avaliacoes`).
-    // Fechar para o professor não pode abrir esta para o `company_admin`.
-    await ler('company_admin').expect(403);
-    expect(mediaDaTurma).not.toHaveBeenCalled();
+    expect(avaliar).toHaveBeenCalledWith(EMPRESA, 'u1', AULA, {
+      nota: 5,
+      comentario: undefined,
+    });
   });
 });

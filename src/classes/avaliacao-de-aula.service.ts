@@ -308,70 +308,6 @@ export class AvaliacaoDeAulaService {
   }
 
   /**
-   * **A média da TURMA, agregada das notas das aulas dela.**
-   *
-   * INV-025a: nada de autoria nem de comentário sai por aqui, e a prova disso
-   * olha o JSON serializado — não os campos que eu lembrei de conferir.
-   *
-   * `media: null` abaixo do mínimo, com a `quantidade` visível: esconder
-   * também a contagem faria a tela não conseguir dizer "ainda faltam
-   * avaliações", que é informação útil e não identifica ninguém.
-   */
-  async mediaDaTurma(companyId: string, turmaId: string) {
-    const turma = await this.prisma.turma.findFirst({
-      where: { id: turmaId, companyId },
-      select: { id: true },
-    });
-    if (!turma) {
-      throw new NotFoundException();
-    }
-
-    const agregado = await this.prisma.avaliacaoDeAula.aggregate({
-      // `companyId` explícito aqui, e não só a relação — achado 1 da
-      // validação cruzada. A FK composta passou a impedir que uma ocupação
-      // de outra empresa aponte para esta turma; este filtro é a segunda
-      // tranca, no caminho de leitura. Isolamento entre empresas é caro
-      // demais para depender de uma camada só.
-      where: {
-        companyId,
-        ocupacao: {
-          companyId,
-          origemTurmaId: turmaId,
-          // **SPEC-030 / achado 2 da 2ª validação cruzada (ALTA).**
-          //
-          // O portão `AULA_NAO_REALIZADA` barra avaliar uma aula já marcada, e
-          // eu tinha escrito no comentário dele que isso impedia a nota de
-          // entrar na média "para sempre". **Não impedia.** A ordem inversa
-          // passava inteira: o aluno avalia uma aula sem cabeçalho, o gestor
-          // registra `nao_houve` depois — a única barreira do registro é
-          // `count(presencas) > 0`, e avaliação não é presença — e a nota
-          // continuava na média. Há ainda a versão concorrente, que lock
-          // nenhum fecharia: a avaliação lê antes do `upsert` e grava depois.
-          //
-          // **Filtrar na LEITURA resolve as duas ordens e a corrida**, e sem
-          // apagar dado do aluno: quem avaliou continua tendo avaliado, e a
-          // nota apenas deixa de falar sobre uma aula que não aconteceu.
-          chamadas: { none: { completude: 'nao_houve' as const } },
-        },
-      },
-      _avg: { nota: true },
-      _count: { _all: true },
-    });
-
-    const quantidade = agregado._count._all;
-
-    return {
-      quantidade,
-      // Uma casa decimal: a tela desenha estrelas, e precisão maior seria
-      // falsa — cinco notas não distinguem 4,26 de 4,3.
-      media:
-        agregado._avg.nota !== null
-          ? Math.round(agregado._avg.nota * 10) / 10
-          : null,
-    };
-  }
-
-  /**
    * **A lista do gestor, ordenada por PIOR NOTA primeiro.**
    *
    * A ordem é a funcionalidade, não um detalhe: o pedido era *"identificar
@@ -390,9 +326,9 @@ export class AvaliacaoDeAulaService {
     }
 
     const avaliacoes = await this.prisma.avaliacaoDeAula.findMany({
-      // Ver a nota gêmea em `mediaDaTurma`. Aqui o custo de um vazamento é
-      // maior: esta é a única resposta do produto que carrega NOME e
-      // COMENTÁRIO.
+      // Esta é a única resposta do produto que carrega NOME e COMENTÁRIO.
+      // A média que o aluno lia (`GET /me/classes/:id/avaliacao`) saiu na
+      // SPEC-057/TASK-002/D12; a leitura de notas agora é só do gestor.
       where: {
         companyId,
         ocupacao: {

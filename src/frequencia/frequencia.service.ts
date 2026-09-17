@@ -8,8 +8,13 @@ import type { CompletudeChamada } from '@prisma/client';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import {
   chamadaJaRegistrada,
+  pendenciaLegada,
   resolverEstadoDaChamada,
 } from '../classes/estado-da-chamada';
+import {
+  CorteDaPresenca,
+  participantesDasCandidatas,
+} from '../presenca-automatica/corte-da-presenca';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -76,6 +81,21 @@ interface Ocorrencia {
   desconhecida: boolean;
   /** SPEC-030 — alguém declarou que a aula não aconteceu. */
   naoHouve: boolean;
+  /** SPEC-057/TASK-001/D4 — pós-corte, sem cabeçalho e sem `M ∪ V`. */
+  semParticipantes: boolean;
+  /** SPEC-057/TASK-001/D6 — `null` sem cabeçalho. */
+  origem: string | null;
+  origemInicial: string | null;
+  /** SPEC-057/TASK-001/D6 — sem cabeçalho: legada (pré-corte) ou atual. */
+  pendenteLegada: boolean;
+}
+
+export interface OrigensDaCobertura {
+  automaticas: number;
+  ratificadas: number;
+  humanas: number;
+  pendentesLegadas: number;
+  pendentesAtuais: number;
 }
 
 export interface Cobertura {
@@ -86,11 +106,60 @@ export interface Cobertura {
   confianca: Confianca;
   /** AC-016 — o texto existe porque o número sozinho engana. */
   aviso: string | null;
+  /** SPEC-057/TASK-001/D6. */
+  origens: OrigensDaCobertura;
+}
+
+/** O que `normaliza` precisa saber além da linha: o corte e `|M ∪ V|`. */
+interface ContextoDaPresenca {
+  corte: Date | null;
+  participantes: Map<string, number>;
 }
 
 @Injectable()
 export class FrequenciaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly corteDaPresenca: CorteDaPresenca = new CorteDaPresenca(
+      prisma,
+    ),
+  ) {}
+
+  /**
+   * SPEC-057/TASK-001/D4 — o corte e a contagem `|M ∪ V|` **só das
+   * candidatas**. Sem candidata não sai consulta de participantes; o custo
+   * fixo é a leitura do corte, e com candidatas somam no máximo mais 3,
+   * independentemente do número de alunos.
+   */
+  private async contexto(
+    companyId: string,
+    ocupacoes: {
+      id: string;
+      data: Date;
+      statusPagamento: string;
+      origemTurmaId: string | null;
+      chamadas: { completude: CompletudeChamada }[];
+      horaInicio: Date;
+      horaFim: Date;
+    }[],
+  ): Promise<ContextoDaPresenca> {
+    const corte = await this.corteDaPresenca.ler();
+    const participantes = await participantesDasCandidatas(
+      this.prisma,
+      companyId,
+      corte,
+      ocupacoes.map((o) => ({
+        id: o.id,
+        turmaId: o.origemTurmaId,
+        cancelada: o.statusPagamento === 'cancelado',
+        completude: o.chamadas[0]?.completude,
+        data: o.data,
+        horaInicio: o.horaInicio,
+        horaFim: o.horaFim,
+      })),
+    );
+    return { corte, participantes };
+  }
 
   /**
    * DEF-020 — o fuso do clube, que passou a ser a convenção única.
@@ -120,7 +189,11 @@ export class FrequenciaService {
     data: true,
     statusPagamento: true,
     origemTurmaId: true,
-    chamadas: { select: { completude: true } },
+    // SPEC-057/TASK-001/D6 — as duas origens, para a cobertura dizer quanto
+    // do número é presunção automática.
+    chamadas: {
+      select: { completude: true, origem: true, origemInicial: true },
+    },
     _count: { select: { presencas: true } },
     // SPEC-030 — as duas entraram para o resolvedor poder ser chamado com o
     // contrato inteiro. Este relatório não usa os estados de relógio
@@ -130,26 +203,36 @@ export class FrequenciaService {
     horaFim: true,
   } as const;
 
-  private normaliza(o: {
-    id: string;
-    data: Date;
-    statusPagamento: string;
-    chamadas: { completude: CompletudeChamada }[];
-    _count: { presencas: number };
-    horaInicio: Date;
-    horaFim: Date;
-  }): Ocorrencia {
+  private normaliza(
+    o: {
+      id: string;
+      data: Date;
+      statusPagamento: string;
+      chamadas: {
+        completude: CompletudeChamada;
+        origem: string;
+        origemInicial: string;
+      }[];
+      _count: { presencas: number };
+      horaInicio: Date;
+      horaFim: Date;
+    },
+    ctx: ContextoDaPresenca,
+  ): Ocorrencia {
     const cab = o.chamadas[0];
-    // **Ignorando o cancelamento, de propósito** — ver o comentário na
-    // interface `Ocorrencia`. O resolvedor responde `cancelada` antes de
-    // olhar o cabeçalho, e a AC-005 precisa dos dois fatos separados.
-    const estadoDoCabecalho = resolverEstadoDaChamada({
+    const paraEstado = {
       cancelada: false,
       completude: cab?.completude,
       data: o.data,
       horaInicio: o.horaInicio,
       horaFim: o.horaFim,
-    });
+      corte: ctx.corte,
+      participantes: ctx.participantes.get(o.id),
+    };
+    // **Ignorando o cancelamento, de propósito** — ver o comentário na
+    // interface `Ocorrencia`. O resolvedor responde `cancelada` antes de
+    // olhar o cabeçalho, e a AC-005 precisa dos dois fatos separados.
+    const estadoDoCabecalho = resolverEstadoDaChamada(paraEstado);
     return {
       id: o.id,
       data: o.data,
@@ -159,6 +242,10 @@ export class FrequenciaService {
       completa: estadoDoCabecalho === 'feita',
       desconhecida: estadoDoCabecalho === 'legada',
       naoHouve: estadoDoCabecalho === 'nao_houve',
+      semParticipantes: estadoDoCabecalho === 'sem_participantes',
+      origem: cab?.origem ?? null,
+      origemInicial: cab?.origemInicial ?? null,
+      pendenteLegada: !cab && pendenciaLegada(paraEstado),
     };
   }
 
@@ -180,9 +267,41 @@ export class FrequenciaService {
    * aconteceu não é dado, é ausência de dado.**
    */
   private aconteceram(ocorrencias: Ocorrencia[]) {
+    // SPEC-057/TASK-001/D4 — `sem_participantes` sai pelo mesmo motivo que
+    // `nao_houve`: não havia de quem cobrar chamada. É o único delta; as
+    // regras de cancelada com registro e de `nao_houve` ficam como estavam.
     return ocorrencias.filter(
-      (o) => !o.naoHouve && (!o.cancelada || o.temChamada),
+      (o) =>
+        !o.naoHouve && !o.semParticipantes && (!o.cancelada || o.temChamada),
     );
+  }
+
+  /**
+   * SPEC-057/TASK-001/D6 — as cinco categorias, sobre o universo de
+   * `aconteceram`, uma por ocorrência. Somam `aconteceram` por construção:
+   * cada ocorrência cai em exatamente um ramo.
+   */
+  private origens(validas: Ocorrencia[]): OrigensDaCobertura {
+    const origens: OrigensDaCobertura = {
+      automaticas: 0,
+      ratificadas: 0,
+      humanas: 0,
+      pendentesLegadas: 0,
+      pendentesAtuais: 0,
+    };
+    for (const o of validas) {
+      if (o.origem === null) {
+        if (o.pendenteLegada) origens.pendentesLegadas += 1;
+        else origens.pendentesAtuais += 1;
+      } else if (o.origem === 'automatica') {
+        origens.automaticas += 1;
+      } else if (o.origemInicial === 'automatica') {
+        origens.ratificadas += 1;
+      } else {
+        origens.humanas += 1;
+      }
+    }
+    return origens;
   }
 
   /**
@@ -231,7 +350,15 @@ export class FrequenciaService {
         `passar de ${REGUA.pisoDeConfiancaPct}%.`;
     }
 
-    return { aconteceram, lancadas, completas, pctCompletas, confianca, aviso };
+    return {
+      aconteceram,
+      lancadas,
+      completas,
+      pctCompletas,
+      confianca,
+      aviso,
+      origens: this.origens(validas),
+    };
   }
 
   /**
@@ -360,12 +487,13 @@ export class FrequenciaService {
       throw new NotFoundException();
     }
 
-    const ocorrencias = this.aconteceram(
-      turma.ocupacoes.map((o) => this.normaliza(o)),
+    const ctx = await this.contexto(
+      companyId,
+      turma.ocupacoes.map((o) => ({ ...o, origemTurmaId: turma.id })),
     );
-    const cobertura = this.cobertura(
-      turma.ocupacoes.map((o) => this.normaliza(o)),
-    );
+    const normalizadas = turma.ocupacoes.map((o) => this.normaliza(o, ctx));
+    const ocorrencias = this.aconteceram(normalizadas);
+    const cobertura = this.cobertura(normalizadas);
     const dataDaOcorrencia = new Map(
       ocorrencias.map((o) => [o.id, o.data.getTime()]),
     );
@@ -510,6 +638,7 @@ export class FrequenciaService {
       },
       orderBy: { data: 'desc' },
     });
+    const ctx = await this.contexto(companyId, ocupacoes);
 
     const porTurma = new Map<
       string,
@@ -522,6 +651,8 @@ export class FrequenciaService {
       data: string;
       cancelada: boolean;
       status: StatusPresenca;
+      origem: string;
+      origemInicial: string;
     }[] = [];
 
     for (const o of ocupacoes) {
@@ -532,7 +663,7 @@ export class FrequenciaService {
         grupo = { nome, ocorrencias: [], registros: [] };
         porTurma.set(turmaId, grupo);
       }
-      const norm = this.normaliza(o);
+      const norm = this.normaliza(o, ctx);
       grupo.ocorrencias.push(norm);
       // AC-005 já está garantida aqui: cancelada sem chamada não tem
       // presença (FK `presencas_chamada_fkey`, INV-027), e `aconteceram`
@@ -549,6 +680,10 @@ export class FrequenciaService {
           data: o.data.toISOString().slice(0, 10),
           cancelada: norm.cancelada,
           status: p.status,
+          // Com presença há cabeçalho (FK `presencas_chamada_fkey`); o
+          // fallback só existe para o tipo, e diz a verdade do legado.
+          origem: norm.origem ?? 'legada_humana',
+          origemInicial: norm.origemInicial ?? 'legada_humana',
         });
       }
     }
@@ -626,6 +761,7 @@ export class FrequenciaService {
         origemTurma: { select: { nome: true } },
       },
     });
+    const ctx = await this.contexto(companyId, ocupacoes);
 
     const porTurma = new Map<
       string,
@@ -640,7 +776,7 @@ export class FrequenciaService {
         g = { nome: o.origemTurma?.nome ?? null, ocorrencias: [] };
         porTurma.set(turmaId, g);
       }
-      const norm = this.normaliza(o);
+      const norm = this.normaliza(o, ctx);
       g.ocorrencias.push(norm);
       if (!norm.cancelada || norm.temChamada) {
         dataDaOcorrencia.set(o.id, o.data.getTime());
@@ -739,6 +875,7 @@ export class FrequenciaService {
         // outra conversa que "5 faltas".
         faltasSeguidasComposicao: x.agregado.faltasSeguidasComposicao,
         confianca: x.cob.confianca,
+        cobertura: x.cob,
       }))
       // AC-008 — faltas seguidas desc, depois frequência asc. O desempate
       // por nome existe só para a ordem ser estável entre chamadas.

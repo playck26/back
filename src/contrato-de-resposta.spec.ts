@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PALETA_DE_QUADRA } from './courts/paleta-de-quadra';
+import { ORIGENS_DA_CHAMADA } from './classes/origem-da-chamada';
 
 /**
  * SPEC-021/TASK-005 — **o gate que faz a dívida encolher, e nunca crescer.**
@@ -267,7 +268,15 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // nunca devolve.
   [
     'AulaDoDiaDoProfessorResponseDto.chamada',
-    ['futura', 'em_andamento', 'pendente', 'feita', 'legada', 'nao_houve'],
+    [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+    ],
   ],
   // SPEC-030 — a lista da turma (professor) e o historico (gestor) publicam
   // a MESMA lista, e as duas incluem `cancelada`: nenhuma das duas esconde
@@ -283,6 +292,8 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'feita',
       'legada',
       'nao_houve',
+      // SPEC-057/TASK-001/D4 — do mesmo resolvedor.
+      'sem_participantes',
       'cancelada',
     ],
   ],
@@ -295,6 +306,8 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'feita',
       'legada',
       'nao_houve',
+      // SPEC-057/TASK-001/D4 — do mesmo resolvedor.
+      'sem_participantes',
       'cancelada',
     ],
   ],
@@ -349,6 +362,15 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   // SPEC-057/TASK-005/D17 — hoje só há um tipo de visitante, e o campo existe
   // para a tela rotular sem supor. Vem de `AgendaService.visitantesDaOcorrencia`.
   ['VisitanteDaOcorrenciaResponseDto.tipo', ['reposicao']],
+  // SPEC-057/TASK-001/D1/D6 — a origem da chamada, atual e inicial. A lista
+  // é a constante que o CHECK `chamadas_origem_dom_check` espelha.
+  // Qualificadas: `origem` simples já é a do horário (`proprio`/`herdado`).
+  ['ChamadaResponseDto.origem', [...ORIGENS_DA_CHAMADA]],
+  ['ChamadaResponseDto.origemInicial', [...ORIGENS_DA_CHAMADA]],
+  ['OcorrenciaNoHistoricoResponseDto.origem', [...ORIGENS_DA_CHAMADA]],
+  ['OcorrenciaNoHistoricoResponseDto.origemInicial', [...ORIGENS_DA_CHAMADA]],
+  ['OcorrenciaDoAlunoResponseDto.origem', [...ORIGENS_DA_CHAMADA]],
+  ['OcorrenciaDoAlunoResponseDto.origemInicial', [...ORIGENS_DA_CHAMADA]],
 ]);
 
 function enumsPublicadosEmRespostas(): {
@@ -443,7 +465,6 @@ describe('DEF-016 — todo enum publicado tem origem conferível', () => {
  */
 const ROTAS_QUE_PRECISAM_DECLARAR_404: [string, string][] = [
   ['/api/v1/classes/{id}/avaliacoes', 'get'],
-  ['/api/v1/me/classes/{id}/avaliacao', 'get'],
   ['/api/v1/me/classes/aulas/{ocupacaoId}/avaliacao', 'put'],
 ];
 

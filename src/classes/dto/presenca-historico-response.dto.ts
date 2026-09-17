@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ORIGENS_DA_CHAMADA } from '../origem-da-chamada';
 
 /**
  * SPEC-021/TASK-005 — o **histórico de chamada visto pelo gestor** e a
@@ -81,6 +82,9 @@ export class OcorrenciaNoHistoricoResponseDto {
       'feita',
       'legada',
       'nao_houve',
+      // SPEC-057/TASK-001/D4 — sem cabeçalho, terminada pós-corte e com
+      // `M ∪ V` vazio: não cobra ninguém.
+      'sem_participantes',
       'cancelada',
     ],
   })
@@ -102,6 +106,27 @@ export class OcorrenciaNoHistoricoResponseDto {
    */
   @ApiProperty({ type: String, nullable: true, example: 'Carlos Lima' })
   registradoPor!: string | null;
+
+  /**
+   * SPEC-057/TASK-001/D1/D6 — **quem respondeu por último** pela chamada.
+   * Com `automatica`, `registradoPor` é `null` e isso é a verdade: o job não é
+   * pessoa. `legada_humana` é o "registro humano anterior à automação".
+   * `null` sem cabeçalho.
+   */
+  @ApiProperty({
+    type: String,
+    enum: [...ORIGENS_DA_CHAMADA],
+    nullable: true,
+  })
+  origem!: string | null;
+
+  /** SPEC-057/TASK-001/D1 — como a chamada nasceu; `null` sem cabeçalho. */
+  @ApiProperty({
+    type: String,
+    enum: [...ORIGENS_DA_CHAMADA],
+    nullable: true,
+  })
+  origemInicial!: string | null;
 
   @ApiProperty({ type: [AlunoNoHistoricoResponseDto] })
   alunos!: AlunoNoHistoricoResponseDto[];
