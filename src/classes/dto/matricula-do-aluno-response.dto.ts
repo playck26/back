@@ -65,6 +65,19 @@ export class TurmaDisponivelResponseDto {
   })
   motivo!: string | null;
 
+  /**
+   * SPEC-057/TASK-004 (card 5350) — **o nível da turma, para a tela filtrar.**
+   *
+   * `null` é o estado normal: `turmas.nivel_id` é anulável, e turma sem nível
+   * aparece para todo mundo (INV-141). O filtro é de EXIBIÇÃO — o servidor
+   * não recusa entrada por nível (D14).
+   */
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  nivelId!: string | null;
+
+  @ApiProperty({ type: String, example: 'Iniciante', nullable: true })
+  nivelNome!: string | null;
+
   @ApiProperty({ type: [EncontroDaTurmaDisponivelDto] })
   encontros!: EncontroDaTurmaDisponivelDto[];
 }

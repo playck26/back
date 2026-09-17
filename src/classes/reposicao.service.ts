@@ -247,6 +247,10 @@ export class ReposicaoService {
           select: {
             nome: true,
             capacidade: true,
+            // SPEC-057/TASK-004 — o nível vai junto, para a tela recortar
+            // com a mesma regra da lista de turmas.
+            nivelId: true,
+            nivel: { select: { nome: true } },
             _count: { select: { alunos: true } },
           },
         },
@@ -267,6 +271,8 @@ export class ReposicaoService {
           ocupacaoId: o.id,
           turmaId: o.origemTurmaId as string,
           turmaNome: o.origemTurma?.nome ?? '',
+          nivelId: o.origemTurma?.nivelId ?? null,
+          nivelNome: o.origemTurma?.nivel ? o.origemTurma.nivel.nome : null,
           quadraNome: o.quadra.nome,
           data: formatDateOnly(o.data),
           horaInicio: formatTimeOnly(o.horaInicio),

@@ -102,6 +102,10 @@ export interface PrismaMock {
     findUnique: jest.Mock;
     // SPEC-036: a ficha do cadastro completo.
     update: jest.Mock;
+    // SPEC-057/TASK-004: `GET /students` passou a ser exercitada por HTTP,
+    // por causa do filtro de nivel -- que num `where` de UUID viraria 500.
+    findMany: jest.Mock;
+    count: jest.Mock;
   };
   movimentoDeCredito: { findMany: jest.Mock };
   // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
@@ -277,6 +281,10 @@ export function buildPrismaMock(): PrismaMock {
       findFirst: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
       findUnique: jest.fn().mockResolvedValue({ saldoCreditos: 0 }),
       update: jest.fn(),
+      // SPEC-057/TASK-004 — `GET /students` passou a ser exercitada por HTTP
+      // por causa do filtro de nível, que num `where` de UUID viraria 500.
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
     },
     movimentoDeCredito: { findMany: jest.fn().mockResolvedValue([]) },
     plano: {

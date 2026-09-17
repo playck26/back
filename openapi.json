@@ -448,6 +448,23 @@
               "example": "silva joao",
               "type": "string"
             }
+          },
+          {
+            "name": "nivelId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "semNivel",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10390,6 +10407,16 @@
             ],
             "description": "Por que não pode entrar. `null` quando pode."
           },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "string",
+            "example": "Iniciante",
+            "nullable": true
+          },
           "encontros": {
             "type": "array",
             "items": {
@@ -10405,6 +10432,8 @@
           "matriculados",
           "jaEstouNela",
           "podeEntrar",
+          "nivelId",
+          "nivelNome",
           "encontros"
         ]
       },
@@ -11323,6 +11352,16 @@
             "type": "string",
             "example": "Iniciante Quinta"
           },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "string",
+            "example": "Iniciante",
+            "nullable": true
+          },
           "quadraNome": {
             "type": "string",
             "example": "Quadra 2"
@@ -11348,6 +11387,8 @@
           "ocupacaoId",
           "turmaId",
           "turmaNome",
+          "nivelId",
+          "nivelNome",
           "quadraNome",
           "data",
           "horaInicio",

@@ -71,6 +71,12 @@ export class MatriculaDoAlunoService {
           nome: true,
           status: true,
           capacidade: true,
+          // SPEC-057/TASK-004 — o nível vai junto porque a tela filtra por ele.
+          // `nivelId` para comparar, `nivel.nome` para escrever na chip: sem o
+          // nome, a tela teria de buscar o catálogo de níveis, que é fechado
+          // para o aluno (AC-027).
+          nivelId: true,
+          nivel: { select: { nome: true } },
           encontros: {
             select: { diaSemana: true, horaInicio: true, horaFim: true },
           },
@@ -110,6 +116,8 @@ export class MatriculaDoAlunoService {
         jaEstouNela,
         podeEntrar: motivo === null && !jaEstouNela,
         motivo,
+        nivelId: turma.nivelId,
+        nivelNome: turma.nivel ? turma.nivel.nome : null,
         encontros: turma.encontros.map((encontro) => ({
           diaSemana: encontro.diaSemana,
           horaInicio: encontro.horaInicio.toISOString().slice(11, 16),

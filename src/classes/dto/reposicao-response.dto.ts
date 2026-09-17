@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** A reposição já marcada para uma falta, quando existe. */
 export class ReposicaoMarcadaResponseDto {
@@ -101,6 +101,21 @@ export class OportunidadeDeReposicaoResponseDto {
 
   @ApiProperty({ example: 'Iniciante Quinta' })
   turmaNome!: string;
+
+  /**
+   * SPEC-057/TASK-004 (card 5350) — **o mesmo recorte de nível da lista de
+   * turmas.** Esta lista é a que mais confunde: ela traz ocorrências de
+   * **todas** as turmas ativas do clube, das quais o aluno não participa.
+   *
+   * `null` quando a turma não tem nível — e turma sem nível aparece para
+   * todo mundo (INV-141). **Filtrar é exibição:** não consome, não expira e
+   * não bloqueia o crédito (D16).
+   */
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  nivelId!: string | null;
+
+  @ApiProperty({ type: String, example: 'Iniciante', nullable: true })
+  nivelNome!: string | null;
 
   @ApiProperty({ example: 'Quadra 2' })
   quadraNome!: string;

@@ -56,6 +56,71 @@ describe('StudentsService', () => {
     service = new StudentsService(prisma);
   });
 
+  describe('list — o filtro de nível (SPEC-057/TASK-004)', () => {
+    beforeEach(() => {
+      (prisma.aluno.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.aluno.count as jest.Mock).mockResolvedValue(0);
+    });
+
+    const whereDaChamada = () =>
+      (
+        (prisma.aluno.findMany as jest.Mock).mock.calls[0] as [
+          { where: Record<string, unknown> },
+        ]
+      )[0].where;
+
+    it('sem `nivelId`, o `where` não ganha a chave — ausência é ausência', async () => {
+      await service.list('c1', { page: 1, pageSize: 20 });
+
+      expect(whereDaChamada()).toEqual({ companyId: 'c1' });
+    });
+
+    it('com um id, filtra por ele', async () => {
+      await service.list('c1', {
+        page: 1,
+        pageSize: 20,
+        nivelId: '11111111-1111-4111-8111-111111111111',
+      });
+
+      expect(whereDaChamada()).toEqual({
+        companyId: 'c1',
+        nivelId: '11111111-1111-4111-8111-111111111111',
+      });
+    });
+
+    /**
+     * **É esta a opção que o gestor precisa antes de ligar o filtro do
+     * aluno.** `alunos.nivel_id` é anulável e o nulo é o estado normal: sem
+     * uma forma de listar quem ficou de fora, ele teria de abrir aluno por
+     * aluno para descobrir.
+     */
+    it('`semNivel` lista quem não foi classificado — e não é o mesmo que sem filtro', async () => {
+      await service.list('c1', {
+        page: 1,
+        pageSize: 20,
+        semNivel: true,
+      });
+
+      expect(whereDaChamada()).toEqual({ companyId: 'c1', nivelId: null });
+    });
+
+    it('combina com vínculo e busca, sem uma apagar a outra', async () => {
+      await service.list('c1', {
+        page: 1,
+        pageSize: 20,
+        semNivel: true,
+        vinculo: 'aprovado',
+        busca: 'ana',
+      });
+
+      const where = whereDaChamada();
+      expect(where.companyId).toBe('c1');
+      expect(where.nivelId).toBeNull();
+      expect(where.vinculo).toBe('aprovado');
+      expect(where.AND).toBeDefined();
+    });
+  });
+
   describe('list', () => {
     it('escopa por company_id e mapeia dado de usuario+aluno (REQ-001, REQ-006)', async () => {
       (prisma.aluno.findMany as jest.Mock).mockResolvedValue([
