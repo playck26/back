@@ -65,6 +65,20 @@ function filtroDeBusca(busca?: string) {
   };
 }
 
+/**
+ * SPEC-057/TASK-004 — o recorte por nível.
+ *
+ * **`SEM_NIVEL` não é `nivelId: undefined`**: o primeiro pede a lista de quem
+ * não foi classificado; o segundo é ausência de filtro. Confundir os dois
+ * devolveria a empresa inteira para quem perguntou por uma lacuna.
+ */
+function filtroDeNivel(nivelId?: string, semNivel?: boolean) {
+  // A ordem É a regra: "sem nível" vence, e os dois juntos não são erro.
+  if (semNivel) return { nivelId: null };
+  if (!nivelId) return {};
+  return { nivelId };
+}
+
 @Injectable()
 export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -129,9 +143,14 @@ export class StudentsService {
     // SPEC-049/REQ-001 — **e `?busca=` é o que faz o seletor do Admin alcançar
     // além do centésimo aluno.** O `pageSize` para em `@Max(100)` e continua
     // parando (D5): o teto protege o banco, e a saída é buscar.
+    //
+    // SPEC-057/TASK-004 — `?nivelId=` recorta por nível, e `SEM_NIVEL` acha
+    // quem ficou sem classificação. O segundo é o que o gestor precisa antes
+    // de ligar o filtro do aluno: sem nível atribuído, filtrar não ajuda.
     const where = {
       companyId,
       ...(query.vinculo ? { vinculo: query.vinculo } : {}),
+      ...filtroDeNivel(query.nivelId, query.semNivel),
       ...filtroDeBusca(query.busca),
     };
 

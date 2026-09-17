@@ -406,6 +406,16 @@ model Quadra {
   /// classifica — "Outros" como filtro e ruido.
   categoriaId String? @map("categoria_id") @db.Uuid
 
+  /// SPEC-057/TASK-005/D19 — cor AUXILIAR da quadra na agenda, de uma paleta
+  /// fixa de seis (CHECK `quadras_cor_paleta_check`, forma canônica maiúscula).
+  /// Nunca é o único identificador (INV-140): a tela sempre escreve nome + Q-código.
+  cor          String @default("#00763A") @db.VarChar(7)
+  /// SPEC-057/TASK-005/D19 — código visível e único que desambigua quadras
+  /// homônimas. No banco é `GENERATED ALWAYS AS IDENTITY` (a migration é a
+  /// fonte); `autoincrement()` aqui só diz ao Prisma que ele NÃO escreve a
+  /// coluna. A API não permite editá-lo.
+  codigoAgenda Int    @unique(map: "quadras_codigo_agenda_key") @default(autoincrement()) @map("codigo_agenda")
+
   empresa      Empresa                @relation(fields: [companyId], references: [id])
   /// INV-054 — **FK COMPOSTA**, e e ela que impede apontar para o esporte de
   /// outra empresa. FK simples nao saberia de `company_id`; aqui, como a

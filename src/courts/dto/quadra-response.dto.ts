@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PALETA_DE_QUADRA } from '../paleta-de-quadra';
 
 /**
  * SPEC-020/TASK-007 — o **contrato de resposta** de quadra, e o primeiro do
@@ -90,6 +91,27 @@ export class QuadraResponseDto {
    */
   @ApiProperty({ type: String, nullable: true })
   imagemUrl!: string | null;
+
+  /**
+   * SPEC-057/TASK-005/D19 — cor auxiliar na agenda, sempre uma das seis da
+   * paleta, na forma canônica maiúscula. **Nunca é o único identificador**
+   * (INV-140): quem identifica é `nome` + `Q-<codigoAgenda>`.
+   */
+  @ApiProperty({
+    type: String,
+    enum: [...PALETA_DE_QUADRA],
+    example: '#00763A',
+  })
+  cor!: string;
+
+  /**
+   * SPEC-057/TASK-005/D19 — o código visível e único que desambigua quadras
+   * homônimas, gerado pelo banco. **String decimal, não número**: é
+   * identificador, não quantidade — ninguém soma nem ordena por ele, e a tela
+   * o escreve como `Q-<codigoAgenda>`.
+   */
+  @ApiProperty({ type: String, example: '12', pattern: '^[1-9][0-9]*$' })
+  codigoAgenda!: string;
 }
 
 /**

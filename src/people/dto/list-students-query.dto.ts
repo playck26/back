@@ -1,5 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsBoolean,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+import { UuidNoCorpo } from '../../common/validation/uuid-no-corpo.decorator';
 import { PaginationQueryDto } from './pagination-query.dto';
 
 /**
@@ -33,4 +41,41 @@ export class ListStudentsQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(120)
   busca?: string;
+
+  /**
+   * SPEC-057/TASK-004 (card 5350) — **filtrar alunos por nível.**
+   *
+   * `@UuidNoCorpo()` e não `@Matches`: a primeira versão aceitava o literal
+   * `SEM_NIVEL` **dentro** deste campo, e o gate `uuid-no-corpo.gate.spec.ts`
+   * a reprovou — com razão. Aquele gate foi endurecido em três rodadas de
+   * validação cruzada justamente contra exceções, e o decorador não confere
+   * só o formato: ele **normaliza a grafia**, que é o que impede um
+   * `where nivel_id = 'ABC…'` não casar com o valor minúsculo que o Postgres
+   * devolve.
+   *
+   * Quem pergunta "quem ficou sem nível" pergunta outra coisa, e tem campo
+   * próprio (`semNivel`).
+   */
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @UuidNoCorpo()
+  nivelId?: string;
+
+  /**
+   * **Quem não foi classificado** — a pergunta que o gestor precisa fazer
+   * ANTES de ligar o filtro do aluno.
+   *
+   * `alunos.nivel_id` é anulável e o nulo é o estado normal: sem esta opção,
+   * descobrir quem ficou de fora exigiria abrir aluno por aluno.
+   *
+   * Vence o `nivelId` quando os dois vêm: "sem nível" e "deste nível" são
+   * mutuamente exclusivos, e recusar com `400` seria rigor sem ganho.
+   */
+  @ApiPropertyOptional({ type: Boolean })
+  @IsOptional()
+  // **NÃO `@Type(() => Boolean)`**: `Boolean('false')` é `true`. Mesmo molde
+  // de `MinhasTurmasQueryDto.incluirInativas`.
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  semNivel?: boolean;
 }

@@ -328,6 +328,95 @@ describe('sair', () => {
   });
 });
 
+describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
+  /**
+   * **AC-023 — o nível precisa CHEGAR à tela.** O filtro é de exibição
+   * (D14): quem decide o que aparece é o cliente, e ele não tem como
+   * decidir sobre um campo que o contrato não carrega.
+   *
+   * **AC-024 — e o nulo vem como nulo.** As duas colunas (`alunos.nivel_id`
+   * e `turmas.nivel_id`) são anuláveis, e o nulo é o estado normal — a
+   * maioria dos alunos em produção não foi classificada. Mandar `''` ou
+   * omitir o campo faria a tela confundir "sem nível" com "não sei".
+   */
+  function prismaCom(turmas: unknown[]) {
+    return {
+      aluno: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'aluno-1', vinculo: 'aprovado' }),
+      },
+      empresa: {
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ limiteTurmasPorAluno: null }),
+      },
+      turma: { findMany: jest.fn().mockResolvedValue(turmas) },
+      turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+  }
+
+  it('AC-023: a turma com nível traz `nivelId` e `nivelNome`', async () => {
+    const prisma = prismaCom([
+      {
+        id: TURMA,
+        nome: 'Iniciantes',
+        status: 'ativa',
+        capacidade: 8,
+        encontros: [],
+        _count: { alunos: 1 },
+        nivelId: 'nivel-1',
+        nivel: { nome: 'Iniciante' },
+      },
+    ]);
+
+    const [turma] = await new MatriculaDoAlunoService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ).disponiveis(EMPRESA, USUARIO);
+
+    expect(turma.nivelId).toBe('nivel-1');
+    expect(turma.nivelNome).toBe('Iniciante');
+  });
+
+  it('AC-024: turma SEM nível vem com os dois campos nulos', async () => {
+    const prisma = prismaCom([
+      {
+        id: TURMA,
+        nome: 'Sem nivelamento',
+        status: 'ativa',
+        capacidade: 8,
+        encontros: [],
+        _count: { alunos: 0 },
+        nivelId: null,
+        nivel: null,
+      },
+    ]);
+
+    const [turma] = await new MatriculaDoAlunoService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ).disponiveis(EMPRESA, USUARIO);
+
+    expect(turma.nivelId).toBeNull();
+    expect(turma.nivelNome).toBeNull();
+  });
+
+  it('o `select` pede o nível — sem isso o mapa devolveria `undefined`', async () => {
+    const prisma = prismaCom([]);
+
+    await new MatriculaDoAlunoService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ).disponiveis(EMPRESA, USUARIO);
+
+    const [args] = (prisma.turma.findMany as unknown as jest.Mock).mock
+      .calls[0] as [{ select: Record<string, unknown> }];
+    expect(args.select.nivelId).toBe(true);
+    expect(args.select.nivel).toEqual({ select: { nome: true } });
+  });
+});
+
 describe('disponíveis', () => {
   it('marca o motivo do bloqueio em vez de esconder a turma', async () => {
     const prisma = {

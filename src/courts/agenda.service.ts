@@ -3,7 +3,13 @@ import {
   DiaComItensResponseDto,
   DiaDaAgendaResponseDto,
   ItemDaAgendaResponseDto,
+  VisitanteDaOcorrenciaResponseDto,
 } from './dto/booking-response.dto';
+import {
+  calcularOcupacao,
+  carregarConjuntos,
+  type ConjuntosDaOcorrencia,
+} from '../classes/ocupacao-da-ocorrencia';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -71,9 +77,12 @@ function autorDo(
  * `include` que perdeu um campo.
  */
 const INCLUDE_DO_ITEM = {
-  quadra: { select: { nome: true } },
+  // SPEC-057/TASK-005/D19 — cor e código entram no MESMO include: identificar
+  // a quadra não pode custar uma consulta por item.
+  quadra: { select: { nome: true, cor: true, codigoAgenda: true } },
   aluno: { include: { usuario: { select: { nome: true } } } },
-  origemTurma: { select: { nome: true } },
+  // SPEC-057/TASK-005/D17 — a capacidade da turma, para a ocupação da aula.
+  origemTurma: { select: { nome: true, capacidade: true } },
   // SPEC-032/AC-009 — o autor entra no MESMO `include`, sem N+1. É a razão do
   // NFR-002 desta rota: descobrir quem criou cada item com uma consulta por
   // item transformaria um dia cheio em dezenas de idas.
@@ -238,7 +247,69 @@ export class AgendaService {
       orderBy: [{ horaInicio: 'asc' }, { quadraId: 'asc' }],
     });
 
-    return ocupacoes.map((o) => this.mapearItem(o));
+    const conjuntos = await this.conjuntosDasAulas(companyId, ocupacoes);
+    return ocupacoes.map((o) => this.mapearItem(o, conjuntos));
+  }
+
+  /**
+   * SPEC-057/TASK-005/D17 — os visitantes de uma aula de turma, para o
+   * diálogo. Ver `VisitanteDaOcorrenciaResponseDto` para o porquê da rota
+   * própria.
+   *
+   * **404 em três casos com a mesma resposta**: ocorrência inexistente, de
+   * outra empresa, ou avulsa. Diferenciá-los contaria a quem pergunta que um
+   * id existe em outro clube.
+   */
+  async visitantesDaOcorrencia(
+    companyId: string,
+    ocupacaoId: string,
+  ): Promise<VisitanteDaOcorrenciaResponseDto[]> {
+    const ocorrencia = await this.prisma.ocupacaoQuadra.findFirst({
+      where: { id: ocupacaoId, companyId, origemTipo: 'TURMA' },
+      select: { id: true },
+    });
+    if (!ocorrencia) throw new NotFoundException();
+
+    const visitas = await this.prisma.reposicaoDeAula.findMany({
+      where: { companyId, ocupacaoId },
+      select: {
+        alunoId: true,
+        aluno: {
+          select: {
+            nivelId: true,
+            nivel: { select: { nome: true } },
+            usuario: { select: { nome: true } },
+          },
+        },
+      },
+    });
+
+    return visitas
+      .map((v) => ({
+        alunoId: v.alunoId,
+        nome: v.aluno.usuario.nome,
+        nivelId: v.aluno.nivelId,
+        nivelNome: v.aluno.nivel?.nome ?? null,
+        tipo: 'reposicao' as const,
+      }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }
+
+  /**
+   * SPEC-057/TASK-005/D17/NFR-001 — os conjuntos M/F/V de TODAS as aulas de
+   * turma da janela, em três consultas (nenhuma se não houver aula de turma).
+   * Dia e semana passam por aqui, e o mês não: ele continua sendo contagem.
+   */
+  private conjuntosDasAulas(
+    companyId: string,
+    ocupacoes: readonly OcupacaoDoItem[],
+  ): Promise<Map<string, ConjuntosDaOcorrencia>> {
+    const aulas = ocupacoes.flatMap((o) =>
+      o.origemTipo === 'TURMA' && o.origemTurmaId
+        ? [{ id: o.id, turmaId: o.origemTurmaId }]
+        : [],
+    );
+    return carregarConjuntos(this.prisma, companyId, aulas);
   }
 
   /**
@@ -292,12 +363,17 @@ export class AgendaService {
       }),
     ]);
 
+    // SPEC-057/TASK-005/NFR-001 — UMA carga de conjuntos para a semana
+    // inteira, depois da consulta de ocupações; nunca por dia nem por item.
+    const conjuntos = await this.conjuntosDasAulas(companyId, ocupacoes);
+
     const porDia = new Map<string, ItemDoDia[]>();
     for (const o of ocupacoes) {
       const chave = formatDateOnly(o.data);
+      const mapeado = this.mapearItem(o, conjuntos);
       const lista = porDia.get(chave);
-      if (lista) lista.push(this.mapearItem(o));
-      else porDia.set(chave, [this.mapearItem(o)]);
+      if (lista) lista.push(mapeado);
+      else porDia.set(chave, [mapeado]);
     }
 
     // **Exatamente sete, sempre** (REQ-001): dia sem ocupação entra com
@@ -319,7 +395,15 @@ export class AgendaService {
   }
 
   /** SPEC-034 — o mapeamento do item, também em um lugar só. Ver acima. */
-  private mapearItem(o: OcupacaoDoItem): ItemDoDia {
+  private mapearItem(
+    o: OcupacaoDoItem,
+    conjuntos: ReadonlyMap<string, ConjuntosDaOcorrencia>,
+  ): ItemDoDia {
+    const doItem = conjuntos.get(o.id);
+    const ocupacao =
+      o.origemTipo === 'TURMA' && doItem && o.origemTurma
+        ? calcularOcupacao(o.origemTurma.capacidade, doItem)
+        : null;
     return {
       id: o.id,
       quadraId: o.quadraId,
@@ -352,6 +436,21 @@ export class AgendaService {
         quantidade: item.quantidade,
         valorUnitario: Number(item.valorUnitario),
       })),
+      quadraCor: o.quadra.cor,
+      quadraCodigoAgenda: String(o.quadra.codigoAgenda),
+      tipoVisual:
+        o.origemTipo === 'TURMA'
+          ? 'TURMA'
+          : o.professorId !== null
+            ? 'PARTICULAR'
+            : 'AVULSO',
+      capacidade: ocupacao?.capacidade ?? null,
+      matriculados: ocupacao?.matriculados ?? null,
+      faltasAvisadas: ocupacao?.faltasAvisadas ?? null,
+      reposicoesMarcadas: ocupacao?.reposicoesMarcadas ?? null,
+      reposicoesNaOcupacao: ocupacao?.reposicoesNaOcupacao ?? null,
+      ocupados: ocupacao?.ocupados ?? null,
+      vagasNaOcorrencia: ocupacao?.vagasNaOcorrencia ?? null,
     };
   }
 

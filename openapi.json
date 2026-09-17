@@ -448,6 +448,23 @@
               "example": "silva joao",
               "type": "string"
             }
+          },
+          {
+            "name": "nivelId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "semNivel",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3092,6 +3109,44 @@
         ]
       }
     },
+    "/api/v1/agenda/ocorrencias/{ocupacaoId}/visitantes": {
+      "get": {
+        "operationId": "AgendaController_visitantes",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VisitanteDaOcorrenciaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "agenda"
+        ]
+      }
+    },
     "/api/v1/agenda/{data}": {
       "get": {
         "operationId": "AgendaController_dia",
@@ -4511,7 +4566,28 @@
     "/api/v1/me/classes": {
       "get": {
         "operationId": "MeClassesController_myUpcomingClasses",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "de",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "ate",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-07",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -4609,6 +4685,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErroDeMatriculaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "get": {
+        "operationId": "MeClassesController_minhaTurma",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurmaDoAlunoDetalheResponseDto"
                 }
               }
             }
@@ -7992,6 +8101,23 @@
           "imagemUrl": {
             "type": "string",
             "nullable": true
+          },
+          "cor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ],
+            "example": "#00763A"
+          },
+          "codigoAgenda": {
+            "type": "string",
+            "example": "12",
+            "pattern": "^[1-9][0-9]*$"
           }
         },
         "required": [
@@ -8003,7 +8129,9 @@
           "precoHora",
           "status",
           "createdAt",
-          "imagemUrl"
+          "imagemUrl",
+          "cor",
+          "codigoAgenda"
         ]
       },
       "QuadraPaginadaResponseDto": {
@@ -8053,6 +8181,18 @@
           },
           "precoHora": {
             "type": "number"
+          },
+          "cor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ],
+            "description": "Ausente: usa o padrão #00763A."
           }
         },
         "required": [
@@ -8085,6 +8225,18 @@
               "ativa",
               "inativa"
             ]
+          },
+          "cor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ],
+            "description": "Ausente: preserva a cor atual. null é recusado."
           }
         }
       },
@@ -8932,6 +9084,65 @@
             "items": {
               "$ref": "#/components/schemas/AdicionalDaReservaDto"
             }
+          },
+          "quadraCor": {
+            "type": "string",
+            "enum": [
+              "#00763A",
+              "#31658C",
+              "#A23B1E",
+              "#6B46A3",
+              "#8B5E00",
+              "#A12B65"
+            ]
+          },
+          "quadraCodigoAgenda": {
+            "type": "string",
+            "example": "12",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "tipoVisual": {
+            "type": "string",
+            "enum": [
+              "TURMA",
+              "AVULSO",
+              "PARTICULAR"
+            ]
+          },
+          "capacidade": {
+            "type": "number",
+            "nullable": true,
+            "example": 8
+          },
+          "matriculados": {
+            "type": "number",
+            "nullable": true,
+            "example": 8
+          },
+          "faltasAvisadas": {
+            "type": "number",
+            "nullable": true,
+            "example": 1
+          },
+          "reposicoesMarcadas": {
+            "type": "number",
+            "nullable": true,
+            "example": 2
+          },
+          "reposicoesNaOcupacao": {
+            "type": "number",
+            "nullable": true,
+            "example": 2
+          },
+          "ocupados": {
+            "type": "number",
+            "nullable": true,
+            "example": 9
+          },
+          "vagasNaOcorrencia": {
+            "type": "number",
+            "nullable": true,
+            "example": 0
           }
         },
         "required": [
@@ -8947,7 +9158,17 @@
           "valor",
           "criadaPor",
           "canceladaPor",
-          "adicionais"
+          "adicionais",
+          "quadraCor",
+          "quadraCodigoAgenda",
+          "tipoVisual",
+          "capacidade",
+          "matriculados",
+          "faltasAvisadas",
+          "reposicoesMarcadas",
+          "reposicoesNaOcupacao",
+          "ocupados",
+          "vagasNaOcorrencia"
         ]
       },
       "DiaComItensResponseDto": {
@@ -8971,6 +9192,42 @@
           "data",
           "fechado",
           "itens"
+        ]
+      },
+      "VisitanteDaOcorrenciaResponseDto": {
+        "type": "object",
+        "properties": {
+          "alunoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Ana Souza"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Intermediário"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "reposicao"
+            ]
+          }
+        },
+        "required": [
+          "alunoId",
+          "nome",
+          "nivelId",
+          "nivelNome",
+          "tipo"
         ]
       },
       "ImagemDaQuadraResponseDto": {
@@ -10336,6 +10593,16 @@
             ],
             "description": "Por que não pode entrar. `null` quando pode."
           },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "string",
+            "example": "Iniciante",
+            "nullable": true
+          },
           "encontros": {
             "type": "array",
             "items": {
@@ -10351,6 +10618,8 @@
           "matriculados",
           "jaEstouNela",
           "podeEntrar",
+          "nivelId",
+          "nivelNome",
           "encontros"
         ]
       },
@@ -10407,6 +10676,83 @@
           "statusCode",
           "code",
           "message"
+        ]
+      },
+      "ColegaDeTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "João Silva"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "souEu": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "nome",
+          "nivelNome",
+          "souEu"
+        ]
+      },
+      "TurmaDoAlunoDetalheResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "capacidade": {
+            "type": "number"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "quadraNome": {
+            "type": "string"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "professorNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "colegas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ColegaDeTurmaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "status",
+          "capacidade",
+          "encontros",
+          "quadraNome",
+          "nivelNome",
+          "professorNome",
+          "colegas"
         ]
       },
       "AulaAnteriorResponseDto": {
@@ -11192,6 +11538,16 @@
             "type": "string",
             "example": "Iniciante Quinta"
           },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "nivelNome": {
+            "type": "string",
+            "example": "Iniciante",
+            "nullable": true
+          },
           "quadraNome": {
             "type": "string",
             "example": "Quadra 2"
@@ -11217,6 +11573,8 @@
           "ocupacaoId",
           "turmaId",
           "turmaNome",
+          "nivelId",
+          "nivelNome",
           "quadraNome",
           "data",
           "horaInicio",

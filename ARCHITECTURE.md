@@ -1,16 +1,23 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-15** (era 2026-09-10).
+**Fonte: análise direta do código.** Data: **2026-09-17** (era 2026-09-15).
 **Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
 defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
 **DEF-027**.
 Por nome e não por hash porque este arquivo faz parte do próprio commit — um
 documento não consegue citar o hash que ele ajuda a formar.
 
-**Números conferidos por comando em 2026-09-15, com a SPEC-054 (Entrega B):**
-**40 migrations, 37 tabelas, 105 caminhos / 147 operações** no `openapi.json`,
-**17 triggers** não-internas (`ls -d prisma/migrations/*/`, `pg_tables` sem
-`_prisma_migrations`, `pg_trigger` sem as internas). *A SPEC-054 somou 1
+**Números conferidos por comando em 2026-09-17, com a SPEC-057/TASK-005 sobre
+a base integrada 004+002:** **41 migrations, 37 tabelas, 106 caminhos / 149
+operações** no `openapi.json`, **17 triggers** não-internas (`ls -d
+prisma/migrations/*/`; `pg_tables` sem `_prisma_migrations` e `pg_trigger` sem
+as internas, num banco novo com as 41 aplicadas). *A TASK-005 somou 1 migration
+e nenhuma tabela nem trigger: `quadras.cor` e `quadras.codigo_agenda` com
+`NOT NULL`, `UNIQUE` e dois `CHECK`. As TASK-004/002 e a 005 somaram juntas 1
+caminho / 2 operações sobre os 105/147 da SPEC-054.*
+
+*Registro de 2026-09-15, com a SPEC-054 (Entrega B):* 40 migrations, 37
+tabelas, 105 caminhos / 147 operações, 17 triggers. *A SPEC-054 somou 1
 migration, 3 tabelas (`tipos_de_adicional`, `adicionais`,
 `adicionais_da_ocupacao`), 6 caminhos / 9 operações e 7 triggers.*
 
@@ -516,7 +523,7 @@ a replicar:
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
 | `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
 | `niveis` | MOD-003 | único por `(company_id, nome)` |
-| `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor`. `imagem_key` é **pública** e vem com `imagem_confirmada_por`/`_em`: as três vivem e morrem juntas por CHECK (SPEC-018, decisão 1) |
+| `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor`. `imagem_key` é **pública** e vem com `imagem_confirmada_por`/`_em`: as três vivem e morrem juntas por CHECK (SPEC-018, decisão 1) **SPEC-057/TASK-005/D19:** `cor` (`varchar(7)`, default `#00763A`, `CHECK quadras_cor_paleta_check` com as seis cores canônicas) e `codigo_agenda` (`GENERATED ALWAYS AS IDENTITY`, `UNIQUE`, `CHECK > 0`) — o código é o que separa homônimas na agenda, e a API não o edita; a cor é auxiliar (INV-140) |
 | `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008. **SPEC-039:** ganhou `professor_id` (nulável), e a aula particular é uma linha `AVULSO` com ele preenchido — **não** um terceiro `origem_tipo`. O professor é atributo, não origem; `origem_tipo` responde "quem criou esta ocupação", e a resposta continua sendo "um pedido avulso" |
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
@@ -787,11 +794,47 @@ da SPEC-033, onde o saldo é gravado porque dinheiro precisa de extrato com
 ordem. **A `UNIQUE (falta_id)` (INV-118) é o que torna a subtração segura**: sem
 ela, dois `POST` simultâneos da mesma falta deixariam o crédito negativo.
 
-A capacidade de uma ocorrência passou a ser `matriculados − faltas avisadas +
-reposições`, e **a vaga que a reposição usa é a que a falta liberou** — a
+A vaga de uma ocorrência passou a descontar as faltas avisadas e somar as
+reposições, e **a vaga que a reposição usa é a que a falta liberou** — a
 LIM-031d continua verdadeira sobre lista de espera e deixou de ser o fim da
 história. Isso não cabe em `CHECK` nem em `EXCLUDE` (é contagem com subtração),
 e está declarado assim: a garantia é `turmas FOR UPDATE` mais o **FIT-035**.
+
+**SPEC-057/TASK-005/D17 — a conta virou de CONJUNTOS, e mora num lugar só**
+(`classes/ocupacao-da-ocorrencia.ts`). A soma de contagens da SPEC-046 errava em
+dois casos reais: a falta retida de quem **saiu** da turma subtraía de uma
+matrícula que não existe mais (capacidade 2 aparecia com 3 vagas), e o
+matriculado que também marcou reposição na mesma aula contava **duas vezes**.
+Agora `ocupados = |(M − F) ∪ V|` e `vagasNaOcorrencia = max(0, capacidade −
+ocupados)`, com `M` matriculados atuais, `F` faltas avisadas da aula e `V`
+visitantes. **Três leitores usam a mesma função**: a agenda do gestor (dia e
+semana), `ReposicaoService.oportunidades` e a recusa `TURMA_SEM_VAGA` do
+`marcar` — a tela nunca anuncia vaga que o `POST` recusa. `carregarConjuntos`
+faz **três consultas para a janela inteira**, nunca uma por ocorrência
+(NFR-001); o resumo do mês não chama nenhuma. **Não é a capacidade de
+matrícula**: `allocateStudent` continua comparando `|M|` com
+`turmas.capacidade`, e vaga liberada por falta não vira matrícula.
+
+**Agenda do gestor (SPEC-057/TASK-005).** O item ganhou `quadraCor`,
+`quadraCodigoAgenda` (string decimal), `tipoVisual` (`TURMA` pela origem;
+`PARTICULAR` = `AVULSO` com `professor_id`; senão `AVULSO` — derivado, sem valor
+novo no banco) e as sete contagens da aula de turma (nulas nas demais). Os nomes
+dos visitantes **não** vêm no item — a SPEC-034/AC-001 exige o item da semana
+igual ao do dia —, e sim de `GET /agenda/ocorrencias/:ocupacaoId/visitantes`,
+carregada ao abrir o diálogo: nome e nível, sem contato, `404` para ocorrência
+de outra empresa, inexistente ou avulsa. **Nenhuma rota de escrita nova**: o
+diálogo usa `POST`/`DELETE /classes/:id/students/:alunoId`, cuja política,
+autoria e rollback de auditoria ganharam prova em banco
+(`spec-057-matricula-pela-agenda.db-spec.ts`).
+
+**Cor e código pela API.** `validarCorDeQuadra` (`courts/paleta-de-quadra.ts`)
+recusa `null`, formato, fora da paleta e contraste < 3:1 com `400
+COR_QUADRA_INVALIDA`; o DTO usa `@Allow()` justamente para a recusa sair com
+`code` e não com a lista genérica do `ValidationPipe`. Ausente no `create` usa o
+default do banco; ausente no `update` preserva. `codigoAgenda` no corpo é
+recusado pelo `forbidNonWhitelisted`. O banco recusa o que passar por fora:
+`23502`, `23514`, `23505` e `428C9` (identity `ALWAYS`) — provados em
+`spec-057-cor-e-codigo-da-quadra.db-spec.ts`.
 
 > **A ordem de lock desta rota é `turmas` (1) → `alunos` (2) →
 > `ocupacoes_quadra` (3)** — um nível a mais que a `FaltaAvisadaService`, que
