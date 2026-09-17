@@ -7,6 +7,7 @@ import {
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresencaService } from './presenca.service';
+import type { CorteDaPresenca } from '../presenca-automatica/corte-da-presenca';
 
 // TEST (SPEC-014): unit tests de `presencas` com Prisma mockado.
 //
@@ -43,6 +44,15 @@ interface EstadoDaOcorrencia {
   professorIdDaTurma: string | null;
 }
 
+/**
+ * SPEC-057/TASK-001/D5 — o portão passou a reler o CABEÇALHO sob o lock (a
+ * origem inicial decide qual relógio guarda a janela). Este dublê responde
+ * "sem cabeçalho" a essa releitura e não a conta na alternância 0a/0b.
+ */
+function ehReleituraDoCabecalho(sql: unknown): boolean {
+  return Array.isArray(sql) && sql.join('?').includes('FROM chamadas c');
+}
+
 function buildMocks() {
   const estado: EstadoDaOcorrencia = {
     ocupacao: ocupacao(),
@@ -65,7 +75,8 @@ function buildMocks() {
       upsert: jest.fn(),
     },
     turmaAluno: { findMany: jest.fn() },
-    $queryRaw: jest.fn(() => {
+    $queryRaw: jest.fn((sql: unknown) => {
+      if (ehReleituraDoCabecalho(sql)) return Promise.resolve([]);
       statement += 1;
       const oc = estado.ocupacao;
       if (!oc) return Promise.resolve([]);
@@ -173,6 +184,11 @@ function ocupacao(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** SPEC-057/TASK-001/D4 — ambiente que nunca ativou a presença automática. */
+const semCorte = {
+  ler: () => Promise.resolve(null),
+} as unknown as CorteDaPresenca;
+
 describe('PresencaService (SPEC-014)', () => {
   let prisma: PrismaService;
   let tx: TxMock;
@@ -184,7 +200,7 @@ describe('PresencaService (SPEC-014)', () => {
     prisma = b.prisma;
     tx = b.tx;
     estado = b.estado;
-    service = new PresencaService(prisma);
+    service = new PresencaService(prisma, semCorte);
     (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
     // O `GET` monta a lista com o nome do aluno; o `PUT` só usa `alunoId`.
     // Um mock só serve os dois, e é o que permite os testes irem por

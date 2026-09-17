@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ORIGENS_DA_CHAMADA } from '../../classes/origem-da-chamada';
 
 /**
  * SPEC-021/TASK-005 — o **contrato de resposta de frequência** (SPEC-015).
@@ -54,6 +55,37 @@ export class FaltasSeguidasComposicaoResponseDto {
  * fina" — e `aviso` traz a frase pronta, para as telas não inventarem cada
  * uma a sua.
  */
+/**
+ * SPEC-057/TASK-001/D6 — **de onde veio cada aula que conta.**
+ *
+ * Com a presença automática, "chamada completa" deixou de querer dizer "alguém
+ * olhou": a automática presume presença. O percentual continua o mesmo; o que
+ * muda é que o gestor passa a ver quanto dele é presunção. Contagem **por
+ * ocorrência da turma**, no mesmo universo de `aconteceram` — as cinco somam
+ * `aconteceram`.
+ */
+export class OrigensDaCoberturaResponseDto {
+  /** Chamada cuja origem atual é o fechamento automático. */
+  @ApiProperty({ type: Number, example: 6 })
+  automaticas!: number;
+
+  /** Nasceu automática e uma pessoa revisou depois. */
+  @ApiProperty({ type: Number, example: 2 })
+  ratificadas!: number;
+
+  /** Demais aulas com cabeçalho (humano ou legado). */
+  @ApiProperty({ type: Number, example: 3 })
+  humanas!: number;
+
+  /** Sem cabeçalho, anterior ao corte — ou ambiente que nunca ativou. */
+  @ApiProperty({ type: Number, example: 1 })
+  pendentesLegadas!: number;
+
+  /** Sem cabeçalho, depois do corte: o job ainda não passou. */
+  @ApiProperty({ type: Number, example: 0 })
+  pendentesAtuais!: number;
+}
+
 export class CoberturaResponseDto {
   /** Ocorrências que aconteceram na janela. */
   @ApiProperty({ type: Number, example: 12 })
@@ -77,6 +109,10 @@ export class CoberturaResponseDto {
   /** A frase pronta, ou `null` quando a confiança é alta e não há o que avisar. */
   @ApiProperty({ type: String, nullable: true })
   aviso!: string | null;
+
+  /** SPEC-057/TASK-001/D6 — ver `OrigensDaCoberturaResponseDto`. */
+  @ApiProperty({ type: OrigensDaCoberturaResponseDto })
+  origens!: OrigensDaCoberturaResponseDto;
 }
 
 /** Os números de frequência de um aluno, sem identificá-lo. */
@@ -201,6 +237,22 @@ export class OcorrenciaDoAlunoResponseDto {
    */
   @ApiProperty({ type: String, enum: ['presente', 'ausente', 'justificado'] })
   status!: string;
+
+  /**
+   * SPEC-057/TASK-001/D6 — a origem da CHAMADA desta ocorrência (atual e
+   * inicial). Aqui nunca é `null`: a lista só traz ocorrência com registro.
+   */
+  @ApiProperty({
+    type: String,
+    enum: [...ORIGENS_DA_CHAMADA],
+  })
+  origem!: string;
+
+  @ApiProperty({
+    type: String,
+    enum: [...ORIGENS_DA_CHAMADA],
+  })
+  origemInicial!: string;
 }
 
 export class FrequenciaDoAlunoResponseDto {
@@ -275,6 +327,14 @@ export class AlunoEmEvasaoResponseDto {
 
   @ApiProperty({ type: String, enum: ['alta', 'baixa'] })
   confianca!: string;
+
+  /**
+   * SPEC-057/TASK-001/D6 — a cobertura **da turma** na janela, a mesma que o
+   * relatório da turma mostra: o alerta de evasão sobre presunção automática
+   * precisa dizer isso ao lado do motivo.
+   */
+  @ApiProperty({ type: CoberturaResponseDto })
+  cobertura!: CoberturaResponseDto;
 }
 
 export class EvasaoResponseDto {

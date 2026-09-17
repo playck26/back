@@ -4,6 +4,7 @@ import {
   dataExiste,
   FUSO_DO_CLUBE,
   hojeNoFusoDoClube,
+  instanteNoFusoDoClube,
   mesCorrenteNoFusoDoClube,
 } from './date-time.util';
 
@@ -222,5 +223,25 @@ describe('data inexistente não vira outro dia em silêncio', () => {
     expect(
       new Date('2026-04-31T00:00:00.000Z').toISOString().slice(0, 10),
     ).toBe('2026-05-01');
+  });
+});
+
+describe('SPEC-057/TASK-001 — instanteNoFusoDoClube', () => {
+  it('18:30 de 20/08/2026 em São Paulo é 21:30Z', () => {
+    expect(
+      instanteNoFusoDoClube(
+        new Date(Date.UTC(2026, 7, 20)),
+        new Date(Date.UTC(1970, 0, 1, 18, 30)),
+      ).toISOString(),
+    ).toBe('2026-08-20T21:30:00.000Z');
+  });
+
+  it('23:00 local cai no dia seguinte em UTC', () => {
+    expect(
+      instanteNoFusoDoClube(
+        new Date(Date.UTC(2026, 11, 31)),
+        new Date(Date.UTC(1970, 0, 1, 23, 0)),
+      ).toISOString(),
+    ).toBe('2027-01-01T02:00:00.000Z');
   });
 });

@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ORIGENS_DA_CHAMADA } from '../origem-da-chamada';
 
 /**
  * SPEC-021/TASK-005 — o **contrato de resposta das rotas `/me`**.
@@ -143,6 +144,9 @@ export class OcorrenciaDaTurmaResponseDto {
       'feita',
       'legada',
       'nao_houve',
+      // SPEC-057/TASK-001/D4 — sem cabeçalho, terminada pós-corte e com
+      // `M ∪ V` vazio: não cobra ninguém.
+      'sem_participantes',
       'cancelada',
     ],
     description:
@@ -150,7 +154,9 @@ export class OcorrenciaDaTurmaResponseDto {
       'terminou. `pendente` = terminou sem chamada. `feita` = chamada ' +
       'declarada completa. `legada` = chamada anterior à SPEC-015. ' +
       '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). ' +
-      '`cancelada` = ocorrência cancelada.',
+      '`sem_participantes` = terminou depois do corte da presença ' +
+      'automática, sem chamada e sem participante (SPEC-057); não é ' +
+      'pendência. `cancelada` = ocorrência cancelada.',
   })
   estado!: string;
 }
@@ -261,6 +267,44 @@ export class ChamadaResponseDto {
     nullable: true,
   })
   completude!: string | null;
+
+  /**
+   * SPEC-057/TASK-001/D1 — **quem respondeu pela chamada por último.**
+   * `automatica` = o fechamento automático, ainda sem revisão humana;
+   * `professor`/`gestor` = uma pessoa; `legada_humana` = registro humano
+   * anterior à automação. `null` sem cabeçalho.
+   */
+  @ApiProperty({
+    type: String,
+    enum: [...ORIGENS_DA_CHAMADA],
+    nullable: true,
+  })
+  origem!: string | null;
+
+  /**
+   * SPEC-057/TASK-001/D1 — **como a chamada nasceu**; não muda na revisão.
+   * `automatica` aqui com `origem` humana é a chamada automática ratificada.
+   */
+  @ApiProperty({
+    type: String,
+    enum: [...ORIGENS_DA_CHAMADA],
+    nullable: true,
+  })
+  origemInicial!: string | null;
+
+  /**
+   * SPEC-057/TASK-001/D5 — **até quando esta chamada automática pode ser
+   * corrigida**: o fechamento automático + 7 dias, pelo relógio do banco.
+   * `null` quando a chamada não nasceu automática — ali vale a janela de
+   * sempre, contada pela data da aula.
+   */
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: '2026-09-25T17:00:00.000Z',
+  })
+  corrigivelAte!: string | null;
 
   /**
    * SPEC-014 — o token de concorrência otimista. Volta no `PUT`, e duas abas

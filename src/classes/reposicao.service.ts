@@ -528,7 +528,35 @@ export class ReposicaoService {
     const agora = new Date();
 
     await this.prisma.$transaction(async (tx) => {
-      const aluno = await this.alunoDoUsuario(companyId, usuarioId, tx);
+      const encontrada = await tx.reposicaoDeAula.findFirst({
+        where: { id, companyId, aluno: { usuarioId } },
+        select: { ocupacao: { select: { origemTurmaId: true } } },
+      });
+      if (!encontrada?.ocupacao.origemTurmaId) throw new NotFoundException();
+
+      // SPEC-057/TASK-001/D4 — **desmarcar passou a tomar a mesma raiz que
+      // marcar, a chamada e o fechamento automático.** Tirar um visitante muda
+      // `V`, e `V` entra na versão, no teto e no que o job grava: sem a raiz,
+      // o job podia fechar a aula com o visitante que acabou de sair, ou o
+      // `PUT` podia conferir a versão contra um `V` que já não existia.
+      // Ordem da D8: (1) turma, (2) aluno, (3) ocorrência, e só então reler.
+      await tx.$queryRaw`
+        SELECT id FROM turmas
+         WHERE id = ${encontrada.ocupacao.origemTurmaId}::uuid
+           AND company_id = ${companyId}::uuid
+         FOR UPDATE
+      `;
+      const alunos = await tx.$queryRaw<{ id: string }[]>`
+        SELECT a.id
+          FROM alunos a
+         WHERE a.company_id = ${companyId}::uuid
+           AND a.usuario_id = ${usuarioId}::uuid
+         FOR KEY SHARE
+      `;
+      const aluno = alunos[0];
+      if (!aluno) throw new NotFoundException();
+
+      // Releitura com os locks na mão: outra aba pode ter desmarcado primeiro.
       const reposicao = await tx.reposicaoDeAula.findFirst({
         where: { id, companyId, alunoId: aluno.id },
         include: {
@@ -536,6 +564,12 @@ export class ReposicaoService {
         },
       });
       if (!reposicao) throw new NotFoundException();
+      await tx.$queryRaw`
+        SELECT id FROM ocupacoes_quadra
+         WHERE id = ${reposicao.ocupacaoId}::uuid
+           AND company_id = ${companyId}::uuid
+         FOR UPDATE
+      `;
 
       const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
       const veredicto = avaliarSaidaDeTurma({

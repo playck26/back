@@ -144,6 +144,85 @@ describe('SPEC-030 — o estado da chamada tem um dono só (INV-030b)', () => {
     });
   });
 
+  describe('SPEC-057/TASK-001/D4 — `sem_participantes`, só depois do corte', () => {
+    /** Aula das 18h–19h de 20/08 (UTC-3) termina às 22:00Z. */
+    const ANTES_DO_FIM = new Date(Date.UTC(2026, 7, 20, 21, 59));
+    const DEPOIS_DO_FIM = new Date(Date.UTC(2026, 7, 20, 22, 1));
+
+    it('sem cabeçalho, terminada, término DEPOIS do corte e zero participantes → `sem_participantes`', () => {
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: ANTES_DO_FIM, participantes: 0 }),
+          as(23),
+        ),
+      ).toBe('sem_participantes');
+    });
+
+    it('término IGUAL ou ANTERIOR ao corte: regra legada, `pendente`', () => {
+      const fimExato = new Date(Date.UTC(2026, 7, 20, 22, 0));
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: fimExato, participantes: 0 }),
+          as(23),
+        ),
+      ).toBe('pendente');
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: DEPOIS_DO_FIM, participantes: 0 }),
+          as(23),
+        ),
+      ).toBe('pendente');
+    });
+
+    it('ambiente nunca ativado (corte nulo): regra legada', () => {
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: null, participantes: 0 }),
+          as(23),
+        ),
+      ).toBe('pendente');
+    });
+
+    it('com participante, pós-corte e sem cabeçalho: continua `pendente` até o job fechar', () => {
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: ANTES_DO_FIM, participantes: 2 }),
+          as(23),
+        ),
+      ).toBe('pendente');
+    });
+
+    it('precedência: cancelada, futura, em andamento e cabeçalho existente vêm antes', () => {
+      const vazioPosCorte = {
+        corte: new Date(Date.UTC(2026, 0, 1)),
+        participantes: 0,
+      };
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ ...vazioPosCorte, cancelada: true }),
+          as(23),
+        ),
+      ).toBe('cancelada');
+      expect(resolverEstadoDaChamada(ocorrencia(vazioPosCorte), as(17))).toBe(
+        'futura',
+      );
+      expect(
+        resolverEstadoDaChamada(ocorrencia(vazioPosCorte), as(18, 30)),
+      ).toBe('em_andamento');
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ ...vazioPosCorte, completude: 'nao_houve' }),
+          as(23),
+        ),
+      ).toBe('nao_houve');
+    });
+
+    it('`sem_participantes` não é registrada nem pendente — não cobra ninguém', () => {
+      expect(chamadaJaRegistrada('sem_participantes')).toBe(false);
+      expect(chamadaPendente('sem_participantes')).toBe(false);
+    });
+  });
+
   // SABOTAGEM A (prova 13 da spec) — esta descrição existe para quem for
   // mexer no resolvedor: se você trocar a regra e SÓ este arquivo cair, a
   // unificação regrediu e algum consumidor voltou a ter regra própria. Os

@@ -19,6 +19,7 @@ import { MatriculasModule } from './matriculas/matriculas.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ThrottlerPorUsuario } from './storage/limite-de-upload';
 import { StorageModule } from './storage/storage.module';
+import { PresencaAutomaticaModule } from './presenca-automatica/presenca-automatica.module';
 
 @Module({
   imports: [
@@ -49,6 +50,8 @@ import { StorageModule } from './storage/storage.module';
     // propósito: é o que faz a validação das seis variáveis do Spaces
     // rodar no boot. Nenhuma rota depende dele até a SPEC-018.
     StorageModule,
+    // SPEC-057/TASK-001 — o fechamento automático da chamada.
+    PresencaAutomaticaModule,
   ],
   controllers: [AppController],
   providers: [

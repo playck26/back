@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import type { CorteDaPresenca } from '../presenca-automatica/corte-da-presenca';
 import { FrequenciaService } from './frequencia.service';
 
 // TEST (SPEC-015): os três relatórios, com Prisma mockado. O que se prova
@@ -70,7 +71,14 @@ function buildMocks() {
   };
   return {
     prisma: prisma as unknown as PrismaService,
-    service: new FrequenciaService(prisma as unknown as PrismaService),
+    // SPEC-057/TASK-001 — ambiente que nunca ativou a presença automática:
+    // sem corte, nenhuma ocorrência é candidata a `sem_participantes`.
+    service: new FrequenciaService(
+      prisma as unknown as PrismaService,
+      {
+        ler: () => Promise.resolve(null),
+      } as unknown as CorteDaPresenca,
+    ),
   };
 }
 

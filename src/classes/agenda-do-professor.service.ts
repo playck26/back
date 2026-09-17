@@ -3,6 +3,10 @@ import type { CompletudeChamada, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { formatTimeOnly, parseDateOnly } from '../courts/date-time.util';
 import {
+  CorteDaPresenca,
+  participantesDasCandidatas,
+} from '../presenca-automatica/corte-da-presenca';
+import {
   resolverEstadoDaChamada,
   type EstadoDaChamada,
 } from './estado-da-chamada';
@@ -47,6 +51,10 @@ function estadoDaChamada(
   data: Date,
   horaInicio: Date,
   horaFim: Date,
+  // SPEC-057/TASK-001/D4 — o corte e a contagem `|M ∪ V|`, quando a aula é
+  // candidata a `sem_participantes`. Quem decide se é candidata é o resolvedor.
+  corte: Date | null = null,
+  participantes?: number,
   agora: Date = new Date(),
 ): EstadoDaChamada {
   return resolverEstadoDaChamada(
@@ -61,6 +69,8 @@ function estadoDaChamada(
       data,
       horaInicio,
       horaFim,
+      corte,
+      participantes,
     },
     agora,
   );
@@ -68,7 +78,46 @@ function estadoDaChamada(
 
 @Injectable()
 export class AgendaDoProfessorService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly corteDaPresenca: CorteDaPresenca = new CorteDaPresenca(
+      prisma,
+    ),
+  ) {}
+
+  /**
+   * SPEC-057/TASK-001/D4 — corte + `|M ∪ V|` das candidatas, para o
+   * resolvedor. Aula particular nunca é candidata (não tem turma nem chamada).
+   */
+  private async contextoDeParticipantes(
+    companyId: string,
+    ocupacoes: {
+      id: string;
+      data: Date;
+      horaInicio: Date;
+      horaFim: Date;
+      origemTipo: string;
+      origemTurmaId: string | null;
+      chamadas: { completude: CompletudeChamada }[];
+    }[],
+  ) {
+    const corte = await this.corteDaPresenca.ler();
+    const participantes = await participantesDasCandidatas(
+      this.prisma,
+      companyId,
+      corte,
+      ocupacoes.map((o) => ({
+        id: o.id,
+        turmaId: o.origemTipo === 'AVULSO' ? null : o.origemTurmaId,
+        cancelada: false,
+        completude: o.chamadas[0]?.completude,
+        data: o.data,
+        horaInicio: o.horaInicio,
+        horaFim: o.horaFim,
+      })),
+    );
+    return { corte, participantes };
+  }
 
   private async professorDoUsuario(companyId: string, usuarioId: string) {
     const professor = await this.prisma.professor.findFirst({
@@ -122,8 +171,14 @@ export class AgendaDoProfessorService {
         chamadas: { select: { completude: true } },
         // SPEC-039: a origem decide se a aula pode ser pendência.
         origemTipo: true,
+        // SPEC-057/TASK-001/D4: a turma, para contar `M ∪ V`.
+        origemTurmaId: true,
       },
     });
+    const { corte, participantes } = await this.contextoDeParticipantes(
+      companyId,
+      ocupacoes,
+    );
 
     const porDia = new Map<
       string,
@@ -156,10 +211,19 @@ export class AgendaDoProfessorService {
       // `pendentes`.** Ela não tem chamada (LIM-039a), então sem esta guarda
       // toda aula particular passada viraria pendência eterna — e a contagem
       // que faz este calendário valer passaria a mentir todo dia.
+      //
+      // SPEC-057/TASK-001/D4: `sem_participantes` fica em `aulas` e fora de
+      // `pendentes` — o resolvedor já não a devolve como `pendente`.
       if (
         o.origemTipo !== 'AVULSO' &&
-        estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim) ===
-          'pendente'
+        estadoDaChamada(
+          o.chamadas[0],
+          o.data,
+          o.horaInicio,
+          o.horaFim,
+          corte,
+          participantes.get(o.id),
+        ) === 'pendente'
       ) {
         atual.pendentes += 1;
       }
@@ -192,6 +256,10 @@ export class AgendaDoProfessorService {
       },
       orderBy: [{ horaInicio: 'asc' }],
     });
+    const { corte, participantes } = await this.contextoDeParticipantes(
+      companyId,
+      ocupacoes,
+    );
 
     return ocupacoes.map((o) => {
       const particular = o.origemTipo === 'AVULSO';
@@ -213,7 +281,14 @@ export class AgendaDoProfessorService {
         // professor não tem como limpar.
         chamada: particular
           ? null
-          : estadoDaChamada(o.chamadas[0], o.data, o.horaInicio, o.horaFim),
+          : estadoDaChamada(
+              o.chamadas[0],
+              o.data,
+              o.horaInicio,
+              o.horaFim,
+              corte,
+              participantes.get(o.id),
+            ),
       };
     });
   }

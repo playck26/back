@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { FrequenciaService } from './frequencia.service';
+import { PresencaAutomaticaModule } from '../presenca-automatica/presenca-automatica.module';
 
 /**
  * SPEC-015 — módulo próprio porque o serviço atende DOIS módulos:
@@ -12,6 +13,7 @@ import { FrequenciaService } from './frequencia.service';
  * não pertence a nenhum dos dois, e depende só do Prisma.
  */
 @Module({
+  imports: [PresencaAutomaticaModule],
   providers: [FrequenciaService],
   exports: [FrequenciaService],
 })

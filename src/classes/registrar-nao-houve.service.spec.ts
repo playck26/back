@@ -2,6 +2,12 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresencaService } from './presenca.service';
+import type { CorteDaPresenca } from '../presenca-automatica/corte-da-presenca';
+
+/** SPEC-057/TASK-001/D4 — ambiente que nunca ativou a presença automática. */
+const semCorte = {
+  ler: () => Promise.resolve(null),
+} as unknown as CorteDaPresenca;
 
 /**
  * **ACHADO 1 DA 3ª VALIDAÇÃO CRUZADA — por que estas duas constantes são
@@ -96,6 +102,15 @@ function ocupacao(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * SPEC-057/TASK-001/D5 — o portão passou a reler o CABEÇALHO sob o lock (a
+ * origem inicial decide qual relógio guarda a janela). Este dublê responde
+ * "sem cabeçalho" a essa releitura e não a conta na alternância 0a/0b.
+ */
+function ehReleituraDoCabecalho(sql: unknown): boolean {
+  return Array.isArray(sql) && sql.join('?').includes('FROM chamadas c');
+}
+
 function buildMocks() {
   const estado: EstadoDaOcorrencia = {
     ocupacao: ocupacao(),
@@ -116,7 +131,8 @@ function buildMocks() {
         completude: 'nao_houve',
       }),
     },
-    $queryRaw: jest.fn(() => {
+    $queryRaw: jest.fn((sql: unknown) => {
+      if (ehReleituraDoCabecalho(sql)) return Promise.resolve([]);
       statement += 1;
       const oc = estado.ocupacao;
       // Ocupação inexistente, de outra empresa ou que não é TURMA: as três
@@ -155,7 +171,7 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
     prisma = b.prisma;
     tx = b.tx;
     estado = b.estado;
-    service = new PresencaService(prisma);
+    service = new PresencaService(prisma, semCorte);
   });
 
   afterEach(() => {
@@ -453,13 +469,14 @@ describe('PresencaService.registrarNaoHouve (SPEC-030)', () => {
 
   describe('o portão roda DENTRO da transação', () => {
     it('trava a turma antes de ler, e só então grava', async () => {
-      // Os dois statements do portão (0a lock, 0b releitura) e o `upsert`
-      // acontecem no mesmo `tx`. Se o `upsert` saísse da transação, a corrida
-      // que o lock existe para fechar voltaria — é o BLOQUEADOR da 9ª rodada.
+      // Os statements do portão (0a lock, 0b releitura e, desde a SPEC-057,
+      // a releitura do cabeçalho) e o `upsert` acontecem no mesmo `tx`. Se o
+      // `upsert` saísse da transação, a corrida que o lock existe para fechar
+      // voltaria — é o BLOQUEADOR da 9ª rodada.
       await service.registrarNaoHouve('c1', 'oc1', 'u-prof', true);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
       expect(tx.chamada.upsert).toHaveBeenCalledTimes(1);
     });
 
@@ -539,7 +556,7 @@ describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => 
           ),
       },
     } as unknown as PrismaService;
-    return new PresencaService(prisma);
+    return new PresencaService(prisma, semCorte);
   }
 
   it('cabeçalho `nao_houve` volta como `nao_houve` — NÃO como `desconhecida`', async () => {
@@ -638,7 +655,8 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
         upsert: upsertDoCabecalho,
       },
       turmaAluno: { findMany: jest.fn().mockResolvedValue(MATRICULADOS) },
-      $queryRaw: jest.fn(() => {
+      $queryRaw: jest.fn((sql: unknown) => {
+        if (ehReleituraDoCabecalho(sql)) return Promise.resolve([]);
         statement += 1;
         if (statement % 2 === 1) {
           return Promise.resolve([{ id: TURMA }]);
@@ -665,7 +683,10 @@ describe('PresencaService — desfazer `nao_houve` (REQ-005)', () => {
       reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
     } as unknown as PrismaService;
-    return { service: new PresencaService(prisma), upsertDoCabecalho };
+    return {
+      service: new PresencaService(prisma, semCorte),
+      upsertDoCabecalho,
+    };
   }
 
   it('a versão que o GET devolve é aceita pelo PUT — sem 409', async () => {

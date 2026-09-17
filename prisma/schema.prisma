@@ -720,8 +720,23 @@ model Chamada {
 
   companyId     String            @map("company_id") @db.Uuid
   registradaEm  DateTime          @default(now()) @map("registrada_em")
-  registradaPor String            @map("registrada_por") @db.Uuid
+  /// SPEC-057/TASK-001/D1 — NULO só na chamada automática (CHECK
+  /// `chamadas_origem_autor_check`): o worker não é pessoa, e um usuário
+  /// "sistema" seria autor inventado.
+  registradaPor String?           @map("registrada_por") @db.Uuid
   updatedAt     DateTime          @updatedAt @map("updated_at")
+  /// SPEC-057/TASK-001/D1 — quem respondeu pela chamada POR ÚLTIMO:
+  /// `automatica`, `professor`, `gestor` ou `legada_humana` (tudo que existia
+  /// antes). Domínio por CHECK; texto e não enum Prisma, para a expansão não
+  /// exigir `ALTER TYPE`.
+  origem        String            @default("legada_humana")
+  /// SPEC-057/TASK-001/D1 — como a chamada NASCEU. Não muda na ratificação
+  /// (imutabilidade de aplicação, LIM-057j).
+  origemInicial String            @default("legada_humana") @map("origem_inicial")
+  /// SPEC-057/TASK-001/D5 — relógio do BANCO no fechamento automático; ancora
+  /// os sete dias de correção. CHECK + trigger: existe exatamente quando
+  /// `origemInicial` é `automatica`, e não muda depois de gravado.
+  fechadaAutomaticamenteEm DateTime? @map("fechada_automaticamente_em") @db.Timestamptz(6)
   completude    CompletudeChamada
   /// Nulo quando `completude` e `desconhecida` **ou `nao_houve`** (SPEC-030),
   /// garantido por CHECK escrito a mao na migration: quem afirma completude
@@ -732,7 +747,7 @@ model Chamada {
 
   empresa     Empresa        @relation(fields: [companyId], references: [id])
   ocupacao    OcupacaoQuadra @relation(fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Cascade, map: "chamadas_ocupacao_fkey")
-  registrante Usuario        @relation("ChamadaRegistradaPor", fields: [registradaPor], references: [id], onDelete: Restrict)
+  registrante Usuario?       @relation("ChamadaRegistradaPor", fields: [registradaPor], references: [id], onDelete: Restrict)
   presencas   Presenca[]
 
   @@index([companyId])
@@ -755,7 +770,8 @@ model Presenca {
 
   alunoId       String         @map("aluno_id") @db.Uuid
   status        StatusPresenca
-  registradoPor String         @map("registrado_por") @db.Uuid
+  /// SPEC-057/TASK-001/D1 — nulo nas linhas do fechamento automático.
+  registradoPor String?        @map("registrado_por") @db.Uuid
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
 
@@ -773,7 +789,7 @@ model Presenca {
   /// DEF-024 fase 1 — era a FK que a SPEC-031 apontou: a v3 dela dizia
   /// nascer "no molde de `presencas`", e o molde nao carregava a empresa.
   aluno       Aluno          @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "presencas_aluno_fkey")
-  registrante Usuario        @relation("PresencaRegistradaPor", fields: [registradoPor], references: [id], onDelete: Restrict)
+  registrante Usuario?       @relation("PresencaRegistradaPor", fields: [registradoPor], references: [id], onDelete: Restrict)
 
   // INV-015: um aluno tem no maximo um registro por aula.
   @@unique([ocupacaoId, alunoId])

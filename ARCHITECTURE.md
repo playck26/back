@@ -527,9 +527,10 @@ a replicar:
 | `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008. **SPEC-039:** ganhou `professor_id` (nulável), e a aula particular é uma linha `AVULSO` com ele preenchido — **não** um terceiro `origem_tipo`. O professor é atributo, não origem; `origem_tipo` responde "quem criou esta ocupação", e a resposta continua sendo "um pedido avulso" |
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
 | `turmas`, `turma_alunos` | MOD-004 | recorrência semanal; gera ocupações numa janela de 8 semanas. **`turma_alunos` não tem vigência temporal** — a linha some quando o aluno sai (origem de LIM-003) |
-| `presencas` | MOD-004 | o par (ocorrência, aluno). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
+| `presencas` | MOD-004 | o par (ocorrência, aluno). `registrado_por` anulável desde a SPEC-057 (linha do fechamento automático); a coerência com o cabeçalho é **só aplicação** (LIM-057j). `origem_tipo` é coluna **constante** que participa de FK composta para `ocupacoes_quadra(id, origem_tipo)`: é assim que INV-016 é imposta pelo banco, não por código |
 | `reposicoes_de_aula` | MOD-004 | **SPEC-046.** Liga a **falta** ao lugar onde ela será reposta. `origem_tipo` é constante `TURMA` no molde de `presencas` — **`CHECK` e não `GENERATED`**, porque coluna gerada obrigaria o Prisma a declarar o campo opcional e com ele a relação inteira, o que seria mentira no tipo. **`UNIQUE (falta_id)` é a INV-118**, e é ela que torna o crédito derivado (`faltas − reposições`) seguro sob concorrência: sem ela, dois `POST` da mesma falta deixariam o crédito **negativo**. Não há coluna de saldo de propósito — seria uma terceira verdade sobre os mesmos dois fatos |
-| `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. `completude` = `completa` \| `desconhecida` \| `nao_houve`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção; **`nao_houve` (SPEC-030) é a aula que não aconteceu** — cabeçalho sem nenhuma presença, e é o que tira o dia do vermelho no calendário sem mentir que a aula foi dada |
+| `config_presenca_automatica` | MOD-004 | **SPEC-057/TASK-001/D3.** Singleton (`id = 1`) por banco: `instancia_id`, `ambiente` (declarado uma vez), `ativada_em` (o **corte**, fixado pelo trigger na primeira ativação e imutável) e `habilitada`. **Sem modelo Prisma, de propósito**: a aplicação só lê (raw), e a flag só muda pela função `presenca_auto_alterar` (SECURITY DEFINER, dono `presenca_auto_guardiao`). Ver "Papéis de banco" na seção 6 |
+| `chamadas` | MOD-004 | **cabeçalho da chamada** (SPEC-015/INV-027), uma linha por ocorrência lançada. **SPEC-057/TASK-001:** `origem` e `origem_inicial` (`automatica`/`professor`/`gestor`/`legada_humana`, CHECK de domínio), `registrada_por` **anulável só na automática** (CHECK `chamadas_origem_autor_check`) e `fechada_automaticamente_em` (CHECK de presença + trigger de imutabilidade), que ancora os 7 dias de correção. `completude` = `completa` \| `desconhecida` \| `nao_houve`: `presencas` sozinha não distingue "completa de uma turma de 2" de "pela metade de uma turma de 10", e era daí que vinha a DEF-002. `desconhecida` marca o que foi gravado antes da correção; **`nao_houve` (SPEC-030) é a aula que não aconteceu** — cabeçalho sem nenhuma presença, e é o que tira o dia do vermelho no calendário sem mentir que a aula foi dada |
 | `config_pagamento_empresa` | MOD-006 | link/WhatsApp por empresa; `company_id` único |
 | `termos_da_plataforma` | MOD-009 | SPEC-024. O texto **da plataforma**, versionado. Versão publicada **nunca é editada** — publicar de novo cria versão nova, porque saber que alguém aceitou "a v1" não vale nada se a v1 não puder ser lida depois. A versão vigente é constante em código (`TERMO_VERSAO_VIGENTE`), não `MAX(versao)`: o portão roda em **toda** requisição autenticada, e um `MAX()` por requisição seria uma segunda ida ao banco para responder algo que só muda em deploy |
 | `contratos_da_empresa` | MOD-009 | SPEC-024. O contrato **do clube**, versionado do mesmo jeito. `ON DELETE RESTRICT` de propósito: apagar uma empresa não pode levar embora o registro de qual texto os alunos aceitaram |
@@ -652,6 +653,13 @@ src/
   courts/          MOD-005 — quadras, ocupações, horários, agenda
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
+  presenca-automatica/
+                   SPEC-057/TASK-001 — fechamento automático da chamada:
+                   leitor do corte (`CorteDaPresenca`), worker horário
+                   (`FechamentoAutomaticoService` + `AgendadorDeFechamento`),
+                   trava de credencial e a CLI operacional
+                   (`cli/presenca-auto.ts`). **Sem controller, e de
+                   propósito**: nenhuma rota ativa ou pausa o job
   dashboard/       MOD-007 — agregações de leitura
   storage/         MOD-008 — porta, adaptador S3, validador WebP, gramática
                    da chave, StorageService, fonte única do upload, fila,
@@ -1321,6 +1329,32 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   convite, auto-cadastro e leitura pública contam **sempre por IP**, via
   `@ContagemPorIp()`. Ver seção 10.
 
+### Papéis de banco (SPEC-057/TASK-001/D3)
+
+**Até a TASK-001 o processo conectava como dono do schema**, e grant nenhum
+separava autoridade. A migration `20260918000000_spec057_presenca_automatica_expand`
+cria três papéis de grupo (sem login) e o provisionamento cria os logins:
+
+| Grupo | Login | Pode |
+|---|---|---|
+| `playck_app_runtime` | `playck_runtime` (o processo) | DML nas tabelas, **só SELECT** na configuração; default privileges para tabelas futuras |
+| `presenca_auto_operador` | `presenca_operador` (a CLI) | só `EXECUTE` na função operacional |
+| `presenca_auto_guardiao` | — | dono da função; `UPDATE(habilitada)` |
+
+O owner (migrador) contorna tudo isso — bypass declarado (LIM-057o) — e só o
+passo de migration do `run_command` o usa (`MIGRATION_DATABASE_URL`). **A
+trava de credencial do worker** (`credencial-do-worker.ts`) não é autoridade:
+é fail-closed de rollout, e mantém o job parado enquanto o processo conecta
+como owner ou operador. Gate: `test/banco/spec-057-presenca-automatica-banco`
+(privilégios, catálogo, sabotagem de regrant) e
+`spec-057-presenca-automatica-worker` (serviços pela conexão do runtime).
+Roteiro operacional: `OPERATIONS.md`, "Runbook — Presença automática".
+
+**O conjunto observável da chamada (D4/INV-144).** GET, versão, teto/piso do
+PUT e worker usam `M ∪ V ∪ S` (matriculados, visitantes com reposição,
+snapshot). `reposicao.service.ts` `marcar` **e** `desmarcar` tomam a mesma
+raiz `turmas FOR UPDATE` → `alunos` → `ocupacoes_quadra` antes de escrever.
+
 ## 7. Regras de camada (com gate)
 
 | Regra | Gate |
@@ -1384,7 +1418,9 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
 `ClassesModule → CourtsModule, PeopleModule`; `CourtsModule → PeopleModule`;
 `PaymentConfigModule → CourtsModule`;
-`ClassesModule, PeopleModule, DashboardModule → FrequenciaModule`. Sem ciclos.
+`ClassesModule, PeopleModule, DashboardModule → FrequenciaModule`;
+`ClassesModule, FrequenciaModule → PresencaAutomaticaModule` (SPEC-057, só
+Prisma por baixo). Sem ciclos.
 **`StorageModule` não tem dependente nenhum hoje** — é fundação registrada
 antes do consumidor, e quem passa a depender dela é a SPEC-018. Exporta
 `StorageService` (o caminho de leitura, com a conferência obrigatória) e
