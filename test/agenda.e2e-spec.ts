@@ -33,13 +33,18 @@ describe('Agenda (e2e) - TEST-012', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      const [args] = prisma.ocupacaoQuadra.groupBy.mock.calls[0] as [
-        { where: { companyId: string } },
-      ];
-      // O `companyId` sai do JWT. Um cliente que mandasse outro na query
-      // não teria efeito nenhum — o guard autoriza a rota, o filtro
-      // protege o dado, e os dois precisam existir.
-      expect(args.where.companyId).toBe(usuario.companyId);
+      // SPEC-060 — o resumo do mês virou `$queryRaw` (o `groupBy` não
+      // expressa "AVULSO sem professor"), então o escopo agora é um PARÂMETRO
+      // LIGADO, não uma chave de objeto. O que a prova afirma não mudou: o
+      // `companyId` sai do JWT, e um cliente que mandasse outro na query não
+      // teria efeito nenhum — o guard autoriza a rota, o filtro protege o
+      // dado, e os dois precisam existir.
+      const chamadas = prisma.$queryRaw.mock.calls as unknown[][];
+      const doMes = chamadas.find((c) =>
+        String((c[0] as string[]).join(' ')).includes('ocupacoes_quadra'),
+      );
+      expect(doMes).toBeDefined();
+      expect(doMes!.slice(1)).toContain(usuario.companyId);
     });
 
     it('AC-006: aluno não acessa a agenda do gestor', async () => {
@@ -61,14 +66,14 @@ describe('Agenda (e2e) - TEST-012', () => {
       const usuario = await buildUsuarioAtivo();
       const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
       prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: false });
-      prisma.ocupacaoQuadra.groupBy.mockClear();
+      prisma.$queryRaw.mockClear();
 
       await request(app.getHttpServer())
         .get('/api/v1/agenda?mes=agosto')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(400);
 
-      expect(prisma.ocupacaoQuadra.groupBy).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 

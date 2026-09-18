@@ -251,6 +251,34 @@ export class DiaDaAgendaResponseDto {
   @ApiProperty({ type: Number, example: 3 })
   pendentes!: number;
 
+  /**
+   * SPEC-060/D4 — **quantas de cada tipo neste dia.**
+   *
+   * A grade do mês pintava só "N reservas": o gestor não sabia, olhando o mês,
+   * em que dias havia aula particular ou aula de turma — que é a pergunta que
+   * ele faz ao planejar a semana.
+   *
+   * `total = turmas + particulares + quadras` (INV-060a): as quatro contagens
+   * saem do mesmo `FILTER`, sobre as mesmas linhas e o mesmo recorte
+   * (cancelada fora, quadra inativa fora).
+   */
+  @ApiProperty({ type: Number, example: 5, description: 'Ocupações de TURMA.' })
+  turmas!: number;
+
+  @ApiProperty({
+    type: Number,
+    example: 2,
+    description: 'Reservas AVULSAS com professor (aula particular).',
+  })
+  particulares!: number;
+
+  @ApiProperty({
+    type: Number,
+    example: 5,
+    description: 'Reservas AVULSAS sem professor (a quadra pela quadra).',
+  })
+  quadras!: number;
+
   @ApiProperty({ type: Boolean })
   fechado!: boolean;
 }

@@ -314,3 +314,77 @@ describe('SPEC-057/D17 — a mesma ocupação na agenda, nas oportunidades e no 
     ]);
   });
 });
+
+/**
+ * SPEC-060/D4 — **a contagem por tipo do resumo do mês, contra Postgres real.**
+ *
+ * O unitário prova que o serviço repassa o que a consulta devolveu; ele não
+ * prova a consulta. E é ela que decide o que é aula particular ("AVULSO com
+ * professor") e o que é reserva de quadra — distinção que só existe no SQL,
+ * porque `professor_id IS NULL` não é chave de grupo do Prisma.
+ */
+describe('SPEC-060 — o mês conta por tipo', () => {
+  const PROF = '05780000-0000-4000-8000-00000000f001';
+  const UPROF = '05780000-0000-4000-8000-00000000f002';
+  const ALUNO_RES = '05780000-0000-4000-8000-00000000f003';
+  const UALUNO_RES = '05780000-0000-4000-8000-00000000f004';
+  const mes = DIA_DA_AULA.slice(0, 7);
+
+  async function reservaAvulsa(hora: string, comProfessor: boolean) {
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,professor_id,status_pagamento,valor,updated_at)
+       VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','${DIA_DA_AULA}','${hora}:00','${hora}:50','AVULSO','${ALUNO_RES}',${comProfessor ? `'${PROF}'` : 'NULL'},'pendente_pagamento',100,now())`,
+    );
+  }
+
+  beforeEach(async () => {
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${UPROF}','s060prof@x.com','h','Prof 060','professor','${EMPRESA}',now()) ON CONFLICT (id) DO NOTHING`,
+    );
+    await q(
+      `INSERT INTO professores (id,company_id,nome,usuario_id,created_at) VALUES ('${PROF}','${EMPRESA}','Prof 060','${UPROF}',now()) ON CONFLICT (id) DO NOTHING`,
+    );
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${UALUNO_RES}','s060aluno@x.com','h','Aluno 060','aluno','${EMPRESA}',now()) ON CONFLICT (id) DO NOTHING`,
+    );
+    await q(
+      `INSERT INTO alunos (id,usuario_id,company_id,vinculo,status) VALUES ('${ALUNO_RES}','${UALUNO_RES}','${EMPRESA}','aprovado','ativo') ON CONFLICT (id) DO NOTHING`,
+    );
+    await reservaAvulsa('07', false);
+    await reservaAvulsa('08', false);
+    await reservaAvulsa('09', true);
+  });
+
+  it('separa turma, aula particular e reserva de quadra', async () => {
+    const dias = await agenda().resumoDoMes(EMPRESA, mes);
+    const dia = dias.find((d) => d.data === DIA_DA_AULA);
+
+    // A aula da turma (AULA) já existe na fixture do arquivo.
+    expect(dia?.turmas).toBeGreaterThanOrEqual(1);
+    expect(dia?.particulares).toBe(1);
+    expect(dia?.quadras).toBe(2);
+  });
+
+  // INV-060a — as partes somam o total. Se alguém acrescentar um quarto tipo
+  // sem contá-lo, é aqui que aparece.
+  it('as três contagens somam o total do dia', async () => {
+    const dias = await agenda().resumoDoMes(EMPRESA, mes);
+
+    for (const d of dias) {
+      expect(d.turmas + d.particulares + d.quadras).toBe(d.total);
+    }
+  });
+
+  it('cancelada não entra em nenhuma das contagens', async () => {
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,status_pagamento,valor,updated_at)
+       VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','${DIA_DA_AULA}','10:00','10:50','AVULSO','${ALUNO_RES}','cancelado',100,now())`,
+    );
+
+    const dias = await agenda().resumoDoMes(EMPRESA, mes);
+    const dia = dias.find((d) => d.data === DIA_DA_AULA);
+
+    expect(dia?.quadras).toBe(2);
+    expect(dia!.turmas + dia!.particulares + dia!.quadras).toBe(dia!.total);
+  });
+});

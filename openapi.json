@@ -9065,6 +9065,21 @@
             "type": "number",
             "example": 3
           },
+          "turmas": {
+            "type": "number",
+            "example": 5,
+            "description": "Ocupações de TURMA."
+          },
+          "particulares": {
+            "type": "number",
+            "example": 2,
+            "description": "Reservas AVULSAS com professor (aula particular)."
+          },
+          "quadras": {
+            "type": "number",
+            "example": 5,
+            "description": "Reservas AVULSAS sem professor (a quadra pela quadra)."
+          },
           "fechado": {
             "type": "boolean"
           }
@@ -9073,6 +9088,9 @@
           "data",
           "total",
           "pendentes",
+          "turmas",
+          "particulares",
+          "quadras",
           "fechado"
         ]
       },
