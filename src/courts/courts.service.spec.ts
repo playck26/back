@@ -1396,6 +1396,13 @@ describe('CourtsService', () => {
             valor: 150,
             eventos: autorId ? [{ acao: { autorId } }] : [],
             adicionais: [],
+            // SPEC-059 — o `include` da listagem passou a trazer a quadra e o
+            // professor, e a fixture acompanha. Sem eles o mapeador lê `nome`
+            // de `undefined`: foi o que estes seis testes acusaram, e é o que
+            // um mock desatualizado esconderia se o código fosse defensivo.
+            quadra: { nome: 'Quadra 1' },
+            professor: null,
+            professorId: null,
           },
         ]);
         (prisma.ocupacaoQuadra.count as jest.Mock).mockResolvedValue(1);
@@ -1472,7 +1479,15 @@ describe('CourtsService', () => {
             'horaInicio',
             'id',
             'origemTipo',
+            // SPEC-059/D2 — o que a reserva É, quem dá a aula e onde ela
+            // acontece. Nenhum dos três é dado de AUTOR: `professorNome` é
+            // quem dá a aula, papel público da reserva, não quem a cancelou.
+            // A INV-092 continua fechada, e este conjunto fechado é o que
+            // garante isso — foi ele que acusou os três campos novos.
+            'professorNome',
             'quadraId',
+            'quadraNome',
+            'tipo',
             'statusPagamento',
             'valor',
           ].sort(),

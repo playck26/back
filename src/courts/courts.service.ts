@@ -1282,7 +1282,24 @@ export class CourtsService {
     const where: Prisma.OcupacaoQuadraWhereInput = {
       companyId,
       ...(alunoIdScope ? { alunoId: alunoIdScope } : {}),
-      ...(query.data ? { data: parseDateOnly(query.data) } : {}),
+      // SPEC-059/D5 — um dia (`data`) OU uma janela (`de`/`ate`), nunca os
+      // dois somados.
+      //
+      // A primeira versão disto eram dois espalhamentos seguidos, e o segundo
+      // **sobrescrevia** o primeiro em silêncio — o comentário dizia
+      // "intersectam" e o objeto dizia outra coisa. Escrito como escolha
+      // explícita, o `tsc` e quem lê enxergam a mesma regra: o dia é mais
+      // específico, então ele ganha.
+      ...(query.data
+        ? { data: parseDateOnly(query.data) }
+        : query.de || query.ate
+          ? {
+              data: {
+                ...(query.de ? { gte: parseDateOnly(query.de) } : {}),
+                ...(query.ate ? { lte: parseDateOnly(query.ate) } : {}),
+              },
+            }
+          : {}),
       ...(condicoes.length ? { AND: condicoes } : {}),
     };
 
@@ -1309,6 +1326,12 @@ export class CourtsService {
             take: 1,
             select: { acao: { select: { autorId: true } } },
           },
+          // SPEC-059/D2 — **só na LISTAGEM**, como o `canceladaPorMim`.
+          // Pôr isto no `OcupacaoResponseDto` obrigaria as outras três rotas
+          // a produzir o campo, e o `POST` teria de carregar duas relações
+          // para devolver o que acabou de receber.
+          quadra: { select: { nome: true } },
+          professor: { select: { nome: true } },
           ...INCLUIR_NA_RESPOSTA,
         },
       }),
@@ -1319,6 +1342,19 @@ export class CourtsService {
       data: data.map((ocupacao) => ({
         ...this.toOcupacaoResponse(ocupacao),
         canceladaPorMim: quemCancelou(ocupacao.eventos, usuarioIdAtual),
+        // SPEC-059/D1 — **o tipo vem do contrato, não de dedução da tela.**
+        // Reserva de quadra e aula particular são as duas `AVULSO`, e até
+        // aqui nada as separava no payload: o app não tinha como escrever
+        // "aula particular" porque não tinha como saber. Deduzir de
+        // `professorNome != null` seria contrato por acidente — no dia em que
+        // existir aula particular sem professor atribuído, a dedução mente em
+        // silêncio (é o argumento da SPEC-039/AC-009).
+        tipo:
+          ocupacao.professorId != null
+            ? ('aula_particular' as const)
+            : ('quadra' as const),
+        professorNome: ocupacao.professor?.nome ?? null,
+        quadraNome: ocupacao.quadra.nome,
       })),
       page,
       pageSize,

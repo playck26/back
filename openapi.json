@@ -2712,6 +2712,26 @@
             }
           },
           {
+            "name": "de",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "ate",
+            "required": false,
+            "in": "query",
+            "description": "AAAA-MM-DD",
+            "schema": {
+              "example": "2026-09-30",
+              "type": "string"
+            }
+          },
+          {
             "name": "page",
             "required": false,
             "in": "query",
@@ -8734,6 +8754,23 @@
             "type": "boolean",
             "nullable": true,
             "description": "Foi quem está pedindo que cancelou? `true` = eu, `false` = outra pessoa, `null` = não foi cancelada, não há evento registrado (anterior à SPEC-032), ou quem pede é o gestor. **Nunca traz nome, id ou objeto do autor** (INV-092)."
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "quadra",
+              "aula_particular"
+            ],
+            "description": "`quadra` = a pessoa reservou a quadra. `aula_particular` = há professor atribuído (SPEC-039)."
+          },
+          "professorNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Marcos Lima"
+          },
+          "quadraNome": {
+            "type": "string",
+            "example": "Quadra 1"
           }
         },
         "required": [
@@ -8749,7 +8786,10 @@
           "statusPagamento",
           "valor",
           "adicionais",
-          "canceladaPorMim"
+          "canceladaPorMim",
+          "tipo",
+          "professorNome",
+          "quadraNome"
         ]
       },
       "OcupacaoPaginadaResponseDto": {
