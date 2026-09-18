@@ -154,7 +154,9 @@ describe('AgendaService (SPEC-012)', () => {
         particulares: 2,
         quadras: 1,
       });
-      expect(dia3!.turmas + dia3!.particulares + dia3!.quadras).toBe(dia3!.total);
+      expect(dia3!.turmas + dia3!.particulares + dia3!.quadras).toBe(
+        dia3!.total,
+      );
       expect(dias.find((d) => d.data === '2026-08-04')).toMatchObject({
         total: 0,
         turmas: 0,
