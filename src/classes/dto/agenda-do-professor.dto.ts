@@ -112,4 +112,31 @@ export class AulaDoDiaDoProfessorDto {
     nullable: true,
   })
   chamada!: string | null;
+
+  /**
+   * SPEC-058/D5 — **quantos avisaram que vão faltar nesta aula.**
+   *
+   * O Israel escolheu este insight para o cartão do professor: *"quem avisou
+   * que vai faltar"*. Ele já é visível na chamada, depois que a aula termina;
+   * o que faltava era saber **antes**, quando ainda dá para mudar o plano da
+   * aula.
+   *
+   * **Zero em aula particular:** falta avisada é de aluno de turma
+   * (SPEC-031), e um aluno só que não vem cancela a aula, não a esvazia.
+   */
+  @ApiProperty({
+    example: 2,
+    description: 'Quantos avisaram falta nesta aula.',
+  })
+  faltasAvisadas!: number;
+
+  /**
+   * Os nomes de quem avisou, em ordem alfabética.
+   *
+   * **Não é dado novo exposto:** o professor já vê a lista da turma e a
+   * chamada já diz quem avisou que ia faltar. O que muda é a hora em que ele
+   * fica sabendo.
+   */
+  @ApiProperty({ type: [String], example: ['Ana Lima', 'Bruno Sá'] })
+  quemAvisou!: string[];
 }
