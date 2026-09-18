@@ -33,6 +33,8 @@ function ocorrencia(
     completude?: 'completa' | 'desconhecida' | null;
     presencas?: number;
     turmaNome?: string;
+    /** DEF-035 — quem estava ali REPONDO, e não porque saiu da turma. */
+    repondo?: string[];
   } = {},
 ) {
   const completude =
@@ -45,6 +47,7 @@ function ocorrencia(
     origemTurmaId: opts.turmaId ?? 't1',
     chamadas: completude ? [{ completude }] : [],
     _count: { presencas },
+    reposicoes: (opts.repondo ?? []).map((alunoId) => ({ alunoId })),
     origemTurma: { nome: opts.turmaNome ?? 'Turma 01' },
   };
 }
@@ -173,6 +176,42 @@ describe('FrequenciaService (SPEC-015)', () => {
         base: 1,
       });
       expect(r.alunos.find((a) => a.alunoId === 'a1')?.naTurmaHoje).toBe(true);
+    });
+
+    /**
+     * DEF-035 — **o relatório acusava de evasão quem veio repor.**
+     *
+     * Quem repõe aparece aqui porque tem presença registrada (AC-004), e
+     * `naTurmaHoje: false` é verdade sobre ele. O erro era a LEITURA: a tela
+     * só tinha esse campo e escrevia "saiu da turma" — sobre alguém que
+     * nunca esteve nela. `visitante` separa os dois casos na origem.
+     */
+    it('visitante e ex-aluno não se confundem: os dois com naTurmaHoje false', async () => {
+      (prisma.turma.findFirst as jest.Mock).mockResolvedValue(
+        turma({ ocupacoes: [ocorrencia('o1', 3, { repondo: ['a7'] })] }),
+      );
+      (prisma.presenca.findMany as jest.Mock).mockResolvedValue([
+        { ...presenca('a1', 'Ana', 'presente'), ocupacaoId: 'o1' },
+        { ...presenca('a7', 'Visitante', 'presente'), ocupacaoId: 'o1' },
+        { ...presenca('a9', 'Saiu Depois', 'ausente'), ocupacaoId: 'o1' },
+      ]);
+
+      const r = await service.daTurma('c1', 't1', 30);
+
+      expect(r.alunos.find((a) => a.alunoId === 'a7')).toMatchObject({
+        naTurmaHoje: false,
+        visitante: true,
+      });
+      expect(r.alunos.find((a) => a.alunoId === 'a9')).toMatchObject({
+        naTurmaHoje: false,
+        visitante: false,
+      });
+      // Matriculado que também repôs noutra aula continua matriculado: a
+      // marca de visitante existe para quem NÃO está na turma.
+      expect(r.alunos.find((a) => a.alunoId === 'a1')).toMatchObject({
+        naTurmaHoje: true,
+        visitante: false,
+      });
     });
 
     // AC-005 — as duas metades, e elas não são simétricas.

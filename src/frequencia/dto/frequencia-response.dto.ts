@@ -155,6 +155,17 @@ export class AlunoNaFrequenciaDaTurmaResponseDto extends AgregadoDeFrequenciaRes
   @ApiProperty({ type: String, format: 'uuid' })
   alunoId!: string;
 
+  /**
+   * DEF-035 — **repôs aula nesta turma e não é matriculado nela.**
+   *
+   * `naTurmaHoje: false` sozinho não distingue quem saiu de quem nunca
+   * entrou, e o relatório rotulava os dois como "saiu da turma". Quem repõe
+   * aparece no relatório porque tem presença registrada (AC-004); o que
+   * faltava era dizer a que título.
+   */
+  @ApiProperty({ type: Boolean })
+  visitante!: boolean;
+
   @ApiProperty({ type: String, example: 'Ana Souza' })
   nome!: string;
 
@@ -209,6 +220,14 @@ export class FrequenciaPorTurmaResponseDto extends AgregadoDeFrequenciaResponseD
 
   @ApiProperty({ type: Boolean })
   naTurmaHoje!: boolean;
+
+  /**
+   * DEF-035 — a turma aparece aqui porque ele **repôs** uma aula nela, não
+   * porque saiu dela. Sem este campo, a ficha do aluno dizia "saiu da turma"
+   * sobre uma turma em que ele nunca se matriculou.
+   */
+  @ApiProperty({ type: Boolean })
+  visitante!: boolean;
 
   @ApiProperty({ type: CoberturaResponseDto })
   cobertura!: CoberturaResponseDto;

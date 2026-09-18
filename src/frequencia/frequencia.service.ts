@@ -476,7 +476,13 @@ export class FrequenciaService {
         },
         ocupacoes: {
           where: { data: { gte: desde, lte: hoje }, origemTipo: 'TURMA' },
-          select: FrequenciaService.SELECT_OCORRENCIA,
+          select: {
+            ...FrequenciaService.SELECT_OCORRENCIA,
+            // DEF-035 — quem veio REPOR não "saiu da turma": nunca esteve
+            // nela. Vem aninhado na query que já busca as ocorrências, e não
+            // numa terceira consulta, para a AC-015 continuar valendo.
+            reposicoes: { select: { alunoId: true } },
+          },
           orderBy: { data: 'desc' },
         },
       },
@@ -518,6 +524,12 @@ export class FrequenciaService {
       : [];
 
     const naTurmaHoje = new Set(turma.alunos.map((a) => a.alunoId));
+    // DEF-035 — visitante é quem tem reposição em alguma ocorrência da janela
+    // e não está matriculado hoje. A ordem importa: quem voltou a se
+    // matricular depois de repor é matriculado, não visitante.
+    const visitantes = new Set(
+      turma.ocupacoes.flatMap((o) => o.reposicoes.map((r) => r.alunoId)),
+    );
 
     // AC-004 — quem saiu da turma mas tem registro na janela continua
     // aparecendo. Por isso o agrupamento parte das PRESENÇAS, e não da
@@ -562,6 +574,9 @@ export class FrequenciaService {
         alunoId,
         nome: d.nome,
         naTurmaHoje: naTurmaHoje.has(alunoId),
+        // DEF-035 — o terceiro sinalizador, e ele **corrige uma acusação**: a
+        // tela dizia "saiu da turma" para quem só veio repor uma aula.
+        visitante: !naTurmaHoje.has(alunoId) && visitantes.has(alunoId),
         // AC-011 — os dois sinalizadores viajam no payload.
         alunoAtivo: d.alunoAtivo,
         vinculo: d.vinculo,
@@ -635,6 +650,9 @@ export class FrequenciaService {
         ...FrequenciaService.SELECT_OCORRENCIA,
         origemTurma: { select: { nome: true } },
         presencas: { where: { alunoId }, select: { status: true } },
+        // DEF-035 — só as reposições DELE: a turma em que ele apenas repôs
+        // não pode aparecer como turma da qual ele saiu.
+        reposicoes: { where: { alunoId }, select: { alunoId: true } },
       },
       orderBy: { data: 'desc' },
     });
@@ -642,7 +660,12 @@ export class FrequenciaService {
 
     const porTurma = new Map<
       string,
-      { nome: string | null; ocorrencias: Ocorrencia[]; registros: Registro[] }
+      {
+        nome: string | null;
+        ocorrencias: Ocorrencia[];
+        registros: Registro[];
+        visitante: boolean;
+      }
     >();
     const ocorrenciasDoAluno: {
       turmaId: string;
@@ -660,9 +683,10 @@ export class FrequenciaService {
       const nome = turmasHoje.get(turmaId) ?? o.origemTurma?.nome ?? null;
       let grupo = porTurma.get(turmaId);
       if (!grupo) {
-        grupo = { nome, ocorrencias: [], registros: [] };
+        grupo = { nome, ocorrencias: [], registros: [], visitante: false };
         porTurma.set(turmaId, grupo);
       }
+      if (o.reposicoes.length > 0) grupo.visitante = true;
       const norm = this.normaliza(o, ctx);
       grupo.ocorrencias.push(norm);
       // AC-005 já está garantida aqui: cancelada sem chamada não tem
@@ -689,7 +713,12 @@ export class FrequenciaService {
     }
     for (const [turmaId, nome] of turmasHoje) {
       if (!porTurma.has(turmaId)) {
-        porTurma.set(turmaId, { nome, ocorrencias: [], registros: [] });
+        porTurma.set(turmaId, {
+          nome,
+          ocorrencias: [],
+          registros: [],
+          visitante: false,
+        });
       }
     }
 
@@ -702,6 +731,8 @@ export class FrequenciaService {
           turmaId,
           turmaNome: g.nome,
           naTurmaHoje: turmasHoje.has(turmaId),
+          // DEF-035 — repôs aula nesta turma e não é matriculado nela.
+          visitante: !turmasHoje.has(turmaId) && g.visitante,
           cobertura: cob,
           ...this.agrega(g.registros, cob.confianca),
         };

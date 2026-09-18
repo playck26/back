@@ -469,6 +469,67 @@ describe('AC-003 — `sem_participantes` nos cinco consumidores', () => {
 });
 
 // ======================================================================
+describe('DEF-035 — visitante não é ex-aluno, no histórico do gestor', () => {
+  it('quem repôs sai marcado como reposição; quem saiu da turma, não', async () => {
+    const { a1, a2, oc } = await automaticaDeOntem();
+    const visitante = await aluno('Visitante');
+    await matricular(TURMA_ORIGEM, visitante.alunoId);
+    await visita(visitante.alunoId, oc);
+    // A chamada automática já existe: refazê-la com o visitante dentro é o
+    // caminho do produto — o professor ratifica a lista inteira.
+    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
+    await presenca().salvarChamada(
+      EMPRESA,
+      UPROF,
+      oc,
+      lida.versao,
+      todosPresentes([a1.alunoId, a2.alunoId, visitante.alunoId]),
+    );
+    // E a2 sai da turma depois da aula: ele É um ex-aluno com registro.
+    await db.$executeRawUnsafe(
+      `DELETE FROM turma_alunos WHERE turma_id = '${TURMA_A}' AND aluno_id = '${a2.alunoId}'`,
+    );
+
+    const historico = await presenca().historicoDaTurma(EMPRESA, TURMA_A, 30);
+    const linhas = historico.find((h) => h.ocupacaoId === oc)?.alunos ?? [];
+    const doVisitante = linhas.find((l) => l.alunoId === visitante.alunoId);
+    const doExAluno = linhas.find((l) => l.alunoId === a2.alunoId);
+
+    // Os dois têm `naTurmaHoje: false` — e é justamente por isso que a tela
+    // precisava de um segundo campo para não chamar visitante de evadido.
+    expect(doVisitante).toMatchObject({ naTurmaHoje: false, reposicao: true });
+    expect(doExAluno).toMatchObject({ naTurmaHoje: false, reposicao: false });
+    expect(linhas.find((l) => l.alunoId === a1.alunoId)).toMatchObject({
+      naTurmaHoje: true,
+      reposicao: false,
+    });
+  });
+
+  it('no relatório de frequência da turma, o visitante vem com `visitante: true`', async () => {
+    const { a1, a2, oc } = await automaticaDeOntem();
+    const visitante = await aluno('Visitante');
+    await matricular(TURMA_ORIGEM, visitante.alunoId);
+    await visita(visitante.alunoId, oc);
+    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
+    await presenca().salvarChamada(
+      EMPRESA,
+      UPROF,
+      oc,
+      lida.versao,
+      todosPresentes([a1.alunoId, a2.alunoId, visitante.alunoId]),
+    );
+
+    const turma = await frequencia().daTurma(EMPRESA, TURMA_A, 30);
+    const linha = turma.alunos.find((x) => x.alunoId === visitante.alunoId);
+
+    expect(linha).toMatchObject({ naTurmaHoje: false, visitante: true });
+    expect(turma.alunos.find((x) => x.alunoId === a1.alunoId)).toMatchObject({
+      visitante: false,
+    });
+  });
+});
+
+// ======================================================================
 describe('AC-010 — os cinco datasets do veredito v2 (A5/P06)', () => {
   type Linha = 'A' | 'P' | 'auto' | '-';
   const datasets: {

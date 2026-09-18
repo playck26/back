@@ -6154,6 +6154,9 @@
           "naTurmaHoje": {
             "type": "boolean"
           },
+          "visitante": {
+            "type": "boolean"
+          },
           "cobertura": {
             "$ref": "#/components/schemas/CoberturaResponseDto"
           }
@@ -6170,6 +6173,7 @@
           "turmaId",
           "turmaNome",
           "naTurmaHoje",
+          "visitante",
           "cobertura"
         ]
       },
@@ -9923,6 +9927,9 @@
             "type": "string",
             "format": "uuid"
           },
+          "visitante": {
+            "type": "boolean"
+          },
           "nome": {
             "type": "string",
             "example": "Ana Souza"
@@ -9952,6 +9959,7 @@
           "faltasSeguidas",
           "faltasSeguidasComposicao",
           "alunoId",
+          "visitante",
           "nome",
           "naTurmaHoje",
           "alunoAtivo",
@@ -10013,6 +10021,9 @@
           "naTurmaHoje": {
             "type": "boolean"
           },
+          "reposicao": {
+            "type": "boolean"
+          },
           "alunoAtivo": {
             "type": "boolean"
           }
@@ -10022,6 +10033,7 @@
           "nome",
           "status",
           "naTurmaHoje",
+          "reposicao",
           "alunoAtivo"
         ]
       },
