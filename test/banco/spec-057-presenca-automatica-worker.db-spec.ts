@@ -785,3 +785,69 @@ describe('AC-004 — a CLI operacional', () => {
     expect(saida.join('\n')).toContain('PRESENCA_SEM_PRIVILEGIO');
   });
 });
+
+/**
+ * **As duas sabotagens que passavam, e agora não passam mais.**
+ *
+ * A revalidação de 2026-09-18 e o veredito das SPEC-058/059 acharam as mesmas
+ * duas mutações sobrevivendo à suíte inteira: inflar `esperados` em 1, e
+ * inverter o comparador da paginação por keyset. Nenhuma das duas quebrava
+ * teste nenhum — ou seja, os dois defeitos entrariam em produção sem ninguém
+ * ver.
+ *
+ * O segundo é o que assusta: com mais de 100 aulas elegíveis num tick, as da
+ * segunda página em diante **nunca fechariam**, e o clube só descobriria pela
+ * ausência — chamada que não apareceu. Hoje a Smart Tennis tem 11 chamadas no
+ * total, então o defeito seria invisível por meses.
+ */
+describe('SPEC-057 — as sabotagens que a suíte não pegava', () => {
+  it('`esperados` do cabeçalho é EXATAMENTE quantas presenças foram gravadas', async () => {
+    const a1 = await aluno('Ana');
+    const a2 = await aluno('Bruno');
+    await matricular(TURMA_A, a1.alunoId);
+    await matricular(TURMA_A, a2.alunoId);
+    const ocupacao = await aula(TURMA_A, -1);
+    await ligarPresencaAutomatica(db, diasAtras(3));
+
+    await worker().executarTick();
+
+    const [cabecalho] = await db.$queryRawUnsafe<{ esperados: number }[]>(
+      `SELECT esperados FROM chamadas WHERE ocupacao_id = $1::uuid`,
+      ocupacao,
+    );
+    const linhas = await linhasDe(ocupacao);
+    // Inflar `esperados` em 1 fazia o cabeçalho discordar do snapshot sem
+    // quebrar prova nenhuma: a frequência passaria a contar um aluno que não
+    // existe na chamada.
+    expect(cabecalho.esperados).toBe(linhas.length);
+    expect(linhas.length).toBe(2);
+  });
+
+  /**
+   * **Mais de uma página de candidatas.** `TAMANHO_DO_LOTE` é 100: 101 aulas
+   * exigem a segunda volta, e é ali que o comparador keyset decide se ela traz
+   * as que faltam ou repete as que já vieram.
+   */
+  it('101 aulas elegíveis fecham TODAS, e não só a primeira página', async () => {
+    const a1 = await aluno('Ana');
+    await matricular(TURMA_A, a1.alunoId);
+    // A quadra tem EXCLUDE de sobreposição e a fixture cicla 16 horários por
+    // dia: 101 aulas no mesmo dia colidem. Espalhadas por dez dias, cabem — e
+    // o corte recua para que todas fiquem depois dele.
+    const ocupacoes: string[] = [];
+    for (let i = 0; i < 101; i++) {
+      ocupacoes.push(await aula(TURMA_A, -(1 + Math.floor(i / 11))));
+    }
+    await ligarPresencaAutomatica(db, diasAtras(30));
+
+    const r = await worker().executarTick();
+
+    const [{ fechadas }] = await db.$queryRawUnsafe<{ fechadas: bigint }[]>(
+      `SELECT count(*) AS fechadas FROM chamadas
+        WHERE ocupacao_id = ANY($1::uuid[]) AND origem_inicial = 'automatica'`,
+      ocupacoes,
+    );
+    expect(Number(fechadas)).toBe(101);
+    expect(r.fechadas).toBe(101);
+  });
+});
