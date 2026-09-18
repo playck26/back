@@ -280,3 +280,147 @@ describe('SPEC-055 — o nome do aluno na reserva', () => {
     );
   });
 });
+
+/**
+ * SPEC-059/D2 — **o que a reserva é, dito pelo servidor.**
+ *
+ * Reserva de quadra e aula particular são as duas `origemTipo: AVULSO`, e até
+ * a SPEC-059 nada as separava no payload — o app não tinha como escrever
+ * "aula particular" porque não tinha como saber. A prova é em banco real
+ * porque `tipo`, `professorNome` e `quadraNome` saem de duas relações lidas
+ * na mesma consulta: um mock devolveria o que eu mandasse devolver.
+ */
+describe('SPEC-059 — tipo, professor e quadra na listagem', () => {
+  const UPROF = 'e0550000-0000-4000-8000-0000000000a1';
+  const PROF = 'e0550000-0000-4000-8000-0000000000a2';
+
+  type ItemDaLista = Reserva & {
+    tipo?: string;
+    professorNome?: string | null;
+    quadraNome?: string;
+  };
+
+  async function comProfessor() {
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
+       VALUES ('${UPROF}','spec059-prof@t.local','x','Marcos Lima','professor','${EMPRESA}',now())
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await q(
+      `INSERT INTO professores (id,company_id,nome,usuario_id,preco_aula,created_at)
+       VALUES ('${PROF}','${EMPRESA}','Marcos Lima','${UPROF}',150,now())
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    // SPEC-040 — aula particular exige o professor DISPONÍVEL no dia da
+    // semana. `2035-06-07` é quinta (dia 4); sem esta linha o serviço recusa
+    // com 422 FORA_DA_DISPONIBILIDADE, e foi o que aconteceu na primeira
+    // tentativa desta fixture.
+    await q(
+      `INSERT INTO disponibilidades_professor (id,company_id,professor_id,dia_semana,hora_inicio,hora_fim,updated_at)
+       VALUES (gen_random_uuid(),'${EMPRESA}','${PROF}',4,'06:00','23:00',now())
+       ON CONFLICT DO NOTHING`,
+    );
+  }
+
+  const listar = async () =>
+    (
+      (await courts.listBookings(EMPRESA, {})) as unknown as {
+        data: ItemDaLista[];
+      }
+    ).data;
+
+  it('reserva sem professor é `quadra`, e traz o nome da quadra', async () => {
+    const r = await reservarPeloGestor(ANA, '10:00', '11:00');
+
+    const item = (await listar()).find((x) => x.id === r.id);
+
+    expect(item?.tipo).toBe('quadra');
+    expect(item?.professorNome).toBeNull();
+    expect(item?.quadraNome).toBe('Q1');
+  });
+
+  it('reserva COM professor é `aula_particular`, e diz quem dá a aula', async () => {
+    await comProfessor();
+    const criada = (await courts.createBooking(
+      EMPRESA,
+      {
+        quadraId: QUADRA,
+        data: DATA,
+        slots: [{ horaInicio: '14:00', horaFim: '15:00' }],
+        alunoId: ANA,
+        professorId: PROF,
+      },
+      UADMIN,
+    )) as unknown as { reservas: Reserva[] };
+
+    const item = (await listar()).find((x) => x.id === criada.reservas[0].id);
+
+    expect(item?.tipo).toBe('aula_particular');
+    expect(item?.professorNome).toBe('Marcos Lima');
+    expect(item?.quadraNome).toBe('Q1');
+  });
+
+  /**
+   * INV-005 continua valendo: o campo novo não pode virar caminho para o
+   * aluno enxergar reserva de outro. Se alguém trocasse o escopo por
+   * descuido ao mexer no `include`, é aqui que apareceria.
+   */
+  it('o aluno continua vendo só as dele, agora com tipo', async () => {
+    const daAna = await reservarPeloGestor(ANA, '10:00', '11:00');
+    await reservarPeloGestor(BRUNO, '11:00', '12:00');
+
+    const lista = (
+      (await courts.listBookings(EMPRESA, {}, ANA, UANA)) as unknown as {
+        data: ItemDaLista[];
+      }
+    ).data;
+
+    expect(lista.map((x) => x.id)).toEqual([daAna.id]);
+    expect(lista[0].tipo).toBe('quadra');
+  });
+});
+
+/**
+ * SPEC-059/D5 — **a janela de datas da listagem**, que é o que o calendário
+ * do aluno pede para desenhar um mês.
+ */
+describe('SPEC-059 — janela de datas em GET /bookings', () => {
+  type Item = { id: string; data: string };
+  const listar = async (query: Record<string, string>) =>
+    ((await courts.listBookings(EMPRESA, query)) as unknown as { data: Item[] })
+      .data;
+
+  it('`de`/`ate` recortam o intervalo, inclusive nas pontas', async () => {
+    const dentro = await reservarPeloGestor(ANA, '10:00', '11:00'); // DATA
+    const fora = (await courts.createBooking(
+      EMPRESA,
+      {
+        quadraId: QUADRA,
+        data: '2035-06-20',
+        slots: [{ horaInicio: '10:00', horaFim: '11:00' }],
+        alunoId: ANA,
+      },
+      UADMIN,
+    )) as unknown as { reservas: Reserva[] };
+
+    const ids = (await listar({ de: DATA, ate: DATA })).map((x) => x.id);
+
+    expect(ids).toContain(dentro.id);
+    expect(ids).not.toContain(fora.reservas[0].id);
+  });
+
+  /**
+   * A primeira versão do filtro espalhava `data` e depois a janela no mesmo
+   * objeto, e o segundo sobrescrevia o primeiro em silêncio. Aqui a regra
+   * fica presa: o dia é mais específico e ganha.
+   */
+  it('`data` e janela juntos: o DIA vence, sem virar intervalo vazio', async () => {
+    const noDia = await reservarPeloGestor(ANA, '10:00', '11:00');
+
+    const ids = (
+      await listar({ data: DATA, de: '2035-01-01', ate: '2035-01-02' })
+    ).map((x) => x.id);
+
+    expect(ids).toEqual([noDia.id]);
+  });
+});

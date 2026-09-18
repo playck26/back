@@ -168,6 +168,44 @@ export class ItemDaListaDeReservasDto extends OcupacaoResponseDto {
       'ou objeto do autor** (INV-092).',
   })
   canceladaPorMim!: boolean | null;
+
+  /**
+   * SPEC-059/D1 — **o que esta reserva é, dito pelo servidor.**
+   *
+   * Reserva de quadra e aula particular são as duas `origemTipo: AVULSO`, e
+   * até aqui nada as separava no payload — o app não tinha como escrever
+   * "aula particular" porque não tinha como saber. O Israel pediu
+   * exatamente isso: *"nas reservas tem que estar especificado o que é aula,
+   * o que é reserva de quadra"*.
+   *
+   * **Campo, e não dedução por `professorNome != null`:** no dia em que
+   * existir aula particular sem professor atribuído, a dedução mente em
+   * silêncio. Mesmo argumento da SPEC-039/AC-009.
+   *
+   * `TURMA` não aparece aqui: a ocupação de turma não entra nesta listagem.
+   */
+  @ApiProperty({
+    enum: ['quadra', 'aula_particular'],
+    description:
+      '`quadra` = a pessoa reservou a quadra. `aula_particular` = há ' +
+      'professor atribuído (SPEC-039).',
+  })
+  tipo!: 'quadra' | 'aula_particular';
+
+  /** Quem dá a aula. `null` em reserva de quadra. */
+  @ApiProperty({ type: String, nullable: true, example: 'Marcos Lima' })
+  professorNome!: string | null;
+
+  /**
+   * O nome da quadra, **na mesma consulta**.
+   *
+   * A lista de reservas resolve o nome buscando o catálogo de quadras — ela
+   * já precisa dele para a foto. O calendário do aluno (SPEC-058) não
+   * precisa de mais nada da quadra, e uma segunda requisição só para
+   * escrever um nome que o servidor tem em mãos seria desperdício.
+   */
+  @ApiProperty({ example: 'Quadra 1' })
+  quadraNome!: string;
 }
 
 export class OcupacaoPaginadaResponseDto {

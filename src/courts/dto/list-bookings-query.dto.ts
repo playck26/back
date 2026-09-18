@@ -133,6 +133,27 @@ export class ListBookingsQueryDto {
   @IsDateString()
   data?: string;
 
+  /**
+   * SPEC-059/D5 — **a janela, para o calendário do aluno.**
+   *
+   * `data` responde por UM dia; o calendário precisa de um MÊS, e sem janela
+   * ele teria de paginar `futuras` e `anteriores` e juntar na tela — duas
+   * travessias para desenhar uma grade.
+   *
+   * Aditivos e independentes de `quando`: quem mandar os dois recebe a
+   * interseção, que é o que as palavras significam. `de` sem `ate` (e
+   * vice-versa) vale como limite aberto do outro lado.
+   */
+  @ApiPropertyOptional({ example: '2026-09-01', description: 'AAAA-MM-DD' })
+  @IsOptional()
+  @IsDateString()
+  de?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-30', description: 'AAAA-MM-DD' })
+  @IsOptional()
+  @IsDateString()
+  ate?: string;
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)
