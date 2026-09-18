@@ -1223,6 +1223,10 @@ export class PresencaService {
             registrante: { select: { nome: true } },
           },
         },
+        // DEF-035 — quem estava ali REPONDO. Sem isso o histórico do gestor
+        // marca o visitante como "saiu da turma", que é uma acusação falsa
+        // sobre alguém que nunca esteve nela.
+        reposicoes: { select: { alunoId: true } },
       },
       orderBy: [{ data: 'desc' }],
     });
@@ -1256,6 +1260,7 @@ export class PresencaService {
         { ...paraEstado(o), corte, participantes: participantes.get(o.id) },
         agora,
       );
+      const repondo = new Set(o.reposicoes.map((r) => r.alunoId));
       return {
         ocupacaoId: o.id,
         data: formatDateOnly(o.data),
@@ -1289,6 +1294,8 @@ export class PresencaService {
             // o único requisito para marcar presença, e que o gestor vê quem
             // já não está ativo ou já não está na turma.
             naTurmaHoje: naTurma.has(p.alunoId),
+            // DEF-035 — a marca que separa "veio repor" de "saiu da turma".
+            reposicao: repondo.has(p.alunoId),
             alunoAtivo: p.aluno.status === 'ativo',
           }))
           .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),

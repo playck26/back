@@ -289,6 +289,39 @@ describe('AC-004 — o que a aplicação respeita da autoridade (D3)', () => {
     expect(await cabecalhoDe(depois)).not.toBeNull();
   });
 
+  /**
+   * **A fronteira exata, e ela veio de fora.** A validação independente de
+   * 2026-09-17 mutou os dois predicados do worker de `> corte` para
+   * `>= corte` e o teste acima **continuou verde**: a fixture tinha aula 5
+   * dias antes e 1 dia depois de um corte de 3 dias, e nenhuma exatamente
+   * nele. A implementação estava certa; a prova é que não cobria o único
+   * ponto onde `>` e `>=` discordam.
+   *
+   * O corte é gravado a partir do término da própria aula, para que os dois
+   * instantes sejam idênticos até o microssegundo — comparar datas montadas
+   * à mão nos dois lados voltaria a deixar folga.
+   */
+  it('aula que termina EXATAMENTE no corte fica fora (o > não é >=)', async () => {
+    const a1 = await aluno('Ana');
+    await matricular(TURMA_A, a1.alunoId);
+    const naFronteira = await aula(TURMA_A, -1);
+    const [{ termino }] = await db.$queryRawUnsafe<{ termino: Date }[]>(
+      `SELECT ((data + hora_fim) AT TIME ZONE 'America/Sao_Paulo') AS termino
+         FROM ocupacoes_quadra WHERE id = $1::uuid`,
+      naFronteira,
+    );
+    // Depois dela, para o tick ter o que fechar e a prova não passar por
+    // vacuidade — se o job não rodar, as duas ficam nulas e o teste engana.
+    const depois = await aula(TURMA_A, -1);
+    await ligarPresencaAutomatica(db, new Date(termino));
+
+    const r = await worker().executarTick();
+
+    expect(await cabecalhoDe(naFronteira)).toBeNull();
+    expect(await cabecalhoDe(depois)).not.toBeNull();
+    expect(r.fechadas).toBeGreaterThanOrEqual(1);
+  });
+
   it('aula cancelada e aula que terminou há menos de 1h ficam fora', async () => {
     const a1 = await aluno('Ana');
     await matricular(TURMA_A, a1.alunoId);

@@ -33,6 +33,17 @@ export class AlunoNoHistoricoResponseDto {
   @ApiProperty({ type: Boolean })
   naTurmaHoje!: boolean;
 
+  /**
+   * DEF-035 — **estava aqui REPONDO uma falta de outra aula.**
+   *
+   * Sem este campo, `naTurmaHoje: false` tem dois significados — "saiu da
+   * turma" e "nunca esteve nela" — e a tela do gestor escolhia o primeiro,
+   * acusando de evasão quem só veio repor. Mesmo par de campos que a chamada
+   * do professor já publica (SPEC-046/AC-015).
+   */
+  @ApiProperty({ type: Boolean })
+  reposicao!: boolean;
+
   @ApiProperty({ type: Boolean })
   alunoAtivo!: boolean;
 }
