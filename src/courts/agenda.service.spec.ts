@@ -32,8 +32,11 @@ function build(opts: {
   ocorrenciaDeTurma?: { id: string } | null;
 }) {
   const prisma = {
+    // SPEC-060/D4 — o resumo do mês deixou de ser `groupBy` e passou a ser um
+    // `$queryRaw` com `FILTER`: "AVULSO sem professor" não é chave de grupo.
+    $queryRaw: jest.fn().mockResolvedValue(opts.grupos ?? []),
     ocupacaoQuadra: {
-      groupBy: jest.fn().mockResolvedValue(opts.grupos ?? []),
+      groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn().mockResolvedValue(opts.ocupacoes ?? []),
       findFirst: jest.fn().mockResolvedValue(opts.ocorrenciaDeTurma ?? null),
     },
@@ -70,13 +73,11 @@ describe('AgendaService (SPEC-012)', () => {
         grupos: [
           {
             data: new Date('2026-08-03T00:00:00.000Z'),
-            statusPagamento: 'pendente_pagamento',
-            _count: { _all: 2 },
-          },
-          {
-            data: new Date('2026-08-03T00:00:00.000Z'),
-            statusPagamento: 'pago',
-            _count: { _all: 1 },
+            total: 3n,
+            pendentes: 2n,
+            turmas: 1n,
+            particulares: 1n,
+            quadras: 1n,
           },
         ],
       });
@@ -103,30 +104,63 @@ describe('AgendaService (SPEC-012)', () => {
 
       await service.resumoDoMes(COMPANY, '2026-08');
 
-      expect(prisma.ocupacaoQuadra.groupBy).toHaveBeenCalledTimes(1);
+      // SPEC-060: a agregação virou `$queryRaw`, e continua sendo UMA.
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
       expect(prisma.quadra.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.horarioFuncionamento.findMany).toHaveBeenCalledTimes(1);
     });
 
+    /**
+     * SPEC-060 — o recorte continua o mesmo depois de virar SQL cru, e isto é
+     * prova de TEXTO porque o `$queryRaw` guarda o template. Frágil de
+     * propósito: se alguém reescrever a consulta e deixar cair o filtro de
+     * cancelada ou de quadra inativa, o teste cai junto.
+     */
     it('AC-002: a agregação exclui cancelada e quadra inativa', async () => {
       const { service, prisma } = build({});
 
       await service.resumoDoMes(COMPANY, '2026-08');
 
-      const [args] = prisma.ocupacaoQuadra.groupBy.mock.calls[0] as [
-        {
-          by: string[];
-          where: {
-            companyId: string;
-            statusPagamento: { not: string };
-            quadra: { status: string };
-          };
-        },
-      ];
-      expect(args.by).toEqual(['data', 'statusPagamento']);
-      expect(args.where.companyId).toBe(COMPANY);
-      expect(args.where.statusPagamento.not).toBe('cancelado');
-      expect(args.where.quadra.status).toBe('ativa');
+      const [partes] = prisma.$queryRaw.mock.calls[0] as [string[]];
+      const sql = partes.join(' ? ');
+      expect(sql).toContain("o.status_pagamento <> 'cancelado'");
+      expect(sql).toContain("q.status = 'ativa'");
+      // As três contagens saem do MESMO conjunto de linhas (INV-060a).
+      expect(sql).toContain("FILTER (WHERE o.origem_tipo = 'TURMA')");
+      expect(sql).toContain('o.professor_id IS NOT NULL');
+      expect(sql).toContain('o.professor_id IS NULL');
+    });
+
+    it('AC-003: as três contagens somam o total, e o dia vazio vem zerado', async () => {
+      const { service } = build({
+        grupos: [
+          {
+            data: new Date('2026-08-03T00:00:00.000Z'),
+            total: 7n,
+            pendentes: 2n,
+            turmas: 4n,
+            particulares: 2n,
+            quadras: 1n,
+          },
+        ],
+      });
+
+      const dias = await service.resumoDoMes(COMPANY, '2026-08');
+
+      const dia3 = dias.find((d) => d.data === '2026-08-03');
+      expect(dia3).toMatchObject({
+        total: 7,
+        turmas: 4,
+        particulares: 2,
+        quadras: 1,
+      });
+      expect(dia3!.turmas + dia3!.particulares + dia3!.quadras).toBe(dia3!.total);
+      expect(dias.find((d) => d.data === '2026-08-04')).toMatchObject({
+        total: 0,
+        turmas: 0,
+        particulares: 0,
+        quadras: 0,
+      });
     });
 
     it('AC-008: domingo com todas as quadras fechadas vem marcado como fechado', async () => {

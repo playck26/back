@@ -132,19 +132,44 @@ export class AgendaService {
     const fim = new Date(Date.UTC(ano, mesNum, 0));
 
     const [grupos, quadrasAtivas, linhas] = await Promise.all([
-      this.prisma.ocupacaoQuadra.groupBy({
-        by: ['data', 'statusPagamento'],
-        where: {
-          companyId,
-          data: { gte: inicio, lte: fim },
-          // Cancelada não ocupa a quadra (a constraint EXCLUDE a ignora),
-          // então não deve aparecer como compromisso na agenda.
-          statusPagamento: { not: 'cancelado' },
-          // Quadra inativa não é agenda de ninguém.
-          quadra: { status: 'ativa' },
-        },
-        _count: { _all: true },
-      }),
+      /**
+       * SPEC-060/D4 — **a contagem por tipo, na mesma consulta do total.**
+       *
+       * Era um `groupBy` do Prisma por `['data','statusPagamento']`. Não dá
+       * para acrescentar "AVULSO com professor" a ele: `professor_id` como
+       * chave de grupo explodiria em uma linha por professor, e "é nulo?" não
+       * é expressável ali. Vira `FILTER`, que é como o resto da agenda já
+       * conta.
+       *
+       * **O recorte é o mesmo do total** — cancelada fora, quadra inativa
+       * fora. Um dia cujas partes não somam o total seria pior que não ter as
+       * partes.
+       */
+      this.prisma.$queryRaw<
+        {
+          data: Date;
+          total: bigint;
+          pendentes: bigint;
+          turmas: bigint;
+          particulares: bigint;
+          quadras: bigint;
+        }[]
+      >`
+        SELECT o.data,
+               count(*) AS total,
+               count(*) FILTER (WHERE o.status_pagamento = 'pendente_pagamento') AS pendentes,
+               count(*) FILTER (WHERE o.origem_tipo = 'TURMA') AS turmas,
+               count(*) FILTER (WHERE o.origem_tipo = 'AVULSO' AND o.professor_id IS NOT NULL) AS particulares,
+               count(*) FILTER (WHERE o.origem_tipo = 'AVULSO' AND o.professor_id IS NULL) AS quadras
+          FROM ocupacoes_quadra o
+          JOIN quadras q ON q.id = o.quadra_id AND q.company_id = o.company_id
+         WHERE o.company_id = ${companyId}::uuid
+           AND o.data >= ${inicio}::date
+           AND o.data <= ${fim}::date
+           AND o.status_pagamento <> 'cancelado'
+           AND q.status = 'ativa'
+         GROUP BY o.data
+      `,
       this.prisma.quadra.findMany({
         where: { companyId, status: 'ativa' },
         select: { id: true },
@@ -161,15 +186,22 @@ export class AgendaService {
       }),
     ]);
 
-    const porDia = new Map<string, { total: number; pendentes: number }>();
+    const VAZIO = {
+      total: 0,
+      pendentes: 0,
+      turmas: 0,
+      particulares: 0,
+      quadras: 0,
+    };
+    const porDia = new Map<string, typeof VAZIO>();
     for (const g of grupos) {
-      const chave = formatDateOnly(g.data);
-      const atual = porDia.get(chave) ?? { total: 0, pendentes: 0 };
-      atual.total += g._count._all;
-      if (g.statusPagamento === 'pendente_pagamento') {
-        atual.pendentes += g._count._all;
-      }
-      porDia.set(chave, atual);
+      porDia.set(formatDateOnly(g.data), {
+        total: Number(g.total),
+        pendentes: Number(g.pendentes),
+        turmas: Number(g.turmas),
+        particulares: Number(g.particulares),
+        quadras: Number(g.quadras),
+      });
     }
 
     const dias: DiaDaAgenda[] = [];
@@ -179,11 +211,16 @@ export class AgendaService {
       dia.setUTCDate(dia.getUTCDate() + 1)
     ) {
       const chave = formatDateOnly(dia);
-      const contagem = porDia.get(chave) ?? { total: 0, pendentes: 0 };
+      const contagem = porDia.get(chave) ?? VAZIO;
       dias.push({
         data: chave,
         total: contagem.total,
         pendentes: contagem.pendentes,
+        // SPEC-060/INV-060a — as três partes somam o total, por construção:
+        // saem do mesmo `FILTER` sobre as mesmas linhas.
+        turmas: contagem.turmas,
+        particulares: contagem.particulares,
+        quadras: contagem.quadras,
         fechado: this.tudoFechado(quadrasAtivas, linhas, dia.getUTCDay()),
       });
     }
