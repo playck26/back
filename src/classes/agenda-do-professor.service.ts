@@ -260,9 +260,14 @@ export class AgendaDoProfessorService {
       companyId,
       ocupacoes,
     );
+    const avisaram = await this.faltasAvisadasDo(
+      companyId,
+      ocupacoes.map((o) => o.id),
+    );
 
     return ocupacoes.map((o) => {
       const particular = o.origemTipo === 'AVULSO';
+      const nomes = avisaram.get(o.id) ?? [];
       return {
         ocupacaoId: o.id,
         // SPEC-039/AC-009 — o campo que a tela usa para distinguir. Sem ele
@@ -289,8 +294,47 @@ export class AgendaDoProfessorService {
               corte,
               participantes.get(o.id),
             ),
+        // SPEC-058/D5 — zero na particular: falta avisada é de turma
+        // (SPEC-031), e o aluno único que não vem cancela a aula.
+        faltasAvisadas: particular ? 0 : nomes.length,
+        quemAvisou: particular ? [] : nomes,
       };
     });
+  }
+
+  /**
+   * SPEC-058/D5 — quem avisou falta, **numa consulta para o dia inteiro**.
+   *
+   * Uma por aula seria uma por linha da tela, que é o defeito que a SPEC-015
+   * já pagou uma vez. O dia do professor cabe folgado num `IN`.
+   */
+  private async faltasAvisadasDo(
+    companyId: string,
+    ocupacaoIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const porAula = new Map<string, string[]>();
+    if (ocupacaoIds.length === 0) return porAula;
+
+    const faltas = await this.prisma.faltaAvisada.findMany({
+      where: { companyId, ocupacaoId: { in: ocupacaoIds } },
+      select: {
+        ocupacaoId: true,
+        aluno: { select: { usuario: { select: { nome: true } } } },
+      },
+    });
+
+    for (const f of faltas) {
+      const nome = f.aluno.usuario.nome;
+      const lista = porAula.get(f.ocupacaoId);
+      if (lista) lista.push(nome);
+      else porAula.set(f.ocupacaoId, [nome]);
+    }
+    // Ordem alfabética: a tela mostra os primeiros nomes e resume o resto;
+    // sem ordem estável, "e mais 2" mudaria de quem a cada recarga.
+    for (const lista of porAula.values()) {
+      lista.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    }
+    return porAula;
   }
 
   /**

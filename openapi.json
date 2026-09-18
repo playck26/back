@@ -11448,6 +11448,21 @@
             ],
             "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); **não** é pendência e não pinta o ponto vermelho. `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem ninguém matriculado nem repondo (SPEC-057); não é pendência. `cancelada` não aparece aqui: o filtro do calendário a exclui antes. **`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem chamada, e resolver um estado ali pintaria `pendente` numa aula que nunca poderá receber uma — ponto vermelho que o professor não limpa.",
             "nullable": true
+          },
+          "faltasAvisadas": {
+            "type": "number",
+            "example": 2,
+            "description": "Quantos avisaram falta nesta aula."
+          },
+          "quemAvisou": {
+            "example": [
+              "Ana Lima",
+              "Bruno Sá"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -11458,7 +11473,9 @@
           "quadraNome",
           "horaInicio",
           "horaFim",
-          "chamada"
+          "chamada",
+          "faltasAvisadas",
+          "quemAvisou"
         ]
       },
       "ReposicaoMarcadaResponseDto": {

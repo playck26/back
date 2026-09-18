@@ -487,7 +487,7 @@ a replicar:
 > | Tabela | Para quê |
 > |---|---|
 > | `config_operacao_empresa` | os dois prazos de cancelamento, em horas. `NULL` = sem prazo, e é o padrão |
-> | `faltas_avisadas` | o aluno avisa que vai faltar **sem sair da turma** |
+> | `faltas_avisadas` | o aluno avisa que vai faltar **sem sair da turma**. **SPEC-058/D5:** vira insight no painel do professor — `GET /me/teacher/agenda/{data}` devolve `faltasAvisadas` e `quemAvisou` por aula, numa consulta para o dia inteiro (uma por aula seria uma por linha da tela). Campo **aditivo**: o Cliente trata ausente como zero, para o front novo conversar com o back antigo durante o rollout |
 > | `eventos_de_matricula` | auditoria da saída de turma (D21) |
 >
 > `faltas_avisadas` tem **quatro FKs para três pais**, todas `RESTRICT`: a

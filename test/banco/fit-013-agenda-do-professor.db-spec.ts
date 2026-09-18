@@ -857,3 +857,79 @@ describe('FIT-013 — SPEC-052: o mês separa turma de aula particular', () => {
     expect(await service.resumoDoMes(EMPRESA, UPROF_A, MES)).toEqual([]);
   });
 });
+
+/**
+ * SPEC-058/D5 — **quem avisou que vai faltar, antes da aula.**
+ *
+ * O Israel escolheu este insight para o cartão do professor. A prova é em
+ * banco real porque o valor vem de uma junção — `faltas_avisadas` → `alunos`
+ * → `usuarios` — e é o nome da pessoa que aparece na tela: mock aqui provaria
+ * o `select` que eu escrevi, não o nome que o professor vai ler.
+ */
+describe('SPEC-058 — faltas avisadas na aula do dia', () => {
+  const ALUNA = 'f0130000-0000-4000-8000-0000000000e1';
+  const UALUNA = 'f0130000-0000-4000-8000-0000000000e2';
+  const ALUNO = 'f0130000-0000-4000-8000-0000000000e3';
+  const UALUNO = 'f0130000-0000-4000-8000-0000000000e4';
+  const AULA = 'f0130000-0000-4000-8000-0000000000e5';
+  const AULA_SEM_AVISO = 'f0130000-0000-4000-8000-0000000000e6';
+
+  async function alunoCom(
+    usuarioId: string,
+    alunoId: string,
+    nome: string,
+  ): Promise<void> {
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${usuarioId}','${alunoId}@teste.local','x','${nome}','aluno','${EMPRESA}',now())`,
+    );
+    await q(
+      `INSERT INTO alunos (id,company_id,usuario_id,status,vinculo,created_at) VALUES ('${alunoId}','${EMPRESA}','${usuarioId}','ativo','aprovado',now())`,
+    );
+    await q(
+      `INSERT INTO turma_alunos (id,turma_id,aluno_id,created_at) VALUES (gen_random_uuid(),'${TURMA_A}','${alunoId}',now())`,
+    );
+  }
+
+  beforeAll(async () => {
+    await montar();
+    // "Zeca" antes de "Ana" na inserção, para a ordem alfabética ter o que
+    // provar: se a ordem viesse do banco, sairia na ordem de inserção.
+    await alunoCom(UALUNO, ALUNO, 'Zeca Faltoso');
+    await alunoCom(UALUNA, ALUNA, 'Ana Avisada');
+    await aula(AULA, EMPRESA, QUADRA, TURMA_A, DIA_1, '10:00');
+    await aula(AULA_SEM_AVISO, EMPRESA, QUADRA, TURMA_A, DIA_1, '12:00');
+    for (const alunoId of [ALUNO, ALUNA]) {
+      await q(
+        `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,origem_tipo,aluno_id,avisada_em,created_at,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${AULA}','TURMA','${alunoId}',now(),now(),now())`,
+      );
+    }
+  });
+
+  it('conta e nomeia quem avisou, em ordem alfabética', async () => {
+    const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    const comAviso = dia.find((a) => a.ocupacaoId === AULA);
+
+    expect(comAviso?.faltasAvisadas).toBe(2);
+    expect(comAviso?.quemAvisou).toEqual(['Ana Avisada', 'Zeca Faltoso']);
+  });
+
+  it('aula sem aviso nenhum devolve zero e lista vazia, não undefined', async () => {
+    const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+    const semAviso = dia.find((a) => a.ocupacaoId === AULA_SEM_AVISO);
+
+    expect(semAviso?.faltasAvisadas).toBe(0);
+    expect(semAviso?.quemAvisou).toEqual([]);
+  });
+
+  /**
+   * O aviso é de UMA ocorrência, não da turma: quem avisa que falta na
+   * quinta continua esperado na segunda. Sem esta prova, um `where` frouxo
+   * espalharia o aviso por todas as aulas da turma e o professor planejaria
+   * o mês inteiro errado.
+   */
+  it('o aviso fica na aula em que foi dado, não na turma toda', async () => {
+    const dia = await service.detalheDoDia(EMPRESA, UPROF_A, DIA_1);
+
+    expect(dia.map((a) => a.faltasAvisadas).sort()).toEqual([0, 2]);
+  });
+});
