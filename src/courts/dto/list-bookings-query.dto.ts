@@ -140,9 +140,15 @@ export class ListBookingsQueryDto {
    * ele teria de paginar `futuras` e `anteriores` e juntar na tela — duas
    * travessias para desenhar uma grade.
    *
-   * Aditivos e independentes de `quando`: quem mandar os dois recebe a
-   * interseção, que é o que as palavras significam. `de` sem `ate` (e
+   * Aditivos e independentes de `quando`. **O dia (`data`) tem precedência
+   * sobre a janela** — ver `listBookings`: o dia é mais específico, e somar os
+   * dois daria intervalo vazio na maioria dos casos. `de` sem `ate` (e
    * vice-versa) vale como limite aberto do outro lado.
+   *
+   * **O teto de `pageSize` continua 100, e quem varre uma janela grande
+   * pagina.** Pedir 200 devolve **400** — foi assim que a primeira versão do
+   * calendário do aluno subiu em produção sem reserva nenhuma, calada, porque
+   * a tela trata falha de reserva como "mostro as aulas e aviso".
    */
   @ApiPropertyOptional({ example: '2026-09-01', description: 'AAAA-MM-DD' })
   @IsOptional()
