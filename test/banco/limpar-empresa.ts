@@ -188,6 +188,18 @@ export const TABELAS_DA_EMPRESA = [
   // SPEC-032: DEPOIS de `eventos_de_ocupacao` (que aponta para ela) e ANTES
   // de `usuarios` (o autor, com RESTRICT).
   'acoes_administrativas',
+  // SPEC-062: ANTES de `usuarios`. A FK composta da notificacao e **NO
+  // ACTION** de proposito — apagar o destinatario e gesto de dominio que a
+  // SPEC-062 nao decide —, entao ela BLOQUEIA o `DELETE FROM usuarios`. Sem
+  // esta linha a limpeza morre com `23503`, e a mensagem culpa `usuarios` em
+  // vez da tabela que os segura.
+  'notificacoes',
+  // SPEC-062: a FK da assinatura e CASCADE, entao ela cairia junto com
+  // `usuarios`. Entra explicitamente pela mesma razao que trouxe
+  // `disponibilidades_professor`: apagar de proposito nao depende de a
+  // proxima pessoa manter o CASCADE — e o db-spec de cobertura exige toda
+  // tabela com `company_id` na lista ou declarada como excecao.
+  'assinaturas_push',
   'usuarios',
 ] as const;
 
