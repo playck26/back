@@ -5645,6 +5645,124 @@
           "bookings"
         ]
       }
+    },
+    "/api/v1/push/chave-publica": {
+      "get": {
+        "operationId": "PushPublicoController_chavePublica",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChavePublicaResponseDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`PUSH_NAO_CONFIGURADO` — falta par VAPID. Falha fechada: o serviço diz que não funciona em vez de fingir."
+          }
+        },
+        "tags": [
+          "push"
+        ]
+      }
+    },
+    "/api/v1/push/assinatura": {
+      "post": {
+        "operationId": "PushController_assinar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssinaturaPushDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Registrada. **Sem corpo de propósito** (INV-062f): não há o que devolver, e devolver a assinatura seria repetir a credencial que acabou de chegar."
+          },
+          "409": {
+            "description": "`ENDPOINT_EM_USO` — o aparelho pertence a outra conta. A autenticação prova a conta, não o controle do aparelho."
+          },
+          "503": {
+            "description": "`PUSH_NAO_CONFIGURADO`."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "push"
+        ]
+      },
+      "delete": {
+        "operationId": "PushController_desassinar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesassinarPushDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Removida, ou já não existia. A resposta é a mesma nos dois casos."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "push"
+        ]
+      }
+    },
+    "/api/v1/push/teste": {
+      "post": {
+        "operationId": "PushController_teste",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TesteEnfileiradoResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TESTE_JA_ENFILEIRADO` (409, já há um a caminho) ou `TESTE_ACIMA_DO_TETO` (429, três na última hora)."
+          },
+          "503": {
+            "description": "`PUSH_NAO_CONFIGURADO`."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "push"
+        ]
+      }
     }
   },
   "info": {
@@ -12040,6 +12158,73 @@
           "valor",
           "adicionais",
           "creditoDevolvidoCentavos"
+        ]
+      },
+      "ChavePublicaResponseDto": {
+        "type": "object",
+        "properties": {
+          "chave": {
+            "type": "string",
+            "description": "A chave pública VAPID, em base64url."
+          },
+          "impressaoDaPrivada": {
+            "type": "string",
+            "description": "`sha256` do texto da chave privada, em hexadecimal. Não é segredo: é o insumo do gate que procura a chave no bundle publicado."
+          }
+        },
+        "required": [
+          "chave",
+          "impressaoDaPrivada"
+        ]
+      },
+      "AssinaturaPushDto": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "description": "O `endpoint` emitido pelo serviço de push do navegador. CREDENCIAL: não é devolvido por nenhuma rota.",
+            "maxLength": 2048
+          },
+          "p256dh": {
+            "type": "string",
+            "description": "Chave pública do aparelho. CREDENCIAL.",
+            "maxLength": 255
+          },
+          "auth": {
+            "type": "string",
+            "description": "Segredo de autenticação do aparelho. CREDENCIAL.",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "endpoint",
+          "p256dh",
+          "auth"
+        ]
+      },
+      "DesassinarPushDto": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "description": "O `endpoint` a remover DESTA conta.",
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "TesteEnfileiradoResponseDto": {
+        "type": "object",
+        "properties": {
+          "enfileirada": {
+            "type": "boolean",
+            "description": "Sempre `true`. A linha entrou na caixa de saída; o envio é do tick, e aceitação pelo serviço de push não é entrega."
+          }
+        },
+        "required": [
+          "enfileirada"
         ]
       }
     }
