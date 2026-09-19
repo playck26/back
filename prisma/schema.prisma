@@ -172,6 +172,9 @@ model Usuario {
   /// SPEC-037 — quem matriculou. Nomeada porque `Matricula` tem DUAS pernas
   /// para `usuarios`: esta (o autor) e a do aceite, que passa por `Aceite`.
   matriculasCriadas            Matricula[]          @relation("MatriculaCriadaPor")
+  /// SPEC-062 — os aparelhos desta pessoa e os avisos destinados a ela.
+  assinaturasPush              AssinaturaPush[]
+  notificacoes                 Notificacao[]
 
   /// DEF-024 fase 1 — alvo da FK composta de `alunos`. `company_id` aqui e
   /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
@@ -1609,4 +1612,115 @@ model DisponibilidadeProfessor {
   @@unique([companyId, professorId, diaSemana], map: "disponibilidades_professor_dia_key")
   @@index([companyId, professorId], map: "disponibilidades_professor_idx")
   @@map("disponibilidades_professor")
+}
+
+// ===========================================================================
+// SPEC-062 — infraestrutura de push (card 5328, parte 1)
+// ===========================================================================
+
+/// SPEC-062/D2 — a assinatura e do APARELHO, nao da pessoa.
+///
+/// **`endpoint` e UNIQUE global, e isso e a INV-062d.** Um aparelho tem um
+/// dono por vez; registrar `endpoint` que ja pertence a outro usuario volta
+/// `409 ENDPOINT_EM_USO` (achado v2-06 da SPEC-061: a autenticacao prova a
+/// CONTA, nunca o controle do aparelho, e transferir por declaracao seria
+/// sequestro de avisos).
+///
+/// **Os tres campos sao CREDENCIAL** (INV-062f): `endpoint`, `p256dh` e `auth`
+/// dao a quem os tiver a capacidade de mandar push naquele aparelho. Nunca em
+/// log, telemetria, resposta ou mensagem de erro — no log vai a impressao de 8
+/// caracteres, nao o valor.
+model AssinaturaPush {
+  id        String @id @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+  usuarioId String @map("usuario_id") @db.Uuid
+  /// CREDENCIAL. Ver o bloco acima antes de logar isto em qualquer lugar.
+  endpoint  String
+  p256dh    String
+  auth      String
+
+  criadaEm       DateTime  @default(now()) @map("criada_em") @db.Timestamptz(6)
+  ultimoUsoEm    DateTime? @map("ultimo_uso_em") @db.Timestamptz(6)
+  falhasSeguidas Int       @default(0) @map("falhas_seguidas")
+
+  /// INV-062c — FK COMPOSTA para `usuarios(company_id, id)`. FK simples nao
+  /// saberia de `company_id`, e um aviso podia cruzar empresa. `CASCADE`
+  /// porque assinatura de usuario que nao existe mais nao tem destino.
+  usuario Usuario @relation(fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, map: "assinaturas_push_usuario_fkey")
+
+  @@unique([endpoint], map: "assinaturas_push_endpoint_key")
+  @@index([companyId, usuarioId], map: "assinaturas_push_usuario_idx")
+  @@map("assinaturas_push")
+}
+
+/// SPEC-062/D4 — a caixa de saida.
+///
+/// **`origem_id` e OPACO aqui de proposito:** quem enfileira decide o que por
+/// nele (a SPEC-063 usa a acao administrativa; a SPEC-064, a linha da fila). O
+/// emissor nunca o abre — e foi por nao ter de abrir que `expira_em` precisou
+/// existir: o TTL do Web Push sai DAQUI, nao de perguntar ao dominio.
+model Notificacao {
+  id             String  @id @db.Uuid
+  companyId      String  @map("company_id") @db.Uuid
+  destinatarioId String  @map("destinatario_id") @db.Uuid
+  origemId       String? @map("origem_id") @db.Uuid
+  tipo           String
+  titulo         String
+  corpo          String
+  destinoUrl     String? @map("destino_url")
+
+  criadaEm DateTime  @default(now()) @map("criada_em") @db.Timestamptz(6)
+  /// D1a — o prazo do fato, informado por quem enfileira. `NULL` = sem prazo,
+  /// e o TTL vira `TTL_PADRAO` (24 h). Com prazo, o TTL e
+  /// `floor(expira_em - now())` e abaixo de 1 segundo NAO se envia: a linha
+  /// vira `expirada` (transicoes 5 e 6).
+  expiraEm DateTime? @map("expira_em") @db.Timestamptz(6)
+
+  estado             EstadoDaNotificacao @default(pendente)
+  /// D4b — a tentativa conta na REIVINDICACAO, nao no fim. Quem morre no meio
+  /// do envio queima a tentativa: e a escolha conservadora, e a unica que
+  /// impede laco infinito por processo que morre sempre no mesmo ponto.
+  tentativas         Int                 @default(0)
+  proximaTentativaEm DateTime            @default(now()) @map("proxima_tentativa_em") @db.Timestamptz(6)
+  reivindicadaAte    DateTime?           @map("reivindicada_ate") @db.Timestamptz(6)
+  /// INV-062e — a CERCA. So o dono da reivindicacao conclui; o emissor com
+  /// lease vencido nao consegue escrever (transicoes 2, 3 e 6).
+  reivindicadaPor    String?             @map("reivindicada_por")
+  concluidaEm        DateTime?           @map("concluida_em") @db.Timestamptz(6)
+  ultimoErro         String?             @map("ultimo_erro")
+
+  /// INV-062c — FK COMPOSTA, mesma razao da `assinaturas_push`. Sem `CASCADE`:
+  /// apagar usuario e gesto de dominio que a SPEC-062 nao decide.
+  destinatario Usuario @relation(fields: [companyId, destinatarioId], references: [companyId, id], map: "notificacoes_destinatario_fkey")
+
+  /// A reivindicacao varre por aqui: `estado` + `proxima_tentativa_em`, na
+  /// ordem de `criada_em`.
+  @@index([estado, proximaTentativaEm, criadaEm], map: "notificacoes_fila_idx")
+  /// D6 — o teto horario do aviso de teste conta por aqui (duas igualdades e
+  /// um range). Persistente de proposito: o `@Throttle` vive na memoria do
+  /// processo, e reiniciar zerava a janela.
+  @@index([destinatarioId, tipo, criadaEm], map: "notificacoes_teste_janela_idx")
+  @@map("notificacoes")
+}
+
+/// SPEC-062/D4 — os sete estados da caixa de saida.
+///
+/// **Nao-terminais: `pendente` e `enviando`.** Os outros cinco sao terminais, e
+/// o CHECK `notificacoes_terminal_conclusao_chk` obriga `concluida_em` a
+/// acompanhar — ver a migration. Ordem NOVA entra no FIM: `ALTER TYPE ADD
+/// VALUE` sem `BEFORE`/`AFTER` anexa ao final, e declarar aqui em outra posicao
+/// cria drift permanente (a mesma regra que governa `TipoDeAcao`).
+enum EstadoDaNotificacao {
+  pendente
+  enviando
+  aceita_pelo_servico
+  sem_destino
+  falha_definitiva
+  falha_operacional
+  /// O prazo venceu antes do envio. **Nao e falha:** o aviso nao falhou, ele
+  /// venceu — e quem le o relatorio precisa da diferenca (achado T02 da 3a
+  /// rodada de validacao, que derrubou a versao anterior da transicao 4).
+  expirada
+
+  @@map("estado_da_notificacao")
 }
