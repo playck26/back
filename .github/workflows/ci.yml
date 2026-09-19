@@ -42,6 +42,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # SPEC-062/INV-062b/G5 — a chave privada e lida em UM lugar so.
+      # Leitura espalhada e como um console.log de depuracao acaba
+      # imprimindo segredo.
+      - run: node scripts/gate-g5-chave-privada.mjs
+
       - run: pnpm run lint:ci
 
       - run: pnpm run typecheck
