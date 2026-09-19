@@ -20,6 +20,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ThrottlerPorUsuario } from './storage/limite-de-upload';
 import { StorageModule } from './storage/storage.module';
 import { PresencaAutomaticaModule } from './presenca-automatica/presenca-automatica.module';
+import { PushModule } from './push/push.module';
 
 @Module({
   imports: [
@@ -52,6 +53,8 @@ import { PresencaAutomaticaModule } from './presenca-automatica/presenca-automat
     StorageModule,
     // SPEC-057/TASK-001 — o fechamento automático da chamada.
     PresencaAutomaticaModule,
+    // SPEC-062 — infraestrutura de push. Nasce DESLIGADA sem o par VAPID.
+    PushModule,
   ],
   controllers: [AppController],
   providers: [
