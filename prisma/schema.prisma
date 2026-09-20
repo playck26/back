@@ -721,32 +721,32 @@ model Chamada {
   // impede cabecalho apontando reserva avulsa (INV-016).
   origemTipo OrigemTipo @map("origem_tipo")
 
-  companyId     String            @map("company_id") @db.Uuid
-  registradaEm  DateTime          @default(now()) @map("registrada_em")
+  companyId                String            @map("company_id") @db.Uuid
+  registradaEm             DateTime          @default(now()) @map("registrada_em")
   /// SPEC-057/TASK-001/D1 — NULO só na chamada automática (CHECK
   /// `chamadas_origem_autor_check`): o worker não é pessoa, e um usuário
   /// "sistema" seria autor inventado.
-  registradaPor String?           @map("registrada_por") @db.Uuid
-  updatedAt     DateTime          @updatedAt @map("updated_at")
+  registradaPor            String?           @map("registrada_por") @db.Uuid
+  updatedAt                DateTime          @updatedAt @map("updated_at")
   /// SPEC-057/TASK-001/D1 — quem respondeu pela chamada POR ÚLTIMO:
   /// `automatica`, `professor`, `gestor` ou `legada_humana` (tudo que existia
   /// antes). Domínio por CHECK; texto e não enum Prisma, para a expansão não
   /// exigir `ALTER TYPE`.
-  origem        String            @default("legada_humana")
+  origem                   String            @default("legada_humana")
   /// SPEC-057/TASK-001/D1 — como a chamada NASCEU. Não muda na ratificação
   /// (imutabilidade de aplicação, LIM-057j).
-  origemInicial String            @default("legada_humana") @map("origem_inicial")
+  origemInicial            String            @default("legada_humana") @map("origem_inicial")
   /// SPEC-057/TASK-001/D5 — relógio do BANCO no fechamento automático; ancora
   /// os sete dias de correção. CHECK + trigger: existe exatamente quando
   /// `origemInicial` é `automatica`, e não muda depois de gravado.
-  fechadaAutomaticamenteEm DateTime? @map("fechada_automaticamente_em") @db.Timestamptz(6)
-  completude    CompletudeChamada
+  fechadaAutomaticamenteEm DateTime?         @map("fechada_automaticamente_em") @db.Timestamptz(6)
+  completude               CompletudeChamada
   /// Nulo quando `completude` e `desconhecida` **ou `nao_houve`** (SPEC-030),
   /// garantido por CHECK escrito a mao na migration: quem afirma completude
   /// diz sobre quantos, e quem diz que a aula nao aconteceu nao afirma sobre
   /// ninguem. O CHECK enumera os tres casos um a um, de proposito — ver
   /// `20260830100100_spec030_check_esperados_nao_houve`.
-  esperados     Int?
+  esperados                Int?
 
   empresa     Empresa        @relation(fields: [companyId], references: [id])
   ocupacao    OcupacaoQuadra @relation(fields: [ocupacaoId, origemTipo], references: [id, origemTipo], onDelete: Cascade, map: "chamadas_ocupacao_fkey")
@@ -1689,6 +1689,15 @@ model Notificacao {
   concluidaEm        DateTime?           @map("concluida_em") @db.Timestamptz(6)
   ultimoErro         String?             @map("ultimo_erro")
 
+  /// SPEC-065/D2 — **"lido" e do SERVIDOR, nao do aparelho.** `NULL` e nao
+  /// lida. Quem tem celular e computador ve a mesma caixa; marcar lido num e
+  /// continuar com bolinha no outro e o que faz a pessoa parar de confiar no
+  /// numero, e contador em que ninguem confia e pior que contador nenhum.
+  ///
+  /// **Nao tem nada a ver com `expira_em`** (D7): aquele responde ate quando
+  /// vale a pena TENTAR enviar; este, se a pessoa ja leu.
+  lidaEm DateTime? @map("lida_em") @db.Timestamptz(6)
+
   /// INV-062c — FK COMPOSTA, mesma razao da `assinaturas_push`. Sem `CASCADE`:
   /// apagar usuario e gesto de dominio que a SPEC-062 nao decide.
   destinatario Usuario @relation(fields: [companyId, destinatarioId], references: [companyId, id], map: "notificacoes_destinatario_fkey")
@@ -1700,6 +1709,18 @@ model Notificacao {
   /// um range). Persistente de proposito: o `@Throttle` vive na memoria do
   /// processo, e reiniciar zerava a janela.
   @@index([destinatarioId, tipo, criadaEm], map: "notificacoes_teste_janela_idx")
+  /// SPEC-065/D8 — **a caixa de entrada, e ela e UM indice so.**
+  ///
+  /// Os outros dois nao servem: o da fila comeca por `estado`, e o do teste
+  /// tem `tipo` no meio. Nenhum tinha `company_id`, ao contrario da convencao
+  /// do resto do schema.
+  ///
+  /// A contagem de nao-lidas usa este mesmo: os dois primeiros campos vem do
+  /// indice, e `lida_em IS NULL AND tipo <> 'teste'` e filtro sobre as linhas
+  /// de UMA pessoa. Um indice parcial dedicado so se paga quando alguem
+  /// acumular milhares de avisos -- e acrescenta-lo agora seria pagar escrita
+  /// em toda a fila por uma leitura que ainda nao doi.
+  @@index([companyId, destinatarioId, criadaEm(sort: Desc)], map: "notificacoes_caixa_idx")
   @@map("notificacoes")
 }
 
