@@ -228,6 +228,19 @@ export class EnfileiradorDeAvisos {
       -- LIM-063e: professores.usuario_id e anulavel, e a ficha existe
       -- justamente para o professor que ainda nao tem login. Sem conta nao ha
       -- destinatario possivel: o gesto acontece, so o aviso nao sai.
+      --
+      -- **NAO APAGUE O IS NOT NULL PORQUE OS TESTES PASSAM SEM ELE.**
+      -- Sabotei esta linha e a FIT-049 ficou verde, e ficar verde estava
+      -- CERTO: a linha de baixo ja derruba o professor sem conta, porque
+      -- NULL <> '<uuid>' em Postgres da NULL, e nao TRUE (medido). Ou seja,
+      -- hoje quem protege a LIM-063e e um efeito colateral da logica de tres
+      -- valores na exclusao do AUTOR -- nao uma guarda deliberada.
+      --
+      -- Se alguem mover a exclusao do autor para o JavaScript, ou trocar o
+      -- <> por um NOT IN, o professor sem conta passa a entrar na lista
+      -- com usuario_id nulo, o INSERT leva 23502 DENTRO da transacao do
+      -- gesto, e a edicao de grade inteira volta atras. Esta linha e o que
+      -- torna a protecao explicita em vez de acidental.
       SELECT p.usuario_id, 'professor' AS papel
         FROM turmas t
         JOIN professores p ON p.id = t.professor_id
