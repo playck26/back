@@ -1,4 +1,4 @@
-import { ordenarChavesParaLock, StorageLockKey } from './storage-lock-key';
+import { ordenarChavesParaLock, ChaveDeLock } from './chave-de-lock';
 import { tentarLockDeChave } from './advisory-lock';
 
 // SPEC-017/TASK-005 — AC-020/INV-043: o `bigint` tem UMA fonte.
@@ -10,25 +10,23 @@ import { tentarLockDeChave } from './advisory-lock';
 
 const KEY = `empresas/a1b2c3d4-11ef-4111-8111-1f1e1d1c1b1a/quadra/c3d4e5f6-33ef-4333-8333-3f3e3d3c3b3a/${'a'.repeat(64)}.webp`;
 
-describe('StorageLockKey', () => {
+describe('ChaveDeLock', () => {
   it('é determinístico', () => {
-    expect(StorageLockKey.fromObjectKey(KEY)).toBe(
-      StorageLockKey.fromObjectKey(KEY),
-    );
+    expect(ChaveDeLock.deTexto(KEY)).toBe(ChaveDeLock.deTexto(KEY));
   });
 
   it('o algoritmo é FIXO — sha256, 8 bytes, big-endian, com sinal', () => {
     // Valor congelado. Mudar qualquer uma das quatro escolhas quebra todo
     // lock já tomado, e este teste é o que obriga a mudança a ser
     // deliberada em vez de acidental.
-    expect(StorageLockKey.fromObjectKey('playck')).toBe(-755961181511603538n);
-    expect(StorageLockKey.fromObjectKey('')).toBe(-2039914840885289964n);
+    expect(ChaveDeLock.deTexto('playck')).toBe(-755961181511603538n);
+    expect(ChaveDeLock.deTexto('')).toBe(-2039914840885289964n);
   });
 
   it('cabe em bigint assinado do Postgres', () => {
     const LIMITE = 2n ** 63n;
     for (const entrada of ['a', KEY, 'x'.repeat(5000), '🙂']) {
-      const valor = StorageLockKey.fromObjectKey(entrada);
+      const valor = ChaveDeLock.deTexto(entrada);
       expect(valor).toBeLessThan(LIMITE);
       expect(valor).toBeGreaterThanOrEqual(-LIMITE);
     }
@@ -38,7 +36,7 @@ describe('StorageLockKey', () => {
     // Se alguém trocar para `readBigUInt64BE`, metade das chaves passa a
     // estourar o `bigint` do Postgres. Este teste prova que o caso existe.
     const negativos = ['playck', 'a', 'quadra'].map((k) =>
-      StorageLockKey.fromObjectKey(k),
+      ChaveDeLock.deTexto(k),
     );
     expect(negativos.some((v) => v < 0n)).toBe(true);
   });
@@ -54,7 +52,7 @@ describe('StorageLockKey', () => {
       },
     };
     await tentarLockDeChave(tx, KEY);
-    expect(recebido).toBe(StorageLockKey.fromObjectKey(KEY));
+    expect(recebido).toBe(ChaveDeLock.deTexto(KEY));
   });
 });
 
@@ -77,9 +75,7 @@ describe('ordenarChavesParaLock — AC-021', () => {
     // teste passaria mesmo com a implementação errada.
     const chaves = ['k4', 'aaa'];
     const porBigint = [...chaves].sort((x, y) =>
-      StorageLockKey.fromObjectKey(x) < StorageLockKey.fromObjectKey(y)
-        ? -1
-        : 1,
+      ChaveDeLock.deTexto(x) < ChaveDeLock.deTexto(y) ? -1 : 1,
     );
     expect(ordenarChavesParaLock(chaves)).toEqual(['aaa', 'k4']);
     expect(porBigint).toEqual(['k4', 'aaa']);

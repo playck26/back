@@ -1,5 +1,5 @@
 import { comLockDeChaves, tentarLockDeChave } from './advisory-lock';
-import { StorageLockKey } from './storage-lock-key';
+import { ChaveDeLock } from './chave-de-lock';
 
 // SPEC-017/TASK-005 — a ORDEM de aquisição (AC-021). Aqui dá para observar
 // cada chamada; o que só o banco prova (locks simultâneos, soltar no
@@ -31,7 +31,7 @@ describe('comLockDeChaves', () => {
     await comLockDeChaves(tx, chaves, () => Promise.resolve('ok'));
 
     expect(pedidos).toEqual(
-      ['aaa', 'mmm', 'zzz'].map((k) => StorageLockKey.fromObjectKey(k)),
+      ['aaa', 'mmm', 'zzz'].map((k) => ChaveDeLock.deTexto(k)),
     );
   });
 

@@ -21,8 +21,8 @@ import { createHash } from 'node:crypto';
  * assinado: mandar um valor não-assinado acima de 2^63-1 estoura, e o driver
  * ou o banco reclamaria — ou pior, converteria em silêncio.
  */
-export const StorageLockKey = {
-  fromObjectKey(key: string): bigint {
+export const ChaveDeLock = {
+  deTexto(key: string): bigint {
     const digest = createHash('sha256').update(key, 'utf8').digest();
     return digest.readBigInt64BE(0);
   },
