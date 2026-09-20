@@ -59,6 +59,38 @@ function tick(db: PrismaClient, porta: AdaptadorDeMemoria): TickDeEnvioService {
   return new TickDeEnvioService(db as unknown as PrismaService, porta);
 }
 
+/**
+ * Espera a linha chegar a um estado, em vez de dormir um tempo fixo.
+ *
+ * **A primeira versao desta FIT dormia 300 ms** para dar tempo de a
+ * reivindicacao acontecer, e isso a tornava dependente de relogio de parede:
+ * numa execucao em que ela disputou CPU com o `lint:ci`, um caso caiu. O
+ * teste estava frouxo, nao o codigo -- 300 ms de relogio deixam de ser 300 ms
+ * de execucao quando a maquina esta ocupada.
+ *
+ * Esperar o estado e deterministico: ou a transicao aconteceu, ou o teste
+ * falha por tempo esgotado dizendo exatamente o que nao aconteceu.
+ */
+async function esperarEstado(
+  id: string,
+  estado: string,
+  limiteMs = 15_000,
+): Promise<void> {
+  const ate = Date.now() + limiteMs;
+  for (;;) {
+    const linha = await dbB.notificacao.findUniqueOrThrow({ where: { id } });
+    if (linha.estado === estado) {
+      return;
+    }
+    if (Date.now() > ate) {
+      throw new Error(
+        `a linha ${id} nao chegou a '${estado}' em ${limiteMs}ms (esta em '${linha.estado}')`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 async function enfileirar(
   quantas: number,
   extra: { expiraEm?: Date; tentativas?: number } = {},
@@ -161,7 +193,8 @@ describe('FIT-048 (b) — lease vencido com o envio no ar (AC-012, LIM-062a)', (
     portaLenta.segurarAte(trava);
     const primeiro = tick(dbA, portaLenta).executarTick();
 
-    await new Promise((r) => setTimeout(r, 300));
+    // Espera a reivindicacao ACONTECER, e nao um tempo arbitrario.
+    await esperarEstado(id, 'enviando');
     await dbB.$executeRawUnsafe(
       `UPDATE notificacoes SET reivindicada_ate = now() - interval '1 second'
         WHERE id = $1::uuid`,
@@ -210,7 +243,7 @@ describe('FIT-048 (b2) — a cerca é pelo TOKEN, não só pelo estado', () => {
     const portaA = new AdaptadorDeMemoria();
     portaA.segurarAte(travaA);
     const primeiro = tick(dbA, portaA).executarTick();
-    await new Promise((r) => setTimeout(r, 300));
+    await esperarEstado(id, 'enviando');
 
     await dbB.$executeRawUnsafe(
       `UPDATE notificacoes SET reivindicada_ate = now() - interval '1 second'
@@ -221,7 +254,9 @@ describe('FIT-048 (b2) — a cerca é pelo TOKEN, não só pelo estado', () => {
     const portaB = new AdaptadorDeMemoria();
     portaB.segurarAte(travaB);
     const segundo = tick(dbB, portaB).executarTick();
-    await new Promise((r) => setTimeout(r, 300));
+    // O segundo reivindicou: a linha voltou a `enviando`, agora sob o token
+    // dele. Sem esta espera, o teste dependia de 300 ms de relogio.
+    await esperarEstado(id, 'enviando');
 
     // Neste instante a linha está `enviando` sob o token de B.
     const antes = await dbA.notificacao.findUniqueOrThrow({ where: { id } });
@@ -243,12 +278,21 @@ describe('FIT-048 (b2) — a cerca é pelo TOKEN, não só pelo estado', () => {
 describe('FIT-048 (c) — vencer entre reivindicar e enviar (AC-013)', () => {
   it('termina `expirada`, e não `falha_definitiva`', async () => {
     // Prazo à frente do varredor, mas abaixo de 1 s quando o TTL é calculado.
-    const [id] = await enfileirar(1, { expiraEm: new Date(Date.now() + 400) });
+    // 900 ms, e não 400: a margem existe para a máquina ocupada, e o teto
+    // continua sendo 1 s, que é o que faz o TTL cair para zero.
+    const [id] = await enfileirar(1, { expiraEm: new Date(Date.now() + 900) });
     const porta = new AdaptadorDeMemoria();
 
     const r = await tick(dbA, porta).executarTick();
 
-    expect(r.expiradasNoEmissor).toBe(1);
+    // **A asserção é sobre o EFEITO, não sobre qual transição o produziu.**
+    // Se a máquina engasgar entre criar a linha e o tick começar, o varredor
+    // (transição 5) a pega antes da reivindicação — e o resultado para quem
+    // usa é idêntico: não foi enviada, e terminou `expirada`.
+    //
+    // A transição 6 em isolamento é provada no `db-spec` irmão, numa conexão
+    // só e sem disputa. Aqui, amarrar o teste a ela era amarrá-lo ao relógio.
+    expect(r.expiradasNoEmissor + r.vencidasNaFila).toBe(1);
     // **Não chegou a ser enviada**: aviso vencido que chega é pior que aviso
     // que não chega.
     expect(porta.enviados).toHaveLength(0);

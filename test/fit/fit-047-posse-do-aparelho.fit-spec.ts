@@ -56,7 +56,8 @@ let outra: Sessao;
 const ENDPOINT = 'https://push.exemplo.test/fit-047-aparelho-1';
 const ASSINATURA = {
   endpoint: ENDPOINT,
-  p256dh: 'BLc4xRzKlKORKWlbdgFaBrrPK3ydWAHo4M0gs0i1oEKgPpWG5VEmUYIWwFvwwqgqYktFB5W0LcQ',
+  p256dh:
+    'BLc4xRzKlKORKWlbdgFaBrrPK3ydWAHo4M0gs0i1oEKgPpWG5VEmUYIWwFvwwqgqYktFB5W0LcQ',
   auth: 'FPssNDTKnInHVndSTdbKFw',
 };
 
@@ -90,22 +91,37 @@ function comToken(sessao: Sessao) {
   return { Authorization: `Bearer ${sessao.accessToken}` };
 }
 
+/**
+ * `res.body` do supertest e `any`, e o eslint do projeto recusa acesso cego a
+ * `any` -- com razao: um campo renomeado no contrato passaria despercebido, e
+ * a FIT continuaria verde afirmando coisa nenhuma. Estes dois tipos sao o
+ * contrato que a prova exige, escrito onde a prova o usa.
+ */
+interface CorpoDaChavePublica {
+  chave: string;
+  impressaoDaPrivada: string;
+}
+interface CorpoDeErro {
+  code?: string;
+}
+
 describe('FIT-047 (d) — a chave pública', () => {
   it('é pública, não guarda cache e leva a impressão da privada', async () => {
     const res = await request(app.getHttpServer()).get(
       '/api/v1/push/chave-publica',
     );
 
+    const corpo = res.body as CorpoDaChavePublica;
     expect(res.status).toBe(200);
-    expect(res.body.chave).toBe(PAR.publicKey);
+    expect(corpo.chave).toBe(PAR.publicKey);
     // D1b — `no-store`: guardar em cache anula a razão de ela vir por rota.
     // Depois de uma rotação, o aparelho assinaria com a chave velha e o erro
     // só apareceria no envio, longe da causa.
     expect(res.headers['cache-control']).toContain('no-store');
     // O insumo do G7. Não é segredo: 32 bytes aleatórios atrás de um sha256.
-    expect(res.body.impressaoDaPrivada).toMatch(/^[0-9a-f]{64}$/);
+    expect(corpo.impressaoDaPrivada).toMatch(/^[0-9a-f]{64}$/);
     // E a impressão NÃO é a chave, nem parte dela.
-    expect(res.body.impressaoDaPrivada).not.toContain(PAR.privateKey);
+    expect(corpo.impressaoDaPrivada).not.toContain(PAR.privateKey);
   });
 });
 
@@ -145,7 +161,7 @@ describe('FIT-047 (b) — endpoint de outra conta (AC-002, INV-062d)', () => {
       .send(ASSINATURA);
 
     expect(invasao.status).toBe(409);
-    expect(invasao.body.code).toBe('ENDPOINT_EM_USO');
+    expect((invasao.body as CorpoDeErro).code).toBe('ENDPOINT_EM_USO');
 
     // O ponto inteiro: a assinatura continua sendo de quem era. Transferir
     // por declaração seria sequestro — a autenticação prova a conta, não o
@@ -248,6 +264,6 @@ describe('FIT-047 (f) — o teto do aviso de teste (D6)', () => {
     // **`409`, não `429`:** ter um teste ainda pendente é conflito de ESTADO,
     // não excesso de ritmo. O `429` é do teto horário.
     expect(segundo.status).toBe(409);
-    expect(segundo.body.code).toBe('TESTE_JA_ENFILEIRADO');
+    expect((segundo.body as CorpoDeErro).code).toBe('TESTE_JA_ENFILEIRADO');
   });
 });
