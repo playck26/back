@@ -7,6 +7,8 @@ import { PORTA_DE_ENVIO, type PortaDeEnvio } from './porta-de-envio';
 import { PushController, PushPublicoController } from './push.controller';
 import { PushService } from './push.service';
 import { TickDeEnvioService } from './tick-de-envio.service';
+import { CaixaDeAvisosService } from './caixa-de-avisos.service';
+import { MeAvisosController } from './me-avisos.controller';
 import {
   lerEstadoDoVapid,
   registrarEstadoNoBoot,
@@ -29,7 +31,7 @@ export const CONFIGURACAO_VAPID = Symbol('CONFIGURACAO_VAPID');
  * aluno.
  */
 @Module({
-  controllers: [PushPublicoController, PushController],
+  controllers: [PushPublicoController, PushController, MeAvisosController],
   providers: [
     {
       provide: CONFIGURACAO_VAPID,
@@ -55,6 +57,9 @@ export const CONFIGURACAO_VAPID = Symbol('CONFIGURACAO_VAPID');
     },
     TickDeEnvioService,
     AgendadorDeEnvio,
+    // SPEC-065 — a caixa de ENTRADA. Provider normal: ela só lê a tabela e
+    // grava `lida_em`, e não depende do par VAPID nem da porta de envio.
+    CaixaDeAvisosService,
   ],
   exports: [PushService],
 })
