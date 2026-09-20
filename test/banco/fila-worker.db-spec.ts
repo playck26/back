@@ -16,7 +16,7 @@ import { exigirBancoLocal } from './exigir-banco-local';
 import {
   comLockDeChaves,
   tentarLockDeChave,
-} from '../../src/storage/advisory-lock';
+} from '../../src/common/lock/advisory-lock';
 import {
   ALERTAS,
   AlertaDeStorage,

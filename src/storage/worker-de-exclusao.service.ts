@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { tentarLockDeChave } from './advisory-lock';
+import { tentarLockDeChave } from '../common/lock/advisory-lock';
 import { ALERTAS, AlertaDeStorage } from './alerta-de-storage';
 import { KeyReferenceRegistry } from './key-reference-checker';
 import {
