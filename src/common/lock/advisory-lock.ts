@@ -1,4 +1,4 @@
-import { ordenarChavesParaLock, StorageLockKey } from './storage-lock-key';
+import { ordenarChavesParaLock, ChaveDeLock } from './chave-de-lock';
 
 /**
  * SPEC-017/TASK-005 — o lock por chave de objeto (INV-039/042/046).
@@ -46,7 +46,7 @@ export async function tentarLockDeChave(
   tx: ClienteComSql,
   key: string,
 ): Promise<boolean> {
-  const lockId = StorageLockKey.fromObjectKey(key);
+  const lockId = ChaveDeLock.deTexto(key);
   const linhas = (await tx.$queryRaw`
     SELECT pg_try_advisory_xact_lock(${lockId}::bigint) AS tomou
   `) as { tomou: boolean }[] | undefined;

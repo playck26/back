@@ -8,6 +8,8 @@ import { PushController, PushPublicoController } from './push.controller';
 import { PushService } from './push.service';
 import { TickDeEnvioService } from './tick-de-envio.service';
 import { CaixaDeAvisosService } from './caixa-de-avisos.service';
+import { PurgaDeAvisosService } from './purga-de-avisos.service';
+import { AgendadorDePurga } from './agendador-de-purga.service';
 import { MeAvisosController } from './me-avisos.controller';
 import {
   lerEstadoDoVapid,
@@ -60,6 +62,10 @@ export const CONFIGURACAO_VAPID = Symbol('CONFIGURACAO_VAPID');
     // SPEC-065 — a caixa de ENTRADA. Provider normal: ela só lê a tabela e
     // grava `lida_em`, e não depende do par VAPID nem da porta de envio.
     CaixaDeAvisosService,
+    // SPEC-065/TASK-002 — a purga e o quarto agendador do projeto, no mesmo
+    // molde dos tres existentes. `AVISOS_PURGA_INTERVALO_MS=0` desliga.
+    PurgaDeAvisosService,
+    AgendadorDePurga,
   ],
   exports: [PushService],
 })

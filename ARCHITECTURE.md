@@ -11,9 +11,11 @@ tabelas e as três triggers novas desde 2026-09-17 vieram da SPEC-062
 migration e **nenhuma tabela** — só um índice único parcial e um `CHECK` sobre
 `notificacoes`.*
 
-**A seção 10 ganhou o MOD-012 (Avisos) neste ciclo, e com atraso de uma spec:**
-a SPEC-062 subiu o módulo `src/push/` inteiro sem tocar nesta planta. Ver a
-seção *"Os avisos do clube"*.
+**A seção 10 ganhou o MOD-012 (Avisos) em 2026-09-20, e com atraso de uma
+spec:** a SPEC-062 subiu o módulo `src/push/` inteiro sem tocar nesta planta.
+Ver a seção *"Os avisos do clube"* — e, logo abaixo dela, *"O terceiro lado da
+`notificacoes`"*, que a SPEC-065 acrescentou **no mesmo ciclo em que subiu**,
+como a regra manda.
 
 *Registro anterior, de 2026-09-17:*
 **Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
@@ -1428,7 +1430,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030 a INV-033, INV-035 a INV-039, INV-042 a INV-044, INV-046 a INV-048 |
 | MOD-009 | TermosEAceites | `termos_da_plataforma`, `contratos_da_empresa`, `aceites` | SPEC-024. O portão do aceite roda no `JwtAuthGuard`, em toda requisição autenticada — e é por isso que a versão vigente é constante, não consulta |
 | MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
-| **MOD-012** | **Avisos** | `assinaturas_push`, `notificacoes` | **SPEC-062 + SPEC-063.** INV-062a a INV-062h, INV-063a a INV-063c. **Dois lados que não se conhecem:** o `TickDeEnvioService` **tira** da caixa de saída (seis transições cercadas, conexão própria, fora de transação de domínio); o `EnfileiradorDeAvisos` **põe** nela, e sempre **dentro da transação do gesto** — aviso sobre gesto que voltou atrás é pior que aviso nenhum. O emissor nunca abre `origem_id`: quem enfileira já responde o prazo |
+| **MOD-012** | **Avisos** | `assinaturas_push`, `notificacoes` | **SPEC-062 + SPEC-063 + SPEC-065.** INV-062a a INV-062h, INV-063a a INV-063c. **Dois lados que não se conhecem:** o `TickDeEnvioService` **tira** da caixa de saída (seis transições cercadas, conexão própria, fora de transação de domínio); o `EnfileiradorDeAvisos` **põe** nela, e sempre **dentro da transação do gesto** — aviso sobre gesto que voltou atrás é pior que aviso nenhum. O emissor nunca abre `origem_id`: quem enfileira já responde o prazo |
 | **MOD-011** | **Carteira** | `movimentos_de_credito`, e `alunos.saldo_creditos` **só pela trigger** | **SPEC-033.** INV-070, INV-071, INV-085, INV-095 a INV-098. **Três serviços, e a separação é a decisão:** `CreditosService` é o mecanismo do ledger e recebe o `tx` de quem escreve (reserva, cancelamento); `CreditosAdminService` é o caso de uso do gestor, abre a própria transação e é o único que conhece `bcrypt`; `CreditosDoAlunoService` responde `/me/creditos` **sem `motivo`** (AC-013), e a omissão está no `select`. Juntar os três faria a criação de reserva depender de `bcrypt` |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
@@ -1583,6 +1585,52 @@ hora e quantidade. `Turma.nome` é texto livre e o clube escolhe — "Turma da A
 é nome plausível —, então quem diz *qual* turma é o `destino_url`, que carrega
 **id**, nunca slug. O título vem de vocabulário fechado de três valores, e é o
 que torna a regra verificável em vez de prosa.
+
+### O terceiro lado da `notificacoes`: a caixa de ENTRADA (SPEC-065)
+
+Até aqui a tabela tinha dois lados que não se conhecem. **Agora são três**, e o
+novo é o único que lê por conta de gente:
+
+| | Põe | Tira | **Lê** |
+|---|---|---|---|
+| Quem | `EnfileiradorDeAvisos` | `TickDeEnvioService` | `CaixaDeAvisosService` |
+| Quando | na transação do gesto | a cada 60 s | quando alguém abre `/avisos` |
+| Por onde | `origem_id`, `destinatario_id` | `estado`, `proxima_tentativa_em` | `company_id`, `destinatario_id`, `criada_em` |
+
+**A regra mais fácil de errar, e ela está no centro da spec: `expira_em` NÃO
+filtra a caixa.** Aquela coluna responde *"até quando vale a pena TENTAR
+enviar"* — um aviso de aula expira no fim da ocorrência porque, depois disso,
+chegar ao aparelho é pior que não chegar. Quem abre a caixa amanhã está
+fazendo outra pergunta: *"o que aconteceu?"*. Filtrar por ela esvaziaria
+justamente os avisos que a pessoa **não viu na hora** — os que motivaram a
+spec.
+
+**Nem `estado` filtra.** A caixa mostra `sem_destino` e `falha_definitiva`
+também; se espelhasse só o que o push entregou, resolveria a conveniência de
+reler e **não** a perda que a LIM-062b declarava.
+
+**O que ela NÃO devolve, e por quê:** `estado`, `tentativas`, `ultimo_erro`,
+`reivindicada_por` e **`origem_id`**. O último é o perigoso — na SPEC-063 ele
+aponta para `acoes_administrativas`, que carrega `autor_id`, e expô-lo
+permitiria descobrir **quem** cancelou a aula. O mecanismo é `select`
+explícito, uma lista do que ENTRA: com `omit`, um campo novo apareceria
+sozinho no JSON.
+
+**A purga é a única coisa do módulo que apaga dado.** De hora em hora, em
+lotes de 5.000, cada lote na sua transação e sob `pg_try_advisory_xact_lock` —
+e ela **nunca** apaga linha não terminal, por mais velha que seja: `pendente`
+com 90 dias é defeito do tick, e apagá-la esconderia o defeito. Conta e grita
+no log.
+
+**O plano dela foi medido, não suposto** (AC-022): com 200 mil linhas e poucos
+elegíveis — o caso normal —, `Index Scan` em 0,1 ms e 10 buffers. Os dois
+índices que já existiam carregam `criada_em` na cauda, e é isso que dispensa um
+índice de purga.
+
+**E o `advisory-lock` saiu de `src/storage/`.** Ele nunca foi de storage: é de
+lock, e agora mora em `src/common/lock/`, com o cálculo intacto — a INV-043
+protege o **algoritmo**, e os `bigint` cravados no teste provam que ele não
+mudou.
 
 **Os gates da chave privada VAPID (INV-062b) rodam na CI dos quatro
 repositórios** — `scripts/gate-g5-chave-privada.mjs` aqui, `gates-de-push.mjs`
