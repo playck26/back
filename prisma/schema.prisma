@@ -1720,7 +1720,7 @@ model Notificacao {
   /// de UMA pessoa. Um indice parcial dedicado so se paga quando alguem
   /// acumular milhares de avisos -- e acrescenta-lo agora seria pagar escrita
   /// em toda a fila por uma leitura que ainda nao doi.
-  @@index([companyId, destinatarioId, criadaEm(sort: Desc)], map: "notificacoes_caixa_idx")
+  @@index([companyId, destinatarioId, criadaEm(sort: Desc), id(sort: Desc)], map: "notificacoes_caixa_idx")
   @@map("notificacoes")
 }
 
