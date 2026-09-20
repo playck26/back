@@ -1,6 +1,21 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-17** (era 2026-09-15).
+**Fonte: análise direta do código.** Data: **2026-09-20** (era 2026-09-17).
+
+**Números conferidos por comando em 2026-09-20, com a SPEC-062 no ar e a
+SPEC-063 pronta:** **44 migrations, 40 tabelas, 20 triggers** não-internas
+(`ls -d prisma/migrations/*/`; `pg_tables` sem `_prisma_migrations` e
+`pg_trigger` sem as internas, num banco novo com as 44 aplicadas). *As três
+tabelas e as três triggers novas desde 2026-09-17 vieram da SPEC-062
+(`assinaturas_push`, `notificacoes`) e da SPEC-057; a SPEC-063 somou 1
+migration e **nenhuma tabela** — só um índice único parcial e um `CHECK` sobre
+`notificacoes`.*
+
+**A seção 10 ganhou o MOD-012 (Avisos) neste ciclo, e com atraso de uma spec:**
+a SPEC-062 subiu o módulo `src/push/` inteiro sem tocar nesta planta. Ver a
+seção *"Os avisos do clube"*.
+
+*Registro anterior, de 2026-09-17:*
 **Commit de referência:** a **SPEC-035 completa** (cancelar e reativar) mais os
 defeitos que testar localmente revelou — **DEF-025**, **DEF-026** e
 **DEF-027**.
@@ -1413,6 +1428,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-008 | StorageMedia | `arquivos_pendentes_exclusao` | INV-030 a INV-033, INV-035 a INV-039, INV-042 a INV-044, INV-046 a INV-048 |
 | MOD-009 | TermosEAceites | `termos_da_plataforma`, `contratos_da_empresa`, `aceites` | SPEC-024. O portão do aceite roda no `JwtAuthGuard`, em toda requisição autenticada — e é por isso que a versão vigente é constante, não consulta |
 | MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
+| **MOD-012** | **Avisos** | `assinaturas_push`, `notificacoes` | **SPEC-062 + SPEC-063.** INV-062a a INV-062h, INV-063a a INV-063c. **Dois lados que não se conhecem:** o `TickDeEnvioService` **tira** da caixa de saída (seis transições cercadas, conexão própria, fora de transação de domínio); o `EnfileiradorDeAvisos` **põe** nela, e sempre **dentro da transação do gesto** — aviso sobre gesto que voltou atrás é pior que aviso nenhum. O emissor nunca abre `origem_id`: quem enfileira já responde o prazo |
 | **MOD-011** | **Carteira** | `movimentos_de_credito`, e `alunos.saldo_creditos` **só pela trigger** | **SPEC-033.** INV-070, INV-071, INV-085, INV-095 a INV-098. **Três serviços, e a separação é a decisão:** `CreditosService` é o mecanismo do ledger e recebe o `tx` de quem escreve (reserva, cancelamento); `CreditosAdminService` é o caso de uso do gestor, abre a própria transação e é o único que conhece `bcrypt`; `CreditosDoAlunoService` responde `/me/creditos` **sem `motivo`** (AC-013), e a omissão está no `select`. Juntar os três faria a criação de reserva depender de `bcrypt` |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
@@ -1519,6 +1535,60 @@ vem junto com o `@Throttle` em `LimiteDeLogin()` / `LimitePublico()`
 (`common/throttle/contagem-por-ip.ts`) — as duas metades de uma decisão só,
 pelo mesmo motivo da INV-048. **Rota pública nova precisa usar as fábricas**;
 o gate é `contagem-por-ip.spec.ts`, que confere os handlers reais.
+
+### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
+
+**Esta seção chega atrasada, e o atraso é o primeiro registro dela.** A
+SPEC-062 subiu o módulo `src/push/` inteiro — assinatura, caixa de saída,
+tick, sete gates de segredo — **sem tocar nesta planta**, contra a regra dura do
+`CLAUDE.md`. Quem lesse o catálogo modular depois daquele ciclo concluiria que o
+projeto não manda push. Planta desatualizada é pior que planta ausente, porque
+quem lê confia nela.
+
+**A tabela `notificacoes` é uma caixa de saída, e os dois lados dela não se
+conhecem.**
+
+| | Quem **põe** | Quem **tira** |
+|---|---|---|
+| Quem é | `EnfileiradorDeAvisos` (SPEC-063) e `PushService.enfileirarTeste` (SPEC-062) | `TickDeEnvioService`, a cada 60 s |
+| Onde roda | **dentro da transação do gesto** | conexão própria, **fora** de transação de domínio |
+| O que sabe | quem recebe, o texto e o prazo | só as colunas da linha |
+
+**O emissor nunca abre `origem_id`.** Foi um achado da 1ª rodada de validação da
+SPEC-062: se o tick precisasse consultar a origem para descobrir o prazo, a
+caixa de saída deixaria de ser caixa de saída. Por isso `expira_em` é coluna, e
+**quem enfileira responde a pergunta** — `NULL` significa "sem prazo", e o TTL
+vira 24 h.
+
+**Por que o aviso nasce dentro da transação do gesto.** Se a edição da grade
+falha, as linhas de aviso vão junto, sem código nenhum para isso — um aviso
+sobre um gesto que voltou atrás é pior que nenhum aviso, porque a pessoa passa a
+confiar num aviso que já não descreve o mundo.
+
+E é isso que torna o `ON CONFLICT (origem_id, destinatario_id) WHERE
+tipo = 'gesto' DO UPDATE` **obrigatório, não detalhe**: um `23505` dentro da
+transação aborta a transação inteira, e a transação aqui é a **do próprio
+gesto**. Sem ele, um aviso duplicado desfaria a edição de grade com uma
+mensagem de erro que culpa notificação.
+
+**O custo dentro da transação é fixo, e isso é gate.** O `DEF-013` conta idas ao
+banco na transação de turma, porque foi um laço dentro dela que derrubou
+produção com `P2028`. O enfileirador gasta **duas idas, sempre**: uma consulta
+que resolve todos os destinatários e um `INSERT` com todas as linhas em
+`VALUES`. Dez alunos custam o mesmo que um; o teto subiu de `5 + dias` para
+`7 + dias` com o motivo registrado, como a SPEC-032 já havia feito de 3 para 5.
+
+**O texto do aviso não carrega texto escrito por ninguém** (INV-063a). Só dia,
+hora e quantidade. `Turma.nome` é texto livre e o clube escolhe — "Turma da Ana"
+é nome plausível —, então quem diz *qual* turma é o `destino_url`, que carrega
+**id**, nunca slug. O título vem de vocabulário fechado de três valores, e é o
+que torna a regra verificável em vez de prosa.
+
+**Os gates da chave privada VAPID (INV-062b) rodam na CI dos quatro
+repositórios** — `scripts/gate-g5-chave-privada.mjs` aqui, `gates-de-push.mjs`
+nos três fronts. O aprendizado que os produziu: os primeiros gates procuravam o
+**nome** da variável, e bastava cadastrá-la com outro nome para passar por
+todos. **O nome não é o portador; o valor é.**
 
 ## 11. Patterns observados
 

@@ -40,6 +40,7 @@ import {
   novaTransicao,
   RegistradorDeAcao,
 } from '../common/auditoria/registrador-de-acao';
+import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
 import { ImagemDaQuadraService } from './imagem-da-quadra.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import {
@@ -944,6 +945,16 @@ export class CourtsService {
             autorId,
             'reserva_criada',
           );
+          // SPEC-063/AC-003, AC-017 — **um** aviso por gestor, dizendo N. A
+          // identidade aqui é a mesma da ação: o pedido, não o bloco. Três
+          // blocos são um gesto, e três avisos seriam três vezes o mesmo
+          // recado.
+          const avisos = new EnfileiradorDeAvisos(
+            tx,
+            companyId,
+            autorId,
+            'reserva_criada',
+          );
 
           const resultado: OcupacaoParaResposta[] = [];
           for (const bloco of blocos) {
@@ -991,6 +1002,13 @@ export class CourtsService {
             // cancelável e devolvida sozinha. Na mesma transação (D5).
             await inserirItensDaOcupacao(tx, companyId, ocupacao.id, itens);
             await registrador.registrar(ocupacao.id, 'criada', transicaoId);
+            // Em memória: não custa ida ao banco, e é o que faz o aviso dizer
+            // "3 horários" em vez de nascer três vezes.
+            avisos.anotarEfeito({
+              data: ocupacao.data,
+              horaInicio: ocupacao.horaInicio,
+              horaFim: ocupacao.horaFim,
+            });
             resultado.push({
               ...ocupacao,
               adicionais: itens.map((item) => ({
@@ -1014,6 +1032,8 @@ export class CourtsService {
             ocupacoes: resultado,
             registrador,
           });
+
+          await avisos.despachar(registrador.idDaAcao);
 
           // **Última instrução** (D7): força as diferidas a julgarem aqui,
           // onde o Prisma ainda traduz o erro em `P2010` + `meta.code`.
@@ -1874,10 +1894,13 @@ export class CourtsService {
             status_pagamento: StatusPagamento;
             data: Date;
             hora_inicio: Date;
+            // SPEC-063/D5 — o aviso ao gestor expira no FIM do bloco. Vem na
+            // linha que já está travada: não custa ida nova.
+            hora_fim: Date;
           }[]
         >`
         SELECT id, company_id, aluno_id, origem_tipo, status_pagamento,
-               data, hora_inicio
+               data, hora_inicio, hora_fim
           FROM ocupacoes_quadra
          WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
          FOR UPDATE
@@ -1895,6 +1918,7 @@ export class CourtsService {
           statusPagamento: bruta.status_pagamento,
           data: bruta.data,
           horaInicio: bruta.hora_inicio,
+          horaFim: bruta.hora_fim,
         };
         if (alunoIdScope && ocupacao.alunoId !== alunoIdScope) {
           throw new ForbiddenException();
@@ -2019,6 +2043,18 @@ export class CourtsService {
           autorId,
           'reserva_cancelada',
         );
+        // SPEC-063/AC-010 — avisa os gestores, menos quem cancelou.
+        const avisos = new EnfileiradorDeAvisos(
+          tx,
+          companyId,
+          autorId,
+          'reserva_cancelada',
+        );
+        avisos.anotarEfeito({
+          data: ocupacao.data,
+          horaInicio: ocupacao.horaInicio,
+          horaFim: ocupacao.horaFim,
+        });
 
         // AC-003: cancelar libera o slot imediatamente — a constraint EXCLUDE
         // já ignora linhas com status_pagamento = 'cancelado' (WHERE da
@@ -2054,6 +2090,8 @@ export class CourtsService {
           autorId,
           registrador,
         });
+
+        await avisos.despachar(registrador.idDaAcao);
 
         // Última instrução (D7).
         await julgarInvariantesDiferidas(tx);
@@ -2308,12 +2346,20 @@ export class CourtsService {
         }
 
         const transicaoId = novaTransicao();
+        const gesto =
+          status === 'pago' ? 'pagamento_confirmado' : 'reserva_cancelada';
         const registrador = new RegistradorDeAcao(
           tx,
           companyId,
           autorId,
-          status === 'pago' ? 'pagamento_confirmado' : 'reserva_cancelada',
+          gesto,
         );
+        // SPEC-063 — **este caminho faz os dois gestos, e um deles não avisa
+        // ninguém.** Não há `if` aqui de propósito: `pagamento_confirmado` tem
+        // público `ninguem` (LIM-063b) e o enfileirador devolve zero sozinho.
+        // Um `if` no chamador seria a mesma decisão escrita duas vezes, e a
+        // segunda envelheceria.
+        const avisos = new EnfileiradorDeAvisos(tx, companyId, autorId, gesto);
         const linha = await tx.ocupacaoQuadra.update({
           where: { id },
           data: { statusPagamento: status, transicaoId },
@@ -2341,6 +2387,13 @@ export class CourtsService {
             registrador,
           });
         }
+
+        avisos.anotarEfeito({
+          data: linha.data,
+          horaInicio: linha.horaInicio,
+          horaFim: linha.horaFim,
+        });
+        await avisos.despachar(registrador.idDaAcao);
 
         // Última instrução (D7).
         await julgarInvariantesDiferidas(tx);
@@ -2604,6 +2657,14 @@ export class CourtsService {
             autorId,
             'reserva_movida',
           );
+          // SPEC-063/AC-010 — avisa os gestores. O corpo não diz de onde para
+          // onde: "Uma reserva mudou de horário" e a agenda resolve o resto.
+          const avisos = new EnfileiradorDeAvisos(
+            tx,
+            companyId,
+            autorId,
+            'reserva_movida',
+          );
           const movida = await tx.ocupacaoQuadra.update({
             where: { id },
             // `alunoId`, `valor` e `statusPagamento` ficam de fora **de
@@ -2618,6 +2679,16 @@ export class CourtsService {
             include: INCLUIR_NA_RESPOSTA,
           });
           await registrador.registrar(id, 'movida', transicaoId);
+
+          // O prazo é o fim do bloco **no destino**: é lá que a reserva está
+          // agora, e um aviso que expira no horário antigo expiraria cedo.
+          avisos.anotarEfeito({
+            data: movida.data,
+            horaInicio: movida.horaInicio,
+            horaFim: movida.horaFim,
+          });
+          await avisos.despachar(registrador.idDaAcao);
+
           return this.toOcupacaoResponse(movida);
         });
       } catch (error) {

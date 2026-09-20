@@ -23,6 +23,9 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 interface TxMock {
   turma: { create: jest.Mock; update: jest.Mock };
   $queryRaw: jest.Mock;
+  // SPEC-063 — o enfileirador de avisos grava por SQL cru, dentro da MESMA
+  // transacao do gesto.
+  $executeRaw: jest.Mock;
   aluno: { findFirst: jest.Mock };
   turmaAluno: {
     findFirst: jest.Mock;
@@ -41,7 +44,24 @@ interface TxMock {
 function buildMocks() {
   const tx: TxMock = {
     turma: { create: jest.fn(), update: jest.fn() },
-    $queryRaw: jest.fn(),
+    /**
+     * **O dublê responde pelo SQL, e não por um valor fixo.**
+     *
+     * Duas consultas cruas diferentes passam por aqui: o `FOR UPDATE` da
+     * turma, cujo resultado o serviço descarta, e a da SPEC-063 que resolve
+     * destinatários de aviso. Um `mockResolvedValue` único serviria a uma e
+     * mentiria para a outra — e mentir devolvendo `[]` para a segunda seria
+     * pior que quebrar: o `INSERT` nunca aconteceria e o teste ficaria verde
+     * sobre zero execução.
+     */
+    $queryRaw: jest.fn((strings: TemplateStringsArray) => {
+      const sql = Array.isArray(strings) ? strings.join(' ') : '';
+      if (sql.includes('usuario_id')) {
+        return Promise.resolve([{ usuario_id: 'u-aluno', papel: 'aluno' }]);
+      }
+      return Promise.resolve([]);
+    }),
+    $executeRaw: jest.fn().mockResolvedValue(1),
     aluno: { findFirst: jest.fn() },
     // Padrao: empresa sem prazo configurado e sem ocorrencia a frente — a
     // remocao passa, que e o comportamento de hoje.

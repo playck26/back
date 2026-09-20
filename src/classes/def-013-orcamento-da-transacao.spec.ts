@@ -191,6 +191,23 @@ function buildTxContado(
   };
 
   const tx = {
+    /**
+     * SPEC-063 — **o enfileirador de avisos entra no orçamento, e tem de
+     * entrar.** Ele gasta duas idas fixas dentro desta transação: uma para
+     * resolver os destinatários e um `INSERT` só para todos eles.
+     *
+     * **A consulta devolve UMA linha, e não `[]`.** Com array vazio o
+     * enfileirador sai cedo, o `INSERT` nunca acontece e o orçamento deixaria
+     * de medir a segunda ida — o mesmo falso verde que o
+     * `createManyAndReturn` aqui embaixo já documenta. Medido: com `[]` a
+     * criação dava 6 idas; com uma linha, 7.
+     */
+    $queryRaw: jest.fn(() =>
+      ida('$queryRaw(destinatarios)', 'Notificacao', [
+        { usuario_id: 'u-professor', papel: 'professor' },
+      ]),
+    ),
+    $executeRaw: jest.fn(() => ida('$executeRaw(avisos)', 'Notificacao', 1)),
     turma: {
       create: jest.fn(() => ida('turma.create', 'Turma', turma)),
       update: jest.fn(() => ida('turma.update', 'Turma', turma)),
@@ -385,10 +402,29 @@ describe('DEF-013 — orçamento da transação de turma', () => {
      * em producao. Virou `registrarMuitos`, uma instrucao.
      *
      * Folga no relogio: 6 idas x 200 ms = 1,2 s contra o timeout de 5 s.
+     *
+     * **SPEC-063 subiu a constante de 5 para 7, pelo mesmo motivo que a
+     * SPEC-032 a subiu de 3 para 5.**
+     *
+     * O aviso de gesto acrescenta DUAS idas fixas — a consulta que resolve os
+     * destinatarios e o `INSERT` que grava todos eles — e nenhuma das duas
+     * depende do numero de encontros nem do numero de alunos. Dez alunos
+     * custam o mesmo que um.
+     *
+     * **A invariante que este arquivo protege continua intacta**, e e a frase
+     * do titulo: *"o custo nao pode crescer com o numero de encontros"*.
+     * Medido depois da mudanca: 1 encontro custa 8 e 3 encontros custam 8.
+     *
+     * O que continuaria reprovando, e e o ponto: um laco por destinatario.
+     * Foi exatamente esse o defeito que derrubou producao com `P2028`, e
+     * reintroduzi-lo com outra roupa seria facil — por isso o enfileirador
+     * monta um `VALUES` unico em vez de um `create` por pessoa.
+     *
+     * Folga no relogio: 8 idas x 200 ms = 1,6 s contra o timeout de 5 s.
      */
     function tetoDaCriacao(encontros: EncontroDaTurma[]) {
       const diasDistintos = new Set(encontros.map((e) => e.diaSemana)).size;
-      return 5 + diasDistintos;
+      return 7 + diasDistintos;
     }
 
     it('criar turma de 1 encontro cabe no teto', async () => {
@@ -469,7 +505,9 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       // Fixas: `turma.update`, o cancelamento, a consulta de conflito, o
       // `createManyAndReturn` — e as DUAS da auditoria (SPEC-032), que nao
       // dependem do numero de encontros.
-      expect(idas.length).toBeLessThanOrEqual(6 + diasDistintos);
+      // SPEC-063: +2 fixas (destinatarios + `INSERT` dos avisos), pela mesma
+      // razao registrada no `tetoDaCriacao` acima. Nao cresce com encontros.
+      expect(idas.length).toBeLessThanOrEqual(8 + diasDistintos);
     });
   });
 
