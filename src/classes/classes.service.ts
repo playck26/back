@@ -17,6 +17,7 @@ import {
 import { StudentsService } from '../people/students.service';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
+import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import {
   avaliarSaidaDeTurma,
@@ -172,14 +173,33 @@ export class ClassesService {
 
       // SPEC-032/INV-078 — UMA acao por TURMA. Criar a turma e um gesto, e as
       // N ocorrencias geradas sao N eventos dele.
+      const registrador = new RegistradorDeAcao(
+        tx,
+        companyId,
+        autorId,
+        'turma_criada',
+      );
       await this.courtsService.registerClassOccupancy(
         tx,
         companyId,
         dto.quadraId,
         criada.id,
         ocorrencias,
-        new RegistradorDeAcao(tx, companyId, autorId, 'turma_criada'),
+        registrador,
       );
+
+      // SPEC-063/AC-005 — avisa o professor com conta, e **nenhum aluno**:
+      // ninguém está matriculado ainda. Não é um público diferente do dos
+      // outros gestos de turma — é o mesmo público num momento em que só o
+      // professor existe.
+      const avisos = new EnfileiradorDeAvisos(
+        tx,
+        companyId,
+        autorId,
+        'turma_criada',
+      );
+      avisos.comTurma(criada.id);
+      await avisos.despachar(registrador.idDaAcao);
 
       return criada;
     });
@@ -435,16 +455,22 @@ export class ClassesService {
         // quadra que ficou livre — mentira barata e cara de descobrir. Quando
         // o `PATCH` faz as duas coisas, vence o gesto maior: ligar ou
         // desligar a turma.
+        const gesto = inativando
+          ? 'turma_inativada'
+          : ativando
+            ? 'turma_reativada'
+            : 'turma_horario_editado';
         const registrador = new RegistradorDeAcao(
           tx,
           companyId,
           autorId,
-          inativando
-            ? 'turma_inativada'
-            : ativando
-              ? 'turma_reativada'
-              : 'turma_horario_editado',
+          gesto,
         );
+        // SPEC-063/AC-002, AC-014 — **um resumo por destinatário**, alunos e
+        // professor, sem `expira_em`: o gesto cobre N ocorrências e escolher
+        // uma delas descartaria o resto em silêncio.
+        const avisos = new EnfileiradorDeAvisos(tx, companyId, autorId, gesto);
+        avisos.comTurma(id);
 
         await this.courtsService.cancelFutureClassOccupancies(
           tx,
@@ -480,6 +506,11 @@ export class ClassesService {
             registrador,
           );
         }
+
+        // `idDaAcao` é `null` quando nada foi registrado — e aí não houve
+        // gesto que avisar. A decisão mora no enfileirador de propósito:
+        // quem chama não deveria precisar saber disso.
+        await avisos.despachar(registrador.idDaAcao);
       }
 
       return atualizada;
@@ -641,6 +672,19 @@ export class ClassesService {
       await registrador.registrarMatricula(turmaId, alunoId);
 
       await tx.turmaAluno.delete({ where: { id: alocacao.id } });
+
+      // SPEC-063/AC-015 — avisa **só o aluno removido**: nem a turma, nem o
+      // professor, nem os gestores. E depois do `DELETE` de propósito: antes
+      // dele, a consulta de destinatários do público `turma` ainda o veria
+      // matriculado — não é o público aqui, mas a ordem deixa de importar.
+      const avisos = new EnfileiradorDeAvisos(
+        tx,
+        companyId,
+        autorId,
+        'turma_aluno_removido',
+      );
+      avisos.comAlunoRemovido(alunoId);
+      await avisos.despachar(registrador.idDaAcao);
     });
   }
 
@@ -1168,6 +1212,11 @@ export class ClassesService {
           id: true,
           data: true,
           horaInicio: true,
+          // SPEC-063/D5 — o aviso expira no **fim** da ocorrência, não no
+          // início: o tick roda a cada 60 s, e um cancelamento feito dois
+          // minutos antes da aula seria varrido como `expirada` sem uma
+          // única tentativa de envio (AC-012).
+          horaFim: true,
           statusPagamento: true,
         },
       });
@@ -1200,6 +1249,21 @@ export class ClassesService {
         ocupacao.id,
         registrador,
       );
+
+      // SPEC-063/AC-001 — alunos da turma **e** o professor que tem conta.
+      const avisos = new EnfileiradorDeAvisos(
+        tx,
+        companyId,
+        autorId,
+        'aula_cancelada',
+      );
+      avisos.comTurma(turmaId);
+      avisos.anotarEfeito({
+        data: ocupacao.data,
+        horaInicio: ocupacao.horaInicio,
+        horaFim: ocupacao.horaFim,
+      });
+      await avisos.despachar(registrador.idDaAcao);
     });
   }
 
@@ -1332,6 +1396,22 @@ export class ClassesService {
         ocupacao.id,
         registrador,
       );
+
+      // SPEC-063/AC-013 — espelho exato da irmã: alunos e professor com conta,
+      // `titulo = "Sua aula"`, prazo no fim da ocorrência.
+      const avisos = new EnfileiradorDeAvisos(
+        tx,
+        companyId,
+        autorId,
+        'aula_reativada',
+      );
+      avisos.comTurma(turmaId);
+      avisos.anotarEfeito({
+        data: ocupacao.data,
+        horaInicio: ocupacao.horaInicio,
+        horaFim: ocupacao.horaFim,
+      });
+      await avisos.despachar(registrador.idDaAcao);
     });
   }
 }

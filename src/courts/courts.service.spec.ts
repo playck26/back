@@ -96,6 +96,9 @@ function buildPrismaMock() {
     // julgamento das diferidas so existe contra Postgres de verdade (ver
     // `test/banco/creditos-reserva.db-spec.ts`).
     $executeRawUnsafe: jest.fn(),
+    // SPEC-063 — o enfileirador de avisos grava as notificacoes com um
+    // `INSERT ... ON CONFLICT` cru, na mesma transacao do gesto.
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: jest.fn(),
   } as unknown as PrismaService;
 }
@@ -224,6 +227,13 @@ describe('CourtsService', () => {
         // devolucao arma outro valor, ou usa o db-spec, que tem trigger.
         if (sql.includes('movimentos_de_credito')) {
           return [];
+        }
+        // SPEC-063 — os gestores que recebem o aviso do gesto. Devolve UMA
+        // linha, e nao `[]`: com array vazio o enfileirador sai cedo, o
+        // `INSERT` nunca roda e estes testes ficariam verdes sobre um caminho
+        // que nao foi exercido.
+        if (sql.includes('FROM usuarios')) {
+          return [{ usuario_id: 'u-gestor' }];
         }
         const linha = (await (
           prisma.ocupacaoQuadra.findFirst as unknown as jest.Mock
