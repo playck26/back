@@ -5763,6 +5763,103 @@
           "push"
         ]
       }
+    },
+    "/api/v1/me/avisos": {
+      "get": {
+        "operationId": "MeAvisosController_listar",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 20,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaixaDeAvisosResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/avisos/nao-lidos": {
+      "get": {
+        "operationId": "MeAvisosController_naoLidos",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NaoLidosResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/avisos/lidas": {
+      "post": {
+        "operationId": "MeAvisosController_marcarLidas",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarcadasResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
     }
   },
   "info": {
@@ -12225,6 +12322,108 @@
         },
         "required": [
           "enfileirada"
+        ]
+      },
+      "AvisoDaCaixaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000001"
+          },
+          "titulo": {
+            "type": "string",
+            "example": "Sua aula",
+            "description": "Vocabulário fechado nos avisos de gesto (SPEC-063/D4): `Reservas`, `Sua aula`, `Sua turma`. O aviso de teste usa `Avisos do clube`."
+          },
+          "corpo": {
+            "type": "string",
+            "example": "Sua aula de quinta (19h) foi cancelada"
+          },
+          "destinoUrl": {
+            "type": "string",
+            "nullable": true,
+            "example": "/minhas-aulas",
+            "description": "Para onde o toque leva. Carrega **id**, nunca slug de texto livre (SPEC-063/AC-007)."
+          },
+          "criadaEm": {
+            "format": "date-time",
+            "type": "string",
+            "example": "2026-09-20T12:31:00.000Z"
+          },
+          "lidaEm": {
+            "type": "string",
+            "nullable": true,
+            "example": null,
+            "description": "`null` enquanto não lida. **\"Lido\" é do servidor** (SPEC-065/D2): vale em todo aparelho da mesma conta."
+          }
+        },
+        "required": [
+          "id",
+          "titulo",
+          "corpo",
+          "destinoUrl",
+          "criadaEm",
+          "lidaEm"
+        ]
+      },
+      "CaixaDeAvisosResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvisoDaCaixaResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 20
+          },
+          "total": {
+            "type": "number",
+            "example": 37
+          },
+          "naoLidos": {
+            "type": "number",
+            "example": 3,
+            "description": "Quantos ainda não foram lidos. **Não conta `tipo='teste'`** (SPEC-065/AC-008): o aviso de teste é diagnóstico do canal, não recado do clube."
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total",
+          "naoLidos"
+        ]
+      },
+      "NaoLidosResponseDto": {
+        "type": "object",
+        "properties": {
+          "naoLidos": {
+            "type": "number",
+            "example": 3
+          }
+        },
+        "required": [
+          "naoLidos"
+        ]
+      },
+      "MarcadasResponseDto": {
+        "type": "object",
+        "properties": {
+          "marcadas": {
+            "type": "number",
+            "example": 3
+          }
+        },
+        "required": [
+          "marcadas"
         ]
       }
     }
