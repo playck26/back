@@ -5860,6 +5860,118 @@
           "me"
         ]
       }
+    },
+    "/api/v1/me/fila-de-espera/turmas": {
+      "post": {
+        "operationId": "MeFilaDeEsperaController_entrarNaTurma",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntrarNaFilaDeTurmaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinhaDaFilaResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Já está nesta fila (`JA_NA_FILA`)."
+          },
+          "422": {
+            "description": "Turma fora de operação (`TURMA_INATIVA`) ou já matriculado nela (`JA_MATRICULADO_NA_TURMA`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/fila-de-espera/aulas": {
+      "post": {
+        "operationId": "MeFilaDeEsperaController_entrarNaAula",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntrarNaFilaDeAulaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinhaDaFilaResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Já está nesta fila (`JA_NA_FILA`), sem crédito de reposição (`SEM_CREDITO`), aula cancelada (`OCUPACAO_CANCELADA`) ou já passada (`PRAZO_DE_CANCELAMENTO`)."
+          },
+          "422": {
+            "description": "Já matriculado na turma da aula (`JA_MATRICULADO_NA_TURMA`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/fila-de-espera/{id}": {
+      "delete": {
+        "operationId": "MeFilaDeEsperaController_sair",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
     }
   },
   "info": {
@@ -12424,6 +12536,74 @@
         },
         "required": [
           "marcadas"
+        ]
+      },
+      "EntrarNaFilaDeTurmaDto": {
+        "type": "object",
+        "properties": {
+          "turmaId": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000001"
+          }
+        },
+        "required": [
+          "turmaId"
+        ]
+      },
+      "LinhaDaFilaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000003"
+          },
+          "estado": {
+            "type": "string",
+            "example": "aguardando",
+            "description": "Nasce sempre `aguardando`. Quem muda para `chamado` é o varredor (SPEC-064/D3), nunca esta rota."
+          },
+          "turmaId": {
+            "type": "string",
+            "nullable": true,
+            "example": "5f7c1e2a-0000-4000-8000-000000000001",
+            "description": "Fila de turma. Exclusivo com `ocupacaoId`."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "nullable": true,
+            "example": null,
+            "description": "Fila de aula. Exclusivo com `turmaId`."
+          },
+          "faltaId": {
+            "type": "string",
+            "nullable": true,
+            "example": null,
+            "description": "O crédito que sustenta a fila de aula. `null` na fila de turma — e vira `null` se a falta for apagada (a FK anula só esta coluna)."
+          },
+          "criadaEm": {
+            "type": "string",
+            "example": "2026-09-20T12:31:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "estado",
+          "turmaId",
+          "ocupacaoId",
+          "faltaId",
+          "criadaEm"
+        ]
+      },
+      "EntrarNaFilaDeAulaDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000002"
+          }
+        },
+        "required": [
+          "ocupacaoId"
         ]
       }
     }
