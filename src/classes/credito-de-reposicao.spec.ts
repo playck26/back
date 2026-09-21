@@ -87,16 +87,19 @@ describe('situacaoDoCredito — o que as DUAS regras concordam', () => {
 
 describe('situacaoDoCredito — o caso em que as duas DISCORDAM', () => {
   /**
-   * **Este é o caso que justifica o arquivo inteiro.**
+   * **Este é o caso que justifica o arquivo inteiro, e virou o DEF-036.**
    *
    * SPEC-046/D7: *"reposição em aula cancelada não conta, e o crédito volta
-   * sozinho"* — e ele volta **na tela**. Mas a linha de `reposicoes_de_aula`
-   * continua existindo (só `desmarcar` apaga), a INV-118 é `UNIQUE (falta_id)`
-   * e o `marcar` recusa assim que vê qualquer reposição.
+   * sozinho"* — e ele voltava **só na tela**. A linha de `reposicoes_de_aula`
+   * continuava existindo (só `desmarcar` apagava), a INV-118 é
+   * `UNIQUE (falta_id)` e o `marcar` recusava com `FALTA_JA_REPOSTA`: **o saldo
+   * mostrava um crédito que não podia ser gasto.**
    *
-   * Ou seja: **o saldo mostra um crédito que não pode ser gasto.** É defeito
-   * real, e da SPEC-046 — corrigir aqui mudaria o saldo de quem já usa o
-   * sistema. O que a SPEC-064 faz é não construir em cima do número otimista.
+   * O DEF-036 fechou — cancelar a aula passou a apagar as reposições dela —,
+   * então o sistema **não produz mais** este estado. Estes casos ficam porque a
+   * função é pura e o estado continua **construtível à mão**: dado antigo, um
+   * `INSERT` direto, uma migração. `utilizavel` é a única que prevê o que o
+   * `marcar` vai fazer, e é ela que a fila usa.
    */
   it('reposta numa aula que o clube CANCELOU: conta no saldo, mas não é utilizável', () => {
     const s = situacaoDoCredito(

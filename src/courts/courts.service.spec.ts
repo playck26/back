@@ -99,6 +99,9 @@ function buildPrismaMock() {
     // SPEC-063 — o enfileirador de avisos grava as notificacoes com um
     // `INSERT ... ON CONFLICT` cru, na mesma transacao do gesto.
     $executeRaw: jest.fn().mockResolvedValue(1),
+    // DEF-036 — cancelar ocorrencia apaga as reposicoes dela, para o credito
+    // voltar DE VERDADE e nao so na tela.
+    reposicaoDeAula: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     $transaction: jest.fn(),
   } as unknown as PrismaService;
 }

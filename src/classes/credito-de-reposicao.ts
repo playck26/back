@@ -23,16 +23,27 @@
  * | aula da falta cancelada pelo clube | não conta | recusa `SEM_CREDITO_DE_REPOSICAO` |
  * | **já reposta, em aula que o clube CANCELOU** | **conta de novo** (D7) | **recusa `FALTA_JA_REPOSTA`** |
  *
- * A última linha é uma inconsistência real, e não desta spec: a SPEC-046/D7 diz
- * que *"reposição em aula cancelada não conta, e o crédito volta sozinho"* — e
- * ele volta **na tela**. Mas a linha de `reposicoes_de_aula` continua existindo
- * (só `desmarcar` apaga), a `INV-118` é `UNIQUE (falta_id)`, e `marcar` recusa
- * assim que vê qualquer reposição. **O saldo mostra um crédito que não pode ser
- * gasto.**
+ * A última linha **era** uma inconsistência real, e virou o **DEF-036**: a
+ * SPEC-046/D7 diz que *"reposição em aula cancelada não conta, e o crédito volta
+ * sozinho"* — e ele voltava **só na tela**. A linha de `reposicoes_de_aula`
+ * continuava existindo (só `desmarcar` apagava), a `INV-118` é
+ * `UNIQUE (falta_id)`, e `marcar` recusava com `FALTA_JA_REPOSTA`. **O saldo
+ * mostrava um crédito que não podia ser gasto.**
  *
- * Corrigir isso é decisão da SPEC-046, não desta — mexer aqui mudaria o saldo
- * exibido a quem já usa o sistema. O que esta spec faz é **não construir em
- * cima do número otimista**: a fila usa `utilizavel`, que é a regra do `marcar`.
+ * ## O DEF-036 fechou, e as duas colunas continuam aqui
+ *
+ * Cancelar uma ocorrência passou a **apagar as reposições dela**
+ * (`courts.service.ts`), então o estado divergente deixou de ser produzido pelo
+ * sistema. As duas colunas ficam assim mesmo, por duas razões:
+ *
+ * 1. **a divergência é construtível à mão** — um `INSERT` direto, uma migração,
+ *    um dado antigo de antes da correção. `utilizavel` continua sendo a única
+ *    que prevê o que o `marcar` vai fazer;
+ * 2. **o nome documenta a diferença.** Colapsar as duas apagaria a única pista
+ *    de que elas já discordaram — e foi a discordância, não o código, que
+ *    revelou o defeito.
+ *
+ * A fila continua usando `utilizavel`.
  *
  * > **Fila de aula é convite para tentar** (LIM-064a). Convidar alguém com um
  * > crédito que o `marcar` vai recusar é pior que não convidar: ele recebe o
