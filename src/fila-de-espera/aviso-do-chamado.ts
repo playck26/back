@@ -127,3 +127,34 @@ export function montarAvisoDoChamado(fatos: FatosDoChamado): AvisoDoChamado {
     expiraEm: fatos.chamadoAte,
   };
 }
+
+/**
+ * AC-008 — **a vez que morreu junto com o alvo.**
+ *
+ * Quem estava `chamado` quando a aula foi cancelada ou a turma foi inativada
+ * recebe um aviso. Quem perdeu o vínculo, **não** (AC-010): a conta dele está
+ * saindo do ar, e um aviso que ninguém vai ler é ruído no relatório de entrega.
+ *
+ * **Mesmo título `Sua vez`**, e de propósito: para a pessoa é o mesmo assunto —
+ * a vaga que ela estava tentando pegar. Dois títulos diferentes para o começo e
+ * o fim do mesmo episódio fariam a caixa parecer duas conversas.
+ *
+ * Sem `expira_em`: este aviso **não tem prazo** — não há nada a fazer com ele,
+ * e um aviso que vence antes de ser lido faz a pessoa nunca entender por que o
+ * convite sumiu.
+ */
+export function montarAvisoDeFilaEncerrada(
+  motivo: string,
+  turmaId: string | null,
+): { titulo: string; corpo: string; destinoUrl: string } {
+  const corpo =
+    motivo === 'turma inativada'
+      ? 'A turma que voce esperava saiu de operacao, e sua vez foi encerrada.'
+      : 'A aula que voce esperava foi cancelada pelo clube, e sua vez foi encerrada.';
+
+  return {
+    titulo: TITULO_DO_CHAMADO,
+    corpo,
+    destinoUrl: turmaId ? `/minhas-aulas/turma/${turmaId}` : '/minhas-aulas',
+  };
+}

@@ -35,6 +35,11 @@ import {
 import type { AdicionalDoPedidoDto } from './dto/create-booking.dto';
 import { HorarioFuncionamentoService } from './horario-funcionamento.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  avisarChamadosQuePerderamOAlvo,
+  encerrarFila,
+  MOTIVO,
+} from '../fila-de-espera/encerramento-da-fila';
 import { validarCorDeQuadra } from './paleta-de-quadra';
 import {
   novaTransicao,
@@ -1586,6 +1591,28 @@ export class CourtsService {
       'cancelada',
       transicaoId,
     );
+
+    // SPEC-064/D6 — quem esperava por estas aulas perde o alvo. **Na mesma
+    // transação**: uma transação própria deixaria a janela em que a aula já
+    // está cancelada e o varredor ainda chama gente para ela.
+    //
+    // `lista_de_espera` é o NÍVEL 4 da ordem canônica, e por isso esta escrita
+    // vem no fim — depois de `turmas` e `ocupacoes_quadra`, que quem chama já
+    // segurou.
+    const fila = await encerrarFila(
+      tx,
+      companyId,
+      { ocupacaoIds: canceladas.map((l) => l.id) },
+      MOTIVO.AULA_CANCELADA,
+    );
+    // AC-008 — quem estava CHAMADO é avisado. Quem só aguardava, não: ele
+    // nunca soube que havia vaga.
+    await avisarChamadosQuePerderamOAlvo(
+      tx,
+      companyId,
+      fila.chamados,
+      MOTIVO.AULA_CANCELADA,
+    );
   }
 
   /**
@@ -1615,6 +1642,20 @@ export class CourtsService {
       data: { statusPagamento: 'cancelado', transicaoId },
     });
     await registrador.registrar(ocupacaoId, 'cancelada', transicaoId);
+
+    // SPEC-064/D6 + AC-008 — mesma razão do cancelamento em massa acima.
+    const fila = await encerrarFila(
+      tx,
+      companyId,
+      { ocupacaoId },
+      MOTIVO.AULA_CANCELADA,
+    );
+    await avisarChamadosQuePerderamOAlvo(
+      tx,
+      companyId,
+      fila.chamados,
+      MOTIVO.AULA_CANCELADA,
+    );
   }
 
   /**

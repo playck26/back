@@ -14,6 +14,9 @@ interface TxMock {
   aluno: { create: jest.Mock; update: jest.Mock };
   // SPEC-009: `regenerarSenhaTemporaria` revoga sessões na mesma transação.
   refreshToken: { updateMany: jest.Mock };
+  // SPEC-064: `encerrarFila` escreve por aqui ao inativar o aluno (AC-010).
+  $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
 }
 
 function buildPrismaMock() {
@@ -21,6 +24,13 @@ function buildPrismaMock() {
     usuario: { create: jest.fn(), update: jest.fn() },
     aluno: { create: jest.fn(), update: jest.fn() },
     refreshToken: { updateMany: jest.fn() },
+    // SPEC-064 — inativar aluno passou a encerrar as filas de espera dele
+    // (AC-010), e `encerrarFila` escreve por `$queryRaw`/`$executeRaw`.
+    // **Lista VAZIA e nao uma linha qualquer:** aqui o caso e "ninguem estava
+    // chamado", que e o dos outros testes deste arquivo — e e o unico que nao
+    // dispara o `INSERT` de aviso, que a AC-010 proibe nesta rota.
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    $executeRaw: jest.fn().mockResolvedValue(0),
   };
   const prisma = {
     usuario: { findUnique: jest.fn() },

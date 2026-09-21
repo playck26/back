@@ -13,6 +13,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import type { Prisma, UsuarioStatus, VinculoAluno } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import {
   AlunoComSenhaTemporariaResponseDto,
   AlunoPaginadoResponseDto,
@@ -534,6 +535,20 @@ export class StudentsService {
             where: { usuarioId: existente.usuarioId, revokedAt: null },
             data: { revokedAt: new Date() },
           });
+
+          // SPEC-064/D6 + AC-010 — **encerra as filas dele, SEM AVISO.**
+          //
+          // A conta está saindo do ar; um aviso que ninguém vai ler é ruído no
+          // relatório de entrega, e o push nem chegaria (a sessão acabou de ser
+          // revogada logo acima). Mesma transação: meia inativação é pior que
+          // nenhuma, e deixar a fila viva faria o varredor chamar alguém que
+          // não consegue mais entrar.
+          await encerrarFila(
+            tx,
+            companyId,
+            { alunoId: id },
+            MOTIVO.SEM_VINCULO,
+          );
         }
       }
 

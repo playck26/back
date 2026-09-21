@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
@@ -541,6 +542,24 @@ export class ReposicaoService {
       },
       select: { id: true },
     });
+
+    // SPEC-064/D6 — **o crédito acabou de ser gasto, então as filas que o
+    // usavam morreram.** Sem isso, ele continuaria na fila de outra aula com
+    // um crédito que não existe mais, seria chamado, e a confirmação recusaria
+    // com `FALTA_JA_REPOSTA` — convite que não se pode cumprir, exatamente o
+    // que a LIM-064e existe para evitar.
+    //
+    // Inclui a fila que ESTA confirmação acabou de atender: a SPEC-064 marca
+    // aquela linha como `atendida` DEPOIS desta chamada, e `atendida` não está
+    // no recorte de `encerrarFila` (que só toca `aguardando` e `chamado`) —
+    // mas a linha ainda está `chamado` aqui. Por isso o `atendida` vem depois,
+    // e sobrescreve: o estado final dela é `atendida`, não `encerrada`.
+    await encerrarFila(
+      tx,
+      companyId,
+      { faltaId: falta.id },
+      MOTIVO.CREDITO_CONSUMIDO,
+    );
 
     return {
       id: criada.id,

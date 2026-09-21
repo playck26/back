@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
@@ -214,6 +215,39 @@ export class FaltaAvisadaService {
       turmaId,
       ocupacaoId,
       async (tx, alunoId) => {
+        // ====================================================================
+        // SPEC-064/INV-064g — **ENCERRAR A FILA VEM ANTES DE APAGAR A FALTA.**
+        //
+        // Esta ordem e NORMATIVA, e custou duas rodadas de validacao
+        // independente. A FK `fila_falta_fkey` faz
+        // `ON DELETE SET NULL ("falta_id")`; o `fila_credito_chk` exige
+        // credito enquanto a linha estiver ativa, e o CHECK e avaliado
+        // **no ato do SET NULL** -- antes de qualquer UPDATE de encerramento
+        // chegar.
+        //
+        //   DELETE -> UPDATE encerrada  ->  RECUSADO, 23514
+        //   UPDATE encerrada -> DELETE  ->  PASSA
+        //
+        // Adiar o CHECK nao e opcao: o PostgreSQL recusa
+        // `CHECK ... DEFERRABLE` em qualquer versao.
+        //
+        // **Inverter estas duas linhas quebra a retirada da falta** -- um
+        // recurso novo derrubando um que ja funcionava --, e o `23514` nao
+        // diria `lista_de_espera` na mensagem.
+        // ====================================================================
+        const faltas = await tx.faltaAvisada.findMany({
+          where: { companyId, ocupacaoId, alunoId },
+          select: { id: true },
+        });
+        for (const f of faltas) {
+          await encerrarFila(
+            tx,
+            companyId,
+            { faltaId: f.id },
+            MOTIVO.FALTA_RETIRADA,
+          );
+        }
+
         await tx.faltaAvisada.deleteMany({
           where: { companyId, ocupacaoId, alunoId },
         });

@@ -26,6 +26,11 @@ import {
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  avisarChamadosQuePerderamOAlvo,
+  encerrarFila,
+  MOTIVO,
+} from '../fila-de-espera/encerramento-da-fila';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
 import type { PaginationQueryDto } from '../people/dto/pagination-query.dto';
@@ -424,6 +429,30 @@ export class ClassesService {
         },
       });
 
+      // SPEC-064/D6 — **turma inativada mata a fila de TURMA dela.**
+      //
+      // A fila de AULA daquela turma já morre pelo `cancelFutureClassOccupancies`
+      // logo abaixo, que cancela as ocorrências; esta aqui é a outra fila — quem
+      // esperava uma vaga de MATRÍCULA, que não tem ocorrência nenhuma para
+      // morrer junto.
+      //
+      // Só na inativação: reativar devolve a turma, mas não ressuscita quem já
+      // foi encerrado — a posição dele terminou, com motivo escrito.
+      if (dto.status === 'inativa') {
+        const fila = await encerrarFila(
+          tx,
+          companyId,
+          { turmaId: id },
+          MOTIVO.TURMA_INATIVADA,
+        );
+        await avisarChamadosQuePerderamOAlvo(
+          tx,
+          companyId,
+          fila.chamados,
+          MOTIVO.TURMA_INATIVADA,
+        );
+      }
+
       if (precisaCancelar) {
         // DEF-020: o corte (`gte`) é hoje NO FUSO DO CLUBE. Em UTC, uma
         // edição feita às 21h30 de segunda tinha corte na terça — e a
@@ -672,6 +701,16 @@ export class ClassesService {
       await registrador.registrarMatricula(turmaId, alunoId);
 
       await tx.turmaAluno.delete({ where: { id: alocacao.id } });
+
+      // SPEC-064/D6 — quem sai da turma não continua na fila dela. **Sem
+      // aviso**: ele acabou de ser removido, e dizer "sua vez acabou" logo
+      // depois seria uma segunda má notícia sobre o mesmo fato.
+      await encerrarFila(
+        tx,
+        companyId,
+        { turmaEAluno: { turmaId, alunoId } },
+        MOTIVO.SAIU_DA_TURMA,
+      );
 
       // SPEC-063/AC-015 — avisa **só o aluno removido**: nem a turma, nem o
       // professor, nem os gestores. E depois do `DELETE` de propósito: antes
