@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -7,9 +8,23 @@ import {
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { MatriculaDoAlunoService } from '../classes/matricula-do-aluno.service';
+import { ReposicaoService } from '../classes/reposicao.service';
 import { situacaoDoCredito } from '../classes/credito-de-reposicao';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import type { LinhaDaFilaResponseDto } from './dto/fila-de-espera.dto';
+
+/**
+ * D5 - **a recusa e resultado de dominio, nao excecao.**
+ *
+ * *"O encerramento COMITA"* (achado v2-03, reaberto em v4-06): a transacao
+ * grava `encerrada` com o motivo e **termina**; o `409` e montado **fora**
+ * dela. Lancar excecao dentro do callback reverteria o proprio encerramento, e
+ * o chamado morto continuaria aparecendo para a pessoa.
+ */
+export type ResultadoDaConfirmacao =
+  | { ok: true; fila: 'turma' | 'aula'; reposicaoId: string | null }
+  | { ok: false; code: string; message: string };
 
 /**
  * SPEC-064/TASK-002 — **entrar e sair da fila de espera** (card 5331).
@@ -53,6 +68,11 @@ export class FilaDeEsperaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly operacao: ConfigOperacaoService,
+    // **Compor, e nao reescrever.** As duas confirmacoes sao o gesto que ja
+    // existe - matricular e marcar reposicao -, e duplicar as regras deles
+    // aqui seria a terceira copia da mesma conta.
+    private readonly matriculas: MatriculaDoAlunoService,
+    private readonly reposicoes: ReposicaoService,
   ) {}
 
   /** `alunoId` nunca vem do corpo nem da URL — é derivado do token. Mesma
@@ -60,10 +80,12 @@ export class FilaDeEsperaService {
   private async alunoDoUsuario(
     companyId: string,
     usuarioId: string,
-  ): Promise<{ id: string }> {
+  ): Promise<{ id: string; vinculo: string }> {
+    // `vinculo` entra porque a confirmacao de TURMA o exige: `entrarNaTransacao`
+    // recusa quem nao esta aprovado, e le o vinculo do objeto que recebe.
     const aluno = await this.prisma.aluno.findFirst({
       where: { companyId, usuarioId },
-      select: { id: true },
+      select: { id: true, vinculo: true },
     });
     if (!aluno) throw new NotFoundException();
     return aluno;
@@ -250,6 +272,194 @@ export class FilaDeEsperaService {
     // `404`: responder `204` para uma linha encerrada diria que a ação
     // aconteceu agora, e ela não aconteceu.
     if (count === 0) throw new NotFoundException();
+  }
+
+  /**
+   * REQ-003 - **confirmar a vez, e o encerramento nao se desfaz.**
+   *
+   * ## A ordem canonica de QUATRO niveis, e a v2 nao a escrevia
+   *
+   * ```
+   * 1  turmas FOR UPDATE                 (a turma, ou a da ocupacao)
+   * 2  alunos FOR KEY SHARE              (so na fila de AULA)
+   * 3  ocupacoes_quadra FOR UPDATE       (so na fila de aula)
+   * 4  lista_de_espera FOR UPDATE        (a linha do chamado, POR ULTIMO)
+   * ```
+   *
+   * A v2 dizia *"sob a ordem canonica"* **sem escreve-la**, e foi isso que
+   * permitiu o ciclo: o varredor segurava a turma e queria a linha da fila; a
+   * confirmacao segurava a linha e queria a turma. Deadlock sob exatamente a
+   * carga que esta spec existe para criar.
+   *
+   * **O nivel 2 entra so na fila de AULA**, e a v3 o deixava de fora (achado
+   * da 2a rodada): a confirmacao ali **cria `reposicoes_de_aula`**, que e a
+   * mesma escrita do `ReposicaoService`, e ele toma `1->2->3`. Pular o
+   * `alunos FOR KEY SHARE` faria a confirmacao e a reposicao pela tela normal
+   * tomarem ordens diferentes sobre as mesmas linhas.
+   *
+   * Na fila de TURMA ele fica fora com razao nomeada: ali a confirmacao e uma
+   * matricula, e `entrarNaTransacao` tambem nao toma `alunos` - o aluno e
+   * lido, nao escrito.
+   *
+   * ## A leitura que identifica a linha pode ser sem lock
+   *
+   * E e: sem ela nao ha como saber QUAL turma travar primeiro. O `FOR UPDATE`
+   * da linha vem no fim, e tudo o que importa e reconferido sob ele.
+   *
+   * ## A fila nao reserva a vaga (LIM-064a)
+   *
+   * Confirmar pode falhar - alguem pode ter levado a vaga pela tela normal
+   * durante o prazo (LIM-064f). Quando falha, a linha vira `encerrada` **e o
+   * encerramento comita**; a recusa volta como resultado, nao como excecao.
+   */
+  async confirmar(
+    companyId: string,
+    usuarioId: string,
+    id: string,
+  ): Promise<ResultadoDaConfirmacao> {
+    const aluno = await this.alunoDoUsuario(companyId, usuarioId);
+
+    const linha = await this.prisma.listaDeEspera.findFirst({
+      where: { id, companyId, alunoId: aluno.id },
+      select: { id: true, turmaId: true, ocupacaoId: true, faltaId: true },
+    });
+    if (!linha) throw new NotFoundException();
+
+    return this.prisma.$transaction(async (tx) => {
+      const fila = linha.ocupacaoId ? 'aula' : 'turma';
+
+      // Sem lock: so para descobrir QUAL turma travar primeiro.
+      const ocupacao = linha.ocupacaoId
+        ? await tx.ocupacaoQuadra.findFirst({
+            where: { id: linha.ocupacaoId, companyId },
+            select: { id: true, origemTurmaId: true },
+          })
+        : null;
+      const turmaId = linha.turmaId ?? ocupacao?.origemTurmaId;
+      if (!turmaId) throw new NotFoundException();
+
+      // ---- 1. TURMA
+      await tx.$queryRaw`
+        SELECT id FROM turmas
+         WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+         FOR UPDATE`;
+
+      // ---- 2. ALUNO, so na fila de aula (ela cria reposicao)
+      if (fila === 'aula') {
+        await tx.$queryRaw`
+          SELECT id FROM alunos
+           WHERE company_id = ${companyId}::uuid
+             AND usuario_id = ${usuarioId}::uuid
+           FOR KEY SHARE`;
+      }
+
+      // ---- 3. OCUPACAO, so na fila de aula
+      if (ocupacao) {
+        await tx.$queryRaw`
+          SELECT id FROM ocupacoes_quadra
+           WHERE id = ${ocupacao.id}::uuid AND company_id = ${companyId}::uuid
+           FOR UPDATE`;
+      }
+
+      // ---- 4. A LINHA, por ultimo
+      const travadas = await tx.$queryRaw<
+        { estado: string; vencida: boolean }[]
+      >`
+        SELECT estado::text AS estado,
+               (chamado_ate IS NULL OR chamado_ate < now()) AS vencida
+          FROM lista_de_espera
+         WHERE id = ${linha.id}::uuid
+         FOR UPDATE`;
+      const travada = travadas[0];
+      if (!travada) throw new NotFoundException();
+
+      if (travada.estado !== 'chamado') {
+        // Nao encerra: a linha ja esta no estado que esta, e sobrescrever o
+        // motivo apagaria por que ela terminou.
+        return {
+          ok: false as const,
+          code: 'NAO_E_SUA_VEZ',
+          message: 'Esta vez nao esta mais aberta.',
+        };
+      }
+
+      // **A tela nao depende do varredor para isto** (D8): a confirmacao
+      // confere o prazo por conta propria, entao um varredor desligado nao
+      // deixa ninguem confirmar uma vez vencida.
+      if (travada.vencida) {
+        return this.encerrar(
+          tx,
+          linha.id,
+          'prazo vencido',
+          'VEZ_EXPIRADA',
+          'O prazo desta vez venceu.',
+        );
+      }
+
+      try {
+        let reposicaoId: string | null = null;
+        if (fila === 'aula') {
+          const criada = await this.reposicoes.marcarNaTransacao(
+            tx,
+            companyId,
+            usuarioId,
+            linha.faltaId as string,
+            (ocupacao as { id: string }).id,
+          );
+          reposicaoId = criada.id;
+        } else {
+          await this.matriculas.entrarNaTransacao(
+            tx,
+            companyId,
+            aluno,
+            turmaId,
+          );
+        }
+
+        // AC-007 - **os dois comitam juntos.** Separa-los deixaria alguem com
+        // reposicao marcada e fila ainda `chamado`, ou o contrario.
+        await tx.$executeRaw`
+          UPDATE lista_de_espera
+             SET estado = 'atendida', concluida_em = now(),
+                 motivo_fim = 'confirmou'
+           WHERE id = ${linha.id}::uuid`;
+
+        return { ok: true as const, fila, reposicaoId };
+      } catch (erro) {
+        // **Recusa de dominio vira resultado; erro de banco sobe.**
+        //
+        // A diferenca importa: as recusas dos dois servicos sao lancadas
+        // depois de LEITURAS bem-sucedidas, entao a transacao continua
+        // utilizavel e o encerramento pode comitar. Um erro do banco (um
+        // `23505` na INV-118, por exemplo) **aborta** a transacao - ai nao ha
+        // o que comitar, e deixar a linha em `chamado` e o certo: a pessoa
+        // tenta de novo, ou o varredor expira.
+        if (!(erro instanceof HttpException)) throw erro;
+        const corpo = erro.getResponse() as { code?: string; message?: string };
+        return this.encerrar(
+          tx,
+          linha.id,
+          corpo.code ?? 'recusada',
+          corpo.code ?? 'CONFIRMACAO_RECUSADA',
+          corpo.message ?? 'Nao foi possivel confirmar esta vez.',
+        );
+      }
+    });
+  }
+
+  /** Encerra a linha **e devolve a recusa** - nunca lanca. */
+  private async encerrar(
+    tx: Prisma.TransactionClient,
+    id: string,
+    motivo: string,
+    code: string,
+    message: string,
+  ): Promise<ResultadoDaConfirmacao> {
+    await tx.$executeRaw`
+      UPDATE lista_de_espera
+         SET estado = 'encerrada', concluida_em = now(), motivo_fim = ${motivo}
+       WHERE id = ${id}::uuid`;
+    return { ok: false as const, code, message };
   }
 
   /**

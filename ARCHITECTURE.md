@@ -1667,8 +1667,45 @@ ao subir. **É o único dos cinco que, desligado, deixa PESSOAS esperando** — 
 outros atrasam trabalho de máquina —, e por isso o desligamento sai em `warn`
 com a consequência escrita.
 
-**A confirmação ainda não existe.** Quem foi chamado não tem como aceitar; isso
-é o resto da TASK-003, e exige compor a transação com a lógica de reposição.
+### Confirmar compõe dois gestos que já existiam, e não os reescreve
+
+A **TASK-003b** fechou a fila: `POST /me/fila-de-espera/{id}/confirmar` vira
+**matrícula** na fila de turma e **reposição** na de aula.
+
+**A ordem canônica inteira, e a v2 da spec não a escrevia:**
+
+```
+1  turmas FOR UPDATE              (a turma, ou a da ocupação)
+2  alunos FOR KEY SHARE           (só na fila de AULA)
+3  ocupacoes_quadra FOR UPDATE    (só na fila de aula)
+4  lista_de_espera FOR UPDATE     (a linha do chamado, POR ÚLTIMO)
+```
+
+Dizer *"sob a ordem canônica"* sem escrevê-la foi o que permitiu o ciclo que a
+1ª rodada de validação achou: o varredor segurava a turma e queria a linha; a
+confirmação segurava a linha e queria a turma. **O nível 2 entra só na fila de
+aula** — ela cria `reposicoes_de_aula`, a mesma escrita do `ReposicaoService`,
+que toma `1→2→3`.
+
+**Duas extrações, e nenhuma cópia de regra.** `ReposicaoService.marcar` e
+`MatriculaDoAlunoService.entrar` passaram a ter o corpo da transação num método
+que **recebe o `tx`** (`marcarNaTransacao`, `entrarNaTransacao`); a casca
+pública continua abrindo a transação sozinha. A confirmação chama o núcleo
+dentro da transação dela, e é isso que dá a AC-007: **a reposição e o
+`atendida` comitam juntos, ou nenhum dos dois**.
+
+**E a recusa é resultado de domínio, não exceção** — achado v2-03, reaberto em
+v4-06. A AC-006 exige que confirmar sem vaga devolva `409` **e** deixe a linha
+`encerrada`. Uma exceção lançada de dentro do callback reverteria o próprio
+encerramento, e o chamado morto continuaria aparecendo para a pessoa. O serviço
+devolve `{ ok: false, code }`, o encerramento comita, e o `409` é montado **no
+controller**.
+
+A fronteira entre as duas coisas é explícita: **recusa de domínio** (as duas
+serviços lançam `HttpException` depois de leituras bem-sucedidas, e a transação
+segue utilizável) vira resultado; **erro de banco** — um `23505` na INV-118,
+por exemplo — **aborta** a transação e sobe, deixando a linha em `chamado` para
+a pessoa tentar de novo ou o varredor expirar.
 
 ### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
 

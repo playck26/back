@@ -43,5 +43,10 @@ import { PresencaAutomaticaModule } from '../presenca-automatica/presenca-automa
     MatriculaDoAlunoService,
     PresencaService,
   ],
+  // SPEC-064 — a confirmação da fila de espera precisa matricular e criar
+  // reposição DENTRO da transação dela (AC-007), então ela compõe os dois
+  // serviços em vez de reescrever as regras. Só estes dois saem: o resto do
+  // módulo continua sendo assunto interno.
+  exports: [ReposicaoService, MatriculaDoAlunoService],
 })
 export class ClassesModule {}

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
@@ -157,77 +158,96 @@ export class MatriculaDoAlunoService {
    */
   async entrar(companyId: string, usuarioId: string, turmaId: string) {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
+    return this.prisma.$transaction((tx) =>
+      this.entrarNaTransacao(tx, companyId, aluno, turmaId),
+    );
+  }
 
-    return this.prisma.$transaction(async (tx) => {
-      const turmaRows = await tx.$queryRaw<
-        { id: string; capacidade: number; status: string }[]
-      >`
-        SELECT id, capacidade, status::text AS status FROM turmas
-        WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
-        FOR UPDATE
-      `;
-      const turma = turmaRows[0];
-      // 404 e não 403: dizer "existe mas não é sua" já entrega informação
-      // sobre a outra empresa (INV-023b).
-      if (!turma) {
-        throw new NotFoundException();
-      }
+  /**
+   * O mesmo gesto, **sob uma transação de fora** (SPEC-064).
+   *
+   * A confirmação da fila de espera precisa matricular **dentro da transação
+   * dela**, junto com o `UPDATE` da linha para `atendida`. Um `$transaction`
+   * aninhado não daria atomicidade, e duplicar as cinco checagens daria
+   * drift — a mesma razão que partiu o `ReposicaoService.marcar`.
+   *
+   * Toma `turmas` (nível 1) e **não toma `alunos`**: o aluno é lido, não
+   * escrito. A ordem canônica da SPEC-064 conta com isso.
+   */
+  async entrarNaTransacao(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    aluno: { id: string; vinculo: string },
+    turmaId: string,
+  ) {
+    const turmaRows = await tx.$queryRaw<
+      { id: string; capacidade: number; status: string }[]
+    >`
+      SELECT id, capacidade, status::text AS status FROM turmas
+      WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+      FOR UPDATE
+    `;
+    const turma = turmaRows[0];
+    // 404 e não 403: dizer "existe mas não é sua" já entrega informação
+    // sobre a outra empresa (INV-023b).
+    if (!turma) {
+      throw new NotFoundException();
+    }
 
-      // Idempotente por decisão de desenho: toque duplo em conexão ruim é o
-      // caso real, e entrar duas vezes é o mesmo estado.
-      const jaAlocado = await tx.turmaAluno.findFirst({
-        where: { turmaId, alunoId: aluno.id },
-      });
-      if (jaAlocado) {
-        return jaAlocado;
-      }
-
-      if (aluno.vinculo !== 'aprovado') {
-        throw new ForbiddenException({
-          statusCode: 403,
-          code: 'ALUNO_NAO_APROVADO',
-          message:
-            'Seu cadastro ainda está aguardando a aprovação do clube. Assim que for aprovado, você poderá entrar nas turmas.',
-        });
-      }
-
-      if (turma.status !== 'ativa') {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'TURMA_INATIVA',
-          message: 'Esta turma não está ativa.',
-        });
-      }
-
-      const empresa = await tx.empresa.findUniqueOrThrow({
-        where: { id: companyId },
-        select: { limiteTurmasPorAluno: true },
-      });
-      if (empresa.limiteTurmasPorAluno !== null) {
-        const minhas = await tx.turmaAluno.count({
-          where: { alunoId: aluno.id },
-        });
-        if (minhas >= empresa.limiteTurmasPorAluno) {
-          throw new ConflictException({
-            statusCode: 409,
-            code: 'LIMITE_DE_TURMAS',
-            message: `Você já está em ${minhas} turma(s), que é o limite deste clube.`,
-          });
-        }
-      }
-
-      // Por último, e sob a trava: é a checagem que a concorrência ataca.
-      const alocados = await tx.turmaAluno.count({ where: { turmaId } });
-      if (alocados >= turma.capacidade) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'TURMA_CHEIA',
-          message: 'Esta turma já está com todas as vagas ocupadas.',
-        });
-      }
-
-      return tx.turmaAluno.create({ data: { turmaId, alunoId: aluno.id } });
+    // Idempotente por decisão de desenho: toque duplo em conexão ruim é o
+    // caso real, e entrar duas vezes é o mesmo estado.
+    const jaAlocado = await tx.turmaAluno.findFirst({
+      where: { turmaId, alunoId: aluno.id },
     });
+    if (jaAlocado) {
+      return jaAlocado;
+    }
+
+    if (aluno.vinculo !== 'aprovado') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'ALUNO_NAO_APROVADO',
+        message:
+          'Seu cadastro ainda está aguardando a aprovação do clube. Assim que for aprovado, você poderá entrar nas turmas.',
+      });
+    }
+
+    if (turma.status !== 'ativa') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'TURMA_INATIVA',
+        message: 'Esta turma não está ativa.',
+      });
+    }
+
+    const empresa = await tx.empresa.findUniqueOrThrow({
+      where: { id: companyId },
+      select: { limiteTurmasPorAluno: true },
+    });
+    if (empresa.limiteTurmasPorAluno !== null) {
+      const minhas = await tx.turmaAluno.count({
+        where: { alunoId: aluno.id },
+      });
+      if (minhas >= empresa.limiteTurmasPorAluno) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'LIMITE_DE_TURMAS',
+          message: `Você já está em ${minhas} turma(s), que é o limite deste clube.`,
+        });
+      }
+    }
+
+    // Por último, e sob a trava: é a checagem que a concorrência ataca.
+    const alocados = await tx.turmaAluno.count({ where: { turmaId } });
+    if (alocados >= turma.capacidade) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'TURMA_CHEIA',
+        message: 'Esta turma já está com todas as vagas ocupadas.',
+      });
+    }
+
+    return tx.turmaAluno.create({ data: { turmaId, alunoId: aluno.id } });
   }
 
   /**

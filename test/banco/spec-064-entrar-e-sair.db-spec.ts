@@ -18,6 +18,8 @@ import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { FilaDeEsperaService } from '../../src/fila-de-espera/fila-de-espera.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
+import { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.service';
+import { ReposicaoService } from '../../src/classes/reposicao.service';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
@@ -34,7 +36,13 @@ const q = (sql: string) => db.$executeRawUnsafe(sql);
 
 function servico(): FilaDeEsperaService {
   const p = db as unknown as PrismaService;
-  return new FilaDeEsperaService(p, new ConfigOperacaoService(p));
+  const operacao = new ConfigOperacaoService(p);
+  return new FilaDeEsperaService(
+    p,
+    operacao,
+    new MatriculaDoAlunoService(p, operacao),
+    new ReposicaoService(p, operacao),
+  );
 }
 
 /** Data relativa a HOJE **no fuso do clube**, não em UTC.

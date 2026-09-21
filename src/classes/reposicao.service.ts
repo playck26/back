@@ -305,7 +305,41 @@ export class ReposicaoService {
    * **é** a regra: inverter dois deles é o caminho para deadlock com a
    * SPEC-031, que roda no mesmo par de tabelas.
    */
+  /**
+   * REQ-003/AC-007 — marcar a reposição.
+   *
+   * **Uma casca sobre `marcarNaTransacao`**, e a divisão nasceu da SPEC-064:
+   * a confirmação da fila de espera precisa criar a reposição **dentro da
+   * transação dela**, junto com o `UPDATE` da linha para `atendida` — os dois
+   * comitam juntos ou nenhum (AC-007 da 064). Um `$transaction` aninhado não
+   * daria isso, e duplicar as sete checagens daria drift.
+   */
   async marcar(
+    companyId: string,
+    usuarioId: string,
+    faltaId: string,
+    ocupacaoId: string,
+  ): Promise<ReposicaoCriadaResponseDto> {
+    return this.prisma.$transaction((tx) =>
+      this.marcarNaTransacao(tx, companyId, usuarioId, faltaId, ocupacaoId),
+    );
+  }
+
+  /**
+   * O mesmo gesto, **sob uma transação de fora**.
+   *
+   * Quem chama é dono da ordem de locks: este método toma `turmas` (1),
+   * `alunos` (2) e `ocupacoes_quadra` (3), nesta ordem, e nunca a
+   * `lista_de_espera` — que é o nível 4 e pertence a quem a estiver
+   * confirmando.
+   *
+   * **As recusas continuam sendo exceção**, e isso é deliberado: para a rota
+   * de reposição elas viram `409` direto. Quem compõe (SPEC-064) as captura
+   * DENTRO da transação e as converte em resultado de domínio, porque lá o
+   * encerramento da fila **tem de comitar** junto com a recusa.
+   */
+  async marcarNaTransacao(
+    tx: Prisma.TransactionClient,
     companyId: string,
     usuarioId: string,
     faltaId: string,
@@ -314,210 +348,208 @@ export class ReposicaoService {
     const agora = new Date();
     const hoje = hojeNoFusoDoClube();
 
-    return this.prisma.$transaction(async (tx) => {
-      // (0) A ocorrência de destino, e a TURMA dela — precisamos do id da turma
-      // para travá-la primeiro.
-      const alvo = await tx.ocupacaoQuadra.findFirst({
-        where: { id: ocupacaoId, companyId, origemTipo: 'TURMA' },
-        select: {
-          id: true,
-          data: true,
-          horaInicio: true,
-          horaFim: true,
-          origemTurmaId: true,
-          statusPagamento: true,
-        },
+    // (0) A ocorrência de destino, e a TURMA dela — precisamos do id da turma
+    // para travá-la primeiro.
+    const alvo = await tx.ocupacaoQuadra.findFirst({
+      where: { id: ocupacaoId, companyId, origemTipo: 'TURMA' },
+      select: {
+        id: true,
+        data: true,
+        horaInicio: true,
+        horaFim: true,
+        origemTurmaId: true,
+        statusPagamento: true,
+      },
+    });
+    if (!alvo?.origemTurmaId) throw new NotFoundException();
+
+    // (1) TURMA — nível 1 do INV-029, e o motivo da D8: sem ele um
+    // `allocateStudent` concorrente entra entre a contagem e a escrita.
+    const turmas = await tx.$queryRaw<
+      { id: string; capacidade: number; status: string }[]
+    >`
+      SELECT id, capacidade, status::text AS status
+        FROM turmas
+       WHERE id = ${alvo.origemTurmaId}::uuid
+         AND company_id = ${companyId}::uuid
+       FOR UPDATE
+    `;
+    const turma = turmas[0];
+    if (!turma) throw new NotFoundException();
+    if (turma.status !== 'ativa') {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'TURMA_INATIVA',
+        message: 'Esta turma está fora de operação.',
       });
-      if (!alvo?.origemTurmaId) throw new NotFoundException();
+    }
 
-      // (1) TURMA — nível 1 do INV-029, e o motivo da D8: sem ele um
-      // `allocateStudent` concorrente entra entre a contagem e a escrita.
-      const turmas = await tx.$queryRaw<
-        { id: string; capacidade: number; status: string }[]
-      >`
-        SELECT id, capacidade, status::text AS status
-          FROM turmas
-         WHERE id = ${alvo.origemTurmaId}::uuid
-           AND company_id = ${companyId}::uuid
-         FOR UPDATE
-      `;
-      const turma = turmas[0];
-      if (!turma) throw new NotFoundException();
-      if (turma.status !== 'ativa') {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'TURMA_INATIVA',
-          message: 'Esta turma está fora de operação.',
-        });
-      }
+    // (2) ALUNO — `FOR KEY SHARE` e não `FOR UPDATE`: esta rota **lê** o
+    // aluno, e o que precisa é que ele não suma enquanto a reposição nasce.
+    // Mesma escolha da `FaltaAvisadaService`.
+    const alunos = await tx.$queryRaw<{ id: string }[]>`
+      SELECT a.id
+        FROM alunos a
+       WHERE a.company_id = ${companyId}::uuid
+         AND a.usuario_id = ${usuarioId}::uuid
+       FOR KEY SHARE
+    `;
+    const aluno = alunos[0];
+    if (!aluno) throw new NotFoundException();
 
-      // (2) ALUNO — `FOR KEY SHARE` e não `FOR UPDATE`: esta rota **lê** o
-      // aluno, e o que precisa é que ele não suma enquanto a reposição nasce.
-      // Mesma escolha da `FaltaAvisadaService`.
-      const alunos = await tx.$queryRaw<{ id: string }[]>`
-        SELECT a.id
-          FROM alunos a
-         WHERE a.company_id = ${companyId}::uuid
-           AND a.usuario_id = ${usuarioId}::uuid
-         FOR KEY SHARE
-      `;
-      const aluno = alunos[0];
-      if (!aluno) throw new NotFoundException();
+    // (3) A OCORRÊNCIA de destino — nível 3. Trava o que estamos contando.
+    await tx.$queryRaw`
+      SELECT id FROM ocupacoes_quadra
+       WHERE id = ${ocupacaoId}::uuid AND company_id = ${companyId}::uuid
+       FOR UPDATE
+    `;
 
-      // (3) A OCORRÊNCIA de destino — nível 3. Trava o que estamos contando.
-      await tx.$queryRaw`
-        SELECT id FROM ocupacoes_quadra
-         WHERE id = ${ocupacaoId}::uuid AND company_id = ${companyId}::uuid
-         FOR UPDATE
-      `;
-
-      // AC-006 — não se repõe no que não vai acontecer, nem no passado.
-      if (alvo.statusPagamento === 'cancelado') {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'OCUPACAO_CANCELADA',
-          message: 'Esta aula foi cancelada pelo clube.',
-        });
-      }
-      if (alvo.data < hoje) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'PRAZO_DE_CANCELAMENTO',
-          message: 'Esta aula já passou.',
-        });
-      }
-
-      // AC-011 — já matriculado na turma de destino: ele já é esperado lá, e a
-      // chamada o mostraria DUAS vezes (D5). A INV-120 não alcança este caso —
-      // ela só cobre duplicata dentro da própria tabela.
-      const jaNaTurma = await tx.turmaAluno.findFirst({
-        where: { turmaId: alvo.origemTurmaId, alunoId: aluno.id },
-        select: { turmaId: true },
+    // AC-006 — não se repõe no que não vai acontecer, nem no passado.
+    if (alvo.statusPagamento === 'cancelado') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'OCUPACAO_CANCELADA',
+        message: 'Esta aula foi cancelada pelo clube.',
       });
-      if (jaNaTurma) {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'JA_MATRICULADO_NA_TURMA',
-          message: 'Você já faz parte desta turma — não precisa repor nela.',
-        });
-      }
-
-      // A falta que ele quer usar. Tem de ser DELE, e a consulta carrega o
-      // `companyId` de propósito: `faltaId` vem do corpo.
-      const falta = await tx.faltaAvisada.findFirst({
-        where: { id: faltaId, companyId, alunoId: aluno.id },
-        include: {
-          ocupacao: { select: { data: true, statusPagamento: true } },
-          reposicao: { select: { id: true } },
-        },
+    }
+    if (alvo.data < hoje) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'PRAZO_DE_CANCELAMENTO',
+        message: 'Esta aula já passou.',
       });
-      if (!falta) throw new NotFoundException();
+    }
 
-      // AC-009 — a pré-checagem existe para a MENSAGEM; a garantia é a
-      // INV-118. Mesma divisão de trabalho da `EXCLUDE` na INV-001.
-      if (falta.reposicao) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'FALTA_JA_REPOSTA',
-          message: 'Esta falta já foi reposta.',
-        });
-      }
-
-      const regra = await this.operacao.reposicaoDaEmpresa(companyId, tx);
-
-      // AC-008 — sem crédito: a falta que ele escolheu não vale.
-      if (falta.ocupacao.statusPagamento === 'cancelado') {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'SEM_CREDITO_DE_REPOSICAO',
-          message:
-            'O clube cancelou esta aula — você não a perdeu, e não há o que repor.',
-        });
-      }
-      // A aritmetica sai para `credito-de-reposicao.ts`; os dois `if` e as
-      // duas mensagens ficam, porque a consulta desta rota nao carrega
-      // `reposicao.ocupacao` e nao teria como decidir `reposta`.
-      const expiraEm = expiracaoDoCredito(
-        falta.ocupacao.data,
-        regra.validadeDias,
-      );
-      if (expiraEm < hoje) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'SEM_CREDITO_DE_REPOSICAO',
-          message: `O prazo para repor esta falta era até ${formatDateOnly(expiraEm)}.`,
-        });
-      }
-
-      // AC-012 — o teto, contado pelo mês da FALTA (D6).
-      const usadas = await this.usadasNoMes(companyId, aluno.id, hoje, tx);
-      if (usadas >= regra.porMes) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'TETO_DE_REPOSICAO',
-          message: `Você já usou ${usadas} de ${regra.porMes} reposições deste mês.`,
-          usadas,
-          teto: regra.porMes,
-        });
-      }
-
-      // AC-014 — o prazo, o mesmo da falta e com o mesmo código (SPEC-031/D23).
-      const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
-      const veredicto = avaliarSaidaDeTurma({
-        papelDoAutor: 'aluno',
-        agora,
-        ocorrenciaRelevante: {
-          tipo: 'MINUTOS',
-          minutos: antecedenciaEmMinutos(alvo.data, alvo.horaInicio, agora),
-        },
-        prazo: prazos.aula,
+    // AC-011 — já matriculado na turma de destino: ele já é esperado lá, e a
+    // chamada o mostraria DUAS vezes (D5). A INV-120 não alcança este caso —
+    // ela só cobre duplicata dentro da própria tabela.
+    const jaNaTurma = await tx.turmaAluno.findFirst({
+      where: { turmaId: alvo.origemTurmaId, alunoId: aluno.id },
+      select: { turmaId: true },
+    });
+    if (jaNaTurma) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'JA_MATRICULADO_NA_TURMA',
+        message: 'Você já faz parte desta turma — não precisa repor nela.',
       });
-      if (!veredicto.permitido) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: veredicto.code,
-          message:
-            prazos.aula.regra === 'HORAS'
-              ? `Marcar reposição exige ${prazos.aula.horas}h de antecedência.`
-              : 'Esta aula já começou.',
-        });
-      }
+    }
 
-      // AC-010 — a vaga. Com `turmas` e a ocorrência travadas, esta leitura é
-      // a verdade até o COMMIT. SPEC-057/TASK-005/D17 — pela MESMA projeção
-      // que a agenda e as oportunidades mostram: a recusa não pode dizer
-      // "cheia" numa aula que a tela anunciou com vaga, nem o contrário.
-      const conjuntos = await carregarConjuntos(tx, companyId, [
-        { id: ocupacaoId, turmaId: alvo.origemTurmaId },
-      ]);
-      const daAula = conjuntos.get(ocupacaoId);
-      if (!daAula || calcularOcupacao(turma.capacidade, daAula).cheia) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'TURMA_SEM_VAGA',
-          message: 'Esta aula já está cheia. Escolha outro horário.',
-        });
-      }
+    // A falta que ele quer usar. Tem de ser DELE, e a consulta carrega o
+    // `companyId` de propósito: `faltaId` vem do corpo.
+    const falta = await tx.faltaAvisada.findFirst({
+      where: { id: faltaId, companyId, alunoId: aluno.id },
+      include: {
+        ocupacao: { select: { data: true, statusPagamento: true } },
+        reposicao: { select: { id: true } },
+      },
+    });
+    if (!falta) throw new NotFoundException();
 
-      const criada = await tx.reposicaoDeAula.create({
-        data: {
-          companyId,
-          alunoId: aluno.id,
-          faltaId: falta.id,
-          ocupacaoId,
-        },
-        select: { id: true },
+    // AC-009 — a pré-checagem existe para a MENSAGEM; a garantia é a
+    // INV-118. Mesma divisão de trabalho da `EXCLUDE` na INV-001.
+    if (falta.reposicao) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'FALTA_JA_REPOSTA',
+        message: 'Esta falta já foi reposta.',
       });
+    }
 
-      return {
-        id: criada.id,
+    const regra = await this.operacao.reposicaoDaEmpresa(companyId, tx);
+
+    // AC-008 — sem crédito: a falta que ele escolheu não vale.
+    if (falta.ocupacao.statusPagamento === 'cancelado') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SEM_CREDITO_DE_REPOSICAO',
+        message:
+          'O clube cancelou esta aula — você não a perdeu, e não há o que repor.',
+      });
+    }
+    // A aritmetica sai para `credito-de-reposicao.ts`; os dois `if` e as
+    // duas mensagens ficam, porque a consulta desta rota nao carrega
+    // `reposicao.ocupacao` e nao teria como decidir `reposta`.
+    const expiraEm = expiracaoDoCredito(
+      falta.ocupacao.data,
+      regra.validadeDias,
+    );
+    if (expiraEm < hoje) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SEM_CREDITO_DE_REPOSICAO',
+        message: `O prazo para repor esta falta era até ${formatDateOnly(expiraEm)}.`,
+      });
+    }
+
+    // AC-012 — o teto, contado pelo mês da FALTA (D6).
+    const usadas = await this.usadasNoMes(companyId, aluno.id, hoje, tx);
+    if (usadas >= regra.porMes) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'TETO_DE_REPOSICAO',
+        message: `Você já usou ${usadas} de ${regra.porMes} reposições deste mês.`,
+        usadas,
+        teto: regra.porMes,
+      });
+    }
+
+    // AC-014 — o prazo, o mesmo da falta e com o mesmo código (SPEC-031/D23).
+    const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
+    const veredicto = avaliarSaidaDeTurma({
+      papelDoAutor: 'aluno',
+      agora,
+      ocorrenciaRelevante: {
+        tipo: 'MINUTOS',
+        minutos: antecedenciaEmMinutos(alvo.data, alvo.horaInicio, agora),
+      },
+      prazo: prazos.aula,
+    });
+    if (!veredicto.permitido) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: veredicto.code,
+        message:
+          prazos.aula.regra === 'HORAS'
+            ? `Marcar reposição exige ${prazos.aula.horas}h de antecedência.`
+            : 'Esta aula já começou.',
+      });
+    }
+
+    // AC-010 — a vaga. Com `turmas` e a ocorrência travadas, esta leitura é
+    // a verdade até o COMMIT. SPEC-057/TASK-005/D17 — pela MESMA projeção
+    // que a agenda e as oportunidades mostram: a recusa não pode dizer
+    // "cheia" numa aula que a tela anunciou com vaga, nem o contrário.
+    const conjuntos = await carregarConjuntos(tx, companyId, [
+      { id: ocupacaoId, turmaId: alvo.origemTurmaId },
+    ]);
+    const daAula = conjuntos.get(ocupacaoId);
+    if (!daAula || calcularOcupacao(turma.capacidade, daAula).cheia) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'TURMA_SEM_VAGA',
+        message: 'Esta aula já está cheia. Escolha outro horário.',
+      });
+    }
+
+    const criada = await tx.reposicaoDeAula.create({
+      data: {
+        companyId,
+        alunoId: aluno.id,
         faltaId: falta.id,
         ocupacaoId,
-        data: formatDateOnly(alvo.data),
-        horaInicio: formatTimeOnly(alvo.horaInicio),
-        horaFim: formatTimeOnly(alvo.horaFim),
-      };
+      },
+      select: { id: true },
     });
+
+    return {
+      id: criada.id,
+      faltaId: falta.id,
+      ocupacaoId,
+      data: formatDateOnly(alvo.data),
+      horaInicio: formatTimeOnly(alvo.horaInicio),
+      horaFim: formatTimeOnly(alvo.horaFim),
+    };
   }
 
   /**
