@@ -312,6 +312,9 @@ model Aluno {
   avaliacoes          AvaliacaoDeAula[]
   presencas           Presenca[]
   matriculas          Matricula[]
+  /// SPEC-064 — as linhas da fila de espera do aluno (`fila_aluno_fkey`,
+  /// RESTRICT: apagar aluno com fila viva e erro, nao limpeza silenciosa).
+  filaDeEspera        ListaDeEspera[]
 
   /// DEF-024 fase 1 — alvo das FKs compostas de `presencas` e
   /// `avaliacoes_de_aula`. `id` ja e PK, entao este UNIQUE nunca falha por
@@ -560,6 +563,9 @@ model OcupacaoQuadra {
   // `chamadas`. Então aqui o tipo é lista e **o banco é que garante uma
   // chamada por ocorrência**, pela PK. Mesmo caminho de `presencas`.
   chamadas          Chamada[]
+  /// SPEC-064 — a fila de espera por VAGA DE REPOSICAO nesta aula. E a
+  /// outra metade da D1: direito diferente, gatilho diferente.
+  filaDeEspera      ListaDeEspera[]
 
   @@unique([id, origemTipo], map: "ocupacoes_quadra_id_origem_tipo_key")
   /// SPEC-032 — alvo da FK composta de `eventos_de_ocupacao`. Redundante como
@@ -608,6 +614,8 @@ model Turma {
   alunos    TurmaAluno[]
   ocupacoes OcupacaoQuadra[]
   encontros TurmaEncontro[]
+  /// SPEC-064 — a fila de espera por VAGA DE MATRICULA nesta turma.
+  filaDeEspera ListaDeEspera[]
 
   /// SPEC-025 / validacao cruzada — o alvo da FK composta de
   /// `ocupacoes_quadra`. Sem ele, o banco aceitava ocupacao de uma empresa
@@ -1461,8 +1469,16 @@ model FaltaAvisada {
   /// SPEC-046 — no maximo UMA (INV-118). O `?` do lado da reposicao e o que
   /// torna o credito derivado possivel: falta sem reposicao E o credito.
   reposicao ReposicaoDeAula?
+  /// SPEC-064/INV-064e — as linhas da fila que gastam ESTE credito.
+  filaDeEspera ListaDeEspera[]
 
   @@unique([ocupacaoId, alunoId], map: "faltas_unica")
+  /// SPEC-064/TASK-001 (achado v4-04) — alvo da FK composta de
+  /// `lista_de_espera`. `id` ja e PK, entao este UNIQUE nunca falha por
+  /// duplicata: ele existe so para o `REFERENCES` de tres colunas ter onde
+  /// se apoiar. **Com `aluno_id` DENTRO da chave**, porque sem ele a linha
+  /// da fila podia apontar para o credito de OUTRO aluno da mesma empresa.
+  @@unique([companyId, alunoId, id], map: "faltas_company_aluno_id_key")
   @@map("faltas_avisadas")
 }
 
@@ -1744,4 +1760,88 @@ enum EstadoDaNotificacao {
   expirada
 
   @@map("estado_da_notificacao")
+}
+
+/// SPEC-064 (card 5331) — **a lista de espera.**
+///
+/// Duas filas na mesma tabela, com direitos diferentes (D1): por VAGA DE
+/// MATRICULA numa turma (`turma_id`) ou por VAGA DE REPOSICAO numa aula
+/// (`ocupacao_id`). Nunca as duas, nunca nenhuma — `fila_um_alvo_chk`.
+///
+/// **Quatro coisas aqui sao do BANCO e nao deste arquivo**, e a migration
+/// `20260920200000_spec064_lista_de_espera` e a fonte de verdade das quatro:
+///
+///   1. os dois CHECK (`fila_um_alvo_chk`, `fila_credito_chk`);
+///   2. os quatro indices UNICOS PARCIAIS — um chamado por alvo (INV-064a) e
+///      uma inscricao ativa por aluno e alvo (INV-064b). O Prisma nao expressa
+///      `WHERE`, e sem o `WHERE` uma passagem pela fila proibiria a segunda
+///      para sempre;
+///   3. o `ON DELETE SET NULL (falta_id)` da FK do credito — ver abaixo;
+///   4. a ORDEM de encerrar a fila antes de apagar a falta (TASK-004), que
+///      nenhuma constraint consegue impor.
+model ListaDeEspera {
+  id          String                @id @db.Uuid
+  companyId   String                @map("company_id") @db.Uuid
+  alunoId     String                @map("aluno_id") @db.Uuid
+  /// Fila de TURMA. Exclusivo com `ocupacaoId` (`fila_um_alvo_chk`).
+  turmaId     String?               @map("turma_id") @db.Uuid
+  /// Fila de AULA. Exclusivo com `turmaId`.
+  ocupacaoId  String?               @map("ocupacao_id") @db.Uuid
+  /// O credito que da direito a fila de AULA. Vira `NULL` quando a falta e
+  /// apagada, e e por isso que `fila_credito_chk` so exige credito nos dois
+  /// estados ativos.
+  faltaId     String?               @map("falta_id") @db.Uuid
+  estado      EstadoDaFilaDeEspera  @default(aguardando)
+  criadaEm    DateTime              @default(now()) @map("criada_em") @db.Timestamptz(6)
+  chamadoEm   DateTime?             @map("chamado_em") @db.Timestamptz(6)
+  /// D4 — nunca passa de 2h antes da aula (AC-004). Prazo impossivel encerra
+  /// sem chamar, em vez de chamar para uma vez que ja nasceu vencida.
+  chamadoAte  DateTime?             @map("chamado_ate") @db.Timestamptz(6)
+  concluidaEm DateTime?             @map("concluida_em") @db.Timestamptz(6)
+  motivoFim   String?               @map("motivo_fim")
+
+  aluno    Aluno           @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "fila_aluno_fkey")
+  turma    Turma?          @relation(fields: [companyId, turmaId], references: [companyId, id], onDelete: Restrict, map: "fila_turma_fkey")
+  ocupacao OcupacaoQuadra? @relation(fields: [companyId, ocupacaoId], references: [companyId, id], onDelete: Restrict, map: "fila_ocupacao_fkey")
+
+  /// INV-064g — **o banco faz `ON DELETE SET NULL (falta_id)`, com a coluna
+  /// NOMEADA, e o Prisma NAO SABE ESCREVER ISSO.**
+  ///
+  /// `onDelete: SetNull` no Prisma exige que TODOS os campos da relacao sejam
+  /// opcionais — e `companyId`/`alunoId` sao `NOT NULL`. Pior: o `SET NULL` sem
+  /// lista de colunas, que e o unico que o Prisma gera, anula as tres e o
+  /// `DELETE` da falta morre com `23502`. Foi exatamente esse o primeiro
+  /// bloqueio da validacao independente desta spec.
+  ///
+  /// Por isso aqui vai `NoAction` — que e o que o Prisma consegue dizer — e a
+  /// acao real esta na migration. **Nao rode `prisma migrate dev` sobre este
+  /// modelo esperando reproduzir o banco:** ele geraria `NO ACTION` e desfaria
+  /// a metade da INV-064g que custou duas rodadas.
+  falta FaltaAvisada? @relation(fields: [companyId, alunoId, faltaId], references: [companyId, alunoId, id], onDelete: NoAction, onUpdate: NoAction, map: "fila_falta_fkey")
+
+  @@map("lista_de_espera")
+}
+
+/// SPEC-064/D2 — os seis estados da fila.
+///
+/// **Nao-terminais: `aguardando` e `chamado`.** Sao exatamente os dois que os
+/// quatro indices parciais e o `fila_credito_chk` citam — quem acrescentar um
+/// estado nao-terminal tem de mexer nos tres lugares, e o banco nao avisa.
+///
+/// Ordem NOVA entra no FIM (mesma regra de `EstadoDaNotificacao` e `TipoDeAcao`).
+enum EstadoDaFilaDeEspera {
+  /// Na fila.
+  aguardando
+  /// E a vez dele, ate `chamado_ate`.
+  chamado
+  /// Entrou na turma / marcou a reposicao.
+  atendida
+  /// O prazo venceu.
+  expirada
+  /// O alvo morreu, ou o aluno perdeu o direito (os sete caminhos da D6).
+  encerrada
+  /// Saiu por conta propria.
+  desistiu
+
+  @@map("estado_da_fila_de_espera")
 }
