@@ -322,9 +322,12 @@ describe('SPEC-064/TASK-002 — a fila de AULA, e o crédito (LIM-064e)', () => 
    * **O caso que justifica a regra estrita**, provado contra o banco.
    *
    * A reposição foi marcada numa aula que o clube depois cancelou. Pela
-   * SPEC-046/D7 o crédito "volta sozinho" — e volta **na tela**. Mas a linha de
-   * `reposicoes_de_aula` continua lá, e o `marcar` recusa com
-   * `FALTA_JA_REPOSTA`.
+   * SPEC-046/D7 o crédito "volta sozinho" — e voltava **só na tela**. Era o
+   * **DEF-036**, hoje corrigido: cancelar a aula apaga as reposições dela.
+   *
+   * **Este caso fica, e o estado é montado à mão de propósito.** O DEF-036
+   * impede o sistema de PRODUZIR o estado; não impede que ele exista por dado
+   * antigo ou escrita direta. A fila continua tendo de recusar.
    *
    * Se a fila usasse o número da tela, esta pessoa entraria, seria chamada e
    * levaria `409` ao confirmar. **Convite que não se pode cumprir é pior que

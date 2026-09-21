@@ -208,6 +208,19 @@ function buildTxContado(
       ]),
     ),
     $executeRaw: jest.fn(() => ida('$executeRaw(avisos)', 'Notificacao', 1)),
+    /**
+     * **DEF-036 — e ela CONTA no orçamento.** Cancelar as ocorrências apaga as
+     * reposições delas, para o crédito voltar de verdade e não só na tela.
+     *
+     * Um `deleteMany` sobre a lista inteira de ocorrências canceladas: uma ida
+     * fixa, que não cresce nem com os encontros nem com quantas reposições
+     * havia. É essa forma que o DEF-013 cobra — não o número.
+     */
+    reposicaoDeAula: {
+      deleteMany: jest.fn(() =>
+        ida('reposicaoDeAula.deleteMany', 'ReposicaoDeAula', { count: 0 }),
+      ),
+    },
     turma: {
       create: jest.fn(() => ida('turma.create', 'Turma', turma)),
       update: jest.fn(() => ida('turma.update', 'Turma', turma)),
@@ -519,7 +532,12 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       // Um laco por pessoa na fila faria o custo de editar o horario de uma
       // turma depender de quantos estavam esperando por ela, e e exatamente
       // isso que o DEF-013 existe para impedir.
-      expect(idas.length).toBeLessThanOrEqual(11 + diasDistintos);
+      //
+      // **DEF-036: +1, e o teto vai a 12.** Cancelar as ocorrencias passou a
+      // apagar as reposicoes delas -- um `deleteMany` sobre a lista inteira,
+      // fixo como os outros tres. A conta e a mesma: o custo nao pode depender
+      // de quantas reposicoes havia, so de quantas COISAS sao feitas.
+      expect(idas.length).toBeLessThanOrEqual(12 + diasDistintos);
     });
   });
 

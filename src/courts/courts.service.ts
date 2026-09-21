@@ -1592,6 +1592,27 @@ export class CourtsService {
       transicaoId,
     );
 
+    // ====================================================================
+    // DEF-036 — **cancelar a aula devolve o credito DE VERDADE.**
+    //
+    // A SPEC-046/D7 promete que *"reposicao em aula cancelada nao conta, e o
+    // credito volta sozinho"*. Ele voltava **so na tela**: `meuCredito` nao
+    // somava a reposicao cujo destino o clube cancelou, mas a linha de
+    // `reposicoes_de_aula` continuava la -- e a INV-118 e `UNIQUE (falta_id)`.
+    // Ao tentar gastar, `marcar` via a reposicao e recusava com
+    // `FALTA_JA_REPOSTA`.
+    //
+    // **O sistema mostrava um credito e recusava gasta-lo.** Medido ponta a
+    // ponta em `def-036-credito-fantasma.db-spec.ts`, que nasceu vermelho.
+    //
+    // Apagar nao destroi historia: **a aula nao aconteceu**, e `desmarcar` ja
+    // apagava a mesma linha por gesto do aluno. A alternativa -- o saldo parar
+    // de devolver o credito -- seria punir a pessoa pelo gesto do CLUBE.
+    // ====================================================================
+    await tx.reposicaoDeAula.deleteMany({
+      where: { companyId, ocupacaoId: { in: canceladas.map((l) => l.id) } },
+    });
+
     // SPEC-064/D6 — quem esperava por estas aulas perde o alvo. **Na mesma
     // transação**: uma transação própria deixaria a janela em que a aula já
     // está cancelada e o varredor ainda chama gente para ela.
@@ -1642,6 +1663,12 @@ export class CourtsService {
       data: { statusPagamento: 'cancelado', transicaoId },
     });
     await registrador.registrar(ocupacaoId, 'cancelada', transicaoId);
+
+    // DEF-036 — mesma razão do cancelamento em massa acima: o crédito volta
+    // de verdade, não só na tela.
+    await tx.reposicaoDeAula.deleteMany({
+      where: { companyId, ocupacaoId },
+    });
 
     // SPEC-064/D6 + AC-008 — mesma razão do cancelamento em massa acima.
     const fila = await encerrarFila(
