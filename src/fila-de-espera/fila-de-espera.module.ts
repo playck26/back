@@ -3,6 +3,8 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
 import { FilaDeEsperaService } from './fila-de-espera.service';
 import { MeFilaDeEsperaController } from './me-fila-de-espera.controller';
+import { VarredorDaFilaService } from './varredor-da-fila.service';
+import { AgendadorDaFila } from './agendador-da-fila.service';
 
 /**
  * SPEC-064 — a lista de espera (card 5331).
@@ -26,7 +28,7 @@ import { MeFilaDeEsperaController } from './me-fila-de-espera.controller';
 @Module({
   imports: [PrismaModule, CompanySettingsModule],
   controllers: [MeFilaDeEsperaController],
-  providers: [FilaDeEsperaService],
-  exports: [FilaDeEsperaService],
+  providers: [FilaDeEsperaService, VarredorDaFilaService, AgendadorDaFila],
+  exports: [FilaDeEsperaService, VarredorDaFilaService],
 })
 export class FilaDeEsperaModule {}

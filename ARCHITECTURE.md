@@ -1445,7 +1445,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-009 | TermosEAceites | `termos_da_plataforma`, `contratos_da_empresa`, `aceites` | SPEC-024. O portão do aceite roda no `JwtAuthGuard`, em toda requisição autenticada — e é por isso que a versão vigente é constante, não consulta |
 | MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
 | **MOD-012** | **Avisos** | `assinaturas_push`, `notificacoes` | **SPEC-062 + SPEC-063 + SPEC-065.** INV-062a a INV-062h, INV-063a a INV-063c. **Dois lados que não se conhecem:** o `TickDeEnvioService` **tira** da caixa de saída (seis transições cercadas, conexão própria, fora de transação de domínio); o `EnfileiradorDeAvisos` **põe** nela, e sempre **dentro da transação do gesto** — aviso sobre gesto que voltou atrás é pior que aviso nenhum. O emissor nunca abre `origem_id`: quem enfileira já responde o prazo |
-| **MOD-013** | **FilaDeEspera** | `lista_de_espera` | **SPEC-064.** INV-064a a INV-064h. **Nao chama ninguem:** este modulo so grava que a pessoa quer a vaga — quem chama e o varredor (TASK-003), e o motivo e ordem de locks (chamar dentro da transacao do gesto inverteria `turmas` e `ocupacoes_quadra` no caminho da falta avisada). **Nenhum `FOR UPDATE` ao entrar**, e isso e decisao: a unicidade e do indice parcial, e o credito e elegibilidade, nao capacidade — capacidade e conta do varredor, que trava `turmas` antes de contar |
+| **MOD-013** | **FilaDeEspera** | `lista_de_espera`, `notificacoes` (so o aviso do chamado) | **SPEC-064.** INV-064a a INV-064h. **Dois lados que nao se confundem:** o `FilaDeEsperaService` so grava que a pessoa quer a vaga — **nenhum `FOR UPDATE` ao entrar**, porque a unicidade e do indice parcial e o credito e elegibilidade, nao capacidade; o `VarredorDaFilaService` e quem **chama**, e ele toma a ordem canonica inteira (`1 → 3 → 4`), sem o nivel 2, porque nao escreve no aluno. **Chamar dentro da transacao do gesto inverteria `turmas` e `ocupacoes_quadra`** no caminho da falta avisada — foi o segundo bloqueio da validacao. O quinto agendador (`FILA_DE_ESPERA_INTERVALO_MS`) e o unico que, desligado, deixa PESSOAS esperando |
 | **MOD-011** | **Carteira** | `movimentos_de_credito`, e `alunos.saldo_creditos` **só pela trigger** | **SPEC-033.** INV-070, INV-071, INV-085, INV-095 a INV-098. **Três serviços, e a separação é a decisão:** `CreditosService` é o mecanismo do ledger e recebe o `tx` de quem escreve (reserva, cancelamento); `CreditosAdminService` é o caso de uso do gestor, abre a própria transação e é o único que conhece `bcrypt`; `CreditosDoAlunoService` responde `/me/creditos` **sem `motivo`** (AC-013), e a omissão está no `select`. Juntar os três faria a criação de reserva depender de `bcrypt` |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
@@ -1625,8 +1625,50 @@ ficam lado a lado e nomeadas (`contaComoSaldo` e `utilizavel`), e **a fila usa a
 estrita**: convidar alguém com um crédito que o `marcar` vai recusar é pior que
 não convidar.
 
-**O varredor ainda não existe.** Nada muda de `aguardando` para `chamado`; isso
-é TASK-003.
+### O varredor é o QUINTO agendador, e a constraint é o lock dele
+
+A **TASK-003** deu à fila quem a movimenta. `VarredorDaFilaService` faz três
+coisas por ciclo, nesta ordem, e a ordem importa:
+
+1. **expira** chamados vencidos (`chamado_ate < now()`);
+2. **encerra** linhas de alvo morto — a rede que pega o que escapar dos sete
+   caminhos de domínio da TASK-004;
+3. **chama** o primeiro de cada alvo com vaga, **um alvo por transação**.
+
+Expirar **antes** de chamar libera o alvo no mesmo ciclo: sem isso o próximo da
+fila esperaria mais um minuto por nada.
+
+**A ordem canônica de quatro níveis, inteira, dentro de cada transação:**
+`turmas` (1) → `ocupacoes_quadra` (3, só fila de aula) → `lista_de_espera`
+(4, sempre por último). **O nível 2 (`alunos`) fica de fora com razão nomeada:**
+o varredor só marca `chamado` e enfileira o aviso; quem escreve no aluno é a
+confirmação, e por isso só ela tomará `alunos FOR KEY SHARE`.
+
+**Não há advisory lock entre réplicas, e é deliberado (D8).** Chamar duas vezes
+é impossível por construção — o `UNIQUE (turma_id) WHERE estado='chamado'`
+recusa o segundo com `23505` e a réplica perdedora desiste daquele alvo. A
+constraint já é o lock. É o oposto da purga da SPEC-065, que **apaga**: apagar
+duas vezes é trabalho perdido em transação longa.
+
+**Duas contas de capacidade, e elas não se misturam:** fila de turma usa
+`|matriculados| >= capacidade` (a de `allocateStudent`); fila de aula usa
+`calcularOcupacao`, por conjuntos. **Não é a fórmula da SPEC-046**, que a
+SPEC-057/D17 abandonou por dar vaga fantasma — a v1 desta spec a citava, e um
+varredor com ela chamaria gente para vaga inexistente.
+
+**O aviso é gravado na MESMA transação que o `chamado`**, com
+`tipo = 'lista_espera'` e `titulo = 'Sua vez'`. Ele aparece na caixa da
+SPEC-065 **sem uma linha de código novo**, porque aquela caixa recorta por
+exclusão (`tipo <> 'teste'`) — decisão tomada lá pensando nesta spec.
+
+**`AgendadorDaFila` é o quinto agendador**, no mesmo molde dos quatro:
+`FILA_DE_ESPERA_INTERVALO_MS`, 60 s, não sobe em teste, um ciclo por vez, roda
+ao subir. **É o único dos cinco que, desligado, deixa PESSOAS esperando** — os
+outros atrasam trabalho de máquina —, e por isso o desligamento sai em `warn`
+com a consequência escrita.
+
+**A confirmação ainda não existe.** Quem foi chamado não tem como aceitar; isso
+é o resto da TASK-003, e exige compor a transação com a lógica de reposição.
 
 ### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
 
