@@ -10,6 +10,7 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
 import { calcularOcupacao, carregarConjuntos } from './ocupacao-da-ocorrencia';
+import { expiracaoDoCredito, situacaoDoCredito } from './credito-de-reposicao';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import type {
@@ -122,19 +123,20 @@ export class ReposicaoService {
 
     let creditos = 0;
     const linhas = faltas.map((f) => {
-      const expiraEm = new Date(f.ocupacao.data);
-      expiraEm.setUTCDate(expiraEm.getUTCDate() + regra.validadeDias);
-      const expirada = expiraEm < hoje;
-      // AC-003 — aula que o clube cancelou não gera crédito: ele não perdeu
+      // **SPEC-064 — a regra saiu daqui, e nao mudou de opiniao.**
+      // `contaComoSaldo` e exatamente o `!expirada && !aulaCancelada &&
+      // !reposta` que estava escrito neste lugar. Ela mora agora em
+      // `credito-de-reposicao.ts` porque a fila de espera precisa da MESMA
+      // conta (LIM-064e), e tres copias de uma regra derivada divergem.
+      //
+      // AC-003 — aula que o clube cancelou nao gera credito: ele nao perdeu
       // nada. E a falta continua listada (SPEC-031/D14) — sumir com ela faria
       // o aluno achar que nunca avisou.
-      const aulaCancelada = f.ocupacao.statusPagamento === 'cancelado';
-      // D7 — reposição em aula cancelada não conta, e o crédito volta sozinho.
-      const reposta =
-        f.reposicao !== null &&
-        f.reposicao.ocupacao.statusPagamento !== 'cancelado';
+      // D7 — reposicao em aula cancelada nao conta, e o credito volta sozinho.
+      const situacao = situacaoDoCredito(f, regra.validadeDias, hoje);
+      const { expiraEm, expirada, aulaCancelada, reposta } = situacao;
 
-      if (!expirada && !aulaCancelada && !reposta) creditos += 1;
+      if (situacao.contaComoSaldo) creditos += 1;
 
       return {
         faltaId: f.id,
@@ -432,8 +434,13 @@ export class ReposicaoService {
             'O clube cancelou esta aula — você não a perdeu, e não há o que repor.',
         });
       }
-      const expiraEm = new Date(falta.ocupacao.data);
-      expiraEm.setUTCDate(expiraEm.getUTCDate() + regra.validadeDias);
+      // A aritmetica sai para `credito-de-reposicao.ts`; os dois `if` e as
+      // duas mensagens ficam, porque a consulta desta rota nao carrega
+      // `reposicao.ocupacao` e nao teria como decidir `reposta`.
+      const expiraEm = expiracaoDoCredito(
+        falta.ocupacao.data,
+        regra.validadeDias,
+      );
       if (expiraEm < hoje) {
         throw new ConflictException({
           statusCode: 409,

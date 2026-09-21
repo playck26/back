@@ -1445,6 +1445,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-009 | TermosEAceites | `termos_da_plataforma`, `contratos_da_empresa`, `aceites` | SPEC-024. O portão do aceite roda no `JwtAuthGuard`, em toda requisição autenticada — e é por isso que a versão vigente é constante, não consulta |
 | MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
 | **MOD-012** | **Avisos** | `assinaturas_push`, `notificacoes` | **SPEC-062 + SPEC-063 + SPEC-065.** INV-062a a INV-062h, INV-063a a INV-063c. **Dois lados que não se conhecem:** o `TickDeEnvioService` **tira** da caixa de saída (seis transições cercadas, conexão própria, fora de transação de domínio); o `EnfileiradorDeAvisos` **põe** nela, e sempre **dentro da transação do gesto** — aviso sobre gesto que voltou atrás é pior que aviso nenhum. O emissor nunca abre `origem_id`: quem enfileira já responde o prazo |
+| **MOD-013** | **FilaDeEspera** | `lista_de_espera` | **SPEC-064.** INV-064a a INV-064h. **Nao chama ninguem:** este modulo so grava que a pessoa quer a vaga — quem chama e o varredor (TASK-003), e o motivo e ordem de locks (chamar dentro da transacao do gesto inverteria `turmas` e `ocupacoes_quadra` no caminho da falta avisada). **Nenhum `FOR UPDATE` ao entrar**, e isso e decisao: a unicidade e do indice parcial, e o credito e elegibilidade, nao capacidade — capacidade e conta do varredor, que trava `turmas` antes de contar |
 | **MOD-011** | **Carteira** | `movimentos_de_credito`, e `alunos.saldo_creditos` **só pela trigger** | **SPEC-033.** INV-070, INV-071, INV-085, INV-095 a INV-098. **Três serviços, e a separação é a decisão:** `CreditosService` é o mecanismo do ledger e recebe o `tx` de quem escreve (reserva, cancelamento); `CreditosAdminService` é o caso de uso do gestor, abre a própria transação e é o único que conhece `bcrypt`; `CreditosDoAlunoService` responde `/me/creditos` **sem `motivo`** (AC-013), e a omissão está no `select`. Juntar os três faria a criação de reserva depender de `bcrypt` |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
@@ -1591,9 +1592,41 @@ que a ação referencial nomeie **exatamente** `falta_id` — mesma família do 
 que confere o color type do PNG do badge na SPEC-063: **o artefato entregue, não
 a intenção do autor.**
 
-**Ainda não há módulo para ela.** A tabela existe e nenhuma rota a lê ou
-escreve; o serviço, o varredor e a entrada no catálogo modular vêm com as
-TASK-002 e TASK-003.
+### Entrar e sair da fila, e a regra de crédito que estava escrita duas vezes
+
+A **TASK-002** deu três rotas à tabela — `POST /me/fila-de-espera/turmas`,
+`POST /me/fila-de-espera/aulas` e `DELETE /me/fila-de-espera/{id}` — e um módulo
+próprio (`MOD-013`), não um anexo de `ClassesModule`: a fila atravessa turma e
+ocorrência, e pendurá-la no arquivo mais movimentado do repositório faria o
+quinto agendador nascer lá dentro.
+
+**Dois `POST` e não um com `tipo`**, porque as duas filas têm direitos
+diferentes (D1): a de turma é para qualquer aluno ativo; a de aula é **só para
+quem tem crédito** (LIM-064e). Um corpo com `{ tipo, alvoId }` reescreveria em
+TypeScript o `num_nonnulls = 1` que o banco já garante.
+
+**Não há pré-checagem de duplicata.** A AC-001 é `23505 → 409 JA_NA_FILA`: entre
+um `SELECT` de checagem e o `INSERT` cabe outra requisição, entre o `INSERT` e a
+constraint não cabe nada. Mesma divisão de trabalho da INV-001 e da INV-118.
+
+**E a TASK-002 tornou visível uma divergência de SPEC-046 que estava
+escondida.** A conta do crédito derivado estava escrita duas vezes dentro de
+`reposicao.service.ts` — uma em `meuCredito`, outra em `marcar` — e elas **não
+diziam a mesma coisa**:
+
+| | `meuCredito` (o saldo na tela) | `marcar` (a reposição de fato) |
+|---|---|---|
+| já reposta, em aula que o clube **cancelou** | **conta de novo** (SPEC-046/D7) | **recusa `FALTA_JA_REPOSTA`** |
+
+Ou seja: **o saldo mostra um crédito que não pode ser gasto.** Corrigir isso é
+decisão da SPEC-046 — mexer nele mudaria o saldo de quem já usa o sistema. A
+regra foi extraída para `classes/credito-de-reposicao.ts`, onde as duas versões
+ficam lado a lado e nomeadas (`contaComoSaldo` e `utilizavel`), e **a fila usa a
+estrita**: convidar alguém com um crédito que o `marcar` vai recusar é pior que
+não convidar.
+
+**O varredor ainda não existe.** Nada muda de `aguardando` para `chamado`; isso
+é TASK-003.
 
 ### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
 

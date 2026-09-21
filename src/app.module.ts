@@ -21,6 +21,7 @@ import { ThrottlerPorUsuario } from './storage/limite-de-upload';
 import { StorageModule } from './storage/storage.module';
 import { PresencaAutomaticaModule } from './presenca-automatica/presenca-automatica.module';
 import { PushModule } from './push/push.module';
+import { FilaDeEsperaModule } from './fila-de-espera/fila-de-espera.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { PushModule } from './push/push.module';
     PresencaAutomaticaModule,
     // SPEC-062 — infraestrutura de push. Nasce DESLIGADA sem o par VAPID.
     PushModule,
+    FilaDeEsperaModule,
   ],
   controllers: [AppController],
   providers: [
