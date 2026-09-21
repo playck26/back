@@ -7,7 +7,10 @@ import {
   carregarConjuntos,
 } from '../classes/ocupacao-da-ocorrencia';
 import { montarAvisoDoChamado, TIPO_LISTA_ESPERA } from './aviso-do-chamado';
-import { instanteNoFusoDoClube } from '../courts/date-time.util';
+import {
+  hojeNoFusoDoClube,
+  instanteNoFusoDoClube,
+} from '../courts/date-time.util';
 
 /**
  * SPEC-064/D3 + D4 — **o varredor: quem chama é ele, nunca o gesto.**
@@ -113,7 +116,11 @@ export class VarredorDaFilaService {
     // deixa de ocupar o `UNIQUE`, e o próximo da fila pode ser chamado agora em
     // vez de daqui a um minuto.
     r.expirados = await this.expirarVencidos();
-    r.encerradosPorAlvoMorto = await this.encerrarAlvoMorto();
+    // **A data de "hoje" vem do FUSO DO CLUBE, derivada do relogio injetado** —
+    // ver `encerrarAlvoMorto`.
+    r.encerradosPorAlvoMorto = await this.encerrarAlvoMorto(
+      hojeNoFusoDoClube(new Date(inicio)),
+    );
 
     const alvos = await this.alvosComFila();
     r.alvos = alvos.length;
@@ -170,8 +177,25 @@ export class VarredorDaFilaService {
    *
    * **Não substitui a TASK-004**, e a diferença importa: lá o encerramento é
    * imediato e avisa quando precisa; aqui é até um ciclo depois e silencioso.
+   *
+   * ## `hoje` vem de fora, e a primeira versão usava `CURRENT_DATE`
+   *
+   * **A CI da própria PR pegou.** `CURRENT_DATE` é a data do **servidor de
+   * banco**, que roda em UTC; o clube vive em `America/Sao_Paulo`. Entre 21h e
+   * meia-noite locais (00h–03h UTC) o banco já virou o dia, e **toda aula de
+   * hoje à noite seria encerrada como "já passou"** — fila viva morta por
+   * acidente de fuso, às vésperas da aula.
+   *
+   * Não foi teoria: a CI rodou às 02:55 UTC — 23:55 em São Paulo — e o caso do
+   * prazo ficou vermelho porque a linha havia sido encerrada antes de o
+   * varredor chegar a chamar.
+   *
+   * `CURRENT_DATE` aparecia **só neste arquivo**; o resto do projeto usa
+   * `hojeNoFusoDoClube()` desde sempre. Recebê-la por parâmetro é o que torna
+   * o caso provável com relógio fixo, em vez de só entre 21h e meia-noite.
    */
-  private async encerrarAlvoMorto(): Promise<number> {
+  private async encerrarAlvoMorto(hoje: Date): Promise<number> {
+    const hojeIso = hoje.toISOString().slice(0, 10);
     return this.prisma.$executeRaw`
       UPDATE lista_de_espera f
          SET estado = 'encerrada', concluida_em = now(), motivo_fim = 'alvo indisponivel'
@@ -185,7 +209,7 @@ export class VarredorDaFilaService {
            OR EXISTS (
              SELECT 1 FROM ocupacoes_quadra o
               WHERE o.id = f.ocupacao_id AND o.company_id = f.company_id
-                AND (o.status_pagamento = 'cancelado' OR o.data < CURRENT_DATE)
+                AND (o.status_pagamento = 'cancelado' OR o.data < ${hojeIso}::date)
            )
          )`;
   }
