@@ -32,6 +32,7 @@ import {
   MOTIVO,
 } from '../fila-de-espera/encerramento-da-fila';
 import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
+import { PAGINA_PADRAO } from './dto/proximas-aulas-query.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
 import type { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import type { UpdateClassDto } from './dto/update-class.dto';
@@ -73,6 +74,69 @@ const ORDEM_DOS_ENCONTROS = {
   // recusa. O `as const` fica só nos literais.
   orderBy: [{ diaSemana: 'asc' as const }, { horaInicio: 'asc' as const }],
 };
+
+/**
+ * SPEC-066/TASK-001 — **o `select` da aula do aluno, num lugar so.**
+ *
+ * Duas rotas devolvem `AulaDoAlunoResponseDto`: a janela
+ * (`myUpcomingClasses`) e a pagina (`listProximasAulasPaginadas`). Antes desta
+ * task havia uma so, e o `select` morava dentro dela.
+ *
+ * **Copiar seria escrever a mesma regra duas vezes, e este projeto ja pagou
+ * por isso.** O DEF-036 nasceu exatamente assim: a regra de credito vivia em
+ * dois lugares, um mudou e o outro nao, e o saldo passou a mostrar um credito
+ * que o `marcar` recusava gastar.
+ *
+ * A lista de campos e **exatamente** a que `paraAulaDoAluno` consome.
+ * Acrescentar campo aqui sem usar la e reabrir o buraco que o comentario da
+ * SPEC-044 descreve: 55 ocorrencias carregando as mesmas 4 turmas inteiras.
+ */
+function selectDaAulaDoAluno(alunoId: string) {
+  return {
+    id: true,
+    origemTurmaId: true,
+    quadraId: true,
+    data: true,
+    horaInicio: true,
+    horaFim: true,
+    origemTurma: { select: { nome: true } },
+    quadra: { select: { nome: true } },
+    // SPEC-030 — o aluno precisa saber que a aula nao aconteceu.
+    chamadas: { select: { completude: true } },
+    // SPEC-031/REQ-006 — o aviso DESTE aluno, e so dele. Sem o `where`
+    // viriam os avisos da turma inteira para o `map` usar um booleano.
+    faltas: { where: { alunoId }, select: { id: true } },
+  } as const;
+}
+
+/** O `map` que acompanha o `select` acima. Ver a nota dele. */
+function paraAulaDoAluno(ocupacao: {
+  id: string;
+  origemTurmaId: string | null;
+  quadraId: string;
+  data: Date;
+  horaInicio: Date;
+  horaFim: Date;
+  origemTurma: { nome: string } | null;
+  quadra: { nome: string };
+  chamadas: { completude: string | null }[];
+  faltas: { id: string }[];
+}): AulaDoAlunoResponseDto {
+  return {
+    ocupacaoId: ocupacao.id,
+    turmaId: ocupacao.origemTurmaId,
+    turmaNome: ocupacao.origemTurma?.nome ?? null,
+    quadraId: ocupacao.quadraId,
+    quadraNome: ocupacao.quadra.nome,
+    // Um booleano, e nao o `estado` inteiro: o aluno nao precisa distinguir
+    // `completa` de `legada` — isso e registro do professor.
+    naoRealizada: ocupacao.chamadas[0]?.completude === 'nao_houve',
+    faltaAvisada: ocupacao.faltas.length > 0,
+    data: formatDateOnly(ocupacao.data),
+    horaInicio: formatTimeOnly(ocupacao.horaInicio),
+    horaFim: formatTimeOnly(ocupacao.horaFim),
+  };
+}
 
 @Injectable()
 export class ClassesService {
@@ -783,54 +847,109 @@ export class ClassesService {
           ? { gte: parseDateOnly(janela.de), lte: parseDateOnly(janela.ate) }
           : { gte: hojeUTC },
       },
-      // SPEC-044 — `select`, e não `include`. Com `include: { origemTurma:
-      // true, quadra: true }` cada ocorrência trazia a turma e a quadra
-      // INTEIRAS, e o `map` abaixo usa **um** campo de cada. Medido em
-      // produção em 2026-09-03: 55 ocorrências carregavam as mesmas 4 turmas
-      // 55 vezes, com todas as colunas, do banco até a serialização.
-      //
-      // A lista de campos é exatamente a que o `map` consome — acrescentar
-      // campo aqui sem usar embaixo é reabrir o mesmo buraco em miniatura.
-      select: {
-        id: true,
-        origemTurmaId: true,
-        quadraId: true,
-        data: true,
-        horaInicio: true,
-        horaFim: true,
-        origemTurma: { select: { nome: true } },
-        quadra: { select: { nome: true } },
-        // SPEC-030 / achado 2 — o aluno precisa saber que a aula não
-        // aconteceu. Sem isto ela aparecia como aula normal em "Próximas" e
-        // sumia das "Anteriores" no dia seguinte (o filtro da avaliação),
-        // sem nunca dizer o que houve.
-        chamadas: { select: { completude: true } },
-        // SPEC-031/REQ-006 — o aviso DESTE aluno, e só dele.
-        //
-        // `where` na relação, e `select: { id: true }`: sem o filtro viriam
-        // os avisos da turma inteira para o `map` usar um booleano — que é
-        // exatamente o buraco que o comentário do `select` acima descreve, em
-        // miniatura. Com ele, no máximo uma linha por ocorrência.
-        faltas: { where: { alunoId: aluno.id }, select: { id: true } },
-      },
+      // SPEC-066/TASK-001 — o `select` mora em `selectDaAulaDoAluno`, que
+      // esta rota e a paginada compartilham. A nota de por que ele e `select`
+      // e nao `include` esta la, junto do codigo que ela descreve.
+      select: selectDaAulaDoAluno(aluno.id),
+      // Sem o `id` aqui: esta rota NAO pagina, entao nao ha `OFFSET` para
+      // desempatar. A paginada o tem, e a nota do desempate esta nela.
       orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
     });
 
-    return ocupacoes.map((ocupacao) => ({
-      ocupacaoId: ocupacao.id,
-      turmaId: ocupacao.origemTurmaId,
-      turmaNome: ocupacao.origemTurma?.nome ?? null,
-      quadraId: ocupacao.quadraId,
-      quadraNome: ocupacao.quadra.nome,
-      // Um booleano, e não o `estado` inteiro: o aluno não precisa
-      // distinguir `completa` de `legada` — isso é registro do professor. O
-      // que muda a vida dele é só "a aula não aconteceu".
-      naoRealizada: ocupacao.chamadas[0]?.completude === 'nao_houve',
-      faltaAvisada: ocupacao.faltas.length > 0,
-      data: formatDateOnly(ocupacao.data),
-      horaInicio: formatTimeOnly(ocupacao.horaInicio),
-      horaFim: formatTimeOnly(ocupacao.horaFim),
-    }));
+    return ocupacoes.map(paraAulaDoAluno);
+  }
+
+  /**
+   * SPEC-066/TASK-001 — **a PAGINA da lista de proximas aulas.**
+   *
+   * ## Por que e uma rota nova, e nao um parametro na de cima
+   *
+   * Sao duas perguntas com garantias diferentes. `myUpcomingClasses` responde
+   * *"me de a janela inteira"* e **nao pode truncar** — a home desenha um mes
+   * e precisa de todas as aulas dele (INV-066e). Esta responde *"me de a
+   * pagina N"* e **nunca devolve mais que uma pagina** (INV-066a).
+   *
+   * A v1 desta spec tentou as duas pela mesma rota. A validacao independente
+   * mediu **270 aulas em 90 dias com tres turmas** e derrubou o teto que a
+   * rota unica exigia: enquanto as duas perguntas dividiam uma rota, qualquer
+   * numero seria chute.
+   *
+   * ## O `id` no `orderBy` nao e enfeite (INV-066b)
+   *
+   * Duas aulas do mesmo aluno podem cair na **mesma data e hora** (turmas
+   * diferentes, quadras diferentes). Sem desempate estavel, `OFFSET` sobre
+   * uma ordem parcial repete e pula linhas — a 1a rodada da validacao mediu
+   * isto, e as paginas 1 e 2 devolveram **as mesmas dez**:
+   *
+   *     sem_id pagina1=12,13,14,15,16,17,18,19,20,11
+   *     sem_id pagina2=20,19,18,17,16,15,14,13,12,11
+   *     vistos=10   esperados_nas_2_paginas=20
+   *
+   * ## `$transaction` para a contagem e a pagina concordarem
+   *
+   * `total` e a pagina saem da **mesma** leitura. Em duas chamadas soltas,
+   * uma aula marcada no meio faria o paginador anunciar um numero que a
+   * pagina ja nao reflete.
+   */
+  async listProximasAulasPaginadas(
+    companyId: string,
+    usuarioId: string,
+    page = 1,
+    pageSize = PAGINA_PADRAO,
+  ): Promise<{
+    data: AulaDoAlunoResponseDto[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }> {
+    const aluno = await this.prisma.aluno.findFirst({
+      where: { usuarioId, companyId },
+    });
+    if (!aluno) {
+      throw new ForbiddenException();
+    }
+
+    const alocacoes = await this.prisma.turmaAluno.findMany({
+      where: { alunoId: aluno.id },
+      select: { turmaId: true },
+    });
+    const turmaIds = alocacoes.map((alocacao) => alocacao.turmaId);
+
+    // Mesmo `hojeNoFusoDoClube` do metodo de cima, e pelo mesmo motivo: com
+    // `CURRENT_DATE` ou UTC, das 21h a meia-noite a aula de hoje as 22h
+    // desaparece uma hora antes de comecar. E o DEF-020.
+    // Tipado, e nao inferido: sem a anotacao o literal `'cancelado'` alarga
+    // para `string` e o Prisma recusa o enum. Tipar aqui tambem garante que o
+    // MESMO `where` vai para a pagina e para a contagem.
+    const where: Prisma.OcupacaoQuadraWhereInput = {
+      companyId,
+      origemTipo: 'TURMA',
+      origemTurmaId: { in: turmaIds },
+      statusPagamento: { not: 'cancelado' },
+      data: { gte: hojeNoFusoDoClube() },
+    };
+
+    const [ocupacoes, total] = await this.prisma.$transaction([
+      this.prisma.ocupacaoQuadra.findMany({
+        where,
+        select: selectDaAulaDoAluno(aluno.id),
+        // INV-066b — a ordem e TOTAL. O `id` e o desempate.
+        orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }, { id: 'asc' }],
+        // INV-066a — o corte e no BANCO. Cortar na aplicacao traria o futuro
+        // inteiro pela rede para jogar fora, que e o defeito que esta spec
+        // existe para fechar.
+        take: pageSize,
+        skip: (page - 1) * pageSize,
+      }),
+      this.prisma.ocupacaoQuadra.count({ where }),
+    ]);
+
+    return {
+      data: ocupacoes.map(paraAulaDoAluno),
+      page,
+      pageSize,
+      total,
+    };
   }
 
   private async assertTurmaDaEmpresa(

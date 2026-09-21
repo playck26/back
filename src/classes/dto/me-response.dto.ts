@@ -432,3 +432,38 @@ export class OcorrenciasDaTurmaPaginadasResponseDto {
   @ApiProperty({ type: Number, example: 38 })
   total!: number;
 }
+
+/**
+ * SPEC-066/TASK-001 — **a página da lista de próximas aulas do aluno.**
+ *
+ * Mesmo formato `{ data, page, pageSize, total }` que `quadras`, `ocorrências`
+ * e `aulas anteriores` já publicam. Um segundo dialeto de paginação no mesmo
+ * contrato obrigaria cada frontend a saber qual rota fala qual.
+ *
+ * ## `total` é o total, não o da página
+ *
+ * É o número de aulas futuras do aluno, contado no banco com o **mesmo
+ * `where`** da consulta — não `data.length`. Sem isso o paginador não sabe
+ * quantas páginas existem, e a AC-001 exige os dois números.
+ *
+ * ## Por que esta rota existe, se `GET /me/classes` já devolve aulas
+ *
+ * Porque são **duas perguntas diferentes**: *"me dê a janela inteira, que eu
+ * vou desenhar um mês"* (a home e os calendários) e *"me dê a página N da
+ * minha lista"* (a tela de `/minhas-aulas`). A v1 desta spec tentou responder
+ * as duas pela mesma rota e pagou em dois bloqueios de validação — o teto de
+ * página nunca poderia responder por uma tela que precisa da janela inteira.
+ */
+export class AulasProximasPaginadasResponseDto {
+  @ApiProperty({ type: [AulaDoAlunoResponseDto] })
+  data!: AulaDoAlunoResponseDto[];
+
+  @ApiProperty({ type: Number, example: 1 })
+  page!: number;
+
+  @ApiProperty({ type: Number, example: 10 })
+  pageSize!: number;
+
+  @ApiProperty({ type: Number, example: 43 })
+  total!: number;
+}

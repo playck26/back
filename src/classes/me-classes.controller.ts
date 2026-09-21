@@ -21,8 +21,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
-import { AulaDoAlunoResponseDto } from './dto/me-response.dto';
+import {
+  AulasProximasPaginadasResponseDto,
+  AulaDoAlunoResponseDto,
+} from './dto/me-response.dto';
 import { TurmaDoAlunoDetalheResponseDto } from './dto/turma-response.dto';
+import { ProximasAulasQueryDto } from './dto/proximas-aulas-query.dto';
 import {
   MAXIMO_DE_DIAS_DA_JANELA,
   MinhasAulasQueryDto,
@@ -124,6 +128,49 @@ export class MeClassesController {
   @Roles('aluno')
   disponiveis(@CurrentUser() user: AccessTokenPayload) {
     return this.matricula.disponiveis(user.companyId as string, user.sub);
+  }
+
+  /**
+   * SPEC-066/TASK-001 — **a pagina da lista de proximas aulas.**
+   *
+   * ## A posicao desta linha e NORMATIVA (INV-066g)
+   *
+   * `proximas` e rota literal e tem de ser declarada **acima do
+   * `@Get(':id')`**. O Nest registra na ordem de declaracao e o Express casa
+   * a primeira: declarada depois, ela entraria no `:id` com
+   * `id = "proximas"` e o pipe de UUID responderia `400` **numa rota que
+   * existe**.
+   *
+   * **Isto nao e hipotese. Aconteceu neste arquivo em 2026-09-21**, com
+   * `anteriores` — o DEF-039. E o comentario acima do `:id` ja avisava disso,
+   * com todas as letras, enquanto o codigo fazia o contrario. Ninguem pegou
+   * porque nao havia teste da rota, e a tela "Aulas que ja passaram" — o
+   * unico lugar onde o aluno avalia uma aula — ficou morta.
+   *
+   * **Um comentario nao e mecanismo.** O mecanismo aqui e a **AC-001**: ela
+   * pede o corpo `{ data, page, pageSize, total }`, e um `400` a reprova. Se
+   * alguem mover esta rota para baixo do `:id`, o teste fica vermelho.
+   *
+   * ## Por que nao e um parametro em `GET /me/classes`
+   *
+   * Porque sao duas perguntas com garantias opostas: aquela **nao pode
+   * truncar** (a home desenha o mes inteiro) e esta **nunca devolve mais que
+   * uma pagina**. A v1 desta spec juntou as duas e a validacao independente
+   * derrubou o teto com **270 aulas em 90 dias e tres turmas**.
+   */
+  @Get('proximas')
+  @ApiOkResponse({ type: AulasProximasPaginadasResponseDto })
+  @Roles('aluno')
+  proximas(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: ProximasAulasQueryDto,
+  ) {
+    return this.classesService.listProximasAulasPaginadas(
+      user.companyId as string,
+      user.sub,
+      query.page,
+      query.pageSize,
+    );
   }
 
   /** SPEC-023/REQ-002 — entrar. Idempotente: entrar duas vezes é o mesmo estado. */

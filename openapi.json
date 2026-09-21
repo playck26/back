@@ -4662,6 +4662,54 @@
         ]
       }
     },
+    "/api/v1/me/classes/proximas": {
+      "get": {
+        "operationId": "MeClassesController_proximas",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AulasProximasPaginadasResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/me/classes/{id}": {
       "post": {
         "operationId": "MeClassesController_entrar",
@@ -11094,6 +11142,35 @@
           "nivelId",
           "nivelNome",
           "encontros"
+        ]
+      },
+      "AulasProximasPaginadasResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AulaDoAlunoResponseDto"
+            }
+          },
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "example": 10
+          },
+          "total": {
+            "type": "number",
+            "example": 43
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "pageSize",
+          "total"
         ]
       },
       "MatriculaDoAlunoResponseDto": {
