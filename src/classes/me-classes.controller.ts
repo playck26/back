@@ -154,6 +154,34 @@ export class MeClassesController {
    * até a aula para dar nota.
    */
   /**
+   * SPEC-046 — as aulas que ja passaram, paginadas.
+   *
+   * **DEF-039: esta rota fica ANTES do `:id`, e isso e o defeito inteiro.**
+   * Ela estava declarada DEPOIS, o Express casava `:id` primeiro, o pipe de
+   * UUID recebia a palavra `anteriores` e respondia **400 para uma rota que
+   * existe** — a tela "Aulas que ja passaram", que e o unico lugar do
+   * produto onde o aluno avalia uma aula.
+   *
+   * O comentario acima do `@Get(':id')` ja descrevia este defeito com todas
+   * as letras. **O aviso estava escrito e a ordem fazia o contrario** — e
+   * nao havia teste da rota, entao nada gritou.
+   */
+  @Get('anteriores')
+  @ApiOkResponse({ type: AulasAnterioresPaginadasResponseDto })
+  @Roles('aluno')
+  aulasAnteriores(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.avaliacoes.aulasAnteriores(
+      user.companyId as string,
+      user.sub,
+      query.page,
+      query.pageSize,
+    );
+  }
+
+  /**
    * SPEC-057/TASK-002 (card 5352) — **a ficha da turma do aluno.**
    *
    * Declarada DEPOIS de `disponiveis` e `anteriores`: rota com segmento fixo
@@ -172,21 +200,6 @@ export class MeClassesController {
       user.companyId as string,
       user.sub,
       id,
-    );
-  }
-
-  @Get('anteriores')
-  @ApiOkResponse({ type: AulasAnterioresPaginadasResponseDto })
-  @Roles('aluno')
-  aulasAnteriores(
-    @CurrentUser() user: AccessTokenPayload,
-    @Query() query: PaginationQueryDto,
-  ) {
-    return this.avaliacoes.aulasAnteriores(
-      user.companyId as string,
-      user.sub,
-      query.page,
-      query.pageSize,
     );
   }
 

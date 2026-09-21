@@ -11151,83 +11151,6 @@
           "message"
         ]
       },
-      "ColegaDeTurmaResponseDto": {
-        "type": "object",
-        "properties": {
-          "nome": {
-            "type": "string",
-            "example": "João Silva"
-          },
-          "nivelNome": {
-            "type": "string",
-            "nullable": true
-          },
-          "souEu": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "nome",
-          "nivelNome",
-          "souEu"
-        ]
-      },
-      "TurmaDoAlunoDetalheResponseDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "nome": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "ativa",
-              "inativa"
-            ]
-          },
-          "capacidade": {
-            "type": "number"
-          },
-          "encontros": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
-            }
-          },
-          "quadraNome": {
-            "type": "string"
-          },
-          "nivelNome": {
-            "type": "string",
-            "nullable": true
-          },
-          "professorNome": {
-            "type": "string",
-            "nullable": true
-          },
-          "colegas": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ColegaDeTurmaResponseDto"
-            }
-          }
-        },
-        "required": [
-          "id",
-          "nome",
-          "status",
-          "capacidade",
-          "encontros",
-          "quadraNome",
-          "nivelNome",
-          "professorNome",
-          "colegas"
-        ]
-      },
       "AulaAnteriorResponseDto": {
         "type": "object",
         "properties": {
@@ -11314,6 +11237,83 @@
           "page",
           "pageSize",
           "total"
+        ]
+      },
+      "ColegaDeTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "João Silva"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "souEu": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "nome",
+          "nivelNome",
+          "souEu"
+        ]
+      },
+      "TurmaDoAlunoDetalheResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "capacidade": {
+            "type": "number"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "quadraNome": {
+            "type": "string"
+          },
+          "nivelNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "professorNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "colegas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ColegaDeTurmaResponseDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "status",
+          "capacidade",
+          "encontros",
+          "quadraNome",
+          "nivelNome",
+          "professorNome",
+          "colegas"
         ]
       },
       "AvaliarAulaDto": {
