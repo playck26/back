@@ -126,6 +126,22 @@ export const TABELAS_DA_EMPRESA = [
   // morre com `23001` na falta**, e a mensagem culpa `faltas_avisadas` em vez
   // da tabela que a segura — que e exatamente como a SPEC-035 pagou a licao
   // com `matriculas` e `planos`.
+  // SPEC-064: ANTES de `faltas_avisadas`, `ocupacoes_quadra`, `turmas` e
+  // `alunos`. Sao quatro razoes, e a primeira e a que ensina:
+  //
+  // **A limpeza APAGA FALTA, entao ela e um dos "caminhos que apagam falta"
+  // que a INV-064g governa.** A FK `fila_falta_fkey` faz
+  // `ON DELETE SET NULL (falta_id)`; com uma linha de fila ainda ATIVA, esse
+  // SET NULL dispara o `fila_credito_chk` e a limpeza morre com **23514** —
+  // nao com 23503, e a mensagem nao diria "lista_de_espera". Apagar a fila
+  // inteira antes resolve pelo caminho mais curto: sem linha, sem CHECK.
+  //
+  // As outras tres sao as FKs RESTRICT para aluno, turma e ocupacao.
+  //
+  // A spec avisa que "um segundo apagamento de falta e a forma conhecida de
+  // quebrar esta spec depois de pronta". **O segundo apareceu no mesmo dia, e
+  // e este arquivo.**
+  'lista_de_espera',
   'reposicoes_de_aula',
   'faltas_avisadas',
   'ocupacoes_quadra',

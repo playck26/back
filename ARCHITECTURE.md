@@ -462,8 +462,22 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**31 tabelas e 14 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-09**), **34 migrations**.
+**40 tabelas e 16 enums** no `schema.prisma` (conferido por
+`grep -c '^model'` / `'^enum'` em **2026-09-20**), **47 migrations**
+(`ls -d prisma/migrations/*/ | wc -l`).
+
+> **Estes numeros estavam errados em 2026-09-20, e a defasagem nao era de uma
+> spec.** A planta declarava `31 tabelas e 14 enums / 34 migrations`, conferidos
+> em 2026-09-09; nesses onze dias entraram as SPEC-047, 054, 057, 062, 063, 064
+> e 065, e **nenhuma atualizou a contagem**. Nove tabelas, dois enums e treze
+> migrations de diferenca.
+>
+> A regra que o `CLAUDE.md` escreve — *"mudanca estrutural atualiza a planta do
+> repositorio afetado no mesmo ciclo"* — nao foi cumprida seis vezes seguidas, e
+> o motivo e sempre o mesmo: a contagem fica numa linha longe do que se esta
+> mexendo. **Planta desatualizada e pior que planta ausente, porque quem le
+> confia nela** — e um numero conferido em 2026-09-09 tem a mesma cara de um
+> conferido hoje.
 
 > **A 34ª é a `20260909180000_spec039_aula_avulsa`, e ela NÃO cria tabela.**
 > A aula particular é uma coluna (`professor_id`), uma FK composta, um `CHECK`
@@ -1537,6 +1551,49 @@ vem junto com o `@Throttle` em `LimiteDeLogin()` / `LimitePublico()`
 (`common/throttle/contagem-por-ip.ts`) — as duas metades de uma decisão só,
 pelo mesmo motivo da INV-048. **Rota pública nova precisa usar as fábricas**;
 o gate é `contagem-por-ip.spec.ts`, que confere os handlers reais.
+
+### A lista de espera: uma tabela cuja regra mais cara não cabe nela (SPEC-064)
+
+`lista_de_espera` (migration `20260920200000`, SPEC-064/TASK-001) guarda **duas
+filas com direitos diferentes na mesma tabela**: por vaga de MATRÍCULA numa
+turma (`turma_id`) ou por vaga de REPOSIÇÃO numa aula (`ocupacao_id`). Nunca as
+duas, nunca nenhuma — `CHECK num_nonnulls(turma_id, ocupacao_id) = 1`.
+
+**Até aqui nada é código: são dois `CHECK`, quatro índices únicos parciais e
+quatro FKs compostas.** Os índices são parciais
+(`WHERE estado IN ('aguardando','chamado')`) de propósito — sem o `WHERE`, uma
+única passagem pela fila proibiria a segunda para sempre. E os dois `UNIQUE` de
+`estado = 'chamado'` são o que permite ao varredor da TASK-003 ser idempotente
+**sem advisory lock**: dois ciclos simultâneos disputam a constraint e um perde
+com `23505`.
+
+**O que não cabe na tabela, e é a parte que custou duas rodadas de validação
+independente.** A FK do crédito é
+`ON DELETE SET NULL ("falta_id")` — com a coluna **nomeada**, porque um
+`SET NULL` sem lista anula todas as colunas da chave, inclusive `company_id` e
+`aluno_id`, que são `NOT NULL`: o `DELETE` da falta morria com `23502`. Mas
+corrigir isso abriu outro buraco: o `CHECK` do crédito é avaliado **no ato do
+`SET NULL`**, antes de qualquer encerramento chegar, então `DELETE → UPDATE`
+morre com `23514`. Adiar não era opção — o PostgreSQL recusa
+`CHECK ... DEFERRABLE` em qualquer versão.
+
+> **A outra metade do mecanismo é de SEQUÊNCIA, e nenhuma constraint a impõe:
+> encerrar a linha da fila vem ANTES de apagar a falta, na mesma transação.**
+
+Quem escrever um segundo caminho que apague falta e não souber disso recebe
+`23514` e uma mensagem que não diz o porquê. **O segundo caminho apareceu no
+mesmo dia:** `limparEmpresa` (test/banco) apaga faltas, e por isso
+`lista_de_espera` entrou na lista dela **antes** de `faltas_avisadas`.
+
+A prova de que o banco entregue é este e não um parecido está em
+`test/banco/spec-064-lista-de-espera.db-spec.ts`, que lê `pg_constraint` e exige
+que a ação referencial nomeie **exatamente** `falta_id` — mesma família do gate
+que confere o color type do PNG do badge na SPEC-063: **o artefato entregue, não
+a intenção do autor.**
+
+**Ainda não há módulo para ela.** A tabela existe e nenhuma rota a lê ou
+escreve; o serviço, o varredor e a entrada no catálogo modular vêm com as
+TASK-002 e TASK-003.
 
 ### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
 
