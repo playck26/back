@@ -147,23 +147,24 @@ export class PurgaDeAvisosService {
    * commit **e no rollback**, inclusive no que ninguém escreveu.
    */
   private async apagarUmLote(): Promise<number | null> {
-    return this.prisma.$transaction(async (tx) => {
-      const lock = await tx.$queryRaw<{ tomou: boolean }[]>`
+    return this.prisma.$transaction(
+      async (tx) => {
+        const lock = await tx.$queryRaw<{ tomou: boolean }[]>`
         SELECT pg_try_advisory_xact_lock(${ChaveDeLock.deTexto(
           CHAVE_DA_PURGA_DE_AVISOS,
         )}::bigint) AS tomou`;
-      if (lock[0]?.tomou !== true) {
-        return null;
-      }
+        if (lock[0]?.tomou !== true) {
+          return null;
+        }
 
-      // `WHERE id IN (SELECT ... LIMIT)` e não `DELETE` aberto: o teto tem de
-      // estar DENTRO da transação, senão ela segura a tabela pelo tempo que
-      // levar para apagar tudo.
-      //
-      // `concluida_em IS NOT NULL` é o predicado terminal — e ele é
-      // equivalente a "estado terminal" por construção, pelo
-      // `CHECK notificacoes_terminal_conclusao_chk` da SPEC-062.
-      return tx.$executeRaw`
+        // `WHERE id IN (SELECT ... LIMIT)` e não `DELETE` aberto: o teto tem de
+        // estar DENTRO da transação, senão ela segura a tabela pelo tempo que
+        // levar para apagar tudo.
+        //
+        // `concluida_em IS NOT NULL` é o predicado terminal — e ele é
+        // equivalente a "estado terminal" por construção, pelo
+        // `CHECK notificacoes_terminal_conclusao_chk` da SPEC-062.
+        return tx.$executeRaw`
         DELETE FROM notificacoes
          WHERE id IN (
            SELECT id FROM notificacoes
@@ -171,7 +172,28 @@ export class PurgaDeAvisosService {
               AND criada_em < now() - ${`${RETENCAO_DIAS} days`}::interval
             LIMIT ${TETO_POR_LOTE}
          )`;
-    });
+      },
+      // **DUAS CONSTANTES QUE SE CONTRADIZIAM, e a CI da SPEC-064 achou.**
+      //
+      // Sem `timeout` explicito, o Prisma capa TODA `$transaction` interativa
+      // em **5 s**. Entao o `ORCAMENTO_DO_CICLO_MS` de 30 s era inalcancavel:
+      // qualquer lote que passasse de 5 s morria com
+      // `Transaction already closed`, o lote inteiro voltava atras e o ciclo
+      // estourava — nao "apagava menos", estourava.
+      //
+      // Nao era teorico: a CI mediu **5990 ms** num lote e derrubou a suite.
+      // Aqui nesta maquina o mesmo lote de 5.000 linhas leva **20 ms** — o que
+      // diz que o custo nao e do `DELETE`, e sim do ambiente (disco do runner,
+      // fsync do WAL, concorrencia com a propria suite). **Um teto que depende
+      // da maquina nao e teto, e uma loteria.**
+      //
+      // O teto passa a ser O MESMO numero do orcamento do ciclo: um lote pode
+      // demorar no maximo o que o ciclo inteiro pode demorar, e o laco ja para
+      // quando o orcamento acaba. Uma norma, um lugar — a 3a rodada de
+      // validacao da propria SPEC-065 reprovou esta spec por ter "uma norma em
+      // quatro lugares, tres divergindo".
+      { timeout: ORCAMENTO_DO_CICLO_MS, maxWait: ORCAMENTO_DO_CICLO_MS },
+    );
   }
 
   /** A consulta cara, e ela só roda quando há atraso. */
