@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
+import { ClassesModule } from '../classes/classes.module';
 import { FilaDeEsperaService } from './fila-de-espera.service';
 import { MeFilaDeEsperaController } from './me-fila-de-espera.controller';
 import { VarredorDaFilaService } from './varredor-da-fila.service';
@@ -26,7 +27,7 @@ import { AgendadorDaFila } from './agendador-da-fila.service';
  * como ser decidida.
  */
 @Module({
-  imports: [PrismaModule, CompanySettingsModule],
+  imports: [PrismaModule, CompanySettingsModule, ClassesModule],
   controllers: [MeFilaDeEsperaController],
   providers: [FilaDeEsperaService, VarredorDaFilaService, AgendadorDaFila],
   exports: [FilaDeEsperaService, VarredorDaFilaService],

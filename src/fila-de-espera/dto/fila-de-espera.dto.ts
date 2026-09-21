@@ -82,3 +82,27 @@ export class LinhaDaFilaResponseDto {
   @ApiProperty({ example: '2026-09-20T12:31:00.000Z' })
   criadaEm!: string;
 }
+
+/**
+ * O que a confirmação devolve quando dá certo.
+ *
+ * **Não devolve a reposição inteira** — a tela do aluno já sabe para onde ir, e
+ * repetir os dados da aula aqui criaria uma segunda fonte para os mesmos fatos.
+ */
+export class ConfirmacaoDaVezResponseDto {
+  @ApiProperty({
+    example: 'aula',
+    description: '`turma` = virou matrícula; `aula` = virou reposição.',
+  })
+  fila!: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '5f7c1e2a-0000-4000-8000-000000000004',
+    description:
+      'A reposição criada, na fila de aula. `null` na fila de turma, que ' +
+      'gera matrícula e não reposição.',
+  })
+  reposicaoId!: string | null;
+}

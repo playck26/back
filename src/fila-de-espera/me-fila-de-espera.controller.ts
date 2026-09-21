@@ -1,5 +1,6 @@
 import {
   Body,
+  ConflictException,
   Controller,
   Delete,
   HttpCode,
@@ -12,6 +13,7 @@ import {
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
+  ApiOkResponse,
   ApiTags,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
@@ -22,6 +24,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import {
+  ConfirmacaoDaVezResponseDto,
   EntrarNaFilaDeAulaDto,
   EntrarNaFilaDeTurmaDto,
   LinhaDaFilaResponseDto,
@@ -112,7 +115,47 @@ export class MeFilaDeEsperaController {
   }
 
   /**
-   * REQ-001 — sair da fila, inclusive depois de chamado.
+   * REQ-003 - **confirmar a vez.**
+   *
+   * Na fila de turma vira matricula; na de aula, reposicao. As duas comitam
+   * junto com o `atendida` da linha (AC-007).
+   *
+   * ## O `409` e montado AQUI, fora da transacao
+   *
+   * O servico devolve `{ ok: false, code }` em vez de lancar, e a razao e a
+   * AC-006: *"confirmar sem vaga devolve 409 **e** a linha fica encerrada"*.
+   * Uma excecao lancada dentro do callback reverteria o proprio encerramento,
+   * e o chamado morto continuaria aparecendo para a pessoa - foi o achado
+   * v2-03, reaberto em v4-06 porque a v3 ainda lancava.
+   */
+  @Post(':id/confirmar')
+  @ApiOkResponse({ type: ConfirmacaoDaVezResponseDto })
+  @ApiConflictResponse({
+    description:
+      'A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu ' +
+      '(`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino ' +
+      '(`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, ' +
+      '`TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**',
+  })
+  @HttpCode(200)
+  @Roles('aluno')
+  async confirmar(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ): Promise<ConfirmacaoDaVezResponseDto> {
+    const r = await this.fila.confirmar(user.companyId as string, user.sub, id);
+    if (!r.ok) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: r.code,
+        message: r.message,
+      });
+    }
+    return { fila: r.fila, reposicaoId: r.reposicaoId };
+  }
+
+  /**
+   * REQ-001 - sair da fila, inclusive depois de chamado.
    *
    * Desistir da vez é legítimo, e **libera o alvo**: sem `chamado` vivo, o
    * próximo ciclo do varredor chama o seguinte.

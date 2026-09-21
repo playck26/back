@@ -5945,6 +5945,44 @@
         ]
       }
     },
+    "/api/v1/me/fila-de-espera/{id}/confirmar": {
+      "post": {
+        "operationId": "MeFilaDeEsperaController_confirmar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmacaoDaVezResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu (`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino (`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, `TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/me/fila-de-espera/{id}": {
       "delete": {
         "operationId": "MeFilaDeEsperaController_sair",
@@ -12604,6 +12642,26 @@
         },
         "required": [
           "ocupacaoId"
+        ]
+      },
+      "ConfirmacaoDaVezResponseDto": {
+        "type": "object",
+        "properties": {
+          "fila": {
+            "type": "string",
+            "example": "aula",
+            "description": "`turma` = virou matrícula; `aula` = virou reposição."
+          },
+          "reposicaoId": {
+            "type": "string",
+            "nullable": true,
+            "example": "5f7c1e2a-0000-4000-8000-000000000004",
+            "description": "A reposição criada, na fila de aula. `null` na fila de turma, que gera matrícula e não reposição."
+          }
+        },
+        "required": [
+          "fila",
+          "reposicaoId"
         ]
       }
     }
