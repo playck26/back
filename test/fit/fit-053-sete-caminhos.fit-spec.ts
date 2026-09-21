@@ -261,7 +261,13 @@ describe('FIT-053 — os sete caminhos, e o conjunto fecha', () => {
       const a = await aluno('Removido');
       await matricular(t, a.alunoId);
       const f = await naFila({ alunoId: a.alunoId, turmaId: t });
-      await classes().removeStudent(EMPRESA, t, a.alunoId, ADMIN, 'company_admin');
+      await classes().removeStudent(
+        EMPRESA,
+        t,
+        a.alunoId,
+        ADMIN,
+        'company_admin',
+      );
       const m = await motivoDe(f);
       expect(m).toBe(MOTIVO.SAIU_DA_TURMA);
       alcancados.add(m as string);
