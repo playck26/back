@@ -23,6 +23,7 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 
 interface TxMock {
   $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
   aluno: { findFirst: jest.Mock };
   empresa: { findUniqueOrThrow: jest.Mock };
   turmaAluno: {
@@ -81,6 +82,11 @@ function montar(opcoes?: {
           ? [{ id: TURMA, capacidade: o.capacidade, status: o.statusDaTurma }]
           : [],
       ),
+    // SPEC-064 — `$executeRaw` entrou no duble porque `encerrarFila` escreve por
+    // ele. **Devolve 0, e nao `undefined`:** o valor e a contagem de linhas
+    // encerradas, e um `undefined` circulando faria o proximo teste desta familia
+    // passar por engano.
+    $executeRaw: jest.fn().mockResolvedValue(0),
     aluno: { findFirst: jest.fn() },
     // Padrao: empresa SEM configuracao — que e o estado da maioria hoje, e o
     // ramo em que a regra `AULA_HOJE` do rollout passo 1 continua valendo.

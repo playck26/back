@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
@@ -362,6 +363,15 @@ export class MatriculaDoAlunoService {
       }
 
       await tx.turmaAluno.delete({ where: { id: alocacao.id } });
+
+      // SPEC-064/D6 — sair da turma tira da fila dela. Sem aviso: foi ele
+      // quem pediu.
+      await encerrarFila(
+        tx,
+        companyId,
+        { turmaEAluno: { turmaId, alunoId: aluno.id } },
+        MOTIVO.SAIU_DA_TURMA,
+      );
     });
   }
 }

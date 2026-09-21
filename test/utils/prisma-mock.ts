@@ -55,7 +55,15 @@ export interface TxMock {
   // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
   ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
   turmaAluno: { findFirst: jest.Mock };
-  faltaAvisada: { createMany: jest.Mock; deleteMany: jest.Mock };
+  // SPEC-064: `retirar` le as faltas antes de apagar, para encerrar as
+  // filas de espera que usavam o credito -- e a ORDEM e normativa.
+  faltaAvisada: {
+    createMany: jest.Mock;
+    deleteMany: jest.Mock;
+    findMany: jest.Mock;
+  };
+  // SPEC-064: `encerrarFila` escreve por aqui, dentro da transacao do gesto.
+  $executeRaw: jest.Mock;
   configOperacaoEmpresa: { findUnique: jest.Mock };
   // SPEC-040/AC-001: o `PUT` apaga a semana e recria DENTRO da mesma
   // transacao — estado parcial aqui seria metade da grade nova.
@@ -205,7 +213,12 @@ export function buildPrismaMock(): PrismaMock {
     faltaAvisada: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // **UMA falta, e nao `[]`:** com lista vazia o laco de encerramento nao
+      // roda, e o teste passaria sem nunca exercitar o caminho que a SPEC-064
+      // acrescentou. Dub que devolve vazio produz verde sobre codigo morto.
+      findMany: jest.fn().mockResolvedValue([{ id: 'falta-1' }]),
     },
+    $executeRaw: jest.fn().mockResolvedValue(0),
     configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
     disponibilidadeProfessor: {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),

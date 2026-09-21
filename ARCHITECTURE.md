@@ -1707,6 +1707,41 @@ segue utilizável) vira resultado; **erro de banco** — um `23505` na INV-118,
 por exemplo — **aborta** a transação e sobe, deixando a linha em `chamado` para
 a pessoa tentar de novo ou o varredor expirar.
 
+### A fila termina em SEIS lugares do domínio, e um deles é normativo
+
+A **TASK-004** espalhou o encerramento pelos gestos que matam o alvo ou o
+direito. `encerrarFila` é uma **função que recebe o `tx`**, não um serviço com
+transação própria — o encerramento tem de comitar **com o gesto que o causou**,
+senão fica a janela em que a aula já está cancelada e o varredor ainda chama
+gente para ela.
+
+| Evento | Onde | Avisa? |
+|---|---|---|
+| ocorrência cancelada (uma ou em massa) | `courts.service.ts` | **sim** (AC-008) |
+| turma inativada | `classes.service.ts` | **sim** |
+| aluno removido da turma pelo gestor | `classes.service.ts` | não |
+| aluno sai da turma sozinho | `matricula-do-aluno.service.ts` | não |
+| aluno inativado | `students.service.ts` | **não** (AC-010) |
+| **falta retirada** | `falta-avisada.service.ts` | não — **e ANTES do `deleteMany`** |
+| prazo vencido | varredor (TASK-003) | não |
+
+**O último é o que custou duas rodadas de validação.** A FK faz
+`ON DELETE SET NULL ("falta_id")` e o `fila_credito_chk` é avaliado **no ato do
+`SET NULL`**: encerrar depois de apagar dá `23514`. A ordem está escrita em
+comentário normativo no serviço, e há uma sabotagem que a inverte — o caso
+`AC-009` fica vermelho.
+
+**Só quem estava `chamado` é avisado**, e só quando o **alvo** morreu. Quem
+apenas aguardava nunca soube que havia vaga; e quem perdeu o vínculo não recebe
+nada, porque a conta está saindo do ar e a sessão acabou de ser revogada.
+
+**O custo é fixo, e o DEF-013 cobrou por isso.** O teto do orçamento da
+transação de turma subiu de 8 para 11 idas: 1 consulta de quem estava chamado,
+1 `UPDATE` de encerramento, 1 `INSERT` de aviso. **Nenhuma cresce com o tamanho
+da fila** — o encerramento é `updateMany` sobre uma lista de ocorrências e o
+aviso é um `INSERT` de múltiplas linhas. Um laço por pessoa faria o custo de
+editar o horário de uma turma depender de quantos estavam esperando por ela.
+
 ### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
 
 **Esta seção chega atrasada, e o atraso é o primeiro registro dela.** A

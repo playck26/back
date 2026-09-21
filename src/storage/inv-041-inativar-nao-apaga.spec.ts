@@ -110,6 +110,12 @@ function capturador() {
       findMany: jest.fn(() => Promise.resolve([])),
       count: jest.fn(() => Promise.resolve(0)),
     },
+    // SPEC-064 — inativar ALUNO passou a encerrar as filas dele (AC-010).
+    // Vazio pela mesma razao que o `ocupacaoQuadra` acima: **este arquivo e
+    // sobre midia**, e uma fila viva so mudaria o caminho sem mudar o que ele
+    // inspeciona.
+    $queryRaw: jest.fn(() => Promise.resolve([])),
+    $executeRaw: jest.fn(() => Promise.resolve(0)),
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
   };
 

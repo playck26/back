@@ -507,7 +507,19 @@ describe('DEF-013 — orçamento da transação de turma', () => {
       // dependem do numero de encontros.
       // SPEC-063: +2 fixas (destinatarios + `INSERT` dos avisos), pela mesma
       // razao registrada no `tetoDaCriacao` acima. Nao cresce com encontros.
-      expect(idas.length).toBeLessThanOrEqual(8 + diasDistintos);
+      //
+      // **SPEC-064: +3 fixas, e o teto sobe de 8 para 11.** O cancelamento em
+      // massa das ocorrencias encerra as filas de espera delas (D6), e isso
+      // custa: 1 consulta de quem estava `chamado`, 1 `UPDATE` de
+      // encerramento, e 1 `INSERT` de aviso quando havia alguem chamado.
+      //
+      // **As tres sao FIXAS.** O encerramento e `updateMany` sobre uma lista
+      // de ocorrencias, e o aviso e um `INSERT` de multiplas linhas -- nenhum
+      // dos dois cresce com o numero de encontros NEM com o tamanho da fila.
+      // Um laco por pessoa na fila faria o custo de editar o horario de uma
+      // turma depender de quantos estavam esperando por ela, e e exatamente
+      // isso que o DEF-013 existe para impedir.
+      expect(idas.length).toBeLessThanOrEqual(11 + diasDistintos);
     });
   });
 
