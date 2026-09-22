@@ -13,8 +13,6 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { request as requisicaoCrua } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -37,6 +35,7 @@ import {
   TAMANHO_MAXIMO_BYTES,
   UploadDeMidia,
 } from '../src/storage/upload-de-midia';
+import { enviarSemEsperarFim, portaDe } from './utils/envio-multipart-cru';
 import {
   EMPRESA_FIXTURE,
   FixtureUploadController,
@@ -226,8 +225,7 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
       // bytes o cliente conseguiu escrever até a resposta chegar. Se o
       // servidor estivesse bufferizando os 3 MB, o número seria 3 MB.
       await app.listen(0);
-      const servidor = app.getHttpServer() as { address(): AddressInfo };
-      const { port } = servidor.address();
+      const porta = portaDe(app.getHttpServer());
       // 30 MB, e o tamanho é escolhido para a prova ser ROBUSTA: quanto
       // maior o corpo, menor a fração que o buffer de socket representa.
       // A primeira versão mandava 3 MB e comparava com o teto de 2 MB —
@@ -235,7 +233,12 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
       // CI (2,69 MB), porque buffer de socket varia por sistema. A
       // afirmação estava certa e a barra é que era arbitrária.
       const CORPO = 30 * 1024 * 1024;
-      const medida = await enviarSemEsperarFim(port, CORPO);
+      const medida = await enviarSemEsperarFim({
+        porta,
+        caminho: '/api/v1/fixture/quadra',
+        campo: CAMPO_DO_ARQUIVO,
+        tamanho: CORPO,
+      });
 
       expect(medida.status).toBe(413);
       expect(medida.body.code).toBe('CORPO_GRANDE_DEMAIS');
@@ -253,6 +256,13 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
       // `Content-Length` para o guard ler, e quem recusa é o
       // `limits.fileSize` durante o streaming. Sem a tradução do MulterError
       // isto seria 500 — servidor "quebrado" em vez de servidor que recusou.
+      // **Aqui o Supertest serve, e isso foi MEDIDO, não suposto.** O teste
+      // acima trocou de cliente por causa da corrida com o ECONNRESET; a
+      // pergunta natural é se este tem a mesma doença. Não tem: com um
+      // cliente que mede, o corpo inteiro sai antes de a resposta chegar
+      // (**3.145.863 bytes de 3.145.728 + cabeçalho**), porque o Multer só
+      // aborta depois de ler o teto e escrever 3 MB em loopback é mais
+      // rápido que isso. Sem escrita pendente, não há o que resetar.
       const stream = Readable.from(
         (function* () {
           for (let i = 0; i < 24; i++) {
@@ -511,79 +521,3 @@ describe('CON-017.1 — upload de mídia (fixture)', () => {
     });
   });
 });
-
-/**
- * Envia um corpo multipart grande com `Content-Length` declarado e resolve
- * assim que a resposta chega — sem esperar a escrita terminar. Devolve
- * também quantos bytes o cliente conseguiu escrever até lá.
- */
-function enviarSemEsperarFim(
-  porta: number,
-  tamanho: number,
-): Promise<{ status: number; body: { code?: string }; bytesEscritos: number }> {
-  const limite = '----playckfixture';
-  const cabecalho = Buffer.from(
-    `--${limite}\r\n` +
-      `Content-Disposition: form-data; name="${CAMPO_DO_ARQUIVO}"; filename="grande.webp"\r\n` +
-      'Content-Type: application/octet-stream\r\n\r\n',
-  );
-  const rodape = Buffer.from(`\r\n--${limite}--\r\n`);
-  const total = cabecalho.length + tamanho + rodape.length;
-
-  return new Promise((resolve, reject) => {
-    let bytesEscritos = 0;
-    let respondido = false;
-
-    const req = requisicaoCrua(
-      {
-        port: porta,
-        method: 'PUT',
-        path: '/api/v1/fixture/quadra',
-        headers: {
-          'content-type': `multipart/form-data; boundary=${limite}`,
-          'content-length': String(total),
-        },
-      },
-      (res) => {
-        let texto = '';
-        res.on('data', (p: Buffer) => (texto += p.toString()));
-        res.on('end', () => {
-          respondido = true;
-          req.destroy();
-          resolve({
-            status: res.statusCode ?? 0,
-            body: JSON.parse(texto || '{}') as { code?: string },
-            bytesEscritos,
-          });
-        });
-      },
-    );
-
-    // ECONNRESET aqui é ESPERADO: o servidor fechou porque já respondeu.
-    req.on('error', (erro) => {
-      if (!respondido) reject(erro);
-    });
-
-    req.write(cabecalho);
-    bytesEscritos += cabecalho.length;
-
-    const pedaco = Buffer.alloc(64 * 1024, 0x41);
-    let restante = tamanho;
-    const escrever = () => {
-      while (restante > 0 && !respondido) {
-        const n = Math.min(pedaco.length, restante);
-        const ok = req.write(pedaco.subarray(0, n));
-        bytesEscritos += n;
-        restante -= n;
-        if (!ok) {
-          req.once('drain', escrever);
-          return;
-        }
-      }
-      if (!respondido) {
-        req.end(rodape);
-      }
-    };
-    escrever();
-  });
-}
