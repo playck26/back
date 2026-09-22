@@ -200,6 +200,29 @@ export class MeClassesController {
    * `GET /me/classes` devolve só o futuro. Sem esta, não haveria como chegar
    * até a aula para dar nota.
    */
+
+  /**
+   * SPEC-057/TASK-002 (card 5352) — **a ficha da turma do aluno.**
+   *
+   * Declarada DEPOIS de `disponiveis` e `anteriores`: rota com segmento fixo
+   * tem de vir antes da que casa `:id`, senão `/me/classes/anteriores` entra
+   * aqui com `id = "anteriores"` e o pipe de UUID responde 400 para uma rota
+   * que existe.
+   */
+  @Get(':id')
+  @ApiOkResponse({ type: TurmaDoAlunoDetalheResponseDto })
+  @Roles('aluno')
+  minhaTurma(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.classesService.myStudentClassDetail(
+      user.companyId as string,
+      user.sub,
+      id,
+    );
+  }
+
   /**
    * SPEC-046 — as aulas que ja passaram, paginadas.
    *
@@ -225,28 +248,6 @@ export class MeClassesController {
       user.sub,
       query.page,
       query.pageSize,
-    );
-  }
-
-  /**
-   * SPEC-057/TASK-002 (card 5352) — **a ficha da turma do aluno.**
-   *
-   * Declarada DEPOIS de `disponiveis` e `anteriores`: rota com segmento fixo
-   * tem de vir antes da que casa `:id`, senão `/me/classes/anteriores` entra
-   * aqui com `id = "anteriores"` e o pipe de UUID responde 400 para uma rota
-   * que existe.
-   */
-  @Get(':id')
-  @ApiOkResponse({ type: TurmaDoAlunoDetalheResponseDto })
-  @Roles('aluno')
-  minhaTurma(
-    @CurrentUser() user: AccessTokenPayload,
-    @Param('id', UuidCanonicoPipe) id: string,
-  ) {
-    return this.classesService.myStudentClassDetail(
-      user.companyId as string,
-      user.sub,
-      id,
     );
   }
 
