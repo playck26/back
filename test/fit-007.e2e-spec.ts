@@ -28,6 +28,7 @@ import {
   CAMPO_DO_ARQUIVO,
   TAMANHO_MAXIMO_BYTES,
 } from '../src/storage/upload-de-midia';
+import { enviarSemEsperarFim, portaDe } from './utils/envio-multipart-cru';
 
 /**
  * **FIT-007 — os portões críticos, nas ROTAS REAIS** (SPEC-018/AC-018).
@@ -144,6 +145,8 @@ describe('FIT-007 — os portões nas rotas reais (AC-018)', () => {
   let app: INestApplication<App>;
   let jwt: JwtService;
   let gravados: string[];
+  /** O caso do 413 fala por socket cru, e socket cru precisa de porta. */
+  let porta: number;
 
   beforeAll(async () => {
     process.env.JWT_ACCESS_SECRET = SEGREDO;
@@ -223,7 +226,11 @@ describe('FIT-007 — os portões nas rotas reais (AC-018)', () => {
     app.setGlobalPrefix('api/v1');
     app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
     jwt = moduleRef.get(JwtService);
-    await app.init();
+    // `listen(0)` em vez de `init()`: o Supertest continua funcionando (ele
+    // reaproveita o servidor que já escuta), e o caso do 413 ganha a porta
+    // real de que precisa.
+    await app.listen(0);
+    porta = portaDe(app.getHttpServer());
   });
 
   afterAll(async () => {
@@ -264,10 +271,27 @@ describe('FIT-007 — os portões nas rotas reais (AC-018)', () => {
     });
 
     it('413 acima do teto, e NADA gravado', async () => {
-      const gordo = Buffer.alloc(TAMANHO_MAXIMO_BYTES + 1024, 0x41);
-      const res = await enviar(rota, CAMPO_DO_ARQUIVO, gordo);
+      // **O único caso do arquivo que não usa Supertest**, e a razão está em
+      // `test/utils/envio-multipart-cru.ts`: o servidor responde 413 e fecha
+      // **enquanto o cliente ainda está enviando**, então com Supertest o
+      // resultado dependia de o corpo caber no buffer de socket antes do
+      // fechamento — e esse buffer varia por sistema e por carga. Era a
+      // causa do `FIT-007 > 413` falhar em 1 de 4 rodadas completas e passar
+      // sozinho: a suíte inteira disputa CPU, o socket drena mais devagar e
+      // a escrita morre com ECONNRESET antes de o Supertest ler a resposta.
+      //
+      // A afirmação é a mesma de antes — 413, e nada gravado. O que mudou é
+      // que agora ela não depende de temporização.
+      const medida = await enviarSemEsperarFim({
+        porta,
+        caminho: rota.caminho,
+        campo: CAMPO_DO_ARQUIVO,
+        campos: rota.campos,
+        tamanho: TAMANHO_MAXIMO_BYTES + 1024,
+        cabecalhos: { authorization: `Bearer ${token(rota.papel)}` },
+      });
 
-      expect(res.status).toBe(413);
+      expect(medida.status).toBe(413);
       expect(gravados).toHaveLength(0);
     });
 
