@@ -25,6 +25,8 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from '../banco/exigir-banco-local';
+import { comAcao } from '../banco/acao-com-efeito';
+import type { ClienteSql } from '../banco/limpar-empresa';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { idsDoCenario, montarCenario } from './cenario';
 
@@ -55,12 +57,21 @@ const uid = (n: number) =>
 let seq = 0;
 const proximo = () => uid(++seq);
 
-async function acao(tipo: string): Promise<string> {
-  const [l] = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','${tipo}','${ADMIN_USUARIO}') RETURNING id`,
+/**
+ * SPEC-069/INV-069a — a acao e o efeito dela na MESMA transacao.
+ *
+ * O `acao_exige_alvo` julga no COMMIT, e em autocommit o `INSERT` da acao
+ * commita sozinho: `23514` numa fixture que nunca foi o defeito.
+ */
+function comAcaoDaqui<T>(
+  tipo: string,
+  efeito: (tx: ClienteSql, acaoId: string) => Promise<T>,
+): Promise<T> {
+  return comAcao(
+    db,
+    { companyId: EMPRESA, tipo, autorId: ADMIN_USUARIO },
+    efeito,
   );
-  return l.id;
 }
 
 async function ocupacaoComConsumo(
@@ -68,12 +79,13 @@ async function ocupacaoComConsumo(
 ): Promise<{ oc: string; consumo: string }> {
   const oc = proximo();
   const consumo = proximo();
-  const acaoId = await acao('reserva_criada');
-  await q(`INSERT INTO ocupacoes_quadra
+  await comAcaoDaqui('reserva_criada', async (tx, acaoId) => {
+    await tx.$executeRawUnsafe(`INSERT INTO ocupacoes_quadra
              (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)
            VALUES ('${oc}','${EMPRESA}','${QUADRA}','2035-01-01'::date + ${dia},'10:00','11:00','AVULSO',now(),'${ALUNO1}',80)`);
-  await q(`INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id)
+    await tx.$executeRawUnsafe(`INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id)
            VALUES ('${consumo}','${EMPRESA}','${ALUNO1}','consumo',8000,'${ADMIN_USUARIO}','${acaoId}','${oc}')`);
+  });
   return { oc, consumo };
 }
 
@@ -81,8 +93,10 @@ beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await montarCenario(db, C);
   // Saldo pela porta do ledger — a única que existe (D1/INV-071).
-  await q(`INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,motivo,autor_id,acao_id)
-           VALUES (gen_random_uuid(),'${EMPRESA}','${ALUNO1}','entrada',500000,'aporte do canario','${ADMIN_USUARIO}','${await acao('credito_lancado')}')`);
+  await comAcaoDaqui('credito_lancado', (tx, acaoId) =>
+    tx.$executeRawUnsafe(`INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,motivo,autor_id,acao_id)
+           VALUES (gen_random_uuid(),'${EMPRESA}','${ALUNO1}','entrada',500000,'aporte do canario','${ADMIN_USUARIO}','${acaoId}')`),
+  );
 });
 
 afterAll(async () => {
@@ -108,12 +122,11 @@ describe('EVD-033-033 no POOLER — o contrato de erro das diferidas', () => {
 
   it('INV-096 violada chega como P2010 + meta.code = P3301 — mesmo pelo pooler', async () => {
     const { oc } = await ocupacaoComConsumo(1);
-    const acaoId = await acao('reserva_cancelada');
     const transicao = proximo();
 
     let erro: unknown;
     try {
-      await db.$transaction(async (tx) => {
+      await comAcaoDaqui('reserva_cancelada', async (tx, acaoId) => {
         await tx.$executeRawUnsafe(
           `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
         );
@@ -135,11 +148,9 @@ describe('EVD-033-033 no POOLER — o contrato de erro das diferidas', () => {
 
   it('INV-098 violada chega como P2010 + meta.code = P3302', async () => {
     const { oc } = await ocupacaoComConsumo(2);
-    const acaoId = await acao('reserva_criada');
-
     let erro: unknown;
     try {
-      await db.$transaction(async (tx) => {
+      await comAcaoDaqui('reserva_criada', async (tx, acaoId) => {
         await tx.$executeRawUnsafe(
           `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id)
            VALUES ('${proximo()}','${EMPRESA}','${ALUNO1}','consumo',8000,'${ADMIN_USUARIO}','${acaoId}','${oc}')`,
@@ -173,10 +184,9 @@ describe('EVD-033-033 no POOLER — o contrato de erro das diferidas', () => {
 
   it('o cancelamento LEGÍTIMO passa, e o efeito fica gravado', async () => {
     const { oc, consumo } = await ocupacaoComConsumo(3);
-    const acaoId = await acao('reserva_cancelada');
     const transicao = proximo();
 
-    await db.$transaction(async (tx) => {
+    await comAcaoDaqui('reserva_cancelada', async (tx, acaoId) => {
       await tx.$executeRawUnsafe(
         `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
       );

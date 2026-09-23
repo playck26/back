@@ -15,6 +15,7 @@ import { DisponibilidadeProfessorService } from '../../src/people/disponibilidad
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
+import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 
@@ -93,19 +94,22 @@ async function semear() {
 
 /** Saldo pela porta do ledger (a INV-071 recusa `UPDATE` direto). */
 async function creditarAna(centavos: number) {
-  const [acao] = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','credito_lancado','${UADMIN}') RETURNING id`,
-  );
-  await db.$transaction((tx) =>
-    new CreditosService().lancar(tx, {
-      companyId: EMPRESA,
-      alunoId: ANA,
-      valorCentavos: centavos,
-      motivo: 'saldo para medir a SPEC-055',
-      autorId: UADMIN,
-      acaoId: acao.id,
-    }),
+  // SPEC-069/INV-069a — **a acao e o efeito na MESMA transacao.** Em
+  // autocommit o `INSERT` da acao commita sozinho, o `acao_exige_alvo` julga
+  // ali e o movimento ainda nao existe: `23514` numa fixture que nunca foi o
+  // defeito. O servico sempre gravou os dois juntos; era a fixture que nao.
+  await comAcao(
+    db,
+    { companyId: EMPRESA, tipo: 'credito_lancado', autorId: UADMIN },
+    (tx, acaoId) =>
+      new CreditosService().lancar(tx, {
+        companyId: EMPRESA,
+        alunoId: ANA,
+        valorCentavos: centavos,
+        motivo: 'saldo para medir a SPEC-055',
+        autorId: UADMIN,
+        acaoId,
+      }),
   );
 }
 

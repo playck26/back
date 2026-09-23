@@ -74,12 +74,43 @@ async function novaOcupacao(dia: string): Promise<string> {
   return id;
 }
 
+/**
+ * SPEC-069/INV-069a — **a ação nasce com o efeito dela**, e o efeito é real.
+ *
+ * Até aqui ela nascia sozinha, num `INSERT` em autocommit. O
+ * `acao_exige_alvo` julga no `COMMIT` e recusa ação sem efeito, então a
+ * fixture morria com `23514` — sem que nada do produto estivesse errado.
+ *
+ * **A ocupação é própria de cada ação, em datas que nenhum caso usa.** A
+ * `EXCLUDE no_overlap_por_quadra` recusa duas ocupações na mesma quadra,
+ * data e hora, e `novaOcupacao` sempre marca 08:00.
+ *
+ * **E o efeito muda o que precisa ser reconferido:** com um evento filho, o
+ * `DELETE` da ação passa a ter DUAS razões possíveis para ser recusado — o
+ * append-only (`23514`) e a FK do evento (`23503`). O `recusaPor` exige a
+ * mensagem, e o trigger `BEFORE DELETE` roda antes da checagem de FK, então
+ * o motivo certo continua sendo o motivo medido. Isso não é sorte: é o que
+ * separa esta prova de uma que passaria pelo erro errado.
+ */
+let diaDaAcao = 0;
 async function novaAcao(): Promise<string> {
   const id = uuid();
-  await q(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES ('${id}','${EMPRESA}','reserva_cancelada','${USUARIO}')`,
-  );
+  diaDaAcao += 1;
+  const ocupacao = uuid();
+  await db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,valor,updated_at)
+       VALUES ('${ocupacao}','${EMPRESA}','${QUADRA}','2028-01-01'::date + ${diaDaAcao},'08:00','09:00','AVULSO',80,now())`,
+    );
+    await tx.$executeRawUnsafe(
+      `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
+       VALUES ('${id}','${EMPRESA}','reserva_cancelada','${USUARIO}')`,
+    );
+    await tx.$executeRawUnsafe(
+      `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+       VALUES ('${uuid()}','${EMPRESA}','${id}','${ocupacao}','criada','${uuid()}')`,
+    );
+  });
   return id;
 }
 

@@ -45,6 +45,7 @@
  * funcionando, e o vinculo continua respondendo primeiro.
  */
 import { PrismaClient } from '@prisma/client';
+import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { MatriculasService } from '../../src/matriculas/matriculas.service';
@@ -182,19 +183,22 @@ async function ocuparPara(
  * cancelada da SPEC-035).
  */
 async function creditar(centavos: number): Promise<void> {
-  const [acao] = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','credito_lancado','${ADMIN}') RETURNING id`,
-  );
-  await db.$transaction((tx) =>
-    new CreditosService().lancar(tx, {
-      companyId: EMPRESA,
-      alunoId: ALUNO,
-      valorCentavos: centavos,
-      motivo: 'saldo para medir o DEF-027',
-      autorId: ADMIN,
-      acaoId: acao.id,
-    }),
+  // SPEC-069/INV-069a — **a acao e o efeito na MESMA transacao.** Em
+  // autocommit o `INSERT` da acao commita sozinho, o `acao_exige_alvo` julga
+  // ali e o movimento ainda nao existe: `23514` numa fixture que nunca foi o
+  // defeito. O servico sempre gravou os dois juntos; era a fixture que nao.
+  await comAcao(
+    db,
+    { companyId: EMPRESA, tipo: 'credito_lancado', autorId: ADMIN },
+    (tx, acaoId) =>
+      new CreditosService().lancar(tx, {
+        companyId: EMPRESA,
+        alunoId: ALUNO,
+        valorCentavos: centavos,
+        motivo: 'saldo para medir o DEF-027',
+        autorId: ADMIN,
+        acaoId,
+      }),
   );
 }
 

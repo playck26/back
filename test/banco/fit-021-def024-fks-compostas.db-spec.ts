@@ -61,6 +61,13 @@ async function limparSuperAdmin(superId: string): Promise<void> {
     await tx.$executeRawUnsafe(
       `SELECT set_config('playck.limpeza_append_only', 'on', true)`,
     );
+    // SPEC-069/INV-069a — a acao do super_admin agora nasce COM efeito, e o
+    // efeito aponta para ela com `RESTRICT`. Filho antes de pai, dentro da
+    // mesma valvula: `eventos_de_ocupacao` tambem e append-only.
+    await tx.$executeRawUnsafe(
+      `DELETE FROM eventos_de_ocupacao
+        WHERE acao_id IN (SELECT id FROM acoes_administrativas WHERE autor_id = '${superId}')`,
+    );
     await tx.$executeRawUnsafe(
       `DELETE FROM acoes_administrativas WHERE autor_id = '${superId}'`,
     );
@@ -259,9 +266,29 @@ describe('FIT-021 — DEF-024 fase 1: a empresa entra na chave', () => {
     await q(
       `INSERT INTO usuarios (id,email,senha_hash,nome,role,updated_at) VALUES ('${SUPER}','def024-super@teste.local','x','S','super_admin',now())`,
     );
-    await aceitaOParCerto(
-      `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em) VALUES (gen_random_uuid(),'${EMPRESA_A}','reserva_cancelada','${SUPER}',now())`,
-    );
+    // **SPEC-069/INV-069a muda a FORMA desta prova, nao o que ela prova.** O
+    // ponto continua sendo que a FK de AUTORIA e simples — `usuarios.company_id`
+    // e nulo para `super_admin`, e uma FK composta o impediria de ser autor de
+    // qualquer coisa (LIM-032f). O que mudou: a acao nao pode mais nascer nua,
+    // entao ela vem com um evento sobre a ocupacao de A, na mesma transacao.
+    //
+    // **Sem isto a prova ficaria vermelha NA ASSERCAO**, e nao no INSERT: em
+    // autocommit o `INSERT` "passa" e o `COMMIT` estoura, entao o
+    // `resolves.toBeDefined()` viraria `rejects` com `23514` — um vermelho que
+    // nao fala de FK nenhuma.
+    const acaoDoSuper = crypto.randomUUID();
+    await expect(
+      db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em) VALUES ('${acaoDoSuper}','${EMPRESA_A}','reserva_cancelada','${SUPER}',now())`,
+        );
+        await tx.$executeRawUnsafe(
+          `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+           VALUES (gen_random_uuid(),'${EMPRESA_A}','${acaoDoSuper}','${OCUPACAO_A}','criada',gen_random_uuid())`,
+        );
+        return true;
+      }),
+    ).resolves.toBe(true);
 
     await limparSuperAdmin(SUPER);
     const [{ n }] = await db.$queryRawUnsafe<{ n: bigint }[]>(

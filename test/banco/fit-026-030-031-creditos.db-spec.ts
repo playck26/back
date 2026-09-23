@@ -20,6 +20,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { comAcao } from './acao-com-efeito';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -89,8 +90,6 @@ beforeAll(async () => {
            VALUES ('${ESPORTE}','${E}','Tenis',1)`);
   await q(`INSERT INTO quadras (id,company_id,nome,preco_hora,esporte_id)
            VALUES ('${QUADRA}','${E}','Q1',80,'${ESPORTE}')`);
-  await q(`INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-           VALUES ('${ACAO}','${E}','reserva_criada','${UADMIN}')`);
   for (const [id, dia] of [
     [OC1, '2032-01-01'],
     [OC2, '2032-01-02'],
@@ -99,6 +98,18 @@ beforeAll(async () => {
                (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)
              VALUES ('${id}','${E}','${QUADRA}','${dia}','10:00','11:00','AVULSO',now(),'${ALUNO}',80)`);
   }
+  // SPEC-069/INV-069a — a acao semeada nasce COM efeito, e por isso as
+  // ocupacoes passaram a vir ANTES dela: o evento aponta para a OC1. Nascer
+  // nua a fazia commitar sozinha, e o `acao_exige_alvo` recusa isso.
+  await comAcao(
+    db,
+    { id: ACAO, companyId: E, tipo: 'reserva_criada', autorId: UADMIN },
+    (tx, acaoId) =>
+      tx.$executeRawUnsafe(
+        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+         VALUES (gen_random_uuid(),'${E}','${acaoId}','${OC1}','criada',gen_random_uuid())`,
+      ),
+  );
 });
 
 afterAll(async () => {
@@ -154,21 +165,22 @@ describe('EVD-033-033 — o SET CONSTRAINTS nomeado, contra o SCHEMA REAL', () =
       acao_id: ACAO,
       ocupacao_id: oc,
     });
-    await q(`INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-             VALUES ('${acao}','${E}','reserva_cancelada','${UADMIN}')`);
-
     let erro: unknown;
     try {
-      await db.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
-        );
-        await tx.$executeRawUnsafe(
-          `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+      await comAcao(
+        db,
+        { id: acao, companyId: E, tipo: 'reserva_cancelada', autorId: UADMIN },
+        async (tx) => {
+          await tx.$executeRawUnsafe(
+            `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
+          );
+          await tx.$executeRawUnsafe(
+            `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
            VALUES ('${evento}','${E}','${acao}','${oc}','cancelada','${transicao}')`,
-        );
-        await tx.$executeRawUnsafe(SET_NOMEADO);
-      });
+          );
+          await tx.$executeRawUnsafe(SET_NOMEADO);
+        },
+      );
     } catch (e) {
       erro = e;
     }
@@ -244,23 +256,24 @@ describe('EVD-033-033 — o SET CONSTRAINTS nomeado, contra o SCHEMA REAL', () =
       acao_id: ACAO,
       ocupacao_id: oc,
     });
-    await q(`INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-             VALUES ('${acao}','${E}','reserva_cancelada','${UADMIN}')`);
-
-    await db.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
-      );
-      await tx.$executeRawUnsafe(
-        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+    await comAcao(
+      db,
+      { id: acao, companyId: E, tipo: 'reserva_cancelada', autorId: UADMIN },
+      async (tx) => {
+        await tx.$executeRawUnsafe(
+          `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${oc}'`,
+        );
+        await tx.$executeRawUnsafe(
+          `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
            VALUES ('${proximo()}','${E}','${acao}','${oc}','cancelada','${transicao}')`,
-      );
-      await tx.$executeRawUnsafe(
-        `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id,movimento_origem_id)
+        );
+        await tx.$executeRawUnsafe(
+          `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,autor_id,acao_id,ocupacao_id,movimento_origem_id)
            VALUES ('${proximo()}','${E}','${ALUNO}','devolucao',8000,'${UADMIN}','${acao}','${oc}','${consumo}')`,
-      );
-      await tx.$executeRawUnsafe(SET_NOMEADO);
-    });
+        );
+        await tx.$executeRawUnsafe(SET_NOMEADO);
+      },
+    );
 
     // **Afirmar o EFEITO, e não "não lançou".** `$transaction` devolve
     // `undefined` quando o callback não retorna nada, então um

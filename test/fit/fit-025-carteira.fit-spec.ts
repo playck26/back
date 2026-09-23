@@ -34,6 +34,7 @@ import { PrismaClient } from '@prisma/client';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { exigirBancoLocal } from '../banco/exigir-banco-local';
+import { comAcao } from '../banco/acao-com-efeito';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { subirAppReal } from './app-real';
 import { dataFutura, idsDoCenario, login, montarCenario } from './cenario';
@@ -86,14 +87,16 @@ const consumos = async (): Promise<number> => {
  * torna este caminho o único: a trigger é a escritora do saldo.
  */
 async function creditar(centavos: number): Promise<void> {
-  const [acao] = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','credito_lancado','${ADMIN_USUARIO}')
-     RETURNING id`,
-  );
-  await db.$executeRawUnsafe(
-    `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,motivo,autor_id,acao_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','${ALUNO1}','entrada',${centavos},'aporte do canario','${ADMIN_USUARIO}','${acao.id}')`,
+  // SPEC-069/INV-069a — a acao e o movimento na MESMA transacao: em autocommit
+  // a acao commita sozinha e o `acao_exige_alvo` recusa no COMMIT.
+  await comAcao(
+    db,
+    { companyId: EMPRESA, tipo: 'credito_lancado', autorId: ADMIN_USUARIO },
+    (tx, acaoId) =>
+      tx.$executeRawUnsafe(
+        `INSERT INTO movimentos_de_credito (id,company_id,aluno_id,tipo,valor_centavos,motivo,autor_id,acao_id)
+         VALUES (gen_random_uuid(),'${EMPRESA}','${ALUNO1}','entrada',${centavos},'aporte do canario','${ADMIN_USUARIO}','${acaoId}')`,
+      ),
   );
 }
 

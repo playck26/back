@@ -27,6 +27,7 @@
  * pela execução.
  */
 import { PrismaClient } from '@prisma/client';
+import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa, TABELAS_DA_EMPRESA } from './limpar-empresa';
 
@@ -74,9 +75,6 @@ async function semear() {
        (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
      VALUES ('${OCUPACAO}','${EMPRESA}','${QUADRA}',DATE '2026-12-01',TIME '09:00',TIME '10:00','TURMA','${TURMA}','pendente_pagamento',now())`,
   );
-  await q(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em) VALUES ('${ACAO}','${EMPRESA}','turma_aluno_removido','${UADMIN}',now())`,
-  );
 
   // As TRÊS tabelas desta spec, povoadas — é o ponto do arquivo.
   await q(
@@ -88,9 +86,23 @@ async function semear() {
     `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at)
      VALUES (gen_random_uuid(),'${EMPRESA}','${OCUPACAO}','${ALUNO}',now())`,
   );
-  await q(
-    `INSERT INTO eventos_de_matricula (id,company_id,acao_id,turma_id,aluno_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','${ACAO}','${TURMA}','${ALUNO}')`,
+  // SPEC-069/INV-069a — a acao e o evento dela entram JUNTOS. Antes a acao
+  // nascia sozinha, la em cima, e o evento vinha aqui embaixo em outro
+  // statement: em autocommit sao duas transacoes, e o `acao_exige_alvo`
+  // recusa a primeira. O gesto que este arquivo semeia sempre foi um so.
+  await comAcao(
+    db,
+    {
+      id: ACAO,
+      companyId: EMPRESA,
+      tipo: 'turma_aluno_removido',
+      autorId: UADMIN,
+    },
+    (tx, acaoId) =>
+      tx.$executeRawUnsafe(
+        `INSERT INTO eventos_de_matricula (id,company_id,acao_id,turma_id,aluno_id)
+         VALUES (gen_random_uuid(),'${EMPRESA}','${acaoId}','${TURMA}','${ALUNO}')`,
+      ),
   );
 }
 

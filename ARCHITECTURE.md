@@ -1,6 +1,16 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-22** (era 2026-09-20).
+**Fonte: análise direta do código.** Data: **2026-09-23** (era 2026-09-22).
+
+**Números conferidos por comando em 2026-09-23, com as TASKs 001–004 da
+SPEC-069 prontas:** **50 migrations, 42 tabelas, 21 triggers** não-internas,
+**118 caminhos / 162 operações** no `openapi.json` (`ls -d
+prisma/migrations/*/`; `pg_tables` sem `_prisma_migrations` e `pg_trigger` sem
+as internas, num banco novo com as 50 aplicadas). *A SPEC-069 somou **1
+migration**, **1 tabela** (`eventos_de_turma`), **1 trigger**
+(`eventos_turma_append_only`) e **1 rota** (`GET /classes/:id/eventos`). O
+`acao_exige_alvo` **não está aqui**: ele é o Deploy 2 (TASK-005), e a AC-014
+varre a árvore do SHA do Deploy 1 para provar isso.*
 
 **Números conferidos por comando em 2026-09-22, com a SPEC-068 pronta:**
 **49 migrations, 41 tabelas, 20 triggers** não-internas (`ls -d
@@ -577,6 +587,7 @@ a replicar:
 | `avaliacoes_de_aula` | MOD-004 | SPEC-025. A nota do aluno sobre uma aula. FK **composta** para `ocupacoes_quadra` e para `alunos` carregando a empresa — sem isso o banco aceitaria a média de uma turma agregar nota alheia, que foi exatamente o vazamento que a validação cruzada achou |
 | `acoes_administrativas` | MOD-010 | **SPEC-032.** O **gesto humano**: uma por comando lógico que escreve. Append-only por trigger. A FK do autor **não** carrega a empresa, de propósito — `usuarios.company_id` é nulo para `super_admin`, e uma FK composta o impediria de ser autor de qualquer coisa (LIM-032f) |
 | `eventos_de_ocupacao` | MOD-010 | **SPEC-032.** O **alvo técnico**: N por ação, um por ocupação afetada. A cisão entre as duas existe porque um evento não pode apontar para 40 ocorrências ao mesmo tempo — a v1 da spec tentava, e foi reprovada por isso. `transicao_id` casa com o da ocupação e é o que a trigger confere no `COMMIT` |
+| `eventos_de_turma` | MOD-010 | **SPEC-069/D1.** O **quarto** alvo técnico, e o que faltava: `turma_professor_alterado` era a única ação do sistema sem evento nenhum — guardava autor e instante e não dizia QUAL turma. Molde literal de `eventos_de_matricula`: duas FKs compostas (ação e turma), append-only, e o índice `(company_id, acao_id)` que o `acao_exige_alvo` do Deploy 2 vai usar. A alternativa recusada era um `turma_id` anulável em `acoes_administrativas` — resolveria este alvo e abriria precedente para `quadra_id`, `aluno_id`, `professor_id` |
 | `movimentos_de_credito` | **MOD-011** | **SPEC-033.** O **ledger da carteira**, append-only. O saldo em `alunos.saldo_creditos` é escrito **pela trigger do ledger**, nunca pelo serviço (INV-071), e a guarda cobre `INSERT` **e** `UPDATE` — a primeira versão só cobria `UPDATE`, e a validação cruzada inseriu um aluno com saldo 12345 e zero movimentos. Duas colunas `GENERATED ALWAYS … STORED` servem de discriminante constante em FK composta: é o que faz a devolução só apontar para um **consumo** do mesmo aluno, ocupação e valor (D5), e o que impede consumo em ocupação de **turma** (INV-097). **Únicas colunas geradas do projeto** — e é por elas que a migration desta spec é SQL manual: o `migrate diff` as transforma num `DEFAULT CASE …` que o Postgres recusa com `0A000` |
 | `professores.preco_aula`, `config_operacao_empresa.preco_aula_padrao` | MOD-003 | **SPEC-047.** O preço da aula particular, **`DECIMAL(10,2)` em reais** — como `quadras.preco_hora`, e não em centavos como a carteira; a conversão mora num lugar só. As duas são **anuláveis, e nulo não é zero**: nulo no professor é *"herda o padrão do clube"*, nulo nos dois é *"este professor não dá aula particular"*. Zero seria o valor que o ledger recusa, e a aula de graça quebraria na cobrança **depois** de a tela dizer que deu certo — por isso a **INV-122** é `CHECK (... IS NULL OR ... > 0)` nas duas |
 | `disponibilidades_professor` | MOD-003 | **SPEC-040.** Quando cada professor atende: uma linha por `(professor, dia_semana)`. E da **ficha**, nao da conta — `professores.usuario_id` e nulavel (INV-014) e a maioria nao tem login. **Nao tem coluna de flag**, e a ausencia dela e a decisao (D6): o molde `horarios_funcionamento` tem `fechado` porque la ha HERANCA e a quadra precisa SOBREPOR um dia aberto herdado; aqui nao ha heranca, entao a flag daria DUAS representacoes de "nao atende" e a SPEC-039 teria de lembrar de filtrar. Primeira tabela a apontar para `professores` com a empresa junto — o `UNIQUE (company_id, id)` de `professores` nasceu nesta migration, sem ele a FK composta morre com `42830` |
@@ -618,6 +629,7 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 |---|---|
 | `acoes_append_only`, `eventos_append_only` | `BEFORE UPDATE OR DELETE` — recusam alteração e remoção nas duas tabelas de auditoria |
 | `ocupacao_cancelada_exige_evento` | `CONSTRAINT TRIGGER AFTER UPDATE ... DEFERRABLE INITIALLY DEFERRED` — a transição para `cancelado` exige evento **desta transição** |
+| `eventos_turma_append_only` (SPEC-069/INV-069c) | a **sexta** da família, e pela função que já existia: nenhuma função nova, para que a AC-014 não tenha uma pergunta a mais a responder. Consequência operacional: a tabela entra também no conjunto `APPEND_ONLY` de `test/banco/limpar-empresa.ts`, que é outro conjunto — a sabotagem SAB-5 mostra o que acontece com só um deles |
 | `eventos_matricula_append_only` (SPEC-031/D21) | a **terceira** da família, e a que faltava: `eventos_de_matricula` é auditoria como as outras duas. Consertar só duas deixaria o fluxo funcional verde e a limpeza do CI abortando |
 | `movimentos_append_only`, `movimentos_atualiza_saldo`, `movimentos_consumo_ativo_unico`, `alunos_saldo_so_pelo_ledger`, `ocupacao_cancelada_exige_devolucao` (SPEC-033) | as cinco da carteira — o saldo só muda pelo ledger, e cancelar reserva paga com crédito exige a devolução no mesmo COMMIT |
 | `ocupacao_reativada_exige_evento` (SPEC-035/INV-106) | **a metade que faltava da INV-064.** Espelho literal da `ocupacao_cancelada_exige_evento`, na direção contrária: `cancelado -> não-cancelado` exige evento `reativada` desta transição |

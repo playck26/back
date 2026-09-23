@@ -39,6 +39,7 @@ import type { CourtsService } from '../../src/courts/courts.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { comAcao } from './acao-com-efeito';
 import { limparEmpresa, TABELAS_DA_EMPRESA } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -70,6 +71,7 @@ const EVENTO = 'f0690000-0000-4000-8000-0000000000e1';
 const UPROF1 = 'f0690000-0000-4000-8000-0000000000c1';
 const PROF1 = 'f0690000-0000-4000-8000-0000000000c2';
 const TURMA2_A = 'f0690000-0000-4000-8000-0000000000a2';
+const TURMA2_B = 'f0690000-0000-4000-8000-0000000000b7';
 const UPROF2 = 'f0690000-0000-4000-8000-0000000000c3';
 const PROF2 = 'f0690000-0000-4000-8000-0000000000c4';
 
@@ -91,6 +93,7 @@ async function semearEmpresa(
   esporte: string,
   quadra: string,
   turma: string,
+  turma2: string,
   acao: string,
   slug: string,
 ) {
@@ -110,11 +113,31 @@ async function semearEmpresa(
   await q(
     `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${turma}','${empresa}','T1','${quadra}',20)`,
   );
-  // A acao NUA — legitima hoje, e impossivel a partir do Deploy 2 (AC-003).
-  // Aqui ela existe para ser o ALVO da FK, e nao o objeto do teste.
+  // A SEGUNDA turma, que carrega o historico semeado. A do cenario precisa
+  // ficar vazia: a AC-010 exige `200 []` em TURMA_A, e a AC-008 exige o mesmo
+  // em TURMA_B pela empresa dela.
   await q(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em)
-     VALUES ('${acao}','${empresa}','turma_professor_alterado','${admin}',now())`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${turma2}','${empresa}','T2','${quadra}',20)`,
+  );
+
+  // **A acao nasce COM efeito, e nao nua.** Ate a SPEC-069 ela podia nascer
+  // sozinha; a partir do Deploy 2 o `acao_exige_alvo` recusa isso no COMMIT, e
+  // uma fixture em autocommit morre com 23514 sem que nada do produto esteja
+  // errado. Aqui ela existe para ser o ALVO da FK dos casos abaixo — e o
+  // efeito dela mora na turma 2, nao na do cenario.
+  await comAcao(
+    db,
+    {
+      id: acao,
+      companyId: empresa,
+      tipo: 'turma_professor_alterado',
+      autorId: admin,
+    },
+    (tx, acaoId) =>
+      tx.$executeRawUnsafe(
+        `INSERT INTO eventos_de_turma (id,company_id,acao_id,turma_id,tipo)
+         VALUES (gen_random_uuid(),'${empresa}','${acaoId}','${turma2}','professor_alterado')`,
+      ),
   );
 }
 
@@ -127,6 +150,7 @@ async function semear() {
     ESPORTE_A,
     QUADRA_A,
     TURMA_A,
+    TURMA2_A,
     ACAO_A,
     'spec-069-a',
   );
@@ -136,6 +160,7 @@ async function semear() {
     ESPORTE_B,
     QUADRA_B,
     TURMA_B,
+    TURMA2_B,
     ACAO_B,
     'spec-069-b',
   );
@@ -155,16 +180,6 @@ async function semearProfessoresDeA() {
   );
   await q(
     `UPDATE turmas SET professor_id = '${PROF1}' WHERE id = '${TURMA_A}'`,
-  );
-  // A SEGUNDA turma da MESMA empresa, com historico proprio. Ela existe para
-  // uma pergunta que nenhuma AC faz: o extrato e desta turma, ou e o da
-  // empresa? Sem ela, tirar o `turmaId` do `where` passa em tudo.
-  await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${TURMA2_A}','${EMPRESA_A}','T2','${QUADRA_A}',20)`,
-  );
-  await q(
-    `INSERT INTO eventos_de_turma (id,company_id,acao_id,turma_id,tipo)
-     VALUES ('f0690000-0000-4000-8000-0000000000e2','${EMPRESA_A}','${ACAO_A}','${TURMA2_A}','professor_alterado')`,
   );
 }
 

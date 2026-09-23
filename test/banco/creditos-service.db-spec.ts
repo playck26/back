@@ -16,6 +16,7 @@
 import { PrismaClient } from '@prisma/client';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { CreditosService } from '../../src/creditos/creditos.service';
+import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 
@@ -36,16 +37,28 @@ const OCUPACAO = 'c0330000-0000-4000-8000-000000000007';
 
 const q = (sql: string) => db.$executeRawUnsafe(sql);
 
-/** A ação administrativa que todo movimento exige (SPEC-032). */
-async function novaAcao(
+/**
+ * A ação administrativa que todo movimento exige (SPEC-032) — **e o efeito
+ * dela, na mesma transação** (SPEC-069/INV-069a).
+ *
+ * Antes daqui a ação nascia num `INSERT` solto e o movimento vinha depois, em
+ * outra transação. Em autocommit isso é uma ação que commita sozinha, e o
+ * `acao_exige_alvo` recusa no `COMMIT` com `23514` — sem que nada do produto
+ * esteja errado. O serviço sempre gravou as duas juntas; era a fixture que
+ * não.
+ *
+ * **E há um ganho de fidelidade junto:** nos casos em que o serviço recusa
+ * (saldo insuficiente, motivo em branco), a ação agora volta atrás com o
+ * movimento, como em produção. Antes ela ficava no banco.
+ */
+function comAcaoDeCredito<T>(
   tipo: 'credito_lancado' | 'credito_retirado' | 'reserva_criada',
-) {
-  const linhas = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id, company_id, tipo, autor_id)
-     VALUES (gen_random_uuid(), '${EMPRESA}', '${tipo}', '${UADMIN}')
-     RETURNING id`,
-  );
-  return linhas[0].id;
+  efeito: (
+    tx: Parameters<Parameters<typeof db.$transaction>[0]>[0],
+    acaoId: string,
+  ) => Promise<T>,
+): Promise<T> {
+  return comAcao(db, { companyId: EMPRESA, tipo, autorId: UADMIN }, efeito);
 }
 
 const saldo = async () => {
@@ -94,8 +107,7 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
   });
 
   it('`lancar` credita, e quem escreve o saldo é a TRIGGER', async () => {
-    const acaoId = await novaAcao('credito_lancado');
-    await db.$transaction(async (tx) => {
+    await comAcaoDeCredito('credito_lancado', async (tx, acaoId) => {
       await creditos.lancar(tx, {
         companyId: EMPRESA,
         alunoId: ALUNO,
@@ -109,8 +121,7 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
   });
 
   it('`retirar` debita', async () => {
-    const acaoId = await novaAcao('credito_retirado');
-    await db.$transaction(async (tx) => {
+    await comAcaoDeCredito('credito_retirado', async (tx, acaoId) => {
       await creditos.retirar(tx, {
         companyId: EMPRESA,
         alunoId: ALUNO,
@@ -124,11 +135,10 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
   });
 
   it('retirada acima do saldo é 422 SALDO_INSUFICIENTE, e NÃO grava (AC-004)', async () => {
-    const acaoId = await novaAcao('credito_retirado');
     const antes = await saldo();
     let capturado: unknown;
     try {
-      await db.$transaction(async (tx) => {
+      await comAcaoDeCredito('credito_retirado', async (tx, acaoId) => {
         await creditos.retirar(tx, {
           companyId: EMPRESA,
           alunoId: ALUNO,
@@ -150,11 +160,10 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
     // A garantia é o `CHECK movimentos_motivo_administrativo`; o serviço só
     // troca `500` por `422`. Por isso o teste manda espaço em branco, que
     // passaria por qualquer validação de "campo obrigatório" no DTO.
-    const acaoId = await novaAcao('credito_lancado');
     const antes = await saldo();
     let capturado: unknown;
     try {
-      await db.$transaction(async (tx) => {
+      await comAcaoDeCredito('credito_lancado', async (tx, acaoId) => {
         await creditos.lancar(tx, {
           companyId: EMPRESA,
           alunoId: ALUNO,
@@ -172,16 +181,15 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
   });
 
   it('`consumir` e `devolver` fecham o ciclo, e a devolução acha o consumo ATIVO', async () => {
-    const acaoCriar = await novaAcao('reserva_criada');
     const antes = await saldo();
 
-    const consumoId = await db.$transaction((tx) =>
+    const consumoId = await comAcaoDeCredito('reserva_criada', (tx, acaoId) =>
       creditos.consumir(tx, {
         companyId: EMPRESA,
         alunoId: ALUNO,
         valorCentavos: 8_000,
         autorId: UADMIN,
-        acaoId: acaoCriar,
+        acaoId,
         ocupacaoId: OCUPACAO,
       }),
     );
@@ -197,14 +205,13 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
       valorCentavos: 8_000,
     });
 
-    const acaoCancelar = await novaAcao('credito_lancado');
-    await db.$transaction((tx) =>
+    await comAcaoDeCredito('credito_lancado', (tx, acaoId) =>
       creditos.devolver(tx, {
         companyId: EMPRESA,
         alunoId: ALUNO,
         valorCentavos: ativo!.valorCentavos,
         autorId: UADMIN,
-        acaoId: acaoCancelar,
+        acaoId,
         ocupacaoId: OCUPACAO,
         movimentoOrigemId: ativo!.id,
       }),
@@ -222,26 +229,24 @@ describe('CreditosService — os quatro tipos, contra Postgres real', () => {
     // Não é o serviço que garante isto — é a FK de seis colunas. O teste
     // existe para provar que a garantia alcança o caminho do serviço, e não só
     // o SQL do ensaio.
-    const acaoCriar = await novaAcao('reserva_criada');
-    const consumoId = await db.$transaction((tx) =>
+    const consumoId = await comAcaoDeCredito('reserva_criada', (tx, acaoId) =>
       creditos.consumir(tx, {
         companyId: EMPRESA,
         alunoId: ALUNO,
         valorCentavos: 3_000,
         autorId: UADMIN,
-        acaoId: acaoCriar,
+        acaoId,
         ocupacaoId: OCUPACAO,
       }),
     );
-    const acaoCancelar = await novaAcao('credito_lancado');
     await expect(
-      db.$transaction((tx) =>
+      comAcaoDeCredito('credito_lancado', (tx, acaoId) =>
         creditos.devolver(tx, {
           companyId: EMPRESA,
           alunoId: ALUNO,
           valorCentavos: 3_001,
           autorId: UADMIN,
-          acaoId: acaoCancelar,
+          acaoId,
           ocupacaoId: OCUPACAO,
           movimentoOrigemId: consumoId,
         }),

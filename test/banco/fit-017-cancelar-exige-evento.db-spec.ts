@@ -16,6 +16,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import type { ClienteSql } from './limpar-empresa';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -40,9 +41,21 @@ async function novaOcupacao(dia: string): Promise<string> {
   return id;
 }
 
-async function novaAcao(): Promise<string> {
+/**
+ * SPEC-069/INV-069a — **a ação nasce DENTRO da transação do caso**, e não
+ * antes dela.
+ *
+ * Antes daqui ela vinha de um `INSERT` solto, em autocommit: o
+ * `acao_exige_alvo` julga no `COMMIT` e recusaria ação sem efeito. Aqui o
+ * efeito é o próprio evento que cada caso grava — e, como toda transação
+ * deste arquivo termina em `ROLLBACK_DA_PROVA`, nada disso chega a existir.
+ *
+ * O conserto **aproxima a fixture do caminho real**: em produção a ação e o
+ * evento sempre nasceram na mesma transação. Era a prova que separava os dois.
+ */
+async function novaAcao(tx: ClienteSql): Promise<string> {
   const id = uuid();
-  await q(
+  await tx.$executeRawUnsafe(
     `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
      VALUES ('${id}','${EMPRESA}','reserva_cancelada','${USUARIO}')`,
   );
@@ -135,10 +148,10 @@ describe('FIT-017 — cancelar exige evento DESTA transição (INV-064)', () => 
 
   it('cancelar COM evento da mesma transição passa', async () => {
     const oc = await novaOcupacao('2027-02-03');
-    const acao = await novaAcao();
     const t = uuid();
     const r = await rolou(
       emTransacao(async (tx) => {
+        const acao = await novaAcao(tx);
         await cancelar(tx, oc, t);
         await gravarEvento(tx, acao, oc, t);
       }),
@@ -154,9 +167,9 @@ describe('FIT-017 — cancelar exige evento DESTA transição (INV-064)', () => 
    */
   it('evento de OUTRA transição não serve', async () => {
     const oc = await novaOcupacao('2027-02-04');
-    const acao = await novaAcao();
     const r = await rolou(
       emTransacao(async (tx) => {
+        const acao = await novaAcao(tx);
         await cancelar(tx, oc, uuid());
         await gravarEvento(tx, acao, oc, uuid());
       }),
@@ -167,10 +180,10 @@ describe('FIT-017 — cancelar exige evento DESTA transição (INV-064)', () => 
   /** **O segundo furo.** Um evento não pode pagar por duas transições. */
   it('cancelar → reativar → cancelar com UM evento é recusado', async () => {
     const oc = await novaOcupacao('2027-02-05');
-    const acao = await novaAcao();
     const t1 = uuid();
     const r = await rolou(
       emTransacao(async (tx) => {
+        const acao = await novaAcao(tx);
         await cancelar(tx, oc, t1);
         await gravarEvento(tx, acao, oc, t1);
         await tx.$executeRawUnsafe(
@@ -190,10 +203,10 @@ describe('FIT-017 — cancelar exige evento DESTA transição (INV-064)', () => 
    */
   it('evento gravado ANTES do cancelamento passa', async () => {
     const oc = await novaOcupacao('2027-02-06');
-    const acao = await novaAcao();
     const t = uuid();
     const r = await rolou(
       emTransacao(async (tx) => {
+        const acao = await novaAcao(tx);
         await gravarEvento(tx, acao, oc, t);
         await cancelar(tx, oc, t);
       }),
@@ -203,9 +216,9 @@ describe('FIT-017 — cancelar exige evento DESTA transição (INV-064)', () => 
 
   it('mexer em outra coluna de ocupação já cancelada NÃO exige evento', async () => {
     const oc = await novaOcupacao('2027-02-07');
-    const acao = await novaAcao();
     const t = uuid();
     await db.$transaction(async (tx) => {
+      const acao = await novaAcao(tx);
       await tx.$executeRawUnsafe(
         `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${t}' WHERE id='${oc}'`,
       );

@@ -29,6 +29,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { comAcao } from './acao-com-efeito';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(180_000);
@@ -59,6 +60,7 @@ const ALUNO = 'f0330000-0000-4000-8000-000000000004';
 const ESPORTE = 'f0330000-0000-4000-8000-000000000005';
 const QUADRA = 'f0330000-0000-4000-8000-000000000006';
 const ACAO = 'f0330000-0000-4000-8000-000000000007';
+const OCUPACAO_SENTINELA = 'f0330000-0000-4000-8000-0000000000fe';
 
 function servico(c: PrismaClient): CourtsService {
   return new CourtsService(
@@ -127,36 +129,34 @@ async function levarSaldoA(alvo: number) {
   const atual = await saldo();
   if (atual === alvo) return;
   if (atual < alvo) return creditar(alvo - atual);
-  const [acao] = await semear.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${E}','credito_retirado','${UADMIN}') RETURNING id`,
-  );
-  await semear.$transaction((tx) =>
-    creditos.retirar(tx, {
-      companyId: E,
-      alunoId: ALUNO,
-      valorCentavos: atual - alvo,
-      motivo: 'ajuste do FIT',
-      autorId: UADMIN,
-      acaoId: acao.id,
-    }),
+  await comAcao(
+    semear,
+    { companyId: E, tipo: 'credito_retirado', autorId: UADMIN },
+    (tx, acaoId) =>
+      creditos.retirar(tx, {
+        companyId: E,
+        alunoId: ALUNO,
+        valorCentavos: atual - alvo,
+        motivo: 'ajuste do FIT',
+        autorId: UADMIN,
+        acaoId,
+      }),
   );
 }
 
 async function creditar(centavos: number) {
-  const [acao] = await semear.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${E}','credito_lancado','${UADMIN}') RETURNING id`,
-  );
-  await semear.$transaction((tx) =>
-    creditos.lancar(tx, {
-      companyId: E,
-      alunoId: ALUNO,
-      valorCentavos: centavos,
-      motivo: 'aporte do FIT',
-      autorId: UADMIN,
-      acaoId: acao.id,
-    }),
+  await comAcao(
+    semear,
+    { companyId: E, tipo: 'credito_lancado', autorId: UADMIN },
+    (tx, acaoId) =>
+      creditos.lancar(tx, {
+        companyId: E,
+        alunoId: ALUNO,
+        valorCentavos: centavos,
+        motivo: 'aporte do FIT',
+        autorId: UADMIN,
+        acaoId,
+      }),
   );
 }
 
@@ -193,8 +193,25 @@ beforeAll(async () => {
            VALUES ('${ESPORTE}','${E}','Tenis',1)`);
   await q(`INSERT INTO quadras (id,company_id,nome,preco_hora,esporte_id)
            VALUES ('${QUADRA}','${E}','Q1',80,'${ESPORTE}')`);
-  await q(`INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-           VALUES ('${ACAO}','${E}','reserva_criada','${UADMIN}')`);
+  // SPEC-069/INV-069a — a acao semeada nasce COM efeito. Ela e o `acao_id`
+  // dos movimentos que varios casos inserem em SQL cru; nascer nua a fazia
+  // commitar sozinha, e o `acao_exige_alvo` recusa isso.
+  //
+  // O efeito e um evento sobre uma ocupacao SENTINELA, em 2039 — todas as
+  // contagens deste arquivo sao escopadas por data ou por join com a ocupacao
+  // do proprio caso, entao ela nao entra em nenhuma.
+  await q(`INSERT INTO ocupacoes_quadra
+             (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)
+           VALUES ('${OCUPACAO_SENTINELA}','${E}','${QUADRA}','2039-12-31','06:00','07:00','AVULSO',now(),'${ALUNO}',80)`);
+  await comAcao(
+    semear,
+    { id: ACAO, companyId: E, tipo: 'reserva_criada', autorId: UADMIN },
+    (tx, acaoId) =>
+      tx.$executeRawUnsafe(
+        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+         VALUES (gen_random_uuid(),'${E}','${acaoId}','${OCUPACAO_SENTINELA}','criada',gen_random_uuid())`,
+      ),
+  );
 });
 
 afterAll(async () => {
