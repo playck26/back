@@ -32,6 +32,11 @@
  * em todas as recusas abaixo.
  */
 import { PrismaClient } from '@prisma/client';
+import { ClassesService } from '../../src/classes/classes.service';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
+import type { CourtsService } from '../../src/courts/courts.service';
+import type { PrismaService } from '../../src/prisma/prisma.service';
+import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa, TABELAS_DA_EMPRESA } from './limpar-empresa';
 
@@ -58,6 +63,25 @@ const TURMA_B = 'f0690000-0000-4000-8000-0000000000b5';
 const ACAO_B = 'f0690000-0000-4000-8000-0000000000b6';
 
 const EVENTO = 'f0690000-0000-4000-8000-0000000000e1';
+
+// TASK-002 — os dois professores da empresa A. A turma nasce com o primeiro,
+// para que a troca tenha um "quem saiu" e exercite o caminho real da SPEC-068.
+const UPROF1 = 'f0690000-0000-4000-8000-0000000000c1';
+const PROF1 = 'f0690000-0000-4000-8000-0000000000c2';
+const UPROF2 = 'f0690000-0000-4000-8000-0000000000c3';
+const PROF2 = 'f0690000-0000-4000-8000-0000000000c4';
+
+/**
+ * O serviço de verdade, contra o banco de verdade. `CourtsService` e
+ * `StudentsService` ficam de fora porque o caminho medido aqui não os alcança:
+ * trocar só o professor não mexe na grade, então `precisaCancelar` é falso.
+ */
+const classes = new ClassesService(
+  db as unknown as PrismaService,
+  {} as unknown as CourtsService,
+  {} as unknown as StudentsService,
+  new ConfigOperacaoService(db as unknown as PrismaService),
+);
 
 async function semearEmpresa(
   empresa: string,
@@ -113,7 +137,43 @@ async function semear() {
     ACAO_B,
     'spec-069-b',
   );
+  await semearProfessoresDeA();
 }
+
+async function semearProfessoresDeA() {
+  await q(
+    `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES
+       ('${UPROF1}','spec-069-p1@x.test','x','Professor Um','professor','${EMPRESA_A}',now()),
+       ('${UPROF2}','spec-069-p2@x.test','x','Professor Dois','professor','${EMPRESA_A}',now())`,
+  );
+  await q(
+    `INSERT INTO professores (id,company_id,nome,usuario_id,created_at) VALUES
+       ('${PROF1}','${EMPRESA_A}','Professor Um','${UPROF1}',now()),
+       ('${PROF2}','${EMPRESA_A}','Professor Dois','${UPROF2}',now())`,
+  );
+  await q(
+    `UPDATE turmas SET professor_id = '${PROF1}' WHERE id = '${TURMA_A}'`,
+  );
+}
+
+/** As linhas de `eventos_de_turma` da turma A, com o tipo da ação junto. */
+const eventosDaTurma = () =>
+  db.$queryRawUnsafe<{ tipo: string; acao_tipo: string; turma_id: string }[]>(
+    `SELECT e.tipo, a.tipo AS acao_tipo, e.turma_id
+       FROM eventos_de_turma e
+       JOIN acoes_administrativas a
+         ON a.company_id = e.company_id AND a.id = e.acao_id
+      WHERE e.company_id = '${EMPRESA_A}' AND e.turma_id = '${TURMA_A}'`,
+  );
+
+const contaAcoes = async () =>
+  Number(
+    (
+      await db.$queryRawUnsafe<{ n: bigint }[]>(
+        `SELECT count(*) AS n FROM acoes_administrativas WHERE company_id = '${EMPRESA_A}'`,
+      )
+    )[0].n,
+  );
 
 const inserirEvento = (
   id: string,
@@ -260,6 +320,107 @@ describe('SPEC-069/TASK-001 — eventos_de_turma', () => {
     expect(linhas.map((l) => l.indexname).sort()).toEqual([...nomes].sort());
     for (const linha of linhas) {
       expect(linha.indexdef).toMatch(esperados[linha.indexname]);
+    }
+  });
+});
+
+/**
+ * SPEC-069/TASK-002 — **o gesto passa a dizer QUAL turma.**
+ *
+ * Até a SPEC-068, trocar o professor não deixava rastro nenhum; ela criou a
+ * ação e, com ela, o estado "ação sem alvo". Aqui a ação nasce **com** a linha
+ * de `eventos_de_turma`, na mesma transação.
+ *
+ * ## Por que o serviço, e não a rota
+ *
+ * A AC-002 fala em **200**, e o que ela está comprando com isso é a
+ * discriminação: *um `PATCH` que falhasse com 500 também daria delta zero*.
+ * Chamado pelo serviço, o equivalente honesto é **a chamada resolver e
+ * devolver a turma atualizada** — e é isso que os dois casos afirmam, além do
+ * delta. É a mesma escolha do `fit-049`, que mede esse mesmo gesto.
+ */
+describe('SPEC-069/TASK-002 — a troca de professor grava o evento', () => {
+  it('AC-001: a troca grava UMA linha, e a acao ligada a ela e do tipo certo', async () => {
+    const acoesAntes = await contaAcoes();
+
+    await classes.update(EMPRESA_A, TURMA_A, { professorId: PROF2 }, UADMIN_A);
+
+    const eventos = await eventosDaTurma();
+    expect(eventos).toHaveLength(1);
+    expect(eventos[0].tipo).toBe('professor_alterado');
+    expect(eventos[0].turma_id).toBe(TURMA_A);
+    // **As duas pontas.** So o nome do evento nao prova a ligacao: a acao
+    // ligada a ele tem de ser a do gesto, e nao uma qualquer.
+    expect(eventos[0].acao_tipo).toBe('turma_professor_alterado');
+    expect(await contaAcoes()).toBe(acoesAntes + 1);
+  });
+
+  it('AC-002: o PATCH que NAO troca o professor resolve, e o delta e ZERO nas duas tabelas', async () => {
+    // Controle positivo primeiro: sem ele, "delta zero" ficaria verde num
+    // caminho que nunca grava nada.
+    await classes.update(EMPRESA_A, TURMA_A, { professorId: PROF2 }, UADMIN_A);
+    expect(await eventosDaTurma()).toHaveLength(1);
+
+    const eventosAntes = (await eventosDaTurma()).length;
+    const acoesAntes = await contaAcoes();
+
+    // (a) sem `professorId` no corpo — renomear nao e gesto de professor.
+    const renomeada = await classes.update(
+      EMPRESA_A,
+      TURMA_A,
+      { nome: 'T1 renomeada' },
+      UADMIN_A,
+    );
+    expect(renomeada.nome).toBe('T1 renomeada');
+
+    // (b) com o MESMO `professorId` — retentativa de rede, nao gesto. Este e
+    // o caso que separa "trocou" de "mandou o formulario de novo", e ele so
+    // existe porque a comparacao acontece sob o `FOR UPDATE` (SPEC-068/D6).
+    const mesma = await classes.update(
+      EMPRESA_A,
+      TURMA_A,
+      { professorId: PROF2 },
+      UADMIN_A,
+    );
+    expect(mesma.professorId).toBe(PROF2);
+
+    expect((await eventosDaTurma()).length).toBe(eventosAntes);
+    expect(await contaAcoes()).toBe(acoesAntes);
+  });
+
+  /**
+   * **A pergunta do 5o gate, feita antes da sabotagem:** o que passa na AC-001
+   * e ainda assim quebra?
+   *
+   * Uma acao gravada FORA da transacao do gesto. As duas linhas existiriam, a
+   * AC-001 ficaria verde — e, a partir do Deploy 2, o `acao_exige_alvo` mataria
+   * o `PATCH` em producao com `23514` no `COMMIT`, porque a acao commitaria
+   * sozinha, antes de o evento existir.
+   *
+   * O molde e o da AC-016 da SPEC-068: um gatilho de teste derruba a transacao
+   * DEPOIS do gesto — o despacho dos avisos vem logo a seguir, no mesmo bloco —
+   * e o que se mede e o residuo. Com `tx`, nao sobra nada.
+   */
+  it('a acao e o evento nascem na MESMA transacao do gesto: erro depois deles nao deixa residuo', async () => {
+    const acoesAntes = await contaAcoes();
+    await q(
+      `CREATE FUNCTION falha_proposital_069() RETURNS trigger AS $$
+       BEGIN RAISE EXCEPTION 'falha proposital da SPEC-069'; END $$ LANGUAGE plpgsql`,
+    );
+    await q(
+      `CREATE TRIGGER falha_proposital_069 BEFORE INSERT ON notificacoes
+         FOR EACH ROW EXECUTE FUNCTION falha_proposital_069()`,
+    );
+    try {
+      await expect(
+        classes.update(EMPRESA_A, TURMA_A, { professorId: PROF2 }, UADMIN_A),
+      ).rejects.toThrow(/falha proposital da SPEC-069/);
+
+      expect(await eventosDaTurma()).toHaveLength(0);
+      expect(await contaAcoes()).toBe(acoesAntes);
+    } finally {
+      await q(`DROP TRIGGER falha_proposital_069 ON notificacoes`);
+      await q(`DROP FUNCTION falha_proposital_069()`);
     }
   });
 });
