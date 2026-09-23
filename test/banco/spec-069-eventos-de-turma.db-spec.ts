@@ -31,6 +31,7 @@
  * primeiro caso grava o evento legitimo; sem ele, uma tabela quebrada passaria
  * em todas as recusas abaixo.
  */
+import { NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { ClassesService } from '../../src/classes/classes.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
@@ -68,6 +69,7 @@ const EVENTO = 'f0690000-0000-4000-8000-0000000000e1';
 // para que a troca tenha um "quem saiu" e exercite o caminho real da SPEC-068.
 const UPROF1 = 'f0690000-0000-4000-8000-0000000000c1';
 const PROF1 = 'f0690000-0000-4000-8000-0000000000c2';
+const TURMA2_A = 'f0690000-0000-4000-8000-0000000000a2';
 const UPROF2 = 'f0690000-0000-4000-8000-0000000000c3';
 const PROF2 = 'f0690000-0000-4000-8000-0000000000c4';
 
@@ -154,6 +156,16 @@ async function semearProfessoresDeA() {
   await q(
     `UPDATE turmas SET professor_id = '${PROF1}' WHERE id = '${TURMA_A}'`,
   );
+  // A SEGUNDA turma da MESMA empresa, com historico proprio. Ela existe para
+  // uma pergunta que nenhuma AC faz: o extrato e desta turma, ou e o da
+  // empresa? Sem ela, tirar o `turmaId` do `where` passa em tudo.
+  await q(
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${TURMA2_A}','${EMPRESA_A}','T2','${QUADRA_A}',20)`,
+  );
+  await q(
+    `INSERT INTO eventos_de_turma (id,company_id,acao_id,turma_id,tipo)
+     VALUES ('f0690000-0000-4000-8000-0000000000e2','${EMPRESA_A}','${ACAO_A}','${TURMA2_A}','professor_alterado')`,
+  );
 }
 
 /** As linhas de `eventos_de_turma` da turma A, com o tipo da ação junto. */
@@ -186,7 +198,19 @@ const inserirEvento = (
      VALUES ('${id}','${empresa}','${acao}','${turma}','professor_alterado')`,
   );
 
+/**
+ * As linhas da turma A — **por turma, e nao por empresa**. A empresa A tem uma
+ * segunda turma com historico proprio (ver `semearProfessoresDeA`), e um
+ * contador por empresa faria estes casos medirem o vizinho.
+ */
 const contaEventos = () =>
+  db.$queryRawUnsafe<{ n: bigint }[]>(
+    `SELECT count(*) AS n FROM eventos_de_turma
+      WHERE company_id = '${EMPRESA_A}' AND turma_id = '${TURMA_A}'`,
+  );
+
+/** A empresa inteira — o que a limpeza tem de zerar. */
+const contaEventosDaEmpresa = () =>
   db.$queryRawUnsafe<{ n: bigint }[]>(
     `SELECT count(*) AS n FROM eventos_de_turma WHERE company_id = '${EMPRESA_A}'`,
   );
@@ -275,7 +299,9 @@ describe('SPEC-069/TASK-001 — eventos_de_turma', () => {
     expect(pos('eventos_de_turma')).toBeLessThan(pos('acoes_administrativas'));
 
     await inserirEvento(EVENTO, EMPRESA_A, ACAO_A, TURMA_A);
-    expect(Number((await contaEventos())[0].n)).toBe(1);
+    // Duas: a desta turma e a da turma vizinha, semeada. A limpeza tem de
+    // zerar a EMPRESA, nao a turma do caso.
+    expect(Number((await contaEventosDaEmpresa())[0].n)).toBe(2);
 
     // O DELETE cru continua recusado (a valvula nao vazou para a sessao)...
     await expect(
@@ -284,7 +310,7 @@ describe('SPEC-069/TASK-001 — eventos_de_turma', () => {
 
     // ...e a limpeza, que a abre dentro da propria transacao, vai ate o fim.
     await expect(limparEmpresa(db, EMPRESA_A)).resolves.toBeUndefined();
-    expect(Number((await contaEventos())[0].n)).toBe(0);
+    expect(Number((await contaEventosDaEmpresa())[0].n)).toBe(0);
   });
 
   /**
@@ -422,5 +448,102 @@ describe('SPEC-069/TASK-002 — a troca de professor grava o evento', () => {
       await q(`DROP TRIGGER falha_proposital_069 ON notificacoes`);
       await q(`DROP FUNCTION falha_proposital_069()`);
     }
+  });
+});
+
+/**
+ * SPEC-069/TASK-003 — **o extrato da turma, lido pelo serviço de verdade.**
+ *
+ * O que fica aqui e o que fica na e2e, e por quê: o **403** é do
+ * `CompanyAdminGuard`, que só existe com a pilha HTTP em pé — ele está em
+ * `test/classes-eventos.e2e-spec.ts`. O **404**, a **ordem** e o **`200 []`**
+ * são do serviço, e provar isso com um dublê provaria o dublê.
+ */
+describe('SPEC-069/TASK-003 — o extrato da turma', () => {
+  it('AC-006: os campos e a ORDEM sao contrato — mais novo primeiro', async () => {
+    // Dois gestos, para que exista ordem a conferir. Um evento só ficaria
+    // verde com `orderBy` nenhum, ou com `asc`.
+    await classes.update(EMPRESA_A, TURMA_A, { professorId: PROF2 }, UADMIN_A);
+    await classes.update(EMPRESA_A, TURMA_A, { professorId: PROF1 }, UADMIN_A);
+
+    const extrato = await classes.eventosDaTurma(EMPRESA_A, TURMA_A);
+
+    expect(extrato).toHaveLength(2);
+    expect(Object.keys(extrato[0]).sort()).toEqual([
+      'acao',
+      'autor',
+      'em',
+      'motivo',
+      'tipo',
+    ]);
+    expect(extrato[0]).toMatchObject({
+      tipo: 'professor_alterado',
+      acao: 'turma_professor_alterado',
+      motivo: null,
+      autor: { id: UADMIN_A, nome: 'Admin' },
+    });
+    // `em` e string ISO, nao Date: quem le e um cliente HTTP.
+    expect(typeof extrato[0].em).toBe('string');
+    expect(new Date(extrato[0].em).getTime()).toBeGreaterThanOrEqual(
+      new Date(extrato[1].em).getTime(),
+    );
+  });
+
+  it('AC-010: turma que existe e nao tem historico devolve 200 []', async () => {
+    // Sem nenhum gesto. **Esta AC e a que impede o atalho**: um
+    // `if (eventos.length === 0) throw NotFound` passaria na AC-006, na
+    // AC-007 e na AC-008, e so aqui ficaria vermelho.
+    await expect(classes.eventosDaTurma(EMPRESA_A, TURMA_A)).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('AC-008: turma de OUTRA empresa devolve 404, e a origem e o filtro do servico', async () => {
+    // A turma existe — e o gestor de A nao pode saber disso. A recusa nao vem
+    // do guard: o `CompanyAdminGuard` confere papel e declaradamente nao faz
+    // escopo de tenant. Vem do `{ id, companyId }` deste `findFirst`.
+    await expect(classes.eventosDaTurma(EMPRESA_A, TURMA_B)).rejects.toThrow(
+      NotFoundException,
+    );
+
+    // E o controle: da empresa dela, a MESMA turma responde.
+    await expect(classes.eventosDaTurma(EMPRESA_B, TURMA_B)).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('turma inexistente devolve 404 — e e a outra metade da D2', async () => {
+    await expect(
+      classes.eventosDaTurma(EMPRESA_A, '00000000-0000-4000-8000-000000000999'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  /**
+   * **A pergunta do 5o gate para esta task:** o que passa nas quatro ACs e
+   * ainda assim quebra?
+   *
+   * **Tirar o `turmaId` do `where`.** A AC-006 continuaria verde (so a turma
+   * do cenario tem evento), a AC-010 tambem (nenhuma turma tem), e a AC-008 e
+   * a AC-007 nem olham para o conteudo. O gestor abriria a turma A e veria o
+   * historico da B — mesma empresa, turma errada, e nenhuma AC reclamando.
+   *
+   * Por isso existe uma SEGUNDA turma da mesma empresa, com evento proprio.
+   */
+  it('o extrato e DESTA turma, e nao o da empresa', async () => {
+    await classes.update(EMPRESA_A, TURMA_A, { professorId: PROF2 }, UADMIN_A);
+
+    const daPrimeira = await classes.eventosDaTurma(EMPRESA_A, TURMA_A);
+    const daSegunda = await classes.eventosDaTurma(EMPRESA_A, TURMA2_A);
+
+    // Uma linha cada, e a semeada na segunda nunca aparece na primeira.
+    expect(daPrimeira).toHaveLength(1);
+    expect(daSegunda).toHaveLength(1);
+    // O controle que torna o caso nao-vacuo: as duas turmas TEM historico, e
+    // a empresa toda tem duas linhas. Se o `where` fosse so por empresa, os
+    // dois extratos teriam 2.
+    const total = await db.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM eventos_de_turma WHERE company_id = '${EMPRESA_A}'`,
+    );
+    expect(Number(total[0].n)).toBe(2);
   });
 });

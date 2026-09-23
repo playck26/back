@@ -276,6 +276,56 @@ export class ClassesService {
     return this.toResponse({ ...turma, _count: { alunos: 0 } });
   }
 
+  /**
+   * SPEC-069/D2 — o extrato administrativo da turma.
+   *
+   * **Espelha o `eventosDaOcupacao`**, inclusive nas duas respostas que
+   * parecem uma só: turma que **não existe** é `404`; turma que existe e
+   * ainda não tem histórico é **`200 []`**. Confundi-las esconderia o estado
+   * normal de toda turma anterior a esta spec — e um `if (eventos.length ===
+   * 0) throw NotFound` passaria em todas as outras provas desta rota, que foi
+   * o que a 1ª rodada de validação apontou.
+   *
+   * **O 404 cross-empresa nasce AQUI, e não no guard** (D7): o
+   * `CompanyAdminGuard` da classe confere papel, e declaradamente não faz
+   * escopo de tenant. Quem impede o gestor da empresa A de ler a turma da B é
+   * o `{ id, companyId }` deste `findFirst` — tirar o `companyId` daqui abre
+   * o vazamento sem que nenhum guard reclame.
+   *
+   * A ordem `criadoEm desc` é contrato (AC-006), não conveniência de tela.
+   */
+  async eventosDaTurma(companyId: string, turmaId: string) {
+    const existe = await this.prisma.turma.findFirst({
+      where: { id: turmaId, companyId },
+      select: { id: true },
+    });
+    if (!existe) throw new NotFoundException();
+
+    const eventos = await this.prisma.eventoDeTurma.findMany({
+      where: { companyId, turmaId },
+      select: {
+        tipo: true,
+        criadoEm: true,
+        acao: {
+          select: {
+            tipo: true,
+            motivo: true,
+            autor: { select: { id: true, nome: true } },
+          },
+        },
+      },
+      orderBy: { criadoEm: 'desc' },
+    });
+
+    return eventos.map((evento) => ({
+      tipo: evento.tipo,
+      em: evento.criadoEm.toISOString(),
+      acao: evento.acao.tipo,
+      motivo: evento.acao.motivo,
+      autor: { id: evento.acao.autor.id, nome: evento.acao.autor.nome },
+    }));
+  }
+
   async findOne(companyId: string, id: string) {
     const turma = await this.prisma.turma.findFirst({
       where: { id, companyId },
