@@ -57,14 +57,29 @@ export type TituloDeGesto = (typeof TITULOS_DE_GESTO)[number];
  * útil e ninguém lembra que isso foi decidido.
  */
 export type PublicoDoGesto =
-  'gestores' | 'turma' | 'aluno_removido' | 'ninguem';
+  | 'gestores'
+  | 'turma'
+  | 'aluno_removido'
+  | 'turma_e_professor_anterior'
+  | 'ninguem';
 
 /**
  * O papel de quem recebe. **Decide a URL**, porque os três apps são
  * diferentes: o gestor abre o Admin, o aluno e o professor abrem o Cliente —
  * e mesmo entre os dois últimos a rota da turma não é a mesma.
  */
-export type PapelDoDestinatario = 'gestor' | 'aluno' | 'professor';
+export type PapelDoDestinatario =
+  | 'gestor'
+  | 'aluno'
+  | 'professor'
+  /**
+   * SPEC-068/D6 — quem **perdeu** a turma. É papel próprio e não `professor`
+   * por duas razões, e nenhuma é de estilo: o texto dele é outro ("você não é
+   * mais o professor"), e a URL dele é a **lista**, não a turma — ele já não
+   * pertence a ela, e mandá-lo para lá seria mandá-lo para um 403. É a mesma
+   * decisão que o `turma_aluno_removido` tomou para o aluno removido.
+   */
+  | 'professor_anterior';
 
 /** O que o serviço de domínio sabe e o texto precisa. */
 export interface FatosDoGesto {
@@ -109,6 +124,11 @@ export const PUBLICO_POR_TIPO: Record<TipoDeAcao, PublicoDoGesto> = {
   // público diferente, é o mesmo público num momento em que está vazio.
   turma_criada: 'turma',
   turma_aluno_removido: 'aluno_removido',
+  // SPEC-068/D6 — dois conjuntos de destinatários para UM gesto: a turma (que
+  // continua existindo, com professor novo) e quem saiu dela. Público composto
+  // em vez de dois tipos de ação, porque a troca é **um** gesto administrativo
+  // — dois tipos produziriam duas ações para um clique.
+  turma_professor_alterado: 'turma_e_professor_anterior',
   pagamento_confirmado: 'ninguem',
   credito_lancado: 'ninguem',
   credito_retirado: 'ninguem',
@@ -192,6 +212,12 @@ function destino(
   if (papel === 'gestor') {
     return '/agenda';
   }
+  // SPEC-068/D6 — **a lista, não a turma.** Ele já não pertence a ela, e a
+  // tela dela devolveria 403. Mesma decisão do `turma_aluno_removido` logo
+  // abaixo, e a razão é idêntica: URL que leva a um erro não é aviso, é ruído.
+  if (papel === 'professor_anterior') {
+    return '/minhas-turmas';
+  }
   if (papel === 'professor') {
     return turmaId ? `/minhas-turmas/${turmaId}` : '/minhas-turmas';
   }
@@ -208,7 +234,11 @@ function destino(
 }
 
 /** O corpo de cada fato (D4). Sem texto livre de tabela nenhuma. */
-function corpoDoGesto(tipo: TipoDeAcao, fatos: FatosDoGesto): string {
+function corpoDoGesto(
+  tipo: TipoDeAcao,
+  fatos: FatosDoGesto,
+  papel: PapelDoDestinatario,
+): string {
   const momento = quando(fatos);
 
   switch (tipo) {
@@ -240,6 +270,14 @@ function corpoDoGesto(tipo: TipoDeAcao, fatos: FatosDoGesto): string {
       return 'Uma das suas turmas voltou';
     case 'turma_aluno_removido':
       return 'Você saiu de uma turma';
+    // **O único corpo desta família que depende do PAPEL**, e depende porque
+    // os dois lados do mesmo fato são notícias diferentes: para a turma, ela
+    // continua e trocou de professor; para quem saiu, ela deixou de ser dele.
+    // Nenhum dos dois diz nome de ninguém — a INV-063a vale igual aqui.
+    case 'turma_professor_alterado':
+      return papel === 'professor_anterior'
+        ? 'Você não é mais o professor de uma turma'
+        : 'Uma das suas turmas mudou de professor';
     case 'pagamento_confirmado':
     case 'credito_lancado':
     case 'credito_retirado':
@@ -264,6 +302,13 @@ function tituloDoGesto(tipo: TipoDeAcao): TituloDeGesto {
     case 'turma_criada':
     case 'turma_reativada':
     case 'turma_aluno_removido':
+    case 'turma_professor_alterado':
+      // SPEC-068/D5 — o tipo novo cabe no vocabulário fechado que já existe,
+      // então a AC-018 da SPEC-063 continua valendo sem remendo. Título novo
+      // aqui seria invariante atropelando o vizinho.
+      //
+      // (O comentário mora DEPOIS do `case`, e não entre os dois: entre eles
+      // o `no-fallthrough` do ESLint reclama.)
       return 'Sua turma';
     case 'pagamento_confirmado':
     case 'credito_lancado':
@@ -286,7 +331,7 @@ export function montarAviso(
   }
   return {
     titulo: tituloDoGesto(tipo),
-    corpo: corpoDoGesto(tipo, fatos),
+    corpo: corpoDoGesto(tipo, fatos, papel),
     destinoUrl: destino(tipo, papel, fatos.turmaId),
     expiraEm: prazoDoGesto(tipo, fatos),
   };

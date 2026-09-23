@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  enfileirarAvisoDeNotaBaixa,
+  entrouNaFaixaBaixa,
+} from './aviso-de-nota-baixa';
+import {
   formatDateOnly,
   formatTimeOnly,
   hojeNoFusoDoClube,
@@ -220,6 +224,8 @@ export class AvaliacaoDeAulaService {
       select: {
         id: true,
         data: true,
+        // SPEC-068 — entra no corpo do aviso de nota baixa ("quinta (19h)").
+        horaInicio: true,
         origemTurmaId: true,
         // SPEC-030 — o portão precisa saber se a aula aconteceu.
         chamadas: { select: { completude: true } },
@@ -266,7 +272,11 @@ export class AvaliacaoDeAulaService {
       });
     }
 
-    return aluno;
+    // SPEC-068 — a ocupação volta junto: o aviso de nota baixa precisa da
+    // turma (para a URL) e do instante (para o corpo), e buscá-la de novo
+    // seria uma ida a mais por uma linha que já está na mão. O
+    // `origemTurmaId` já foi provado não-nulo pelo portão acima.
+    return { aluno, ocupacao, turmaId: ocupacao.origemTurmaId };
   }
 
   /**
@@ -283,7 +293,7 @@ export class AvaliacaoDeAulaService {
     ocupacaoId: string,
     dados: { nota: number; comentario?: string | null },
   ) {
-    const aluno = await this.exigirDireitoDeAvaliar(
+    const { aluno, ocupacao, turmaId } = await this.exigirDireitoDeAvaliar(
       companyId,
       usuarioId,
       ocupacaoId,
@@ -293,17 +303,59 @@ export class AvaliacaoDeAulaService {
     // guardada — o painel do gestor não deve ter linhas com aspas vazias.
     const comentario = dados.comentario?.trim() || null;
 
-    return this.prisma.avaliacaoDeAula.upsert({
-      where: { ocupacaoId_alunoId: { ocupacaoId, alunoId: aluno.id } },
-      create: {
-        companyId,
-        ocupacaoId,
-        alunoId: aluno.id,
-        nota: dados.nota,
-        comentario,
-      },
-      update: { nota: dados.nota, comentario },
-      select: { nota: true, comentario: true, updatedAt: true },
+    /**
+     * SPEC-068/TASK-002 — **a avaliação e o aviso são um fato só** (INV-068j).
+     *
+     * A transação entrou aqui por causa do aviso, e o preço está declarado na
+     * spec: se o `INSERT` do aviso falhar, a avaliação não fica gravada. O
+     * contrário — aviso fora da transação — criaria aviso de uma avaliação
+     * que não existe, que é pior.
+     *
+     * **Isolamento padrão (`Read Committed`), de propósito.** A corrida do
+     * mesmo aluno em dois aparelhos não é resolvida por esta leitura: ela é
+     * resolvida pela UNIQUE parcial de `notificacoes` e pelo `ON CONFLICT DO
+     * NOTHING`. Ler a nota anterior aqui é **economia de trabalho**, não
+     * proteção — e foi essa distinção que a 1ª rodada de validação cobrou.
+     */
+    return this.prisma.$transaction(async (tx) => {
+      const anterior = await tx.avaliacaoDeAula.findUnique({
+        where: { ocupacaoId_alunoId: { ocupacaoId, alunoId: aluno.id } },
+        select: { nota: true },
+      });
+
+      const gravada = await tx.avaliacaoDeAula.upsert({
+        where: { ocupacaoId_alunoId: { ocupacaoId, alunoId: aluno.id } },
+        create: {
+          companyId,
+          ocupacaoId,
+          alunoId: aluno.id,
+          nota: dados.nota,
+          comentario,
+        },
+        update: { nota: dados.nota, comentario },
+        select: { id: true, nota: true, comentario: true, updatedAt: true },
+      });
+
+      if (entrouNaFaixaBaixa(anterior?.nota ?? null, gravada.nota)) {
+        await enfileirarAvisoDeNotaBaixa(tx, {
+          companyId,
+          autorUsuarioId: usuarioId,
+          avaliacaoId: gravada.id,
+          fatos: {
+            nota: gravada.nota,
+            turmaId,
+            data: ocupacao.data,
+            horaInicio: ocupacao.horaInicio,
+          },
+        });
+      }
+
+      // **O contrato da resposta não muda**: as mesmas três colunas de antes.
+      return {
+        nota: gravada.nota,
+        comentario: gravada.comentario,
+        updatedAt: gravada.updatedAt,
+      };
     });
   }
 

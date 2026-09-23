@@ -70,6 +70,9 @@ const ALUNO2 = '063f0490-0000-4000-8000-00000000000b';
 /** Ficha sem login — a LIM-063e existe justamente para ele. */
 const PROF_SEM_CONTA = '063f0490-0000-4000-8000-00000000000c';
 const TURMA_SEM_CONTA = '063f0490-0000-4000-8000-00000000000d';
+/** SPEC-068 — o professor que ENTRA na troca. */
+const PROF2_U = '063f0490-0000-4000-8000-00000000000e';
+const PROF2 = '063f0490-0000-4000-8000-00000000000f';
 
 const SENHA = 'senha-do-gestor';
 
@@ -89,11 +92,29 @@ function courts(): CourtsService {
 }
 
 function classes(): ClassesService {
-  return new ClassesService(
-    db as unknown as PrismaService,
-    courts(),
+  return classesCom(db);
+}
+
+/**
+ * SPEC-068/AC-018 — o mesmo serviço sobre **outra conexão**. A corrida só é
+ * corrida com dois clientes: duas `Promise` no mesmo cliente podem serializar
+ * sozinhas e ficar verdes sem provar nada.
+ */
+function classesCom(cliente: PrismaClient): ClassesService {
+  const quadras = new CourtsService(
+    cliente as unknown as PrismaService,
     {} as unknown as StudentsService,
-    new ConfigOperacaoService(db as unknown as PrismaService),
+    new HorarioFuncionamentoService(cliente as unknown as PrismaService),
+    {} as unknown as ImagemDaQuadraService,
+    new ConfigOperacaoService(cliente as unknown as PrismaService),
+    new CreditosService(),
+    { carregarSemana: jest.fn() } as unknown as DisponibilidadeProfessorService,
+  );
+  return new ClassesService(
+    cliente as unknown as PrismaService,
+    quadras,
+    {} as unknown as StudentsService,
+    new ConfigOperacaoService(cliente as unknown as PrismaService),
   );
 }
 
@@ -150,6 +171,7 @@ async function montar(): Promise<void> {
     [ADMIN, 'admin063@teste.local', 'Gestor Autor', 'company_admin'],
     [GESTOR2, 'gestor2-063@teste.local', 'Gestor Dois', 'company_admin'],
     [PROF_U, 'prof063@teste.local', 'Professor', 'professor'],
+    [PROF2_U, 'prof2-063@teste.local', 'Professor Dois', 'professor'],
     [ALUNO1_U, 'aluno1-063@teste.local', 'Aluno Um', 'aluno'],
     [ALUNO2_U, 'aluno2-063@teste.local', 'Aluno Dois', 'aluno'],
   ]) {
@@ -159,6 +181,9 @@ async function montar(): Promise<void> {
   }
   await q(
     `INSERT INTO professores (id,company_id,nome,usuario_id) VALUES ('${PROF}','${EMPRESA}','Professor','${PROF_U}')`,
+  );
+  await q(
+    `INSERT INTO professores (id,company_id,nome,usuario_id) VALUES ('${PROF2}','${EMPRESA}','Professor Dois','${PROF2_U}')`,
   );
   // LIM-063e — a ficha existe para quem ainda não tem login.
   await q(
@@ -257,11 +282,14 @@ describe('SPEC-063/REQ-001 — a matriz inteira tem caso', () => {
     'pagamento_confirmado',
     'credito_lancado',
     'credito_retirado',
+    // SPEC-068 — o catorze. Este teste foi quem cobrou o caso: o enum cresceu
+    // e a FIT ficou vermelha antes de qualquer caso novo existir.
+    'turma_professor_alterado',
   ];
 
-  it('os treze tipos do enum têm caso nesta FIT', () => {
+  it('os catorze tipos do enum têm caso nesta FIT', () => {
     const doEnum = (Object.keys(PUBLICO_POR_TIPO) as TipoDeAcao[]).sort();
-    expect(doEnum).toHaveLength(13);
+    expect(doEnum).toHaveLength(14);
     expect([...EXERCIDOS].sort()).toEqual(doEnum);
   });
 });
@@ -363,6 +391,153 @@ describe('SPEC-063 — os gestos de turma', () => {
     expect(lista[0].titulo).toBe('Sua turma');
     expect(lista[0].corpo).toBe('Você saiu de uma turma');
     expect(lista[0].destinoUrl).toBe('/minhas-aulas/turmas');
+  });
+});
+
+// ===========================================================================
+// SPEC-068 — a troca de professor, o gesto que não existia
+// ===========================================================================
+
+describe('SPEC-068 — a troca de professor', () => {
+  /** As ações do tipo novo, que a AC-009 conta. */
+  async function acoesDeTroca(): Promise<{ autorId: string }[]> {
+    return db.acaoAdministrativa.findMany({
+      where: { companyId: EMPRESA, tipo: 'turma_professor_alterado' },
+      select: { autorId: true },
+    });
+  }
+
+  it('AC-001/AC-003/AC-013: avisa a turma, o professor NOVO e quem SAIU', async () => {
+    // Sentinelas: se nome de tabela vazar para o corpo ou para a URL, esta
+    // palavra aparece. É a INV-063a virada teste (AC-003).
+    await q(`UPDATE turmas SET nome='Sentinela Turma' WHERE id='${TURMA}'`);
+    await q(
+      `UPDATE professores SET nome='Sentinela Prof' WHERE id IN ('${PROF}','${PROF2}')`,
+    );
+
+    await classes().update(EMPRESA, TURMA, { professorId: PROF2 }, ADMIN);
+
+    const lista = await avisos();
+    expect(paraQuem(lista)).toEqual(
+      [PROF_U, ALUNO1_U, ALUNO2_U, PROF2_U].sort(),
+    );
+    for (const aviso of lista) {
+      expect(aviso.titulo).toBe('Sua turma');
+      expect(aviso.corpo).not.toContain('Sentinela');
+      expect(aviso.destinoUrl).not.toContain('Sentinela');
+      expect(aviso.expiraEm).toBeNull();
+    }
+
+    const porUsuario = new Map(lista.map((a) => [a.destinatarioId, a]));
+    // AC-013 — quem saiu: texto próprio, e a LISTA em vez da turma.
+    expect(porUsuario.get(PROF_U)?.corpo).toBe(
+      'Você não é mais o professor de uma turma',
+    );
+    expect(porUsuario.get(PROF_U)?.destinoUrl).toBe('/minhas-turmas');
+    // O professor novo continua na turma, então vai para ela.
+    expect(porUsuario.get(PROF2_U)?.corpo).toBe(
+      'Uma das suas turmas mudou de professor',
+    );
+    expect(porUsuario.get(PROF2_U)?.destinoUrl).toBe(`/minhas-turmas/${TURMA}`);
+    expect(porUsuario.get(ALUNO1_U)?.destinoUrl).toBe(
+      `/minhas-aulas/turma/${TURMA}`,
+    );
+  });
+
+  it('AC-009/AC-002: UMA ação com o autor — e repetir não produz nada', async () => {
+    // **Controle positivo no mesmo cenário**, que foi o que a 1ª rodada
+    // cobrou: sem ele, remover o gatilho deixaria a segunda metade verde.
+    await classes().update(EMPRESA, TURMA, { professorId: PROF2 }, ADMIN);
+    const depois = await acoesDeTroca();
+    expect(depois).toHaveLength(1);
+    expect(depois[0].autorId).toBe(ADMIN);
+    const quantos = (await avisos()).length;
+    expect(quantos).toBeGreaterThan(0);
+
+    // AC-002 — o MESMO professor de novo: retentativa não é gesto.
+    await classes().update(EMPRESA, TURMA, { professorId: PROF2 }, ADMIN);
+    expect(await acoesDeTroca()).toHaveLength(1);
+    expect((await avisos()).length).toBe(quantos);
+  });
+
+  it('AC-014: professor anterior SEM CONTA não vira linha, e a troca passa', async () => {
+    await q(
+      `UPDATE turmas SET professor_id='${PROF_SEM_CONTA}' WHERE id='${TURMA}'`,
+    );
+
+    await classes().update(EMPRESA, TURMA, { professorId: PROF2 }, ADMIN);
+
+    expect(paraQuem(await avisos())).toEqual(
+      [ALUNO1_U, ALUNO2_U, PROF2_U].sort(),
+    );
+    const turma = await db.turma.findUniqueOrThrow({
+      where: { id: TURMA },
+      select: { professorId: true },
+    });
+    expect(turma.professorId).toBe(PROF2);
+  });
+
+  it('AC-010: o autor não recebe, mesmo sendo quem saiu da turma', async () => {
+    await classes().update(EMPRESA, TURMA, { professorId: PROF2 }, PROF_U);
+
+    expect(paraQuem(await avisos())).toEqual(
+      [ALUNO1_U, ALUNO2_U, PROF2_U].sort(),
+    );
+  });
+
+  it('AC-018: duas trocas simultâneas avisam quem perdeu a turma EM CADA UMA', async () => {
+    /**
+     * **A barreira é o teste.** Duas `Promise` disparadas juntas podem passar
+     * por acaso — o escalonador roda a primeira troca inteira antes de a
+     * segunda ler, e aí a sabotagem *sem lock* fica verde também. A 2ª rodada
+     * de validação cobrou exatamente isso.
+     *
+     * Aqui a primeira transação **segura o lock** e só solta depois de
+     * confirmar, no `pg_locks`, que a segunda está esperando. Sem o
+     * `FOR UPDATE` do serviço, a segunda leria `PROF` (valor velho), concluiria
+     * que nada mudou e **não avisaria ninguém**.
+     */
+    const outro = new PrismaClient();
+    try {
+      let bloqueou = false;
+      const segunda = classesCom(outro).update(
+        EMPRESA,
+        TURMA,
+        { professorId: PROF },
+        ADMIN,
+      );
+
+      await db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(
+            `SELECT professor_id FROM turmas WHERE id='${TURMA}' FOR UPDATE`,
+          );
+          for (let i = 0; i < 100 && !bloqueou; i++) {
+            const esperando = await tx.$queryRawUnsafe<{ n: bigint }[]>(
+              `SELECT count(*) AS n FROM pg_locks WHERE NOT granted`,
+            );
+            bloqueou = Number(esperando[0].n) > 0;
+            if (!bloqueou) {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+          }
+          await tx.$executeRawUnsafe(
+            `UPDATE turmas SET professor_id='${PROF2}' WHERE id='${TURMA}'`,
+          );
+        },
+        { timeout: 30_000 },
+      );
+
+      expect(bloqueou).toBe(true);
+      await segunda;
+
+      const quemSaiu = (await avisos()).filter((a) =>
+        a.corpo.startsWith('Você não é mais'),
+      );
+      expect(quemSaiu.map((a) => a.destinatarioId)).toEqual([PROF2_U]);
+    } finally {
+      await outro.$disconnect();
+    }
   });
 });
 

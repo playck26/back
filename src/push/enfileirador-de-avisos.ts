@@ -63,6 +63,11 @@ export class EnfileiradorDeAvisos {
   private readonly efeitos: EfeitoDoGesto[] = [];
   private turmaId: string | null = null;
   private alunoRemovidoId: string | null = null;
+  /**
+   * SPEC-068/D6 — o professor que a turma TINHA, lido da linha travada antes
+   * do `UPDATE`. Sem ele o ramo `turma_e_professor_anterior` avisa só a turma.
+   */
+  private professorAnteriorId: string | null = null;
   private despachado = false;
 
   constructor(
@@ -88,6 +93,19 @@ export class EnfileiradorDeAvisos {
   /** O aluno que saiu — o único destinatário de `turma_aluno_removido`. */
   comAlunoRemovido(alunoId: string): void {
     this.alunoRemovidoId = alunoId;
+  }
+
+  /**
+   * SPEC-068/D6 — o professor que a turma tinha antes do `UPDATE`.
+   *
+   * **Tem de vir da linha TRAVADA** (`SELECT ... FOR UPDATE`), não de uma
+   * leitura anterior à transação: sob `Read Committed`, duas trocas
+   * simultâneas leriam o mesmo professor e as duas avisariam a pessoa errada
+   * na segunda transição. Quem garante isso é o chamador, e a prova é a
+   * AC-018.
+   */
+  comProfessorAnterior(professorId: string): void {
+    this.professorAnteriorId = professorId;
   }
 
   /**
@@ -189,7 +207,7 @@ export class EnfileiradorDeAvisos {
          WHERE company_id = ${this.companyId}::uuid
            AND role = 'company_admin'
            AND status = 'ativo'
-           AND id <> ${this.autorId}::uuid`;
+           AND id IS DISTINCT FROM ${this.autorId}::uuid`;
       return linhas.map((l) => ({ usuarioId: l.usuario_id, papel: 'gestor' }));
     }
 
@@ -201,20 +219,85 @@ export class EnfileiradorDeAvisos {
         SELECT usuario_id FROM alunos
          WHERE id = ${this.alunoRemovidoId}::uuid
            AND company_id = ${this.companyId}::uuid
-           AND usuario_id <> ${this.autorId}::uuid`;
+           AND usuario_id IS DISTINCT FROM ${this.autorId}::uuid`;
       return linhas.map((l) => ({ usuarioId: l.usuario_id, papel: 'aluno' }));
     }
 
-    // `turma`: alunos matriculados **e** o professor que tem conta.
-    //
-    // `UNION ALL` com desempate na aplicação, e não `UNION`: os dois lados
-    // trazem colunas diferentes (`papel`), então o `UNION` não dedupe quem for
-    // aluno E professor da mesma turma — e duas linhas com o mesmo
-    // `(origem_id, destinatario_id)` no mesmo `INSERT` dão erro `21000`,
-    // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+    if (publico === 'turma_e_professor_anterior') {
+      if (!this.turmaId) {
+        return [];
+      }
+      // **O professor anterior vem PRIMEIRO**, e a ordem é a regra: o
+      // desempate guarda o primeiro que aparece, e se ele também for aluno da
+      // turma o aviso específico ("você não é mais o professor") ganha do
+      // genérico. O contrário mandaria a quem perdeu a turma um texto que não
+      // descreve o que aconteceu com ele.
+      return this.semRepetidos([
+        ...(await this.professorAnterior()),
+        ...(await this.daTurma()),
+      ]);
+    }
+
     if (!this.turmaId) {
       return [];
     }
+    return this.semRepetidos(await this.daTurma());
+  }
+
+  /**
+   * **O desempate, e ele é obrigatório, não higiene.** Duas linhas com o mesmo
+   * `(origem_id, destinatario_id)` no mesmo `INSERT` dão `21000` — *"ON
+   * CONFLICT DO UPDATE command cannot affect row a second time"*. Quem for
+   * aluno **e** professor da mesma turma aparece duas vezes; quem perdeu a
+   * turma e continua como aluno dela, também.
+   *
+   * **Guarda o PRIMEIRO**, e por isso a ordem de quem chama é normativa.
+   */
+  private semRepetidos(lista: Destinatario[]): Destinatario[] {
+    const vistos = new Set<string>();
+    const destinatarios: Destinatario[] = [];
+    for (const d of lista) {
+      if (vistos.has(d.usuarioId)) {
+        continue;
+      }
+      vistos.add(d.usuarioId);
+      destinatarios.push(d);
+    }
+    return destinatarios;
+  }
+
+  /**
+   * SPEC-068/D6 — quem **perdeu** a turma, com papel próprio.
+   *
+   * O `IS NOT NULL` é a guarda da LIM-063e: ficha de professor sem conta não
+   * tem destinatário possível. **E ela tem carga desde a D9** — ver o
+   * comentário dentro de `daTurma()`.
+   */
+  private async professorAnterior(): Promise<Destinatario[]> {
+    if (!this.professorAnteriorId) {
+      return [];
+    }
+    const linhas = await this.tx.$queryRaw<{ usuario_id: string }[]>`
+      SELECT usuario_id FROM professores
+       WHERE id = ${this.professorAnteriorId}::uuid
+         AND company_id = ${this.companyId}::uuid
+         AND usuario_id IS NOT NULL
+         AND usuario_id IS DISTINCT FROM ${this.autorId}::uuid`;
+    return linhas.map((l) => ({
+      usuarioId: l.usuario_id,
+      papel: 'professor_anterior' as const,
+    }));
+  }
+
+  /**
+   * Alunos matriculados **e** o professor atual que tem conta.
+   *
+   * `UNION ALL` com desempate na aplicação, e não `UNION`: os dois lados
+   * trazem colunas diferentes (`papel`), então o `UNION` não dedupe quem for
+   * aluno E professor da mesma turma. Quem desempata é `semRepetidos`, porque
+   * a lista pode chegar concatenada com a do professor anterior.
+   */
+  private async daTurma(): Promise<Destinatario[]> {
     const linhas = await this.tx.$queryRaw<
       { usuario_id: string; papel: string }[]
     >`
@@ -223,44 +306,43 @@ export class EnfileiradorDeAvisos {
         JOIN alunos a ON a.id = ta.aluno_id
        WHERE ta.turma_id = ${this.turmaId}::uuid
          AND a.company_id = ${this.companyId}::uuid
-         AND a.usuario_id <> ${this.autorId}::uuid
+         AND a.usuario_id IS DISTINCT FROM ${this.autorId}::uuid
       UNION ALL
       -- LIM-063e: professores.usuario_id e anulavel, e a ficha existe
       -- justamente para o professor que ainda nao tem login. Sem conta nao ha
       -- destinatario possivel: o gesto acontece, so o aviso nao sai.
       --
-      -- **NAO APAGUE O IS NOT NULL PORQUE OS TESTES PASSAM SEM ELE.**
-      -- Sabotei esta linha e a FIT-049 ficou verde, e ficar verde estava
-      -- CERTO: a linha de baixo ja derruba o professor sem conta, porque
-      -- NULL <> '<uuid>' em Postgres da NULL, e nao TRUE (medido). Ou seja,
-      -- hoje quem protege a LIM-063e e um efeito colateral da logica de tres
-      -- valores na exclusao do AUTOR -- nao uma guarda deliberada.
+      -- **SPEC-068/D9 -- ESTA LINHA PASSOU A TER CARGA, e ate 2026-09-22 nao
+      -- tinha.** O comentario anterior aqui registrava, corretamente, que
+      -- sabota-la deixava a FIT-049 verde: a exclusao do autor usava o
+      -- operador de diferenca, e NULL comparado a um uuid por ele da NULL,
+      -- nao TRUE -- entao o professor sem conta caia de carona, e a guarda
+      -- era descricao, nao mecanismo.
       --
-      -- Se alguem mover a exclusao do autor para o JavaScript, ou trocar o
-      -- <> por um NOT IN, o professor sem conta passa a entrar na lista
-      -- com usuario_id nulo, o INSERT leva 23502 DENTRO da transacao do
-      -- gesto, e a edicao de grade inteira volta atras. Esta linha e o que
-      -- torna a protecao explicita em vez de acidental.
+      -- A exclusao do autor virou IS DISTINCT FROM, que devolve TRUE para
+      -- NULL. Agora o IS NOT NULL e a unica coisa entre uma ficha sem conta e
+      -- o INSERT: tira-lo faz o NULL chegar em destinatario_id, o 23502
+      -- estourar e a AC-014 ficar vermelha. Era o objetivo.
+      --
+      -- Medido antes de trocar: a unica perna anulavel e esta.
+      -- alunos.usuario_id e String @unique sem interrogacao, e usuarios.id e
+      -- PK -- por isso o IS DISTINCT FROM nos outros ramos nao muda nada.
+      -- Plano conferido na 3a rodada: Bitmap Heap Scan, custo 9.52 nos dois.
+      --
+      -- (Sem crase neste bloco de proposito: ele vive dentro de um template
+      -- literal, e uma crase aqui FECHA a string. Custou um typecheck.)
       SELECT p.usuario_id, 'professor' AS papel
         FROM turmas t
         JOIN professores p ON p.id = t.professor_id
        WHERE t.id = ${this.turmaId}::uuid
          AND t.company_id = ${this.companyId}::uuid
          AND p.usuario_id IS NOT NULL
-         AND p.usuario_id <> ${this.autorId}::uuid`;
+         AND p.usuario_id IS DISTINCT FROM ${this.autorId}::uuid`;
 
-    const vistos = new Set<string>();
-    const destinatarios: Destinatario[] = [];
-    for (const l of linhas) {
-      if (vistos.has(l.usuario_id)) {
-        continue;
-      }
-      vistos.add(l.usuario_id);
-      destinatarios.push({
-        usuarioId: l.usuario_id,
-        papel: l.papel === 'professor' ? 'professor' : 'aluno',
-      });
-    }
-    return destinatarios;
+    return linhas.map((l) => ({
+      usuarioId: l.usuario_id,
+      papel:
+        l.papel === 'professor' ? ('professor' as const) : ('aluno' as const),
+    }));
   }
 }

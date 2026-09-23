@@ -45,9 +45,13 @@ function fatos(parcial: Partial<FatosDoGesto> = {}): FatosDoGesto {
   };
 }
 
-describe('SPEC-063 — a matriz dos treze tipos', () => {
-  it('tem exatamente treze tipos, e todos decidiram público', () => {
-    expect(TODOS).toHaveLength(13);
+describe('SPEC-063 — a matriz dos tipos (treze na 063, catorze na 068)', () => {
+  it('tem exatamente catorze tipos, e todos decidiram público', () => {
+    // **O número é o ponto**, e não o valor dele: mudá-lo é um gesto
+    // deliberado, e é o que obriga quem acrescenta um tipo a passar por aqui
+    // e decidir o público. A SPEC-068 acrescentou o catorze
+    // (`turma_professor_alterado`), e o `Record` completo não deixou passar.
+    expect(TODOS).toHaveLength(14);
     expect(TODOS.every((t) => PUBLICO_POR_TIPO[t] !== undefined)).toBe(true);
   });
 

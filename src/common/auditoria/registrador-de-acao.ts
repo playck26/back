@@ -53,6 +53,40 @@ export class RegistradorDeAcao {
   ) {}
 
   /**
+   * SPEC-068/TASK-001 — a ação de um gesto que **não tem efeito registrável**.
+   *
+   * Trocar o professor de uma turma não muda ocupação (não há `ocupacaoId`
+   * honesto, pela mesma razão que o `registrarMatricula` explica) e não muda
+   * matrícula (não há `alunoId`). Muda uma **coluna da turma**, e não existe
+   * tabela de evento para isso.
+   *
+   * **O que esta ação registra, e o que NÃO registra:** ela guarda o tipo, o
+   * autor e o instante — quem trocou, quando, e que foi uma troca de
+   * professor. **Não guarda QUAL turma**, porque o vínculo com o objeto, neste
+   * modelo, mora no evento. Inventar um evento de ocupação para carregar o
+   * `turmaId` seria auditoria semanticamente falsa, que é pior que auditoria
+   * incompleta — é a mesma regra que o `registrarMatricula` seguiu.
+   *
+   * Fechar essa lacuna é uma tabela `eventos_de_turma` (ou um `turma_id`
+   * anulável aqui), e está declarado na SPEC-068 como descoberta da
+   * implementação, **sem dono**.
+   */
+  async garantirAcao(): Promise<string> {
+    this.acaoId ??= (
+      await this.tx.acaoAdministrativa.create({
+        data: {
+          companyId: this.companyId,
+          tipo: this.tipo,
+          autorId: this.autorId,
+          motivo: this.motivo ?? null,
+        },
+        select: { id: true },
+      })
+    ).id;
+    return this.acaoId;
+  }
+
+  /**
    * Registra o efeito sobre UMA ocupação, criando a ação se ainda não existir.
    *
    * `transicaoId` é a identidade da mudança de estado, e o mesmo valor tem de
