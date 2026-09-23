@@ -5909,6 +5909,35 @@
         ]
       }
     },
+    "/api/v1/me/fila-de-espera": {
+      "get": {
+        "operationId": "MeFilaDeEsperaController_minhasLinhas",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MinhaLinhaDaFilaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
     "/api/v1/me/fila-de-espera/turmas": {
       "post": {
         "operationId": "MeFilaDeEsperaController_entrarNaTurma",
@@ -12652,6 +12681,87 @@
         },
         "required": [
           "marcadas"
+        ]
+      },
+      "MinhaLinhaDaFilaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000003"
+          },
+          "fila": {
+            "type": "string",
+            "example": "turma",
+            "description": "`turma` = vaga de matrícula; `aula` = vaga de reposição."
+          },
+          "estado": {
+            "type": "string",
+            "example": "aguardando",
+            "description": "Só `aguardando` ou `chamado`: a lista é das filas VIVAS."
+          },
+          "vezAberta": {
+            "type": "boolean",
+            "description": "**É a sua vez, e ainda dá tempo.** `estado = chamado` **e** o prazo ainda não venceu. A SPEC-064/D8 é explícita: a tela confere `chamado_ate` por conta própria e **não depende do varredor** — com o varredor desligado, uma vez vencida não pode aparecer como aberta."
+          },
+          "chamadoAte": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-09-21T12:00:00.000Z",
+            "description": "Até quando a vez vale. `null` enquanto não foi chamado."
+          },
+          "turmaId": {
+            "type": "string",
+            "nullable": true
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "description": "O nome da turma do alvo — na fila de aula, a turma da aula."
+          },
+          "ocupacaoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "data": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-09-25",
+            "description": "A data da aula, na fila de aula."
+          },
+          "horaInicio": {
+            "type": "string",
+            "nullable": true,
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "nullable": true,
+            "example": "20:00"
+          },
+          "quadraNome": {
+            "type": "string",
+            "nullable": true
+          },
+          "criadaEm": {
+            "type": "string",
+            "example": "2026-09-20T12:31:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "fila",
+          "estado",
+          "vezAberta",
+          "chamadoAte",
+          "turmaId",
+          "turmaNome",
+          "ocupacaoId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "quadraNome",
+          "criadaEm"
         ]
       },
       "EntrarNaFilaDeTurmaDto": {

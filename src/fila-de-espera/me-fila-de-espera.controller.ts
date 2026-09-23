@@ -3,6 +3,7 @@ import {
   ConflictException,
   Controller,
   Delete,
+  Get,
   HttpCode,
   Param,
   Post,
@@ -28,6 +29,7 @@ import {
   EntrarNaFilaDeAulaDto,
   EntrarNaFilaDeTurmaDto,
   LinhaDaFilaResponseDto,
+  MinhaLinhaDaFilaResponseDto,
 } from './dto/fila-de-espera.dto';
 import { FilaDeEsperaService } from './fila-de-espera.service';
 
@@ -60,6 +62,24 @@ import { FilaDeEsperaService } from './fila-de-espera.service';
 @Controller('me/fila-de-espera')
 export class MeFilaDeEsperaController {
   constructor(private readonly fila: FilaDeEsperaService) {}
+
+  /**
+   * SPEC-064/TASK-005 — **as filas vivas do aluno.**
+   *
+   * A rota que faltava: sem ela a TASK-005 não é construível. A LIM-064d
+   * promete que quem não tem push *"vê na tela da fila"*, e não havia de onde
+   * ler — a caixa de avisos **omite `origem_id` de propósito** (INV-065d).
+   *
+   * Devolve só `aguardando` e `chamado`, com o prazo e o `vezAberta` já
+   * calculado: a tela não pode oferecer confirmação que o `confirmar` vai
+   * recusar.
+   */
+  @Get()
+  @ApiOkResponse({ type: MinhaLinhaDaFilaResponseDto, isArray: true })
+  @Roles('aluno')
+  minhasLinhas(@CurrentUser() user: AccessTokenPayload) {
+    return this.fila.minhasLinhas(user.companyId as string, user.sub);
+  }
 
   /**
    * REQ-001 — entrar na fila por uma **vaga de matrícula** numa turma.

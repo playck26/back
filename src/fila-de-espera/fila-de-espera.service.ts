@@ -11,7 +11,11 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 import { MatriculaDoAlunoService } from '../classes/matricula-do-aluno.service';
 import { ReposicaoService } from '../classes/reposicao.service';
 import { situacaoDoCredito } from '../classes/credito-de-reposicao';
-import { hojeNoFusoDoClube } from '../courts/date-time.util';
+import {
+  formatDateOnly,
+  formatTimeOnly,
+  hojeNoFusoDoClube,
+} from '../courts/date-time.util';
 import type { LinhaDaFilaResponseDto } from './dto/fila-de-espera.dto';
 
 /**
@@ -89,6 +93,82 @@ export class FilaDeEsperaService {
     });
     if (!aluno) throw new NotFoundException();
     return aluno;
+  }
+
+  /**
+   * SPEC-064/TASK-005 — **as filas vivas do aluno, para a tela dele.**
+   *
+   * ## Por que só `aguardando` e `chamado`
+   *
+   * São os dois estados não-terminais (D2), e a pergunta que a tela responde é
+   * *"onde eu ainda estou esperando?"*. Linha terminada não é fila: é
+   * histórico, e histórico de fila ninguém pediu. O que aconteceu com ela
+   * continua na **caixa de avisos**, que guarda o chamado.
+   *
+   * ## `vezAberta` é calculado aqui, e não lido do estado
+   *
+   * A D8 é explícita: *"mesmo com o varredor desligado, chamados vivos expiram
+   * na leitura — a tela e a confirmação conferem `chamado_ate`"*. Uma linha
+   * pode estar `chamado` no banco com o prazo já vencido, porque quem a expira
+   * é um agendador que pode estar parado. **Mostrar "confirme agora" nesse
+   * caso seria oferecer o que o `confirmar` vai recusar** com `VEZ_EXPIRADA` —
+   * a armadilha do DEF-011, que este projeto já pagou.
+   *
+   * A comparação é a mesma do `confirmar`: prazo **no passado** fecha a vez.
+   */
+  async minhasLinhas(companyId: string, usuarioId: string) {
+    const aluno = await this.alunoDoUsuario(companyId, usuarioId);
+
+    const linhas = await this.prisma.listaDeEspera.findMany({
+      where: {
+        companyId,
+        alunoId: aluno.id,
+        estado: { in: ['aguardando', 'chamado'] },
+      },
+      select: {
+        id: true,
+        estado: true,
+        turmaId: true,
+        ocupacaoId: true,
+        criadaEm: true,
+        chamadoAte: true,
+        turma: { select: { nome: true } },
+        ocupacao: {
+          select: {
+            data: true,
+            horaInicio: true,
+            horaFim: true,
+            quadra: { select: { nome: true } },
+            origemTurma: { select: { nome: true } },
+          },
+        },
+      },
+      // **Ordem total**, e o `id` no fim não é enfeite: duas entradas no mesmo
+      // instante (o `criada_em` tem precisão de microssegundo, mas empate
+      // existe) ficariam em ordem indefinida entre duas leituras, e a lista
+      // trocaria de ordem sozinha na cara da pessoa.
+      orderBy: [{ criadaEm: 'asc' }, { id: 'asc' }],
+    });
+
+    const agora = new Date();
+    return linhas.map((l) => ({
+      id: l.id,
+      fila: l.turmaId ? 'turma' : 'aula',
+      estado: l.estado,
+      vezAberta:
+        l.estado === 'chamado' &&
+        l.chamadoAte !== null &&
+        l.chamadoAte.getTime() > agora.getTime(),
+      chamadoAte: l.chamadoAte?.toISOString() ?? null,
+      turmaId: l.turmaId,
+      turmaNome: l.turma?.nome ?? l.ocupacao?.origemTurma?.nome ?? null,
+      ocupacaoId: l.ocupacaoId,
+      data: l.ocupacao ? formatDateOnly(l.ocupacao.data) : null,
+      horaInicio: l.ocupacao ? formatTimeOnly(l.ocupacao.horaInicio) : null,
+      horaFim: l.ocupacao ? formatTimeOnly(l.ocupacao.horaFim) : null,
+      quadraNome: l.ocupacao?.quadra.nome ?? null,
+      criadaEm: l.criadaEm.toISOString(),
+    }));
   }
 
   /**
