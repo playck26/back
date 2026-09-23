@@ -1,0 +1,43 @@
+-- SPEC-069/AC-016 — a compensatória do Deploy 2, escrita ANTES de ser
+-- necessária e guardada FORA de `prisma/migrations`.
+--
+-- ## Por que ela existe antes do incidente
+--
+-- Porque redigir rollback durante incidente é o pior momento para pensar. O
+-- trabalho de decidir fica feito aqui; o do incidente é copiar e subir.
+--
+-- ## Por que ela NÃO mora em `prisma/migrations`
+--
+-- **Migration pendente É APLICADA.** Se este arquivo estivesse lá, o
+-- `migrate deploy` do próprio Deploy 2 aplicaria as duas em sequência — criaria
+-- o `acao_exige_alvo` e o derrubaria logo em seguida. O deploy ficaria **verde
+-- com a INV-069a desligada**, que é exatamente a classe de defeito que esta
+-- spec existe para impedir. Foi o bloqueante da 4ª rodada de validação.
+--
+-- "Pendente de propósito" não existe para o Prisma.
+--
+-- ## Como se usa, no incidente
+--
+-- 1. copiar este arquivo, **byte a byte**, para
+--    `prisma/migrations/<timestamp>_remove_acao_exige_alvo/migration.sql`;
+-- 2. commitar e deployar — é um **terceiro SHA**, criado só quando o rollback
+--    é acionado;
+-- 3. **confirmar que a migration terminou** antes de restaurar qualquer
+--    binário anterior.
+--
+-- A ordem do item 3 é normativa: com o trigger ainda no banco e o binário
+-- antigo no ar, o gesto de trocar professor volta a gravar ação sem efeito e
+-- falha com `23514` no COMMIT — 500 para o gestor. Primeiro derruba o trigger,
+-- depois volta o binário.
+--
+-- ## Por que ela derruba TAMBÉM a função
+--
+-- O trigger é o mecanismo; a função é o corpo dele. Deixar a função órfã não
+-- quebra nada, mas deixa no banco um objeto que ninguém executa e que o
+-- próximo a ler o schema vai ter de investigar. As duas entraram juntas na
+-- migration do Deploy 2 e saem juntas aqui — e a ordem importa, porque o
+-- Postgres recusa derrubar uma função de que um trigger ainda depende.
+
+DROP TRIGGER "acao_exige_alvo" ON "acoes_administrativas";
+
+DROP FUNCTION "acao_tem_alvo"();
