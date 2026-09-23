@@ -673,9 +673,17 @@ export class ClassesService {
         if (professorAnteriorId) {
           avisosDaTroca.comProfessorAnterior(professorAnteriorId);
         }
-        // Sem efeito de ocupação para registrar: a ação é criada à mão, e o
-        // que ela NÃO guarda está escrito no `garantirAcao`.
-        await avisosDaTroca.despachar(await gestoDeProfessor.garantirAcao());
+        // SPEC-069/TASK-002 — **o gesto passa a dizer QUAL turma.** Antes
+        // daqui a ação nascia sem efeito nenhum, e o extrato guardava o autor
+        // e o instante sem o objeto; agora ela nasce com a linha de
+        // `eventos_de_turma` na MESMA transação, que é o que o
+        // `acao_exige_alvo` vai exigir no `COMMIT` a partir do Deploy 2.
+        //
+        // `idDaAcao` em vez do retorno do registrar: é a mesma forma do ramo
+        // da grade, dez linhas acima, e quem despacha não precisa saber se
+        // houve efeito — só se houve ação.
+        await gestoDeProfessor.registrarTurma(id, 'professor_alterado');
+        await avisosDaTroca.despachar(gestoDeProfessor.idDaAcao);
       }
 
       return atualizada;

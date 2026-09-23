@@ -3,6 +3,7 @@ import type {
   Prisma,
   TipoDeAcao,
   TipoDeEventoDeOcupacao,
+  TipoDeEventoDeTurma,
 } from '@prisma/client';
 
 /**
@@ -53,25 +54,38 @@ export class RegistradorDeAcao {
   ) {}
 
   /**
-   * SPEC-068/TASK-001 — a ação de um gesto que **não tem efeito registrável**.
+   * SPEC-069/D5 — o efeito sobre uma **TURMA**.
    *
-   * Trocar o professor de uma turma não muda ocupação (não há `ocupacaoId`
-   * honesto, pela mesma razão que o `registrarMatricula` explica) e não muda
-   * matrícula (não há `alunoId`). Muda uma **coluna da turma**, e não existe
-   * tabela de evento para isso.
+   * Ele entra no lugar do método que a SPEC-068 criou para o gesto de trocar
+   * professor, e a substituição é o ponto da spec inteira. Aquele existia
+   * porque **não havia tabela**: trocar o professor não muda ocupação nem
+   * matrícula, então a ação nascia sozinha — guardando o autor e o instante e
+   * **sem dizer qual turma** mudou. Era a única ação do sistema sem efeito
+   * nenhum. E, pior que a lacuna, ele tornava "ação sem alvo" um estado
+   * ALCANÇÁVEL, que até então não existia por acidente feliz: gesto sem
+   * efeito não criava ação.
    *
-   * **O que esta ação registra, e o que NÃO registra:** ela guarda o tipo, o
-   * autor e o instante — quem trocou, quando, e que foi uma troca de
-   * professor. **Não guarda QUAL turma**, porque o vínculo com o objeto, neste
-   * modelo, mora no evento. Inventar um evento de ocupação para carregar o
-   * `turmaId` seria auditoria semanticamente falsa, que é pior que auditoria
-   * incompleta — é a mesma regra que o `registrarMatricula` seguiu.
+   * Com `eventos_de_turma` o gesto ganha alvo, e manter o outro seria manter
+   * a porta pela qual o defeito entrou.
    *
-   * Fechar essa lacuna é uma tabela `eventos_de_turma` (ou um `turma_id`
-   * anulável aqui), e está declarado na SPEC-068 como descoberta da
-   * implementação, **sem dono**.
+   * *(O nome dele não aparece aqui de propósito: a AC-012 prova a remoção por
+   * busca de texto em `src/`, e uma lápide em comentário a deixaria vermelha —
+   * ou, pior, ensinaria a afrouxar o gate.)*
+   *
+   * **O `tipo` vem de quem chama**, ao contrário do `registrarMatricula`: lá
+   * não há coluna de tipo — a tabela inteira significa "matrícula mexida" —,
+   * e aqui há. Enum com um valor só hoje não é motivo para o registrador
+   * decidir pelo caso de uso qual gesto aconteceu.
+   *
+   * A ação continua **preguiçosa**, pela mesma razão dos irmãos. A partir do
+   * Deploy 2 da SPEC-069 isso deixa de ser disciplina e vira garantia do
+   * banco: o `acao_exige_alvo` recusa no `COMMIT` qualquer ação sem ao menos
+   * um efeito (INV-069a).
    */
-  async garantirAcao(): Promise<string> {
+  async registrarTurma(
+    turmaId: string,
+    tipo: TipoDeEventoDeTurma,
+  ): Promise<void> {
     this.acaoId ??= (
       await this.tx.acaoAdministrativa.create({
         data: {
@@ -83,7 +97,15 @@ export class RegistradorDeAcao {
         select: { id: true },
       })
     ).id;
-    return this.acaoId;
+
+    await this.tx.eventoDeTurma.create({
+      data: {
+        companyId: this.companyId,
+        acaoId: this.acaoId,
+        turmaId,
+        tipo,
+      },
+    });
   }
 
   /**
