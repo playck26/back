@@ -622,6 +622,11 @@ model Turma {
   /// apontando para turma de outra.
   eventosDeMatricula EventoDeMatricula[]
 
+  /// SPEC-069 — o extrato administrativo DESTA turma. Nao e a historia
+  /// completa dela (LIM-069a): os gestos de grade continuam em
+  /// `eventos_de_ocupacao`.
+  eventosDeTurma EventoDeTurma[]
+
   @@unique([companyId, id], map: "turmas_company_id_id_key")
   @@index([companyId])
   @@index([quadraId])
@@ -1303,6 +1308,11 @@ model AcaoAdministrativa {
   autor              Usuario             @relation("AcaoRegistradaPor", fields: [autorId], references: [id], onDelete: Restrict, map: "acoes_autor_fkey")
   eventos            EventoDeOcupacao[]
   eventosDeMatricula EventoDeMatricula[]
+  /// SPEC-069/D1 — a QUARTA tabela de efeito. Ate a SPEC-068 toda acao
+  /// nascia de um efeito, e por isso "acao sem alvo" nao existia; o
+  /// `garantirAcao()` tornou o estado alcancavel, e esta perna e o que o
+  /// fecha para o gesto de professor.
+  eventosDeTurma     EventoDeTurma[]
 
   movimentosDeCredito MovimentoDeCredito[]
 
@@ -1550,7 +1560,48 @@ model EventoDeMatricula {
   turma Turma              @relation(fields: [companyId, turmaId], references: [companyId, id], onDelete: Restrict, map: "eventos_matricula_turma_fkey")
   aluno Aluno              @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "eventos_matricula_aluno_fkey")
 
+  /// SPEC-069/TASK-001 — a tabela tinha SO a PK. O `acao_exige_alvo` do
+  /// Deploy 2 confere `(company_id, acao_id)` a cada commit, e `company_id`
+  /// LIDERA o btree: um `EXISTS` so por `acao_id` nao usaria indice nenhum.
+  @@index([companyId, acaoId], map: "eventos_matricula_acao_idx")
   @@map("eventos_de_matricula")
+}
+
+/// SPEC-069/D1 — o alvo da acao de TURMA.
+///
+/// `turma_professor_alterado` era a unica acao sem evento nenhum: o extrato
+/// dizia quem e quando, e nao dizia QUAL turma. A alternativa recusada era um
+/// `turma_id` anulavel em `acoes_administrativas` — resolveria este alvo e
+/// abriria precedente para `quadra_id`, `aluno_id`, `professor_id`.
+///
+/// As duas FKs carregam a EMPRESA, e as duas pernas importam: um evento com o
+/// `company_id` da turma certa e a acao de OUTRA empresa e tao cross-tenant
+/// quanto o inverso (INV-069d).
+model EventoDeTurma {
+  id        String              @id @default(uuid()) @db.Uuid
+  companyId String              @map("company_id") @db.Uuid
+  acaoId    String              @map("acao_id") @db.Uuid
+  turmaId   String              @map("turma_id") @db.Uuid
+  tipo      TipoDeEventoDeTurma
+  criadoEm  DateTime            @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  acao  AcaoAdministrativa @relation(fields: [companyId, acaoId], references: [companyId, id], onDelete: Restrict, map: "eventos_turma_acao_fkey")
+  turma Turma              @relation(fields: [companyId, turmaId], references: [companyId, id], onDelete: Restrict, map: "eventos_turma_turma_fkey")
+
+  /// O de LEITURA, espelhando o `eventos_ocupacao_idx` do irmao: FK nao cria
+  /// indice no Postgres, e sem ele tanto o leitor da TASK-003 quanto a
+  /// checagem RESTRICT de todo `DELETE` de turma pagam varredura.
+  @@index([companyId, turmaId, criadoEm(sort: Desc)], map: "eventos_turma_idx")
+  @@index([companyId, acaoId], map: "eventos_turma_acao_idx")
+  @@map("eventos_de_turma")
+}
+
+/// SPEC-069 — um valor so, e de proposito. O evento nomeia o GESTO; os gestos
+/// de grade continuam em `eventos_de_ocupacao` (LIM-069a).
+enum TipoDeEventoDeTurma {
+  professor_alterado
+
+  @@map("tipo_de_evento_de_turma")
 }
 
 /// SPEC-033 — o ledger da carteira. **Escrito a mao, e a migration TAMBEM.**
@@ -1591,6 +1642,10 @@ model MovimentoDeCredito {
   estornosCausais MovimentoDeCredito[] @relation("EstornoCausal")
 
   @@unique([id, tipo, companyId, alunoId, ocupacaoId, valorCentavos], map: "movimentos_origem_alvo_key")
+  /// SPEC-069/TASK-001 — os indices desta tabela lideravam por `id`
+  /// (o UNIQUE de seis colunas) ou eram parciais de `movimento_origem_id`.
+  /// Nenhum servia ao `EXISTS` por `(company_id, acao_id)` do Deploy 2.
+  @@index([companyId, acaoId], map: "movimentos_acao_idx")
   @@map("movimentos_de_credito")
 }
 

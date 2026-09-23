@@ -86,6 +86,11 @@ const APPEND_ONLY: ReadonlySet<string> = new Set([
   // SPEC-054/INV-134: o item da reserva e a QUINTA. So ela: `adicionais` e
   // `tipos_de_adicional` sao catalogo, e o gestor os edita.
   'adicionais_da_ocupacao',
+  // SPEC-069/INV-069c: o evento de turma e a SEXTA, e entra aqui pela mesma
+  // razao que a irma `eventos_de_matricula` — o trigger e o MESMO
+  // (`append_only_com_valvula_de_teste`), e sem a valvula o `DELETE` da
+  // limpeza morre com 23514. Estar em `TABELAS_DA_EMPRESA` nao poe aqui.
+  'eventos_de_turma',
 ]);
 
 /**
@@ -153,6 +158,16 @@ export const TABELAS_DA_EMPRESA = [
   // SPEC-031/D21: ANTES de `turmas`, `alunos` e `acoes_administrativas` — tem
   // FK RESTRICT para as tres.
   'eventos_de_matricula',
+  // SPEC-069/TASK-001: ANTES de `turmas` e de `acoes_administrativas` — as
+  // DUAS FKs compostas dela sao RESTRICT.
+  //
+  // **Esta linha e delta ao write-set da spec, e nao opcional.** A tabela
+  // nasce com `company_id`, e `limpar-empresa-cobertura.db-spec.ts` le o
+  // `information_schema` e fica vermelho NO DIA em que aparece tabela nova
+  // fora da lista. Sem ela a TASK-001 entregaria suite vermelha por um
+  // motivo que nada tem a ver com o mecanismo que ela instala — que e
+  // exatamente o sintoma que a SPEC-020 pagou em 2026-08-26.
+  'eventos_de_turma',
   // SPEC-037: ANTES de `alunos`, `planos`, `usuarios` e `aceites` — as QUATRO
   // FKs da matricula sao RESTRICT, inclusive a causal do aceite (INV-114).
   // Aqui em cima pela mesma razao que trouxe `movimentos_de_credito`: listar
