@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { TIPOS_DE_ACAO_PUBLICADOS } from '../../common/auditoria/tipos-de-acao-publicados';
 
 /**
  * SPEC-032/CON-016 — uma linha do histórico de uma ocupação.
@@ -34,47 +35,19 @@ export class EventoDeOcupacaoResponseDto {
   @ApiProperty({ format: 'date-time' })
   em!: string;
 
+  /**
+   * **A lista mora em `TIPOS_DE_ACAO_PUBLICADOS`, e não aqui.** O gate do
+   * DEF-016 exige o enum INTEIRO em toda resposta que publique este campo, e
+   * a SPEC-069 criou a segunda — duas cópias da mesma lista é a forma de
+   * drift que este arquivo já pagou três vezes.
+   *
+   * O que continua sendo desta resposta: **`turma_aluno_removido` e
+   * `turma_professor_alterado` nunca aparecem aqui**, porque o alvo técnico
+   * dos dois não é uma ocupação (é uma matrícula e uma turma). Eles entram no
+   * enum publicado, não no que chega.
+   */
   @ApiProperty({
-    enum: [
-      'reserva_criada',
-      'reserva_cancelada',
-      // SPEC-034: mover uma reserva e cancelar uma ocorrência de turma são
-      // gestos próprios — nenhum dos dois cabia em `reserva_cancelada`.
-      'reserva_movida',
-      'aula_cancelada',
-      'pagamento_confirmado',
-      'turma_criada',
-      'turma_horario_editado',
-      'credito_lancado',
-      'credito_retirado',
-      // SPEC-031/D21: o gestor tirou o aluno da turma. **Nunca aparece neste
-      // schema em resposta** — o alvo tecnico dele e uma MATRICULA
-      // (`eventos_de_matricula`), nao uma ocupacao. Entra porque o enum
-      // publicado tem de espelhar `TipoDeAcao` INTEIRO: foi o guarda do
-      // DEF-016 que apontou a divergencia no mesmo commit que criou o valor.
-      'turma_aluno_removido',
-      // SPEC-035/D7 — os tres gestos do `status` da turma. **Os dois
-      // primeiros aparecem MESMO neste schema**, e nao por completude: uma
-      // ocupacao cancelada por `turma_inativada` vai mostrar exatamente isso
-      // no historico, e e essa a pergunta que o gestor faz quando encontra
-      // uma quadra que ficou livre sozinha.
-      //
-      // **Segunda vez que o guarda do DEF-016 pega esta lista atrasada, e no
-      // mesmo lugar.** Da primeira foi o `turma_aluno_removido`; desta,
-      // tres de uma vez. O gate paga o proprio custo toda vez.
-      'turma_inativada',
-      'turma_reativada',
-      'aula_reativada',
-      // SPEC-068/D1 — a troca de professor. **NUNCA aparece neste schema em
-      // resposta**, pelo mesmo motivo do `turma_aluno_removido`: a ação dela
-      // não carrega evento de ocupação nenhum, porque trocar o professor não
-      // muda ocupação. Entra porque o enum publicado tem de espelhar
-      // `TipoDeAcao` INTEIRO.
-      //
-      // **Terceira vez que o guarda do DEF-016 pega esta lista atrasada, e no
-      // mesmo lugar.** Ele pegou no mesmo commit que criou o valor, de novo.
-      'turma_professor_alterado',
-    ],
+    enum: TIPOS_DE_ACAO_PUBLICADOS,
     description: 'O GESTO humano que provocou o evento.',
   })
   acao!: string;

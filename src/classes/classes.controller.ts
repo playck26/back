@@ -38,6 +38,7 @@ import { AvaliacoesDaTurmaResponseDto } from './dto/avaliacao-de-aula.dto';
 import { AulaCanceladaResponseDto } from './dto/aula-cancelada-response.dto';
 import { CancelarOcorrenciaDto } from './dto/cancelar-ocorrencia.dto';
 import { ClassesService } from './classes.service';
+import { EventoDeTurmaResponseDto } from './dto/evento-de-turma-response.dto';
 import { PresencaService } from './presenca.service';
 import {
   FrequenciaService,
@@ -206,6 +207,40 @@ export class ClassesController {
     @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.classesService.findOne(user.companyId as string, id);
+  }
+
+  /**
+   * SPEC-069/D2 — **quem mexeu nesta turma, e quando.**
+   *
+   * O irmão deste extrato é o `GET /bookings/:id/eventos`, e a diferença está
+   * no alvo: lá o histórico é de **uma ocupação**; aqui, da turma em si.
+   *
+   * **Ela não remonta a história da turma** (LIM-069a), e isso é contrato, não
+   * limitação a corrigir depois: os gestos de grade — criar, editar horário,
+   * inativar, reativar, cancelar ou reativar aula — continuam em
+   * `eventos_de_ocupacao`. Quem abrir esta rota esperando linha do tempo
+   * completa vai ver uma linha só e concluir que o histórico sumiu; por isso
+   * a `description` diz isso no Swagger, e não só neste comentário.
+   *
+   * **`404` quando a turma não existe, `200 []` quando existe sem histórico**
+   * — são respostas diferentes, e a segunda é o estado normal de toda turma
+   * anterior a esta spec.
+   */
+  // Sem `@Roles`: este controller inteiro é protegido por `CompanyAdminGuard`
+  // (topo da classe), não por `RolesGuard` — que não existe nem aqui nem
+  // globalmente. Um `@Roles` seria decoração morta, e o irmão em
+  // `bookings.controller.ts` PODE tê-lo porque lá o guard é outro. Copiar a
+  // linha de lá para cá pareceria restringir sem restringir nada.
+  @Get(':id/eventos')
+  @ApiOkResponse({ type: EventoDeTurmaResponseDto, isArray: true })
+  @ApiNotFoundResponse({
+    description: 'Turma inexistente, ou de outra empresa.',
+  })
+  eventos(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.classesService.eventosDaTurma(user.companyId as string, id);
   }
 
   /**

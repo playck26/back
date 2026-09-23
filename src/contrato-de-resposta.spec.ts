@@ -466,6 +466,11 @@ describe('DEF-016 — todo enum publicado tem origem conferível', () => {
 const ROTAS_QUE_PRECISAM_DECLARAR_404: [string, string][] = [
   ['/api/v1/classes/{id}/avaliacoes', 'get'],
   ['/api/v1/me/classes/aulas/{ocupacaoId}/avaliacao', 'put'],
+  // SPEC-069/AC-008 — o extrato da turma recusa por 404 em DOIS casos que o
+  // cliente nao distingue: turma inexistente e turma de outra empresa. A
+  // lista "cresce a mao", como o comentario acima declara; esta linha e a
+  // parte da TASK-003 que faz a rede alcancar a rota nova.
+  ['/api/v1/classes/{id}/eventos', 'get'],
 ];
 
 describe('SPEC-025 — rota que recusa por 404 publica o 404', () => {

@@ -4376,6 +4376,47 @@
         ]
       }
     },
+    "/api/v1/classes/{id}/eventos": {
+      "get": {
+        "operationId": "ClassesController_eventos",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventoDeTurmaResponseDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Turma inexistente, ou de outra empresa."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
+      }
+    },
     "/api/v1/classes/{id}/ocorrencias-canceladas": {
       "get": {
         "operationId": "ClassesController_ocorrenciasCanceladas",
@@ -10901,6 +10942,57 @@
           "status",
           "alunosAlocados",
           "alunos"
+        ]
+      },
+      "EventoDeTurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "professor_alterado"
+            ],
+            "description": "O efeito sobre a TURMA."
+          },
+          "em": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "acao": {
+            "type": "string",
+            "enum": [
+              "reserva_criada",
+              "reserva_cancelada",
+              "reserva_movida",
+              "aula_cancelada",
+              "pagamento_confirmado",
+              "turma_criada",
+              "turma_horario_editado",
+              "credito_lancado",
+              "credito_retirado",
+              "turma_aluno_removido",
+              "turma_inativada",
+              "turma_reativada",
+              "aula_reativada",
+              "turma_professor_alterado"
+            ],
+            "description": "O GESTO humano que provocou o evento."
+          },
+          "motivo": {
+            "type": "object",
+            "nullable": true,
+            "description": "Nota interna da ação administrativa. A troca de professor não pede motivo, então hoje ela chega sempre nula nesta resposta."
+          },
+          "autor": {
+            "$ref": "#/components/schemas/AutorDoEventoDto"
+          }
+        },
+        "required": [
+          "tipo",
+          "em",
+          "acao",
+          "motivo",
+          "autor"
         ]
       },
       "AulaCanceladaResponseDto": {
