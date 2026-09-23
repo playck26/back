@@ -1,6 +1,14 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-20** (era 2026-09-17).
+**Fonte: análise direta do código.** Data: **2026-09-22** (era 2026-09-20).
+
+**Números conferidos por comando em 2026-09-22, com a SPEC-068 pronta:**
+**49 migrations, 41 tabelas, 20 triggers** não-internas (`ls -d
+prisma/migrations/*/`; `pg_tables` sem `_prisma_migrations` e `pg_trigger` sem
+as internas, num banco novo com as 49 aplicadas). *A SPEC-068 somou **2
+migrations** e **nenhuma tabela** — um valor no enum `tipo_de_acao`, um índice
+único parcial e um `CHECK` sobre `notificacoes`, exatamente a forma da
+SPEC-063. Ver a seção "O QUARTO valor de `tipo`".*
 
 **Números conferidos por comando em 2026-09-20, com a SPEC-062 no ar e a
 SPEC-063 pronta:** **44 migrations, 40 tabelas, 20 triggers** não-internas
@@ -1790,6 +1798,50 @@ hora e quantidade. `Turma.nome` é texto livre e o clube escolhe — "Turma da A
 é nome plausível —, então quem diz *qual* turma é o `destino_url`, que carrega
 **id**, nunca slug. O título vem de vocabulário fechado de três valores, e é o
 que torna a regra verificável em vez de prosa.
+
+### O QUARTO valor de `tipo`, e a guarda que passou a ter carga (SPEC-068)
+
+A SPEC-068 acrescentou dois avisos que o card pedia e o produto não dava —
+**troca de professor** e **nota de 1 ou 2 estrelas** — e as duas decisões
+importantes dela são de mecanismo, não de texto.
+
+**O `tipo` da tabela tem quatro valores, e o quarto não é gesto.** `gesto`
+(SPEC-063), `teste` (SPEC-062), `lista_espera` (SPEC-064) e agora
+**`avaliacao_baixa`**. A troca de professor **é** gesto e entrou no enum
+`TipoDeAcao` (o catorze); a nota baixa não é — é condicional (`nota <= 2`), o
+público é outro, e pôr avaliação no enum de ações faria o extrato de uma quadra
+registrar um gesto que gestor nenhum fez.
+
+**Cada `tipo` com idempotência tem o par UNIQUE + CHECK, e o par é indivisível:**
+
+| `tipo` | Índice parcial | CHECK que o mantém vivo |
+|---|---|---|
+| `gesto` | `notificacoes_gesto_por_destinatario_key` | `notificacoes_gesto_tem_origem_chk` |
+| `avaliacao_baixa` | `notificacoes_avaliacao_por_destinatario_key` | `notificacoes_avaliacao_tem_origem_chk` |
+
+Sem o CHECK o índice é **letra morta e em silêncio**: no PostgreSQL `NULL` não
+colide com `NULL`, então a UNIQUE parcial aceitaria quantas linhas sem origem
+quisessem entrar. É por isso que a idempotência do aviso de nota baixa
+**dispensa isolamento serializável** — a proteção não mora na leitura do estado
+anterior, mora no banco, e o mesmo aluno em dois aparelhos resolve no
+`ON CONFLICT DO NOTHING`.
+
+**A exclusão do autor passou de `<>` para `IS DISTINCT FROM`, e isso não é
+estilo.** Até 2026-09-22 a guarda `usuario_id IS NOT NULL` do professor sem
+conta era **carona**: `NULL <> '<uuid>'` dá `NULL` em Postgres, não `TRUE`, e o
+próprio comentário no código registrava que sabotá-la deixava a FIT-049 verde.
+Com `IS DISTINCT FROM`, a guarda é a única coisa entre um `NULL` e o `INSERT` —
+tirá-la produz `23502` e reprova. **A única perna anulável é
+`professores.usuario_id`**: `alunos.usuario_id` é `String @unique` e
+`usuarios.id` é PK, então a troca não muda nada nos outros ramos (plano
+conferido: `Bitmap Heap Scan`, custo 9.52 nos dois).
+
+**O que o extrato NÃO registra, e fica dito:** a ação `turma_professor_alterado`
+não carrega evento — trocar o professor não muda ocupação nem matrícula, e não
+existe tabela de evento para o fato. Ela guarda **quem** e **quando**, não
+**qual turma**. Inventar um evento de ocupação para carregar o `turmaId` seria
+auditoria semanticamente falsa, que é pior que auditoria incompleta. Fechar isso
+é uma tabela `eventos_de_turma`, e está declarado na spec **sem dono**.
 
 ### O terceiro lado da `notificacoes`: a caixa de ENTRADA (SPEC-065)
 
