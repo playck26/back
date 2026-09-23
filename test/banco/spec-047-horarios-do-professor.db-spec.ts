@@ -22,6 +22,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { CourtsService } from '../../src/courts/courts.service';
@@ -172,19 +173,20 @@ async function montar(): Promise<void> {
 
 /** Saldo pela porta do ledger — a INV-071 recusa `UPDATE` direto em `alunos`. */
 async function creditar(centavos: number): Promise<void> {
-  const [acao] = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','credito_lancado','${ADMIN}') RETURNING id`,
-  );
-  await db.$transaction((tx) =>
-    new CreditosService().lancar(tx, {
-      companyId: EMPRESA,
-      alunoId: ALUNO,
-      valorCentavos: centavos,
-      motivo: 'saldo para medir a SPEC-047/REQ-005',
-      autorId: ADMIN,
-      acaoId: acao.id,
-    }),
+  // SPEC-069/INV-069a — a acao e o efeito na MESMA transacao. Em autocommit o
+  // `INSERT` da acao commita sozinho e o `acao_exige_alvo` recusa no COMMIT.
+  await comAcao(
+    db,
+    { companyId: EMPRESA, tipo: 'credito_lancado', autorId: ADMIN },
+    (tx, acaoId) =>
+      new CreditosService().lancar(tx, {
+        companyId: EMPRESA,
+        alunoId: ALUNO,
+        valorCentavos: centavos,
+        motivo: 'saldo para medir a SPEC-047/REQ-005',
+        autorId: ADMIN,
+        acaoId,
+      }),
   );
 }
 

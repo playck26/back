@@ -804,9 +804,27 @@ describe('SPEC-063 — as travas do banco', () => {
    * **misturada** — texto novo com destino e prazo do passado.
    */
   it('D3: o segundo despacho da MESMA ação reescreve as quatro colunas', async () => {
-    const acao = await db.acaoAdministrativa.create({
-      data: { companyId: EMPRESA, tipo: 'aula_cancelada', autorId: ADMIN },
-      select: { id: true },
+    // **SPEC-069/INV-069a — esta e a acao que o `grep` de SQL cru nao via.**
+    // Ela nasce pelo Prisma (`acaoAdministrativa.create`), em autocommit, e
+    // commitava sozinha: o `acao_exige_alvo` recusa isso no COMMIT.
+    //
+    // O conserto preserva o que o caso mede — **os dois despachos da MESMA
+    // acao** —, porque o `acaoId` continua sendo um so. O que entra e um
+    // efeito legitimo: o evento da ocupacao que o gesto `aula_cancelada`
+    // teria produzido de verdade.
+    const acao = { id: crypto.randomUUID() };
+    await db.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
+         VALUES ('${acao.id}','${EMPRESA}','aula_cancelada','${ADMIN}')`,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+         SELECT gen_random_uuid(),'${EMPRESA}','${acao.id}',o.id,'cancelada',gen_random_uuid()
+           FROM ocupacoes_quadra o
+          WHERE o.company_id='${EMPRESA}' AND o.origem_turma_id='${TURMA}'
+          ORDER BY o.data LIMIT 1`,
+      );
     });
 
     await db.$transaction(async (tx) => {

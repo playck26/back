@@ -28,6 +28,7 @@ import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.se
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { StudentsService } from '../../src/people/students.service';
+import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 
@@ -85,29 +86,24 @@ const SET_NOMEADO =
   'SET CONSTRAINTS ocupacao_cancelada_exige_evento, ' +
   'ocupacao_cancelada_exige_devolucao, movimentos_consumo_ativo_unico IMMEDIATE';
 
-async function novaAcao(tipo: string): Promise<string> {
-  const [linha] = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','${tipo}','${UADMIN}') RETURNING id`,
-  );
-  return linha.id;
-}
-
 /** Um aporte pela porta do ledger — a única que existe (D1). */
 async function creditar(centavos: number) {
-  const acao = await db.$queryRawUnsafe<{ id: string }[]>(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-     VALUES (gen_random_uuid(),'${EMPRESA}','credito_lancado','${UADMIN}') RETURNING id`,
-  );
-  await db.$transaction((tx) =>
-    creditos.lancar(tx, {
-      companyId: EMPRESA,
-      alunoId: ALUNO,
-      valorCentavos: centavos,
-      motivo: 'aporte de teste',
-      autorId: UADMIN,
-      acaoId: acao[0].id,
-    }),
+  // SPEC-069/INV-069a — **a acao e o efeito na MESMA transacao.** Em
+  // autocommit o `INSERT` da acao commita sozinho, o `acao_exige_alvo` julga
+  // ali e o movimento ainda nao existe: `23514` numa fixture que nunca foi o
+  // defeito. O servico sempre gravou os dois juntos; era a fixture que nao.
+  await comAcao(
+    db,
+    { companyId: EMPRESA, tipo: 'credito_lancado', autorId: UADMIN },
+    (tx, acaoId) =>
+      creditos.lancar(tx, {
+        companyId: EMPRESA,
+        alunoId: ALUNO,
+        valorCentavos: centavos,
+        motivo: 'aporte de teste',
+        autorId: UADMIN,
+        acaoId,
+      }),
   );
 }
 
@@ -199,19 +195,18 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     const antes = await saldo();
     // Zera a carteira por retirada, que é a porta legítima.
     if (antes > 0) {
-      const acao = await db.$queryRawUnsafe<{ id: string }[]>(
-        `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-         VALUES (gen_random_uuid(),'${EMPRESA}','credito_retirado','${UADMIN}') RETURNING id`,
-      );
-      await db.$transaction((tx) =>
-        creditos.retirar(tx, {
-          companyId: EMPRESA,
-          alunoId: ALUNO,
-          valorCentavos: antes,
-          motivo: 'zerar para o teste',
-          autorId: UADMIN,
-          acaoId: acao[0].id,
-        }),
+      await comAcao(
+        db,
+        { companyId: EMPRESA, tipo: 'credito_retirado', autorId: UADMIN },
+        (tx, acaoId) =>
+          creditos.retirar(tx, {
+            companyId: EMPRESA,
+            alunoId: ALUNO,
+            valorCentavos: antes,
+            motivo: 'zerar para o teste',
+            autorId: UADMIN,
+            acaoId,
+          }),
       );
     }
     const ocupacoesAntes = await db.ocupacaoQuadra.count({
@@ -392,24 +387,24 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     // A sabotagem: cancelar por fora do serviço, gravando ocupação e evento
     // mas NENHUMA devolução. É exatamente o que o `back` revertido faz (saída
     // B do rollout), e o que qualquer caminho novo faria se esquecesse.
-    const acao = await db.$queryRawUnsafe<{ id: string }[]>(
-      `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-       VALUES (gen_random_uuid(),'${EMPRESA}','reserva_cancelada','${UADMIN}') RETURNING id`,
-    );
     const transicao = '0d330000-0000-4000-8000-0000000000ff';
     await expect(
-      db.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(
-          `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${id}'`,
-        );
-        await tx.$executeRawUnsafe(
-          `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
-           VALUES (gen_random_uuid(),'${EMPRESA}','${acao[0].id}','${id}','cancelada','${transicao}')`,
-        );
-        await tx.$executeRawUnsafe(
-          `SET CONSTRAINTS ocupacao_cancelada_exige_evento, ocupacao_cancelada_exige_devolucao, movimentos_consumo_ativo_unico IMMEDIATE`,
-        );
-      }),
+      comAcao(
+        db,
+        { companyId: EMPRESA, tipo: 'reserva_cancelada', autorId: UADMIN },
+        async (tx, acaoId) => {
+          await tx.$executeRawUnsafe(
+            `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${transicao}' WHERE id='${id}'`,
+          );
+          await tx.$executeRawUnsafe(
+            `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+             VALUES (gen_random_uuid(),'${EMPRESA}','${acaoId}','${id}','cancelada','${transicao}')`,
+          );
+          await tx.$executeRawUnsafe(
+            `SET CONSTRAINTS ocupacao_cancelada_exige_evento, ocupacao_cancelada_exige_devolucao, movimentos_consumo_ativo_unico IMMEDIATE`,
+          );
+        },
+      ),
     ).rejects.toMatchObject({ meta: { code: 'P3301' } });
 
     // E o serviço, que faz certo, continua passando na mesma reserva.
@@ -441,29 +436,30 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
      * código antigo, e não uma regressão: a simulação agora é fiel ao que o
      * banco cobra de quem descancela de verdade.
      */
-    const acao = await db.$queryRawUnsafe<{ id: string }[]>(
-      `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id)
-       VALUES (gen_random_uuid(),'${EMPRESA}','reserva_criada','${UADMIN}') RETURNING id`,
+    const acaoDaReativacao = await comAcao(
+      db,
+      { companyId: EMPRESA, tipo: 'reserva_criada', autorId: UADMIN },
+      async (tx, acaoId) => {
+        const [{ t }] = await tx.$queryRawUnsafe<{ t: string }[]>(
+          `SELECT gen_random_uuid()::text AS t`,
+        );
+        await tx.$executeRawUnsafe(
+          `UPDATE ocupacoes_quadra SET status_pagamento='pendente_pagamento', transicao_id='${t}' WHERE id='${id}'`,
+        );
+        await tx.$executeRawUnsafe(
+          `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id,criado_em)
+           VALUES (gen_random_uuid(),'${EMPRESA}','${acaoId}','${id}','reativada','${t}',now())`,
+        );
+        return acaoId;
+      },
     );
-    await db.$transaction(async (tx) => {
-      const [{ t }] = await tx.$queryRawUnsafe<{ t: string }[]>(
-        `SELECT gen_random_uuid()::text AS t`,
-      );
-      await tx.$executeRawUnsafe(
-        `UPDATE ocupacoes_quadra SET status_pagamento='pendente_pagamento', transicao_id='${t}' WHERE id='${id}'`,
-      );
-      await tx.$executeRawUnsafe(
-        `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id,criado_em)
-         VALUES (gen_random_uuid(),'${EMPRESA}','${acao[0].id}','${id}','reativada','${t}',now())`,
-      );
-    });
     await db.$transaction(async (tx) => {
       await creditos.consumir(tx, {
         companyId: EMPRESA,
         alunoId: ALUNO,
         valorCentavos: 8_000,
         autorId: UADMIN,
-        acaoId: acao[0].id,
+        acaoId: acaoDaReativacao,
         ocupacaoId: id,
       });
       await tx.$executeRawUnsafe(
@@ -512,57 +508,61 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     const { id } = await reservar('aluno');
 
     // 1. INV-096 — cancelar sem devolver.
-    const acaoA = await novaAcao('reserva_cancelada');
     const trans = '0d330000-0000-4000-8000-0000000000e1';
     await expect(
-      db
-        .$transaction(async (tx) => {
+      comAcao(
+        db,
+        { companyId: EMPRESA, tipo: 'reserva_cancelada', autorId: UADMIN },
+        async (tx, acaoId) => {
           await tx.$executeRawUnsafe(
             `UPDATE ocupacoes_quadra SET status_pagamento='cancelado', transicao_id='${trans}' WHERE id='${id}'`,
           );
           await tx.$executeRawUnsafe(
             `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
-             VALUES (gen_random_uuid(),'${EMPRESA}','${acaoA}','${id}','cancelada','${trans}')`,
+             VALUES (gen_random_uuid(),'${EMPRESA}','${acaoId}','${id}','cancelada','${trans}')`,
           );
           await tx.$executeRawUnsafe(SET_NOMEADO);
-        })
-        .catch(traduzirRecusaDeCancelamento),
+        },
+      ).catch(traduzirRecusaDeCancelamento),
     ).rejects.toMatchObject({
       response: { code: 'CANCELAMENTO_CARTEIRA_INDISPONIVEL' },
     });
 
     // 2. INV-098 — segundo consumo ativo.
-    const acaoB = await novaAcao('reserva_criada');
     await expect(
-      db
-        .$transaction(async (tx) => {
+      comAcao(
+        db,
+        { companyId: EMPRESA, tipo: 'reserva_criada', autorId: UADMIN },
+        async (tx, acaoId) => {
           await creditos.consumir(tx, {
             companyId: EMPRESA,
             alunoId: ALUNO,
             valorCentavos: 8_000,
             autorId: UADMIN,
-            acaoId: acaoB,
+            acaoId,
             ocupacaoId: id,
           });
           await tx.$executeRawUnsafe(SET_NOMEADO);
-        })
-        .catch(traduzirRecusaDeCancelamento),
+        },
+      ).catch(traduzirRecusaDeCancelamento),
     ).rejects.toMatchObject({ response: { code: 'CONSUMO_JA_ATIVO' } });
 
     // 3. o índice parcial — devolver duas vezes o mesmo consumo.
     const ativo = await creditos.consumoAtivoDaOcupacao(db, EMPRESA, id);
-    const acaoC = await novaAcao('reserva_cancelada');
     const devolver = () =>
-      db.$transaction((tx) =>
-        creditos.devolver(tx, {
-          companyId: EMPRESA,
-          alunoId: ALUNO,
-          valorCentavos: ativo!.valorCentavos,
-          autorId: UADMIN,
-          acaoId: acaoC,
-          ocupacaoId: id,
-          movimentoOrigemId: ativo!.id,
-        }),
+      comAcao(
+        db,
+        { companyId: EMPRESA, tipo: 'reserva_cancelada', autorId: UADMIN },
+        (tx, acaoId) =>
+          creditos.devolver(tx, {
+            companyId: EMPRESA,
+            alunoId: ALUNO,
+            valorCentavos: ativo!.valorCentavos,
+            autorId: UADMIN,
+            acaoId,
+            ocupacaoId: id,
+            movimentoOrigemId: ativo!.id,
+          }),
       );
     await devolver();
     await expect(

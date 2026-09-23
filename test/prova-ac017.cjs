@@ -25,6 +25,30 @@ const antigo = new PrismaClient();
 
 const EMPRESA = randomUUID();
 const USUARIO = randomUUID();
+// SPEC-069/INV-069a — o alvo das acoes desta prova. Elas nasciam nuas, e o
+// `acao_exige_alvo` recusa isso no COMMIT; agora cada uma vem com um evento
+// sobre esta ocupacao, na MESMA transacao. A prova do enum nao enfraquece: o
+// cliente antigo continua lendo o tipo conhecido e falhando no valor novo,
+// que e o que ela mede.
+const ESPORTE = randomUUID();
+const QUADRA = randomUUID();
+const OCUPACAO = randomUUID();
+
+/** Uma acao COM efeito, como o produto sempre gravou. */
+async function acaoComEvento(tipo) {
+  const acaoId = randomUUID();
+  await antigo.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(
+      `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em)
+       VALUES ('${acaoId}','${EMPRESA}','${tipo}','${USUARIO}',now())`,
+    );
+    await tx.$executeRawUnsafe(
+      `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+       VALUES (gen_random_uuid(),'${EMPRESA}','${acaoId}','${OCUPACAO}','criada',gen_random_uuid())`,
+    );
+  });
+  return acaoId;
+}
 
 async function main() {
   await antigo.$executeRawUnsafe(
@@ -34,14 +58,23 @@ async function main() {
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
      VALUES ('${USUARIO}','ac017-${USUARIO}@teste.local','x','Gestor','company_admin','${EMPRESA}',now())`,
   );
+  await antigo.$executeRawUnsafe(
+    `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at)
+     VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
+  );
+  await antigo.$executeRawUnsafe(
+    `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora)
+     VALUES ('${QUADRA}','${EMPRESA}','Q1','${ESPORTE}',100)`,
+  );
+  await antigo.$executeRawUnsafe(
+    `INSERT INTO ocupacoes_quadra
+       (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,valor)
+     VALUES ('${OCUPACAO}','${EMPRESA}','${QUADRA}',DATE '2038-01-01',TIME '08:00',TIME '09:00','AVULSO',now(),80)`,
+  );
 
   // ---- FASE 1 ----------------------------------------------------------
   // O cliente anterior grava uma ação de um tipo que ELE conhece, e lê.
-  const acaoConhecida = randomUUID();
-  await antigo.$executeRawUnsafe(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em)
-     VALUES ('${acaoConhecida}','${EMPRESA}','turma_criada','${USUARIO}',now())`,
-  );
+  const acaoConhecida = await acaoComEvento('turma_criada');
   const antes = await antigo.acaoAdministrativa.findMany({
     where: { companyId: EMPRESA },
     select: { tipo: true },
@@ -60,10 +93,7 @@ async function main() {
   // ---- FASE 2 ----------------------------------------------------------
   // Agora existe UMA linha com o valor novo, gravada por SQL (como o código
   // novo faria em produção).
-  await antigo.$executeRawUnsafe(
-    `INSERT INTO acoes_administrativas (id,company_id,tipo,autor_id,criado_em)
-     VALUES ('${randomUUID()}','${EMPRESA}','turma_professor_alterado','${USUARIO}',now())`,
-  );
+  await acaoComEvento('turma_professor_alterado');
 
   let linhas = null;
   let erro = null;
