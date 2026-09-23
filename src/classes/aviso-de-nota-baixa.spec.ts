@@ -38,7 +38,12 @@ describe('SPEC-068 — a entrada na faixa baixa', () => {
     ['3 → 2: entra na faixa', 3, 2, true],
     ['1 → 1: regravação, não é entrada', 1, 1, false],
     ['1 → 2: já estava na faixa', 1, 2, false],
-    ['2 → 1: já estava na faixa — piora, mas é a mesma reclamação', 2, 1, false],
+    [
+      '2 → 1: já estava na faixa — piora, mas é a mesma reclamação',
+      2,
+      1,
+      false,
+    ],
     ['2 → 5: saiu da faixa', 2, 5, false],
     ['4 → 5: nunca esteve', 4, 5, false],
   ])('%s', (_nome, anterior, nova, esperado) => {

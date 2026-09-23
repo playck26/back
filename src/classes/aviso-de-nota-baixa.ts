@@ -111,7 +111,9 @@ export function montarAvisoDeNotaBaixa(
 ): AvisoDeNotaBaixa {
   const estrelas = fatos.nota === 1 ? '1 estrela' : `${fatos.nota} estrelas`;
   const momento =
-    fatos.data && fatos.horaInicio ? quando(fatos.data, fatos.horaInicio) : null;
+    fatos.data && fatos.horaInicio
+      ? quando(fatos.data, fatos.horaInicio)
+      : null;
   return {
     titulo: TITULO_DA_AVALIACAO,
     corpo: momento

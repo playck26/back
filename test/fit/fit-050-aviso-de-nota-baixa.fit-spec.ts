@@ -215,10 +215,10 @@ describe('SPEC-068 — o aviso de nota baixa', () => {
       // atômico, a perdedora traria `P2002` e a spec manda trocar por
       // `INSERT ... ON CONFLICT ... RETURNING id`. Medido na 3ª rodada de
       // validação: o Client 6.19.3 emite `ON CONFLICT`.
-      const rejeitadas = resultados.filter((r) => r.status === 'rejected');
-      expect(
-        rejeitadas.map((r) => (r as PromiseRejectedResult).reason),
-      ).toEqual([]);
+      const motivos = resultados
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map((r) => String(r.reason));
+      expect(motivos).toEqual([]);
 
       const linhas = await db.avaliacaoDeAula.count({
         where: { companyId: EMPRESA },
@@ -280,8 +280,8 @@ describe('SPEC-068 — o aviso de nota baixa', () => {
       select: { id: true },
     });
 
-    await db.$transaction(async (tx) =>
-      enfileirarAvisoDeNotaBaixa(tx, {
+    await db.$transaction(async (tx) => {
+      await enfileirarAvisoDeNotaBaixa(tx, {
         companyId: EMPRESA,
         autorUsuarioId: ALUNO_U,
         avaliacaoId: avaliacao.id,
@@ -291,8 +291,8 @@ describe('SPEC-068 — o aviso de nota baixa', () => {
           data: new Date(AULA),
           horaInicio: new Date('1970-01-01T19:00:00Z'),
         },
-      }),
-    );
+      });
+    });
 
     expect(await avisos()).toHaveLength(5);
   });
