@@ -20,7 +20,10 @@ import * as bcrypt from 'bcrypt';
 import { exigirBancoLocal } from '../banco/exigir-banco-local';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { AvaliacaoDeAulaService } from '../../src/classes/avaliacao-de-aula.service';
-import { TIPO_AVALIACAO_BAIXA } from '../../src/classes/aviso-de-nota-baixa';
+import {
+  enfileirarAvisoDeNotaBaixa,
+  TIPO_AVALIACAO_BAIXA,
+} from '../../src/classes/aviso-de-nota-baixa';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(600_000);
@@ -257,6 +260,41 @@ describe('SPEC-068 — o aviso de nota baixa', () => {
       await q(`DROP TRIGGER IF EXISTS spec068_falha ON notificacoes`);
       await q(`DROP FUNCTION IF EXISTS spec068_falha()`);
     }
+  });
+
+  it('INV-068g: o MESMO lote duas vezes não duplica e não estoura', async () => {
+    /**
+     * **Este caso existe porque a sabotagem revelou um buraco.** Tirando o
+     * `ON CONFLICT DO NOTHING`, a FIT continuava verde: com a regra de entrada
+     * na faixa funcionando, o segundo `INSERT` nunca chegava a acontecer. Os
+     * dois mecanismos se mascaravam — e prova que não distingue não prova.
+     *
+     * Aqui o enfileirador é chamado **duas vezes com a mesma avaliação**,
+     * pulando a regra de propósito, para exercitar a constraint sozinha.
+     * Sem o `DO NOTHING`, o segundo lote levanta `23505`.
+     */
+    const aula = await ocupacao();
+    await servico().avaliar(EMPRESA, ALUNO_U, aula, { nota: 1 });
+    const avaliacao = await db.avaliacaoDeAula.findFirstOrThrow({
+      where: { companyId: EMPRESA },
+      select: { id: true },
+    });
+
+    await db.$transaction(async (tx) =>
+      enfileirarAvisoDeNotaBaixa(tx, {
+        companyId: EMPRESA,
+        autorUsuarioId: ALUNO_U,
+        avaliacaoId: avaliacao.id,
+        fatos: {
+          nota: 1,
+          turmaId: TURMA,
+          data: new Date(AULA),
+          horaInicio: new Date('1970-01-01T19:00:00Z'),
+        },
+      }),
+    );
+
+    expect(await avisos()).toHaveLength(5);
   });
 
   it('INV-068g: a UNIQUE parcial só vive por causa do CHECK', async () => {
