@@ -302,10 +302,13 @@ function tituloDoGesto(tipo: TipoDeAcao): TituloDeGesto {
     case 'turma_criada':
     case 'turma_reativada':
     case 'turma_aluno_removido':
-    // SPEC-068/D5 — cabe no vocabulário fechado que já existe, então a AC-018
-    // da SPEC-063 continua valendo sem remendo. Título novo aqui seria
-    // invariante atropelando o vizinho.
     case 'turma_professor_alterado':
+      // SPEC-068/D5 — o tipo novo cabe no vocabulário fechado que já existe,
+      // então a AC-018 da SPEC-063 continua valendo sem remendo. Título novo
+      // aqui seria invariante atropelando o vizinho.
+      //
+      // (O comentário mora DEPOIS do `case`, e não entre os dois: entre eles
+      // o `no-fallthrough` do ESLint reclama.)
       return 'Sua turma';
     case 'pagamento_confirmado':
     case 'credito_lancado':
