@@ -9326,7 +9326,8 @@
               "turma_aluno_removido",
               "turma_inativada",
               "turma_reativada",
-              "aula_reativada"
+              "aula_reativada",
+              "turma_professor_alterado"
             ],
             "description": "O GESTO humano que provocou o evento."
           },

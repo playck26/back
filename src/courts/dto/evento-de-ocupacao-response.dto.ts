@@ -65,6 +65,15 @@ export class EventoDeOcupacaoResponseDto {
       'turma_inativada',
       'turma_reativada',
       'aula_reativada',
+      // SPEC-068/D1 — a troca de professor. **NUNCA aparece neste schema em
+      // resposta**, pelo mesmo motivo do `turma_aluno_removido`: a ação dela
+      // não carrega evento de ocupação nenhum, porque trocar o professor não
+      // muda ocupação. Entra porque o enum publicado tem de espelhar
+      // `TipoDeAcao` INTEIRO.
+      //
+      // **Terceira vez que o guarda do DEF-016 pega esta lista atrasada, e no
+      // mesmo lugar.** Ele pegou no mesmo commit que criou o valor, de novo.
+      'turma_professor_alterado',
     ],
     description: 'O GESTO humano que provocou o evento.',
   })

@@ -467,6 +467,39 @@ export class ClassesService {
     // muda, cancelar as ocupações futuras antigas e gerar as novas
     // acontece na mesma transação da atualização da turma.
     const turma = await this.prisma.$transaction(async (tx) => {
+      // SPEC-068/D6 — **o professor anterior sai da linha TRAVADA**, e só
+      // quando o `PATCH` traz `professorId`.
+      //
+      // Ler `existente.professorId` (buscado antes da transação) não serve, e
+      // a 2ª rodada de validação mostrou o traço: sob `Read Committed` duas
+      // trocas simultâneas leem `P0`, a primeira grava `P1` e avisa `P0`, a
+      // segunda acorda, grava `P2` e **avisa `P0` de novo** — enquanto quem
+      // perdeu a turma foi `P1`. O `FOR UPDATE` faz a segunda esperar e
+      // reler. Medido: `LOCK_OLD_1=P0`, `LOCK_OLD_2=P1`.
+      //
+      // **Condicional**: sem `professorId` no corpo não há professor anterior
+      // a capturar, e travar a linha em toda edição de turma seria uma ida e
+      // um lock antecipado sem proveito. Com `professorId` presente — mesmo
+      // igual ao atual — a comparação acontece sob o lock, senão "troca" e
+      // "retentativa" deixam de ser distinguíveis.
+      //
+      // **"Trocou" e "quem saiu" são duas perguntas**, e confundi-las custa um
+      // caso: turma que não tinha professor e passa a ter **trocou**, e não há
+      // ninguém a avisar da saída.
+      let trocouProfessor = false;
+      let professorAnteriorId: string | null = null;
+      if (dto.professorId !== undefined) {
+        const travadas = await tx.$queryRaw<{ professor_id: string | null }[]>`
+          SELECT professor_id FROM turmas
+           WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
+           FOR UPDATE`;
+        const antes = travadas[0]?.professor_id ?? null;
+        if (antes !== dto.professorId) {
+          trocouProfessor = true;
+          professorAnteriorId = antes;
+        }
+      }
+
       const atualizada = await tx.turma.update({
         where: { id },
         data: {
@@ -604,6 +637,45 @@ export class ClassesService {
         // gesto que avisar. A decisão mora no enfileirador de propósito:
         // quem chama não deveria precisar saber disso.
         await avisos.despachar(registrador.idDaAcao);
+      }
+
+      /**
+       * SPEC-068/TASK-001 — **a troca de professor é gesto próprio, e sai
+       * FORA do `if (precisaCancelar)`.**
+       *
+       * Era exatamente por estar lá dentro que ela não avisava ninguém: o
+       * gatilho de lá é `quadraId` ou `encontros`, e trocar só o professor não
+       * toca nenhum dos dois.
+       *
+       * **Ação SEPARADA, e não o tipo do gesto de grade.** O Admin manda o
+       * formulário inteiro no salvar (`nome`, `quadraId`, `professorId`,
+       * `encontros`), então trocar professor e regerar grade **co-ocorrem no
+       * caminho real**, não como exceção. Escolher um tipo só perderia um
+       * fato: ou a turma não fica sabendo que o horário mudou, ou quem saiu
+       * não fica sabendo que saiu. São dois fatos com públicos diferentes — e
+       * o extrato continua honesto, porque os eventos de ocupação ficam sob a
+       * ação da grade e esta aqui não carrega nenhum.
+       */
+      if (trocouProfessor) {
+        const gestoDeProfessor = new RegistradorDeAcao(
+          tx,
+          companyId,
+          autorId,
+          'turma_professor_alterado',
+        );
+        const avisosDaTroca = new EnfileiradorDeAvisos(
+          tx,
+          companyId,
+          autorId,
+          'turma_professor_alterado',
+        );
+        avisosDaTroca.comTurma(id);
+        if (professorAnteriorId) {
+          avisosDaTroca.comProfessorAnterior(professorAnteriorId);
+        }
+        // Sem efeito de ocupação para registrar: a ação é criada à mão, e o
+        // que ela NÃO guarda está escrito no `garantirAcao`.
+        await avisosDaTroca.despachar(await gestoDeProfessor.garantirAcao());
       }
 
       return atualizada;

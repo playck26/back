@@ -1256,6 +1256,13 @@ enum TipoDeAcao {
   turma_reativada
   aula_reativada
 
+  /// SPEC-068/D1 — trocar o professor de uma turma. Ate 2026-09-22 esse gesto
+  /// nao deixava rastro NENHUM: o registrador vivia dentro do
+  /// `if (precisaCancelar)`, e trocar so o professor nao entra la.
+  ///
+  /// **No FIM do enum**, pela quarta vez que esta regra governa este arquivo.
+  turma_professor_alterado
+
   @@map("tipo_de_acao")
 }
 

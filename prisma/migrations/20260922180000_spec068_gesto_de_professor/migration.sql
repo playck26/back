@@ -1,0 +1,19 @@
+-- SPEC-068/TASK-001 — o gesto que nao existia.
+--
+-- Trocar o professor de uma turma nao gerava acao nem aviso: o
+-- `RegistradorDeAcao` do `PATCH /classes/:id` vive dentro de
+-- `if (precisaCancelar)`, e `mudouHorario` so olha `quadraId` e `encontros`.
+--
+-- **ADD VALUE sem BEFORE/AFTER anexa ao FIM**, que e a posicao declarada no
+-- schema. Declarar em outra posicao criaria drift permanente -- a SPEC-035 ja
+-- pagou por isso, e o comentario dela esta no `schema.prisma`.
+--
+-- `IF NOT EXISTS` porque `ADD VALUE` nao e transacional em todas as versoes e
+-- o `migrate deploy` pode reentrar depois de uma falha parcial.
+--
+-- **Esta migration sobe ANTES do codigo** (SPEC-068/D8), e a janela de
+-- rollback fecha na primeira troca de professor: medido na 3a rodada de
+-- validacao, um cliente Prisma gerado sem este valor devolve
+-- `Value 'turma_professor_alterado' not found in enum 'TipoDeAcao'` e **zero
+-- linha** -- a consulta inteira, nao so a linha nova.
+ALTER TYPE "tipo_de_acao" ADD VALUE IF NOT EXISTS 'turma_professor_alterado';
