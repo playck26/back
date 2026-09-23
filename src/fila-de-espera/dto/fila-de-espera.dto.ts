@@ -84,6 +84,98 @@ export class LinhaDaFilaResponseDto {
 }
 
 /**
+ * SPEC-064/TASK-005 — **a linha como a TELA do aluno precisa dela.**
+ *
+ * ## Por que esta rota não existia, e por que ela é obrigatória
+ *
+ * A TASK-005 pedia *"Cliente: entrar, ver a vez e o prazo, confirmar"* e
+ * declarava write-set **`nada`** — nenhuma mudança de Back. Ao implementá-la
+ * ficou claro que **não havia de onde ler**: a fila só tinha `POST`, `POST`,
+ * `POST /confirmar` e `DELETE`, e a caixa de avisos **omite `origem_id` de
+ * propósito** (INV-065d, *"a caixa não vaza campo de fila"*). A LIM-064d
+ * promete que quem não tem push *"vê na tela da fila"* — e essa tela não tinha
+ * fonte de dados. Lacuna da spec, achada na implementação.
+ *
+ * ## O que ela acrescenta ao `LinhaDaFilaResponseDto`
+ *
+ * O **prazo** e o **alvo com nome**. O `POST` devolve a linha crua porque quem
+ * acabou de entrar já sabe onde entrou; a tela, aberta dias depois, não sabe.
+ *
+ * **Nome de turma e de quadra entram aqui, e isso não contradiz a INV-063a.**
+ * A regra proíbe texto de tabela no **corpo do aviso**, que aparece na tela
+ * bloqueada de quem passar por perto. Esta é a tela do próprio aluno, atrás de
+ * login, mostrando a fila dele.
+ *
+ * **Não devolve posição** — LIM-064c continua valendo.
+ */
+export class MinhaLinhaDaFilaResponseDto {
+  @ApiProperty({ example: '5f7c1e2a-0000-4000-8000-000000000003' })
+  id!: string;
+
+  @ApiProperty({
+    example: 'turma',
+    description: '`turma` = vaga de matrícula; `aula` = vaga de reposição.',
+  })
+  fila!: 'turma' | 'aula';
+
+  @ApiProperty({
+    example: 'aguardando',
+    description: 'Só `aguardando` ou `chamado`: a lista é das filas VIVAS.',
+  })
+  estado!: string;
+
+  @ApiProperty({
+    description:
+      '**É a sua vez, e ainda dá tempo.** `estado = chamado` **e** o prazo ' +
+      'ainda não venceu. A SPEC-064/D8 é explícita: a tela confere ' +
+      '`chamado_ate` por conta própria e **não depende do varredor** — com o ' +
+      'varredor desligado, uma vez vencida não pode aparecer como aberta.',
+  })
+  vezAberta!: boolean;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '2026-09-21T12:00:00.000Z',
+    description: 'Até quando a vez vale. `null` enquanto não foi chamado.',
+  })
+  chamadoAte!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  turmaId!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'O nome da turma do alvo — na fila de aula, a turma da aula.',
+  })
+  turmaNome!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  ocupacaoId!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '2026-09-25',
+    description: 'A data da aula, na fila de aula.',
+  })
+  data!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: '19:00' })
+  horaInicio!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, example: '20:00' })
+  horaFim!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  quadraNome!: string | null;
+
+  @ApiProperty({ example: '2026-09-20T12:31:00.000Z' })
+  criadaEm!: string;
+}
+
+/**
  * O que a confirmação devolve quando dá certo.
  *
  * **Não devolve a reposição inteira** — a tela do aluno já sabe para onde ir, e
