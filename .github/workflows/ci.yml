@@ -89,6 +89,31 @@ jobs:
 
       - run: pnpm build
 
+      # SPEC-071/AC-007 - o SMOKE do artefato, e ele roda DEPOIS do build
+      # porque o objeto do julgamento e o `dist/`, nao o fonte.
+      #
+      # Duas medicoes explicam por que ele existe: `nest build` pode sair `0`
+      # SEM emitir `dist/main.js` (incremental), e o `dist/main.js` compilado
+      # tem `void (0, bootstrap_1.bootstrap)()` - um grep pela forma do fonte
+      # ficaria vermelho num build correto. Texto e a prova errada para uma
+      # mudanca cujo risco declarado e "producao nao sobe".
+      #
+      # O banco e descartavel, criado e apagado pelo proprio teste contra o
+      # servico efemero acima. A porta 3777 e a acordada do projeto: ocupada,
+      # o teste FALHA - gate que pula e gate que mente, que e a licao do
+      # FIT-006 escrita mais abaixo neste mesmo arquivo.
+      - run: pnpm run test:smoke
+        env:
+          DATABASE_URL: postgresql://postgres:ci@localhost:5432/playck_ci?schema=public
+          JWT_ACCESS_SECRET: ci-smoke-access-secret
+          JWT_REFRESH_SECRET: ci-smoke-refresh-secret
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-smoke-key
+          SPACES_SECRET: ci-smoke-secret
+
       # Lacuna registrada em STATUS.md: `openapi.json` (contrato consumido
       # pelos 3 frontends, ADR-001) é regenerado manualmente
       # (`pnpm run openapi:export`) e podia ficar stale sem ninguém notar.

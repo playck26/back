@@ -2,9 +2,8 @@
   "moduleFileExtensions": ["js", "json", "ts"],
   "rootDir": ".",
   "testEnvironment": "node",
-  "testRegex": ".e2e-spec.ts$",
-  "testPathIgnorePatterns": ["smoke-do-artefato"],
-  "testTimeout": 30000,
+  "testRegex": "smoke-do-artefato.e2e-spec.ts$",
+  "testTimeout": 120000,
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   }
