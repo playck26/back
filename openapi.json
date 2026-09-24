@@ -12136,6 +12136,10 @@
             "type": "string",
             "format": "uuid"
           },
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
           "turmaNome": {
             "type": "string",
             "nullable": true
@@ -12177,6 +12181,7 @@
         },
         "required": [
           "faltaId",
+          "ocupacaoId",
           "turmaNome",
           "data",
           "horaInicio",
