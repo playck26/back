@@ -27,6 +27,24 @@ export class FaltaParaReporResponseDto {
   @ApiProperty({ format: 'uuid' })
   faltaId!: string;
 
+  /**
+   * SPEC-072/D3 — **de qual ocorrência esta falta nasceu.**
+   *
+   * A tela de Aulas precisa casar a aula que o aluno está olhando com o
+   * crédito que ela gerou, e o único dado comum era
+   * `turmaNome + data + horaInicio` — **junção por texto de exibição**. O
+   * schema não torna o nome da turma único, e duas turmas de mesmo nome em
+   * quadras diferentes são plausíveis: a junção passaria no teste e casaria o
+   * crédito errado em produção (INV-072c).
+   *
+   * **É a ocorrência de ORIGEM — a que ele perdeu.** Nunca a escolhida na
+   * reposição, que vive em `reposicao` e continua sendo outra coisa (AC-002).
+   * O `ReposicaoResponseDto` vizinho já publicava o `ocupacaoId` dele; este
+   * DTO era o único da família que não dizia de onde vinha.
+   */
+  @ApiProperty({ format: 'uuid' })
+  ocupacaoId!: string;
+
   @ApiProperty({ type: String, nullable: true })
   turmaNome!: string | null;
 

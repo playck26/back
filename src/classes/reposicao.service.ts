@@ -141,6 +141,10 @@ export class ReposicaoService {
 
       return {
         faltaId: f.id,
+        // SPEC-072/D3 — a ocorrência de ORIGEM. `f.ocupacao` é a aula que ele
+        // perdeu; a escolhida na reposição é `f.reposicao.ocupacao`, e trocar
+        // uma pela outra é o que a AC-002(b) existe para pegar.
+        ocupacaoId: f.ocupacao.id,
         turmaNome: f.ocupacao.origemTurma?.nome ?? null,
         data: formatDateOnly(f.ocupacao.data),
         horaInicio: formatTimeOnly(f.ocupacao.horaInicio),
