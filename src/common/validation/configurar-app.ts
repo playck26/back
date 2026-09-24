@@ -2,6 +2,7 @@ import { ValidationPipe, type ValidationPipeOptions } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { opcoesDeCors } from './cors';
 
 /**
  * **A configuração de app-level que produção e e2e compartilham.**
@@ -103,5 +104,13 @@ export async function criarAppDeProducao(): Promise<INestApplication> {
   };
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { AppModule } = require('../../app.module') as { AppModule: unknown };
-  return configurarApp(await NestFactory.create(AppModule));
+  const app = configurarApp(await NestFactory.create(AppModule));
+  // SPEC-070/D4 - o CORS entra AQUI, e nao no `bootstrap()`.
+  //
+  // Nao em `configurarApp`: aquela e compartilhada com `createTestApp` e
+  // `subirAppReal`, e ligaria CORS em todas as suites -- mudanca de
+  // comportamento onde a spec promete nenhuma. Esta e so do caminho de
+  // producao, e tem prova de execucao desde a 7a rodada da SPEC-001.
+  app.enableCors(opcoesDeCors(process.env));
+  return app;
 }

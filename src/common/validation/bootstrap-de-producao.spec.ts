@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { criarAppDeProducao, OPCOES_DE_VALIDACAO } from './configurar-app';
+import { opcoesDeCors } from './cors';
 
 /**
  * **A prova do BOOTSTRAP — achado 4 da 7ª rodada.**
@@ -43,6 +44,10 @@ interface AppDublado extends Partial<INestApplication> {
   useGlobalPipes: jest.Mock<INestApplication, [unknown]>;
   setGlobalPrefix: jest.Mock;
   use: jest.Mock;
+  // SPEC-070/D4 — o CORS passou a ser instalado por `criarAppDeProducao`.
+  // Tipado com o argumento como `unknown`: sem isso, `mock.calls[0][0]`
+  // vira `any` e o lint recusa o acesso.
+  enableCors: jest.Mock<void, [unknown]>;
 }
 
 function appDublado(): AppDublado {
@@ -50,6 +55,7 @@ function appDublado(): AppDublado {
     useGlobalPipes: jest.fn<INestApplication, [unknown]>(),
     setGlobalPrefix: jest.fn(),
     use: jest.fn(),
+    enableCors: jest.fn<void, [unknown]>(),
   };
 }
 
@@ -82,6 +88,21 @@ describe('o bootstrap de produção nasce com a fronteira aplicada', () => {
       forbidNonWhitelisted: OPCOES_DE_VALIDACAO.forbidNonWhitelisted,
     });
     expect(pipe.isTransformEnabled).toBe(OPCOES_DE_VALIDACAO.transform);
+  });
+
+  // **SPEC-070/AC-006, cláusula 1 — a LIGAÇÃO, provada por execução.**
+  //
+  // Duas tentativas de provar isto por texto caíram na validação: um gate que
+  // exigia "obtém as opções e não declara `origin` inline" passava com
+  // `const o = opcoesDeCors(env); void o;`, sem chamar nada. Aqui a fábrica é
+  // EXECUTADA, e o espião conta a chamada.
+  //
+  // A comparação é com **o objeto inteiro** devolvido por `opcoesDeCors` — e
+  // não com `origin`, que era o defeito B07: `credentials` podia cair sem
+  // ninguém notar.
+  it('instala o CORS com EXATAMENTE as opções de `opcoesDeCors`', () => {
+    expect(app.enableCors).toHaveBeenCalledTimes(1);
+    expect(app.enableCors.mock.calls[0][0]).toEqual(opcoesDeCors(process.env));
   });
 
   it('e com o prefixo e os middlewares de rota', () => {
