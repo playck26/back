@@ -1,16 +1,21 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-23** (era 2026-09-22).
+**Fonte: análise direta do código.** Data: **2026-09-24** (era 2026-09-23).
 
-**Números conferidos por comando em 2026-09-23, com as TASKs 001–004 da
-SPEC-069 prontas:** **50 migrations, 42 tabelas, 21 triggers** não-internas,
-**118 caminhos / 162 operações** no `openapi.json` (`ls -d
-prisma/migrations/*/`; `pg_tables` sem `_prisma_migrations` e `pg_trigger` sem
-as internas, num banco novo com as 50 aplicadas). *A SPEC-069 somou **1
-migration**, **1 tabela** (`eventos_de_turma`), **1 trigger**
-(`eventos_turma_append_only`) e **1 rota** (`GET /classes/:id/eventos`). O
-`acao_exige_alvo` **não está aqui**: ele é o Deploy 2 (TASK-005), e a AC-014
-varre a árvore do SHA do Deploy 1 para provar isso.*
+**Números conferidos por comando em 2026-09-24, com a SPEC-072/TASK-001 em
+`main`:** **51 migrations, 42 tabelas, 22 triggers** não-internas, **118
+caminhos / 162 operações** no `openapi.json` (`ls -d prisma/migrations/*/`;
+`pg_tables` sem `_prisma_migrations` e `pg_trigger` sem as internas, num banco
+novo com as 51 aplicadas).
+
+*Mudou desde a leitura anterior: **+1 migration e +1 trigger**, e são o
+`acao_exige_alvo` — o **Deploy 2 da SPEC-069**, que a versão anterior desta
+planta declarava **ausente** de propósito. Ele chegou.*
+
+*A SPEC-072/TASK-001 **não somou nada nesta conta**: ela acrescentou um campo a
+um DTO existente (`FaltaParaReporResponseDto.ocupacaoId`), sem migration, sem
+tabela e sem rota nova — o contrato **cresce** sem mexer no banco, que é a
+razão de o `back` subir primeiro no rollout (`D4`/`INV-072d`).*
 
 **Números conferidos por comando em 2026-09-22, com a SPEC-068 pronta:**
 **49 migrations, 41 tabelas, 20 triggers** não-internas (`ls -d
@@ -1422,6 +1427,8 @@ raiz `turmas FOR UPDATE` → `alunos` → `ocupacoes_quadra` antes de escrever.
 | `openapi.json` nunca fica stale | CI regenera e falha em `git diff --exit-code` |
 | **Rota literal nunca é registrada depois de uma paramétrica que a casaria** — foi o DEF-039: `GET /me/classes/anteriores` depois de `GET /me/classes/:id`, e o pipe de UUID respondia 400 numa rota que existia | `test/ordem-de-rota.e2e-spec.ts` (SPEC-067): monta o app pelo harness do e2e e lê a **pilha do Express** — 160 rotas, com herança e prefixo resolvidos, onde a varredura de texto via 156. Gramática fechada (literal ou `:param`): wildcard e opcional **reprovam**, em vez de passar sem ser entendidos. **Limite declarado:** um piso de 100 rotas impede o gate de ficar verde se o Express renomear a pilha — já renomeou, de `_router` para `router`, no 5 |
 | Schema e banco não divergem | `prisma migrate diff` deve devolver "empty migration" |
+| **O crédito de reposição diz de QUAL ocorrência nasceu** (SPEC-072/D3). `FaltaParaReporResponseDto` publica `ocupacaoId` — a ocorrência de **origem**, nunca a escolhida na reposição. Sem ele, o único dado comum entre a aula e o crédito era `turmaNome + data + horaInicio`: junção por **texto de exibição**, que o schema não torna único e que casaria o crédito errado em produção (`INV-072c`) | `test/fit/spec-072-credito-e-nivel.fit-spec.ts`, com app e Prisma reais. Prova o valor **antes e depois** de marcada a reposição — sem a metade de depois, trocar origem por destino passaria; sem a de antes, publicar o `faltaId` dentro do campo passaria no gate do `openapi.json`, que só confere que o contrato **tem** o campo |
+| **Nível NUNCA foi autoridade: o servidor não recusa reposição fora do nível** (SPEC-072/INV-072a). É recorte de exibição do Cliente, e a `SPEC-072` tirou o seletor dele contando com esta frase | **prova no SERVIDOR, e é de propósito:** o mesmo `fit-spec` faz um `POST` real de aluno de nível A em turma de nível B e exige **201**. A varredura do `marcar()` confirma o desenho — entre as recusas que dependem do destino (`TURMA_INATIVA`, `OCUPACAO_CANCELADA`, `PRAZO_DE_CANCELAMENTO` por dois caminhos, `JA_MATRICULADO_NA_TURMA`, `TURMA_SEM_VAGA`), **nenhuma olha nível**. Provar isto no Cliente seria provar com serviço mockado, que não diz nada sobre o servidor — foi o **B02** da 1ª rodada de validação |
 
 ## 8. Requisitos de plataforma
 
