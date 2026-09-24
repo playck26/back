@@ -129,6 +129,9 @@ describe('o log do bootstrap é fechado sobre `app` e `SwaggerModule`', () => {
       forbidNonWhitelisted: true,
     });
 
+    // **O objeto INTEIRO, e nao uma propriedade.** A SPEC-070 acrescentou
+    // `maxAge`, e a versao anterior desta assercao teria passado sem ele --
+    // que foi o achado B07 daquela spec.
     expect(chamada('enableCors')?.args[0]).toEqual({
       origin: [
         'http://localhost:3001',
@@ -136,6 +139,7 @@ describe('o log do bootstrap é fechado sobre `app` e `SwaggerModule`', () => {
         'http://localhost:3003',
       ],
       credentials: true,
+      maxAge: 600,
     });
 
     const setup = chamada('SwaggerModule.setup')?.args ?? [];
@@ -186,11 +190,13 @@ const IMPORTS_PERMITIDOS: Record<string, string[]> = {
   './swagger.config': ['buildSwaggerConfig'],
 };
 
+// **SPEC-070/D4 encolheu esta lista de sete para quatro**, e a allowlist ficou
+// VERMELHA antes de eu atualiza-la -- que e exatamente o que ela existe para
+// fazer. Vermelho aqui nao e falso positivo: e "revise explicitamente o
+// contrato de inicializacao". O bloco de CORS saiu do bootstrap e entrou em
+// `criarAppDeProducao`, que tem prova de execucao propria.
 const CORPO_PERMITIDO = [
   'const app',
-  'const DEFAULT_DEV_CORS_ORIGINS',
-  'const corsOrigins',
-  'app.enableCors',
   'const swaggerDocument',
   'SwaggerModule.setup',
   'app.listen',

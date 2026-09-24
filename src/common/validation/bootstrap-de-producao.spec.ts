@@ -43,6 +43,8 @@ interface AppDublado extends Partial<INestApplication> {
   useGlobalPipes: jest.Mock<INestApplication, [unknown]>;
   setGlobalPrefix: jest.Mock;
   use: jest.Mock;
+  // SPEC-070/D4 — o CORS passou a ser instalado por `criarAppDeProducao`.
+  enableCors: jest.Mock;
 }
 
 function appDublado(): AppDublado {
@@ -50,6 +52,7 @@ function appDublado(): AppDublado {
     useGlobalPipes: jest.fn<INestApplication, [unknown]>(),
     setGlobalPrefix: jest.fn(),
     use: jest.fn(),
+    enableCors: jest.fn(),
   };
 }
 
