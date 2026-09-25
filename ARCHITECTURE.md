@@ -1,6 +1,18 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-24** (era 2026-09-23).
+**Fonte: análise direta do código.** Data: **2026-09-25** (era 2026-09-24).
+
+**Números conferidos por comando em 2026-09-25, na branch da SPEC-074
+(`spec074/pre-reserva`):** **53 migrations, 43 tabelas, 23 triggers**
+não-internas, **120 caminhos / 165 operações** no `openapi.json` — os mesmos
+comandos de antes, num banco com as 53 aplicadas.
+
+*Mudou: **+1 migration, +1 tabela, +1 trigger, +2 caminhos, +3 operações**, e
+são todos da pré-reserva — `pre_reservas`, o trigger `pre_reserva_slot_imutavel`
+e `/me/pre-reservas` (`GET`, `POST`) + `/me/pre-reservas/{id}` (`DELETE`). A
+`main` estava em **52** migrations, e não 51 como dizia o topo: a TASK-008 da
+SPEC-064 (a antecedência configurável) entrou **sem atualizar esta contagem** —
+uma coluna nova, sem tabela, sem trigger e sem rota, mas uma migration.*
 
 **Números conferidos por comando em 2026-09-24, com a SPEC-072/TASK-001 em
 `main`:** **51 migrations, 42 tabelas, 22 triggers** não-internas, **118
@@ -485,9 +497,12 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**40 tabelas e 16 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-20**), **47 migrations**
-(`ls -d prisma/migrations/*/ | wc -l`).
+**42 modelos e 18 enums** no `schema.prisma` (conferido por
+`grep -c '^model'` / `'^enum'` em **2026-09-25**, com a SPEC-074), **53
+migrations** (`ls -d prisma/migrations/*/ | wc -l`). *Eram "40 tabelas e 16
+enums / 47 migrations", conferidos em 2026-09-20 e não atualizados por quatro
+specs; modelo do Prisma e tabela do Postgres não são a mesma conta — o topo
+conta `pg_tables` (43).*
 
 > **Estes numeros estavam errados em 2026-09-20, e a defasagem nao era de uma
 > spec.** A planta declarava `31 tabelas e 14 enums / 34 migrations`, conferidos
@@ -1475,6 +1490,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | MOD-010 | Auditoria | `acoes_administrativas`, `eventos_de_ocupacao` | **SPEC-032.** INV-061 a INV-064, INV-077, INV-078. Não escreve em `ocupacoes_quadra`: recebe o `tx` de quem escreve, e o registrador é instanciado **pelo caso de uso** — uma instância por comando lógico é o que garante uma ação por gesto |
 | **MOD-012** | **Avisos** | `assinaturas_push`, `notificacoes` | **SPEC-062 + SPEC-063 + SPEC-065.** INV-062a a INV-062h, INV-063a a INV-063c. **Dois lados que não se conhecem:** o `TickDeEnvioService` **tira** da caixa de saída (seis transições cercadas, conexão própria, fora de transação de domínio); o `EnfileiradorDeAvisos` **põe** nela, e sempre **dentro da transação do gesto** — aviso sobre gesto que voltou atrás é pior que aviso nenhum. O emissor nunca abre `origem_id`: quem enfileira já responde o prazo |
 | **MOD-013** | **FilaDeEspera** | `lista_de_espera`, `notificacoes` (so o aviso do chamado) | **SPEC-064.** INV-064a a INV-064h. **Dois lados que nao se confundem:** o `FilaDeEsperaService` so grava que a pessoa quer a vaga — **nenhum `FOR UPDATE` ao entrar**, porque a unicidade e do indice parcial e o credito e elegibilidade, nao capacidade; o `VarredorDaFilaService` e quem **chama**, e ele toma a ordem canonica inteira (`1 → 3 → 4`), sem o nivel 2, porque nao escreve no aluno. **Chamar dentro da transacao do gesto inverteria `turmas` e `ocupacoes_quadra`** no caminho da falta avisada — foi o segundo bloqueio da validacao. O quinto agendador (`FILA_DE_ESPERA_INTERVALO_MS`) e o unico que, desligado, deixa PESSOAS esperando |
+| **MOD-014** | **PreReserva** | `pre_reservas`, `notificacoes` (só o aviso de horário livre) | **SPEC-074.** INV-074a a INV-074i. **Quem avisa é o varredor, nunca o gesto** — nenhum dos cinco caminhos que liberam horário foi tocado, e `ocupacoes_quadra` é só LIDA, sem `FOR UPDATE`. O sexto agendador (`PRE_RESERVA_INTERVALO_MS`) e o lote (`PRE_RESERVA_LOTE`, 1 a 200) — ver a seção da pré-reserva |
 | **MOD-011** | **Carteira** | `movimentos_de_credito`, e `alunos.saldo_creditos` **só pela trigger** | **SPEC-033.** INV-070, INV-071, INV-085, INV-095 a INV-098. **Três serviços, e a separação é a decisão:** `CreditosService` é o mecanismo do ledger e recebe o `tx` de quem escreve (reserva, cancelamento); `CreditosAdminService` é o caso de uso do gestor, abre a própria transação e é o único que conhece `bcrypt`; `CreditosDoAlunoService` responde `/me/creditos` **sem `motivo`** (AC-013), e a omissão está no `select`. Juntar os três faria a criação de reserva depender de `bcrypt` |
 
 **Dependências observadas entre módulos:** `AuthModule → PeopleModule`;
@@ -1770,6 +1786,83 @@ transação de turma subiu de 8 para 11 idas: 1 consulta de quem estava chamado,
 da fila** — o encerramento é `updateMany` sobre uma lista de ocorrências e o
 aviso é um `INSERT` de múltiplas linhas. Um laço por pessoa faria o custo de
 editar o horário de uma turma depender de quantos estavam esperando por ela.
+
+### A pré-reserva: o aviso de que o horário vagou (SPEC-074)
+
+`pre_reservas` (migration `20260925180000`, SPEC-074/TASK-001) guarda um
+**pedido de aviso** sobre um slot exato — quadra, dia, hora cheia. O aluno toca
+num horário OCUPADO; quando ele vagar, **todos** que pediram recebem o aviso ao
+mesmo tempo, e quem reservar primeiro fica com ele. **Nada é segurado**
+(LIM-074a). A DoR custou **oito rodadas** de validação independente.
+
+**O que é do banco:** três `CHECK`, duas FKs compostas `RESTRICT`, o índice
+único **parcial** `WHERE estado = 'aguardando'` (pedir de novo depois de
+cancelar ou de ser avisado passa), e o **trigger `pre_reserva_slot_imutavel`**,
+que recusa mudar o slot ou o `inicio_em` depois da criação (INV-074h). Em
+`notificacoes`, o par índice parcial + `CHECK` de origem do tipo `pre_reserva`.
+
+**O relógio tem duas metades.** Na criação, `inicio_em` sai de
+`instanteNoFusoDoClube(data, hora)` — o slot das 21h locais é 00h UTC do dia
+seguinte. Depois, o varredor compara `inicio_em` com o `now()` **do banco**, e
+não conhece fuso: `executarCiclo()` não recebe relógio nem parâmetro nenhum.
+
+#### Quem avisa é o varredor, e isso é o desenho, não um detalhe
+
+Um horário vaga por **cinco** caminhos, todos em `courts.service.ts`:
+`cancelBooking`, `updatePaymentStatus(…, 'cancelado')`,
+`cancelOneClassOccurrence`, `cancelFutureClassOccupancies` e `moveBooking` (o
+slot de ORIGEM vaga sem nada ser cancelado). **Avisar no gesto** exigiria
+mexer nos cinco e lembrar do sexto; **o varredor pergunta pelo ESTADO**, com a
+mesma definição de "livre" da grade (`availability`). A lista dos cinco é
+cobertura de regressão (AC-007), não prova de completude.
+
+**`ocupacoes_quadra` é só LIDA, e sem `FOR UPDATE`** (INV-074g): o varredor
+fica **fora** da ordem canônica de locks. A prova é a AC-021 do FIT-054, com
+`lock_timeout = 1s` na URL da conexão — esperar por lock vira `55P03`, e não um
+tempo medido.
+
+#### O ciclo, e o sexto agendador
+
+`AgendadorDaPreReserva` é o **sexto** agendador, no molde dos cinco:
+`PRE_RESERVA_INTERVALO_MS`, 60 s, não sobe em teste, um ciclo por vez, roda ao
+subir. **Separado do da fila por causa do interruptor:** o rollback da SPEC-064
+manda derrubar o varredor da fila primeiro, e ele não pode calar este aviso.
+
+1. **expirar** o que começou sem vagar; 2. **encerrar** quem reservou o slot
+sozinho — os dois por `id IN (SELECT … FOR UPDATE SKIP LOCKED)`, nunca
+esperando outra réplica;
+3. **o lote** (`SeletorDoLote`): no máximo `PRE_RESERVA_LOTE` slots — **inteiro
+de 1 a 200, só dígitos**, e fora disso o padrão com `warn`: a variável existe
+para DESCER, não para subir. Rodízio por `min(coalesce(verificada_em,
+criada_em))`: o slot que reprova no expediente vai para o fim, e pedido novo
+não fura a fila;
+4. **por slot, em transação própria:** aquisição por `SKIP LOCKED`, releitura
+da sobreposição, encerramento de quem deixou de operar, transição com
+`RETURNING` — **os avisos saem só dele** — e `INSERT … ON CONFLICT DO NOTHING`.
+
+**Data e hora vão ao SQL como TEXTO, com `::date`/`::time`.** Um `Date` chega
+como timestamp, e o cast dependeria do fuso da SESSÃO — a regra que o
+`courts.service.ts` já registra (DEF-020).
+
+**Não há número fechado de ciclos para o aviso** (LIM-074b). A promessa saiu
+na 3ª rodada, depois de errar duas vezes; o que fica é observado: o log de cada
+ciclo traz `candidatos` e `slotsPendentes` — **slots, e não pedidos** —, ao
+lado de `duracaoMs`.
+
+#### A costura dos testes, e o que a fecha
+
+`SeletorDoLote` é uma classe própria para a AC-029 poder **envolvê-la** e
+cancelar um pedido no meio do ciclo, sem parâmetro de teste em
+`executarCiclo()`. **O boot não prova que produção registra ESTA classe** — o
+Nest sobe com um seletor errado sob o mesmo token. Quem prova é a **AC-030**: o
+FIT-054 sobe o `AppModule` com banco real e `PRE_RESERVA_LOTE=1`, pega o
+varredor por `app.get(...)` e roda um cenário que só sai na ordem certa com o
+seletor real.
+
+**Os dois deltas de implementação, fora do write-set que a DoR declarou:**
+`test/banco/limpar-empresa.ts` (o teste de cobertura reprova tabela com
+`company_id` que a limpeza não conhece) e o `preReserva` no dublê do Prisma
+(`test/utils/prisma-mock.ts`, que lista os delegates à mão).
 
 ### Os avisos do clube: quem põe na fila e quem tira (SPEC-062, SPEC-063)
 
