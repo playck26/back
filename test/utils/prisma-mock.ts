@@ -158,6 +158,14 @@ export interface PrismaMock {
   };
   quadra: { findMany: jest.Mock; findFirst: jest.Mock };
   horarioFuncionamento: { findMany: jest.Mock };
+  // SPEC-074 — `/me/pre-reservas`. As guardas contra dado real estao em
+  // `spec-074-pedir.db-spec.ts`; aqui so o que existe no HTTP.
+  preReserva: {
+    count: jest.Mock;
+    create: jest.Mock;
+    findMany: jest.Mock;
+    updateMany: jest.Mock;
+  };
   conviteAluno: {
     create: jest.Mock;
     findUnique: jest.Mock;
@@ -287,6 +295,13 @@ export function buildPrismaMock(): PrismaMock {
     },
     horarioFuncionamento: {
       findMany: jest.fn().mockResolvedValue([]),
+    },
+    // Padrao: nenhum pedido vivo, e o cancelamento acha o pedido.
+    preReserva: {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     aluno: {
       create: jest.fn(),
