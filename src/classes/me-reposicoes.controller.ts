@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -23,6 +24,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import { MarcarReposicaoDto } from './dto/marcar-reposicao.dto';
+import { OportunidadesQueryDto } from './dto/oportunidades-query.dto';
 import {
   CreditoDeReposicaoResponseDto,
   OportunidadeDeReposicaoResponseDto,
@@ -80,8 +82,15 @@ export class MeReposicoesController {
   @Get('oportunidades')
   @ApiOkResponse({ type: OportunidadeDeReposicaoResponseDto, isArray: true })
   @Roles('aluno')
-  oportunidades(@CurrentUser() user: AccessTokenPayload) {
-    return this.reposicoes.oportunidades(user.companyId as string, user.sub);
+  oportunidades(
+    @CurrentUser() user: AccessTokenPayload,
+    @Query() query: OportunidadesQueryDto,
+  ) {
+    return this.reposicoes.oportunidades(
+      user.companyId as string,
+      user.sub,
+      query.incluirSemVaga === true,
+    );
   }
 
   @Post()

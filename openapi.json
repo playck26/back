@@ -5475,7 +5475,17 @@
     "/api/v1/me/reposicoes/oportunidades": {
       "get": {
         "operationId": "MeReposicoesController_oportunidades",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "incluirSemVaga",
+            "required": false,
+            "in": "query",
+            "description": "Inclui as ocorrencias SEM VAGA (`vagas: 0`), para o aluno poder entrar na fila de espera delas (card 5331). Sem o parametro, so as que tem vaga — o comportamento de antes desta task.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",

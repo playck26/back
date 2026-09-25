@@ -224,6 +224,59 @@ describe('SPEC-046 — reposição de aula', () => {
     expect(comVaga[0].vagas).toBe(1);
   });
 
+  /**
+   * SPEC-064/TASK-007 — **a aula CHEIA, que o card 5331 precisa que apareça.**
+   *
+   * O card pede que o aluno *"encontre turma/aula para repor, mas não tem
+   * vaga"* e deixe o aviso de interesse. Sem a ocorrência na lista **não há
+   * onde clicar** — é por isso que `entrarNaFilaDeAula` existia no cliente sem
+   * nenhum componente que a chamasse.
+   *
+   * **Os dois casos são um só de propósito**, porque o que importa é a
+   * DIFERENÇA: o padrão continua escondendo, e só quem pede recebe. Provar as
+   * duas metades em testes separados deixaria passar uma implementação que
+   * alargou o padrão — exatamente a regressão que o parâmetro existe para
+   * evitar, já que o `back` sobe antes do `cliente`.
+   */
+  it('TASK-007: a ocorrência CHEIA só vem quando pedem — e vem com `vagas: 0`', async () => {
+    await limparEmpresa(db, EMPRESA);
+    await montar(2); // Turma B com capacidade 2
+
+    const visitante = await aluno('Quer Entrar Na Fila');
+    await matricular(TURMA_A, visitante.alunoId);
+    const perdida = await ocorrencia(TURMA_A, emDias(-3), '19:00');
+    await falta(visitante.alunoId, perdida);
+
+    // A turma B está CHEIA, e ninguém avisou falta nela: zero vaga.
+    const b1 = await aluno('B Um');
+    const b2 = await aluno('B Dois');
+    await matricular(TURMA_B, b1.alunoId);
+    await matricular(TURMA_B, b2.alunoId);
+    const cheia = await ocorrencia(TURMA_B, emDias(5), '20:00');
+
+    // **O padrão não mudou** — é o contrato de quem já está no ar.
+    const padrao = await servico().oportunidades(EMPRESA, visitante.usuarioId);
+    expect(padrao.filter((o) => o.ocupacaoId === cheia)).toEqual([]);
+
+    // **E quem pede, recebe** — com o zero à vista, que é o que faz a tela
+    // oferecer a fila em vez do "Marcar".
+    const comCheias = await servico().oportunidades(
+      EMPRESA,
+      visitante.usuarioId,
+      true,
+    );
+    const daCheia = comCheias.filter((o) => o.ocupacaoId === cheia);
+    expect(daCheia).toHaveLength(1);
+    expect(daCheia[0].vagas).toBe(0);
+    expect(daCheia[0].turmaNome).toBe('Turma B');
+
+    // E pedir as cheias **não perde** as que têm vaga: o conjunto CRESCE.
+    expect(comCheias.length).toBeGreaterThan(padrao.length);
+    for (const o of padrao) {
+      expect(comCheias.some((c) => c.ocupacaoId === o.ocupacaoId)).toBe(true);
+    }
+  });
+
   it('AC-005: turma em que ele JÁ está não aparece', async () => {
     const a = await aluno('Ja Esta Nas Duas');
     await matricular(TURMA_A, a.alunoId);
