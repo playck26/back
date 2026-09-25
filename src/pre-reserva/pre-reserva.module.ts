@@ -4,6 +4,9 @@ import { CourtsModule } from '../courts/courts.module';
 import { PeopleModule } from '../people/people.module';
 import { PreReservaService } from './pre-reserva.service';
 import { MePreReservasController } from './me-pre-reservas.controller';
+import { SeletorDoLote } from './seletor-do-lote';
+import { VarredorDaPreReservaService } from './varredor-da-pre-reserva.service';
+import { AgendadorDaPreReserva } from './agendador-da-pre-reserva.service';
 
 /**
  * SPEC-074 — a pré-reserva: o aviso de que um horário de quadra vagou.
@@ -25,6 +28,14 @@ import { MePreReservasController } from './me-pre-reservas.controller';
 @Module({
   imports: [PrismaModule, CourtsModule, PeopleModule],
   controllers: [MePreReservasController],
-  providers: [PreReservaService],
+  // SPEC-074/TASK-003 — o varredor, o seletor do lote e o sexto agendador.
+  // **Quem garante que o `SeletorDoLote` registrado é ESTE, e não outro sob
+  // o mesmo token, é a AC-030** — o boot só recusa provider ausente.
+  providers: [
+    PreReservaService,
+    SeletorDoLote,
+    VarredorDaPreReservaService,
+    AgendadorDaPreReserva,
+  ],
 })
 export class PreReservaModule {}
