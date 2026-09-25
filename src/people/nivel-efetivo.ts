@@ -217,3 +217,171 @@ export async function criarNiveisPadrao(
     })),
   });
 }
+
+// ==========================================================================
+// SPEC-075/D12 — a edição de nível não cria par incompatível NOVO
+// ==========================================================================
+
+/** Um par (aluno, turma) de uma matrícula, com o que as mensagens precisam. */
+export type ParDeMatricula = {
+  alunoId: string;
+  alunoNome: string;
+  turmaId: string;
+  turmaNome: string;
+  nivelDaTurmaNome: string;
+};
+
+/** Quais pares a edição afeta: os do aluno editado, os da turma editada, ou
+ *  — quando muda quem é o primeiro — os dos alunos sem nível. */
+export type ParesAfetados =
+  { alunoId: string } | { turmaId: string } | { alunosSemNivel: true };
+
+/**
+ * D12 — **os pares incompatíveis de agora**, entre os afetados: matrícula numa
+ * turma COM nível cujo nível não é o efetivo do aluno. Pelo MESMO predicado da
+ * D3 (`podeEntrarPorNivel`), e pelo cliente de quem chama — o `tx` da edição.
+ */
+export async function paresIncompativeis(
+  db: Pick<Prisma.TransactionClient, 'nivel' | 'turmaAluno'>,
+  companyId: string,
+  afetados: ParesAfetados,
+): Promise<ParDeMatricula[]> {
+  const primeiro = await primeiroNivel(db, companyId);
+  const where: Prisma.TurmaAlunoWhereInput = {
+    turma: { companyId, nivelId: { not: null } },
+  };
+  if ('alunoId' in afetados) where.alunoId = afetados.alunoId;
+  if ('turmaId' in afetados) where.turmaId = afetados.turmaId;
+  if ('alunosSemNivel' in afetados) where.aluno = { nivelId: null };
+
+  const linhas = await db.turmaAluno.findMany({
+    where,
+    select: {
+      alunoId: true,
+      turmaId: true,
+      aluno: { select: { nivelId: true, usuario: { select: { nome: true } } } },
+      turma: {
+        select: {
+          nome: true,
+          nivelId: true,
+          nivel: { select: { nome: true } },
+        },
+      },
+    },
+  });
+
+  return linhas
+    .filter((l) => {
+      const efetivo = l.aluno.nivelId ? { id: l.aluno.nivelId } : primeiro;
+      return !podeEntrarPorNivel(l.turma.nivelId, efetivo);
+    })
+    .map((l) => ({
+      alunoId: l.alunoId,
+      alunoNome: l.aluno.usuario.nome,
+      turmaId: l.turmaId,
+      turmaNome: l.turma.nome,
+      nivelDaTurmaNome: l.turma.nivel?.nome ?? '',
+    }));
+}
+
+/**
+ * D12 — **por identidade de par, nunca por contagem nem por projeção.** A
+ * chave é (aluno, turma), os dois: uma edição que conserta um par e quebra
+ * outro deixa a contagem igual e o conjunto de alunos (ou de turmas) igual — e
+ * aparece aqui, porque o par que nasceu não estava em `antes`.
+ */
+export function paresNovos(
+  antes: readonly ParDeMatricula[],
+  depois: readonly ParDeMatricula[],
+): ParDeMatricula[] {
+  const chave = (p: ParDeMatricula) => `${p.alunoId}|${p.turmaId}`;
+  const existiam = new Set(antes.map(chave));
+  return depois.filter((p) => !existiam.has(chave(p)));
+}
+
+function juntar(itens: string[]): string {
+  if (itens.length <= 1) return itens.join('');
+  return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`;
+}
+
+/** Até 5 nomes, e "e mais N" — a mensagem não vira lista de chamada. */
+function nomesComTeto(nomes: string[]): string {
+  const TETO = 5;
+  if (nomes.length <= TETO) return nomes.join(', ');
+  return `${nomes.slice(0, TETO).join(', ')} e mais ${nomes.length - TETO}`;
+}
+
+export type EdicaoDeNivel =
+  | { tipo: 'aluno' }
+  | { tipo: 'turma' }
+  | { tipo: 'primeiro'; primeiroAntigo: string };
+
+/** D12 — a mensagem diz **o que impede e o que fazer**. */
+export function mensagemDeEdicaoRecusada(
+  edicao: EdicaoDeNivel,
+  novos: readonly ParDeMatricula[],
+): string {
+  if (edicao.tipo === 'aluno') {
+    const turmas = [...new Map(novos.map((p) => [p.turmaId, p])).values()];
+    if (turmas.length === 1) {
+      return (
+        `Este aluno está na turma ${turmas[0].turmaNome}, que é do nível ` +
+        `${turmas[0].nivelDaTurmaNome}. Tire-o dessa turma antes de mudar o nível dele.`
+      );
+    }
+    return (
+      `Este aluno está nas turmas ${juntar(turmas.map((p) => `${p.turmaNome} (nível ${p.nivelDaTurmaNome})`))}. ` +
+      'Tire-o dessas turmas antes de mudar o nível dele.'
+    );
+  }
+  const alunos = [...new Map(novos.map((p) => [p.alunoId, p])).values()];
+  const n = alunos.length;
+  if (edicao.tipo === 'turma') {
+    const nivel = novos[0]?.nivelDaTurmaNome ?? '';
+    const nomes = nomesComTeto(alunos.map((p) => p.alunoNome));
+    return n === 1
+      ? `Esta turma tem 1 aluno que não é do nível ${nivel}: ${nomes}. Tire-o da turma ou mude o nível dele antes.`
+      : `Esta turma tem ${n} alunos que não são do nível ${nivel}: ${nomes}. Tire-os da turma ou mude o nível deles antes.`;
+  }
+  const antigo = edicao.primeiroAntigo;
+  return n === 1
+    ? `Isso faria o primeiro nível deixar de ser ${antigo}, e 1 aluno sem nível está em turma de ${antigo}. Defina o nível dele antes.`
+    : `Isso faria o primeiro nível deixar de ser ${antigo}, e ${n} alunos sem nível estão em turmas de ${antigo}. Defina o nível deles antes.`;
+}
+
+/** O corpo da recusa das edições (D12). */
+export type RecusaDeEdicao = {
+  statusCode: 422;
+  code: 'NIVEL_INCOMPATIVEL_COM_MATRICULAS';
+  message: string;
+};
+
+/**
+ * D12 — **a conferência de uma edição, dentro da transação dela**: lê os pares
+ * incompatíveis afetados, ESCREVE, lê de novo, e devolve a recusa se nasceu um
+ * par que não existia. Quem chama lança `UnprocessableEntityException` com o
+ * corpo — e o rollback desfaz a escrita. Comparar depois de escrever, e não
+ * simular antes, é o que faz as quatro edições usarem a mesma leitura do nível
+ * efetivo, sem uma segunda cópia da regra para "como ficaria".
+ */
+export async function conferirEdicaoDeNivel<T>(
+  db: Pick<Prisma.TransactionClient, 'nivel' | 'turmaAluno'>,
+  companyId: string,
+  afetados: ParesAfetados,
+  edicao: EdicaoDeNivel,
+  escrever: () => Promise<T>,
+): Promise<{ resultado: T; recusa: RecusaDeEdicao | null }> {
+  const antes = await paresIncompativeis(db, companyId, afetados);
+  const resultado = await escrever();
+  const depois = await paresIncompativeis(db, companyId, afetados);
+  const novos = paresNovos(antes, depois);
+  if (novos.length === 0) return { resultado, recusa: null };
+  return {
+    resultado,
+    recusa: {
+      statusCode: 422,
+      code: 'NIVEL_INCOMPATIVEL_COM_MATRICULAS',
+      message: mensagemDeEdicaoRecusada(edicao, novos),
+    },
+  };
+}

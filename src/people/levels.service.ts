@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { criarNiveisPadrao } from './nivel-efetivo';
+import {
+  conferirEdicaoDeNivel,
+  criarNiveisPadrao,
+  primeiroNivel,
+} from './nivel-efetivo';
 import { NivelResponseDto } from './dto/people-response.dto';
 import type { CreateLevelDto } from './dto/create-level.dto';
 import type { UpdateLevelDto } from './dto/update-level.dto';
@@ -53,9 +57,11 @@ export class LevelsService {
       throw new ConflictException('Já existe um nível com esse nome (AC-003)');
     }
 
-    return this.prisma.nivel.create({
-      data: { companyId, nome: dto.nome, ordem: dto.ordem },
-    });
+    return this.gravarConferindoOPrimeiro(companyId, (tx) =>
+      tx.nivel.create({
+        data: { companyId, nome: dto.nome, ordem: dto.ordem },
+      }),
+    );
   }
 
   async findOne(companyId: string, id: string): Promise<NivelResponseDto> {
@@ -86,9 +92,39 @@ export class LevelsService {
       }
     }
 
-    return this.prisma.nivel.update({
-      where: { id },
-      data: { nome: dto.nome, ordem: dto.ordem },
+    return this.gravarConferindoOPrimeiro(companyId, (tx) =>
+      tx.nivel.update({
+        where: { id },
+        data: { nome: dto.nome, ordem: dto.ordem },
+      }),
+    );
+  }
+
+  /**
+   * SPEC-075/D12 (decisão 6) — **criar ou reordenar um nível pode mudar quem
+   * é o primeiro**, e com ele o nível efetivo de todo aluno sem nível (D1). A
+   * escrita não pode deixar um desses alunos fora do nível de uma turma em que
+   * ele está. Numa transação, e comparando os pares dos alunos sem nível antes
+   * e depois; a recusa desfaz a escrita.
+   *
+   * O `remove` não passa por aqui: com a FK `RESTRICT` (D9), nível usado por
+   * turma não se apaga, e não há estado em que só a D12 o recusasse.
+   */
+  private gravarConferindoOPrimeiro(
+    companyId: string,
+    escrever: (tx: Prisma.TransactionClient) => Promise<NivelResponseDto>,
+  ): Promise<NivelResponseDto> {
+    return this.prisma.$transaction(async (tx) => {
+      const antigo = await primeiroNivel(tx, companyId);
+      const r = await conferirEdicaoDeNivel(
+        tx,
+        companyId,
+        { alunosSemNivel: true },
+        { tipo: 'primeiro', primeiroAntigo: antigo?.nome ?? '' },
+        () => escrever(tx),
+      );
+      if (r.recusa) throw new UnprocessableEntityException(r.recusa);
+      return r.resultado;
     });
   }
 

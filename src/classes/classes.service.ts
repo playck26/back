@@ -15,7 +15,7 @@ import {
   parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
-import { recusaPorNivel } from '../people/nivel-efetivo';
+import { conferirEdicaoDeNivel, recusaPorNivel } from '../people/nivel-efetivo';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
@@ -551,31 +551,52 @@ export class ClassesService {
         }
       }
 
-      const atualizada = await tx.turma.update({
-        where: { id },
-        data: {
-          nome: dto.nome,
-          nivelId: dto.nivelId,
-          professorId: dto.professorId,
-          quadraId: dto.quadraId,
-          capacidade: dto.capacidade,
-          status: dto.status,
-          ...(dto.encontros === undefined
-            ? {}
-            : {
-                // **Substitui a lista inteira**, na mesma transação. Não há
-                // edição parcial de recorrência: ver `UpdateClassDto`.
-                encontros: {
-                  deleteMany: {},
-                  create: dto.encontros.map((encontro) => ({
-                    diaSemana: encontro.diaSemana,
-                    horaInicio: parseTimeOnly(encontro.horaInicio),
-                    horaFim: parseTimeOnly(encontro.horaFim),
-                  })),
-                },
-              }),
-        },
-      });
+      const gravarTurma = () =>
+        tx.turma.update({
+          where: { id },
+          data: {
+            nome: dto.nome,
+            nivelId: dto.nivelId,
+            professorId: dto.professorId,
+            quadraId: dto.quadraId,
+            capacidade: dto.capacidade,
+            status: dto.status,
+            ...(dto.encontros === undefined
+              ? {}
+              : {
+                  // **Substitui a lista inteira**, na mesma transação. Não há
+                  // edição parcial de recorrência: ver `UpdateClassDto`.
+                  encontros: {
+                    deleteMany: {},
+                    create: dto.encontros.map((encontro) => ({
+                      diaSemana: encontro.diaSemana,
+                      horaInicio: parseTimeOnly(encontro.horaInicio),
+                      horaFim: parseTimeOnly(encontro.horaFim),
+                    })),
+                  },
+                }),
+          },
+        });
+
+      // SPEC-075/D12 (decisão 6) — **mudar o nível da turma não pode deixar
+      // fora do nível um aluno que está nela.** Só quando o corpo traz
+      // `nivelId` (inclusive `null`, que nunca recusa: turma sem nível é de
+      // todos). Compara os pares antes e depois da escrita, na mesma transação;
+      // a recusa desfaz tudo.
+      let atualizada: Awaited<ReturnType<typeof gravarTurma>>;
+      if (dto.nivelId !== undefined) {
+        const r = await conferirEdicaoDeNivel(
+          tx,
+          companyId,
+          { turmaId: id },
+          { tipo: 'turma' },
+          gravarTurma,
+        );
+        if (r.recusa) throw new UnprocessableEntityException(r.recusa);
+        atualizada = r.resultado;
+      } else {
+        atualizada = await gravarTurma();
+      }
 
       // SPEC-064/D6 — **turma inativada mata a fila de TURMA dela.**
       //

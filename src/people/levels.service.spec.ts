@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LevelsService } from './levels.service';
 
 function buildPrismaMock() {
-  return {
+  const mock = {
     nivel: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -22,7 +22,17 @@ function buildPrismaMock() {
     turma: {
       count: jest.fn(),
     },
-  } as unknown as PrismaService;
+    // SPEC-075/D12 — criar e editar nível conferem, numa transação, os pares
+    // dos alunos sem nível. O dublê: a transação é o próprio dublê, e não há
+    // matrícula nenhuma — a conferência não acha par, e cada caso aqui continua
+    // provando só o que já provava.
+    turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+    $transaction: jest.fn(),
+  };
+  mock.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+    cb(mock),
+  );
+  return mock as unknown as PrismaService;
 }
 
 describe('LevelsService', () => {

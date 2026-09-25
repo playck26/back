@@ -25,6 +25,7 @@ import type { UpdateStudentDto } from './dto/update-student.dto';
 import { calcularCompletude } from './completude-do-cadastro';
 import type { CamposDoCadastroDto } from './dto/campos-do-cadastro.dto';
 import { normalizarNascimento } from './normalizar-nascimento';
+import { conferirEdicaoDeNivel } from './nivel-efetivo';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -552,26 +553,43 @@ export class StudentsService {
         }
       }
 
-      return tx.aluno.update({
-        where: { id },
-        data: {
-          nivelId: dto.nivelId,
-          status: dto.status,
-          // SPEC-036 — os sete. `undefined` nao mexe, `null` APAGA: sao duas
-          // intencoes diferentes e o Prisma ja as distingue, entao passar o
-          // valor cru e o certo. Foi por isso que o DTO recusa `''` (AC-005) —
-          // se aceitasse, "apagar" teria duas formas e uma delas subiria a
-          // barra de completude.
-          dataNascimento,
-          emergenciaNome: dto.emergenciaNome,
-          emergenciaTelefone: dto.emergenciaTelefone,
-          endereco: dto.endereco,
-          cidade: dto.cidade,
-          uf: dto.uf,
-          observacoesSaude: dto.observacoesSaude,
-        },
-        include: { usuario: true },
-      });
+      const gravarAluno = () =>
+        tx.aluno.update({
+          where: { id },
+          data: {
+            nivelId: dto.nivelId,
+            status: dto.status,
+            // SPEC-036 — os sete. `undefined` nao mexe, `null` APAGA: sao duas
+            // intencoes diferentes e o Prisma ja as distingue, entao passar o
+            // valor cru e o certo. Foi por isso que o DTO recusa `''` (AC-005) —
+            // se aceitasse, "apagar" teria duas formas e uma delas subiria a
+            // barra de completude.
+            dataNascimento,
+            emergenciaNome: dto.emergenciaNome,
+            emergenciaTelefone: dto.emergenciaTelefone,
+            endereco: dto.endereco,
+            cidade: dto.cidade,
+            uf: dto.uf,
+            observacoesSaude: dto.observacoesSaude,
+          },
+          include: { usuario: true },
+        });
+
+      // SPEC-075/D12 (decisão 6) — **mudar o nível do aluno não pode deixá-lo
+      // fora do nível de uma turma em que ele está.** Só quando o corpo traz
+      // `nivelId` — inclusive `null`, que o faz contar como o primeiro (D1).
+      // Compara os pares antes e depois da escrita, na mesma transação; a
+      // recusa desfaz a edição inteira (nome, status e o resto vão junto).
+      if (dto.nivelId === undefined) return gravarAluno();
+      const r = await conferirEdicaoDeNivel(
+        tx,
+        companyId,
+        { alunoId: id },
+        { tipo: 'aluno' },
+        gravarAluno,
+      );
+      if (r.recusa) throw new UnprocessableEntityException(r.recusa);
+      return r.resultado;
     });
 
     return this.toResponse(aluno);
