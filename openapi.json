@@ -6138,6 +6138,109 @@
           "me"
         ]
       }
+    },
+    "/api/v1/me/pre-reservas": {
+      "get": {
+        "operationId": "MePreReservasController_meus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PreReservaResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "post": {
+        "operationId": "MePreReservasController_pedir",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PedirPreReservaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreReservaResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A quadra não existe nesta empresa."
+          },
+          "409": {
+            "description": "O horário está livre (`HORARIO_LIVRE`), já é do aluno (`HORARIO_JA_E_SEU`), ou o aviso já foi pedido (`PRE_RESERVA_DUPLICADA`)."
+          },
+          "422": {
+            "description": "Aluno inativo (`ALUNO_INATIVO`), quadra fora de operação (`QUADRA_INATIVA`), horário que já começou (`HORARIO_NO_PASSADO`), fora do expediente (`FORA_DO_EXPEDIENTE`) ou teto de avisos ativos (`LIMITE_DE_PRE_RESERVAS`)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/pre-reservas/{id}": {
+      "delete": {
+        "operationId": "MePreReservasController_cancelar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "O pedido não existe, é de outro aluno ou já terminou — os três no mesmo `404`, que não revela o pedido de ninguém."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      }
     }
   },
   "info": {
@@ -12981,6 +13084,73 @@
         "required": [
           "fila",
           "reposicaoId"
+        ]
+      },
+      "PreReservaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000003"
+          },
+          "quadraId": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000001"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-10-02"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00"
+          },
+          "horaFim": {
+            "type": "string",
+            "example": "20:00"
+          },
+          "estado": {
+            "type": "string",
+            "example": "aguardando",
+            "description": "Nasce `aguardando`. Quem o muda para `avisada` é o varredor (SPEC-074/D3), nunca esta rota."
+          },
+          "criadaEm": {
+            "type": "string",
+            "example": "2026-09-25T12:31:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "quadraId",
+          "data",
+          "horaInicio",
+          "horaFim",
+          "estado",
+          "criadaEm"
+        ]
+      },
+      "PedirPreReservaDto": {
+        "type": "object",
+        "properties": {
+          "quadraId": {
+            "type": "string",
+            "example": "5f7c1e2a-0000-4000-8000-000000000001"
+          },
+          "data": {
+            "type": "string",
+            "example": "2026-10-02",
+            "description": "AAAA-MM-DD"
+          },
+          "horaInicio": {
+            "type": "string",
+            "example": "19:00",
+            "description": "O início do slot, em hora cheia. O fim é o servidor que diz."
+          }
+        },
+        "required": [
+          "quadraId",
+          "data",
+          "horaInicio"
         ]
       }
     }

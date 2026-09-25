@@ -22,6 +22,7 @@ import { StorageModule } from './storage/storage.module';
 import { PresencaAutomaticaModule } from './presenca-automatica/presenca-automatica.module';
 import { PushModule } from './push/push.module';
 import { FilaDeEsperaModule } from './fila-de-espera/fila-de-espera.module';
+import { PreReservaModule } from './pre-reserva/pre-reserva.module';
 
 @Module({
   imports: [
@@ -57,6 +58,8 @@ import { FilaDeEsperaModule } from './fila-de-espera/fila-de-espera.module';
     // SPEC-062 — infraestrutura de push. Nasce DESLIGADA sem o par VAPID.
     PushModule,
     FilaDeEsperaModule,
+    // SPEC-074 — a pré-reserva: o aviso de que um horário de quadra vagou.
+    PreReservaModule,
   ],
   controllers: [AppController],
   providers: [

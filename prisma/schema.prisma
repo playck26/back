@@ -315,6 +315,9 @@ model Aluno {
   /// SPEC-064 — as linhas da fila de espera do aluno (`fila_aluno_fkey`,
   /// RESTRICT: apagar aluno com fila viva e erro, nao limpeza silenciosa).
   filaDeEspera        ListaDeEspera[]
+  /// SPEC-074 — os pedidos de aviso de horario do aluno
+  /// (`pre_reserva_aluno_fkey`, RESTRICT, pelo mesmo motivo da fila).
+  preReservas         PreReserva[]
 
   /// DEF-024 fase 1 — alvo das FKs compostas de `presencas` e
   /// `avaliacoes_de_aula`. `id` ja e PK, entao este UNIQUE nunca falha por
@@ -439,6 +442,9 @@ model Quadra {
   ocupacoes    OcupacaoQuadra[]
   turmas       Turma[]
   horarios     HorarioFuncionamento[]
+  /// SPEC-074 — os pedidos de aviso de horario nesta quadra
+  /// (`pre_reserva_quadra_fkey`, RESTRICT).
+  preReservas  PreReserva[]
 
   /// INV-054b (DEF-022) — o alvo das FKs compostas que apontam para quadra.
   /// `id` já é PK, então isto não muda o que é único: existe para que
@@ -1911,4 +1917,68 @@ enum EstadoDaFilaDeEspera {
   desistiu
 
   @@map("estado_da_fila_de_espera")
+}
+
+/// SPEC-074 — **a pre-reserva: o aviso de que um horario de quadra vagou.**
+///
+/// O aluno toca num horario OCUPADO e pede para ser avisado; quando ele vagar,
+/// **todos** que pediram recebem o aviso ao mesmo tempo, e quem reservar
+/// primeiro fica com ele. Nada e segurado para ninguem (LIM-074a).
+///
+/// **Quatro coisas aqui sao do BANCO e nao deste arquivo**, e a migration
+/// `20260925180000_spec074_pre_reserva` e a fonte de verdade das quatro:
+///
+///   1. os tres CHECK (faixa, conclusao, aviso);
+///   2. os quatro indices PARCIAIS `WHERE estado = 'aguardando'` -- o Prisma
+///      nao expressa `WHERE`, e sem ele um pedido avisado proibiria o proximo
+///      para sempre;
+///   3. o trigger `pre_reserva_slot_imutavel` (INV-074h), que recusa mudar o
+///      slot ou o instante depois da criacao;
+///   4. o indice e o CHECK do aviso em `notificacoes` (INV-074d).
+model PreReserva {
+  id           String             @id @db.Uuid
+  companyId    String             @map("company_id") @db.Uuid
+  alunoId      String             @map("aluno_id") @db.Uuid
+  quadraId     String             @map("quadra_id") @db.Uuid
+  /// O slot, na mesma forma de `ocupacoes_quadra` (D6).
+  data         DateTime           @db.Date
+  horaInicio   DateTime           @map("hora_inicio") @db.Time
+  horaFim      DateTime           @map("hora_fim") @db.Time
+  /// D6 — o instante do inicio, gravado na criacao por
+  /// `instanteNoFusoDoClube`, para o SQL comparar com `now()` sem conhecer
+  /// fuso. Redundante com `data` + `horaInicio`, e sem CHECK que os amarre:
+  /// na criacao quem garante e a aplicacao; depois, o trigger.
+  inicioEm     DateTime           @map("inicio_em") @db.Timestamptz(6)
+  estado       EstadoDaPreReserva @default(aguardando)
+  criadaEm     DateTime           @default(now()) @map("criada_em") @db.Timestamptz(6)
+  /// D7 — a chave do rodizio e `coalesce(verificada_em, criada_em)`.
+  verificadaEm DateTime?          @map("verificada_em") @db.Timestamptz(6)
+  avisadaEm    DateTime?          @map("avisada_em") @db.Timestamptz(6)
+  concluidaEm  DateTime?          @map("concluida_em") @db.Timestamptz(6)
+  motivoFim    String?            @map("motivo_fim")
+
+  aluno  Aluno  @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "pre_reserva_aluno_fkey")
+  quadra Quadra @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "pre_reserva_quadra_fkey")
+
+  @@map("pre_reservas")
+}
+
+/// SPEC-074 — os cinco estados da pre-reserva. **Nao-terminal: so
+/// `aguardando`.** `avisada` e terminal por decisao do Israel (decisao 4): um
+/// aviso por pedido.
+///
+/// Ordem NOVA entra no FIM (mesma regra de `EstadoDaNotificacao`).
+enum EstadoDaPreReserva {
+  /// Esperando o horario vagar.
+  aguardando
+  /// O horario vagou e o aviso saiu.
+  avisada
+  /// O proprio aluno desistiu.
+  cancelada
+  /// O horario comecou sem vagar.
+  expirada
+  /// Perdeu o sentido: o aluno deixou de ser operante, ou reservou sozinho.
+  encerrada
+
+  @@map("estado_da_pre_reserva")
 }
