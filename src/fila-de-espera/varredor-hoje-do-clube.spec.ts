@@ -32,6 +32,7 @@
  * opções da transação da purga: **o artefato, não o ambiente em que ele rodou.**
  */
 import { VarredorDaFilaService } from './varredor-da-fila.service';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -51,7 +52,13 @@ function varredorComEspiao(): {
     $queryRaw: () => Promise.resolve([]),
   } as unknown as PrismaService;
 
-  return { varredor: new VarredorDaFilaService(prisma), sqls };
+  return {
+    varredor: new VarredorDaFilaService(
+      prisma,
+      new ConfigOperacaoService(prisma),
+    ),
+    sqls,
+  };
 }
 
 describe('SPEC-064 — o varredor não pergunta a data ao servidor de banco', () => {

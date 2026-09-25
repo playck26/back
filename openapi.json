@@ -5475,7 +5475,17 @@
     "/api/v1/me/reposicoes/oportunidades": {
       "get": {
         "operationId": "MeReposicoesController_oportunidades",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "incluirSemVaga",
+            "required": false,
+            "in": "query",
+            "description": "Inclui as ocorrencias SEM VAGA (`vagas: 0`), para o aluno poder entrar na fila de espera delas (card 5331). Sem o parametro, so as que tem vaga — o comportamento de antes desta task.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -8464,6 +8474,11 @@
             "nullable": true,
             "example": 150
           },
+          "antecedenciaFilaAulaHoras": {
+            "type": "number",
+            "nullable": true,
+            "example": null
+          },
           "nomeTipoQuadra": {
             "type": "string",
             "example": "Quadra"
@@ -8471,14 +8486,20 @@
           "nomeTipoAula": {
             "type": "string",
             "example": "Aula particular"
+          },
+          "antecedenciaFilaAulaPadraoHoras": {
+            "type": "number",
+            "example": 2
           }
         },
         "required": [
           "prazoCancelamentoAulaHoras",
           "prazoCancelamentoReservaHoras",
           "precoAulaPadrao",
+          "antecedenciaFilaAulaHoras",
           "nomeTipoQuadra",
-          "nomeTipoAula"
+          "nomeTipoAula",
+          "antecedenciaFilaAulaPadraoHoras"
         ]
       },
       "MinhaEmpresaResponseDto": {
@@ -9502,6 +9523,13 @@
             "minimum": 0.01,
             "example": 150,
             "description": "Preco padrao da aula particular, em reais. `null` = o clube nao vende aula particular pelo app."
+          },
+          "antecedenciaFilaAulaHoras": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "example": 2,
+            "description": "Com quantas horas antes da aula a fila de espera de AULA ainda chama alguem. `null` = usa o padrao do servidor (`antecedenciaFilaAulaPadraoHoras`). Nao vale para a fila de turma."
           }
         },
         "required": [
@@ -9526,12 +9554,18 @@
             "type": "number",
             "nullable": true,
             "example": 150
+          },
+          "antecedenciaFilaAulaHoras": {
+            "type": "number",
+            "nullable": true,
+            "example": null
           }
         },
         "required": [
           "prazoCancelamentoAulaHoras",
           "prazoCancelamentoReservaHoras",
-          "precoAulaPadrao"
+          "precoAulaPadrao",
+          "antecedenciaFilaAulaHoras"
         ]
       },
       "DiaDaAgendaResponseDto": {

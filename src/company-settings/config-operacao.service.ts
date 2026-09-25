@@ -17,6 +17,19 @@ export interface PrazosDaEmpresa {
   readonly reserva: PrazoDeCancelamento;
 }
 
+/**
+ * SPEC-064/TASK-008 — **a antecedência padrão da fila de AULA, em horas.**
+ *
+ * É o `2` que estava fixo no varredor (`ANTECEDENCIA_MINIMA_MS`) desde a
+ * SPEC-064, e continua sendo o valor de quem não configurou — **o clube que
+ * nunca abriu a tela tem de ver exatamente o comportamento de antes**. Mora
+ * aqui, e não no varredor, pelo mesmo motivo do `REPOSICAO_PADRAO`: dois
+ * lugares com `?? 2` divergem no primeiro ajuste.
+ */
+export const ANTECEDENCIA_FILA_AULA_PADRAO_HORAS = 2;
+// **Declarada ANTES do `SEM_CONFIGURACAO`**, que a referencia: um `const` lido
+// antes da declaracao estoura no carregamento do modulo (zona morta temporal).
+
 const SEM_CONFIGURACAO: ConfigOperacaoComNomesResponseDto = {
   prazoCancelamentoAulaHoras: null,
   prazoCancelamentoReservaHoras: null,
@@ -26,6 +39,10 @@ const SEM_CONFIGURACAO: ConfigOperacaoComNomesResponseDto = {
   // SPEC-054/D1 — sem configuracao, os nomes padrao, ja resolvidos.
   nomeTipoQuadra: NOMES_DE_TIPO_PADRAO.quadra,
   nomeTipoAula: NOMES_DE_TIPO_PADRAO.aula,
+  // SPEC-064/TASK-008 — nulo cru (o clube nao configurou) E o padrao do
+  // servidor ao lado, para a tela dizer "padrao: 2 h" sem ter o `2` escrito la.
+  antecedenciaFilaAulaHoras: null,
+  antecedenciaFilaAulaPadraoHoras: ANTECEDENCIA_FILA_AULA_PADRAO_HORAS,
 };
 
 /**
@@ -82,6 +99,7 @@ export class ConfigOperacaoService {
         precoAulaPadrao: true,
         nomeTipoQuadra: true,
         nomeTipoAula: true,
+        antecedenciaFilaAulaHoras: true,
       },
     });
     return linha
@@ -91,6 +109,7 @@ export class ConfigOperacaoService {
           // SPEC-054/D8 — resolvidos aqui, num lugar so: nulo e o padrao.
           nomeTipoQuadra: linha.nomeTipoQuadra ?? NOMES_DE_TIPO_PADRAO.quadra,
           nomeTipoAula: linha.nomeTipoAula ?? NOMES_DE_TIPO_PADRAO.aula,
+          antecedenciaFilaAulaPadraoHoras: ANTECEDENCIA_FILA_AULA_PADRAO_HORAS,
         }
       : SEM_CONFIGURACAO;
   }
@@ -143,6 +162,11 @@ export class ConfigOperacaoService {
       // Prisma preservar o valor antigo, e "salvei sem o campo" viraria "o
       // preco continua la" — que e o oposto de substituicao.
       precoAulaPadrao: dto.precoAulaPadrao ?? null,
+      // SPEC-064/TASK-008 — o mesmo `?? null` do preco, pelo mesmo motivo: o
+      // `PUT` e substituicao total. **Aqui o custo de um Admin antigo que nao
+      // mande o campo e pequeno e declarado**: nulo e "usa o padrao de 2 h",
+      // que e o comportamento de antes — apagar volta ao padrao, nao desliga.
+      antecedenciaFilaAulaHoras: dto.antecedenciaFilaAulaHoras ?? null,
     };
     const linha = await this.prisma.configOperacaoEmpresa.upsert({
       where: { companyId },
@@ -152,6 +176,7 @@ export class ConfigOperacaoService {
         prazoCancelamentoAulaHoras: true,
         prazoCancelamentoReservaHoras: true,
         precoAulaPadrao: true,
+        antecedenciaFilaAulaHoras: true,
       },
     });
     return { ...linha, precoAulaPadrao: numeroOuNulo(linha.precoAulaPadrao) };
@@ -211,5 +236,30 @@ export class ConfigOperacaoService {
       validadeDias:
         linha?.reposicaoValidadeDias ?? REPOSICAO_PADRAO.validadeDias,
     };
+  }
+
+  /**
+   * SPEC-064/TASK-008 — **com quantas horas antes da aula a fila de AULA ainda
+   * chama alguém** (card 5331, RN3: *"Admin define a antecedência"*).
+   *
+   * Recebe `tx` pelo mesmo motivo de `prazosDaEmpresa`: quem pergunta é o
+   * varredor, **dentro** da transação que já trava a turma e a ocorrência. Ler
+   * por outra conexão segurando esses locks é o defeito que a SPEC-034 pagou
+   * caro.
+   *
+   * **Só a fila de aula** — a de turma não tem "a aula" (SPEC-064/D4).
+   */
+  async antecedenciaDaFilaDeAula(
+    companyId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const cliente = tx ?? this.prisma;
+    const linha = await cliente.configOperacaoEmpresa.findUnique({
+      where: { companyId },
+      select: { antecedenciaFilaAulaHoras: true },
+    });
+    return (
+      linha?.antecedenciaFilaAulaHoras ?? ANTECEDENCIA_FILA_AULA_PADRAO_HORAS
+    );
   }
 }

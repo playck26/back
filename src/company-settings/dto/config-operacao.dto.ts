@@ -98,6 +98,37 @@ export class DefinirConfigOperacaoDto {
       'O preco comeca em R$ 0,01. Para nao vender aula particular, mande `null`.',
   })
   precoAulaPadrao?: number | null;
+
+  /**
+   * SPEC-064/TASK-008 — card 5331, RN3: *"Notificação apenas para
+   * possibilidades com pelo menos X h de antecedência. — Admin define a
+   * antecedência."*
+   *
+   * **Só a fila de AULA** (SPEC-064/D4): a de turma não tem "a aula".
+   *
+   * **Opcional, como o `precoAulaPadrao`**, e o custo está declarado no
+   * `gravar`: um Admin antigo que não mande o campo o apaga — e aqui apagar
+   * volta ao padrão de 2 h, que é o comportamento de antes, em vez de desligar
+   * alguma coisa.
+   */
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    minimum: 1,
+    example: 2,
+    description:
+      'Com quantas horas antes da aula a fila de espera de AULA ainda chama ' +
+      'alguem. `null` = usa o padrao do servidor ' +
+      '(`antecedenciaFilaAulaPadraoHoras`). Nao vale para a fila de turma.',
+  })
+  @ValidateIf((_objeto, valor) => valor !== null && valor !== undefined)
+  @IsInt()
+  @Min(1, {
+    message:
+      'A antecedencia comeca em 1 hora. Zero nao existe: para usar o padrao, ' +
+      'mande `null`.',
+  })
+  antecedenciaFilaAulaHoras?: number | null;
 }
 
 /**
@@ -116,6 +147,10 @@ export class ConfigOperacaoResponseDto {
   prazoCancelamentoReservaHoras!: number | null;
   @ApiProperty({ type: Number, nullable: true, example: 150 })
   precoAulaPadrao!: number | null;
+
+  /** SPEC-064/TASK-008 — o valor configurado, CRU: `null` = nao configurou. */
+  @ApiProperty({ type: Number, nullable: true, example: null })
+  antecedenciaFilaAulaHoras!: number | null;
 }
 
 /** SPEC-054/D1 — os nomes que o clube não configurou. */
@@ -139,6 +174,18 @@ export class ConfigOperacaoComNomesResponseDto extends ConfigOperacaoResponseDto
 
   @ApiProperty({ example: 'Aula particular' })
   nomeTipoAula!: string;
+
+  /**
+   * SPEC-064/TASK-008 — **o padrão do servidor, para a tela não ter de
+   * repeti-lo.** Mora na LEITURA, ao lado dos nomes de tipo resolvidos, e não
+   * na base: a base é também o corpo que o Admin manda no `PUT`, e um campo só
+   * de leitura ali faria o `tsc` do Admin exigi-lo no corpo — e o
+   * `forbidNonWhitelisted` do Back responderia 400 a todo salvamento. Sem este campo o Admin escreveria `2` no próprio código para
+   * dizer "padrão: 2 h", e a primeira mudança do padrão deixaria a tela
+   * mentindo.
+   */
+  @ApiProperty({ type: Number, example: 2 })
+  antecedenciaFilaAulaPadraoHoras!: number;
 }
 
 /** Mesma regra do `CHECK` do banco: sem espaço nas pontas, 1 a 30. */

@@ -224,6 +224,14 @@ export class ReposicaoService {
   async oportunidades(
     companyId: string,
     usuarioId: string,
+    /**
+     * SPEC-064/TASK-007 — **`false` por padrao, e isso e o contrato.**
+     *
+     * Quem nao pedir recebe o que recebia antes: so ocorrencia com vaga. O
+     * Cliente que esta no ar desenha "Marcar" para cada item que chega, e
+     * mandar `vagas: 0` para ele produziria um botao que leva a `409`.
+     */
+    incluirSemVaga = false,
   ): Promise<OportunidadeDeReposicaoResponseDto[]> {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
     const hoje = hojeNoFusoDoClube();
@@ -279,28 +287,33 @@ export class ReposicaoService {
       ),
     );
 
-    return ocorrencias
-      .map((o) => {
-        const doItem = conjuntos.get(o.id);
-        const vagas =
-          o.origemTurma && doItem
-            ? calcularOcupacao(o.origemTurma.capacidade, doItem)
-                .vagasNaOcorrencia
-            : 0;
-        return {
-          ocupacaoId: o.id,
-          turmaId: o.origemTurmaId as string,
-          turmaNome: o.origemTurma?.nome ?? '',
-          nivelId: o.origemTurma?.nivelId ?? null,
-          nivelNome: o.origemTurma?.nivel ? o.origemTurma.nivel.nome : null,
-          quadraNome: o.quadra.nome,
-          data: formatDateOnly(o.data),
-          horaInicio: formatTimeOnly(o.horaInicio),
-          horaFim: formatTimeOnly(o.horaFim),
-          vagas,
-        };
-      })
-      .filter((o) => o.vagas > 0);
+    return (
+      ocorrencias
+        .map((o) => {
+          const doItem = conjuntos.get(o.id);
+          const vagas =
+            o.origemTurma && doItem
+              ? calcularOcupacao(o.origemTurma.capacidade, doItem)
+                  .vagasNaOcorrencia
+              : 0;
+          return {
+            ocupacaoId: o.id,
+            turmaId: o.origemTurmaId as string,
+            turmaNome: o.origemTurma?.nome ?? '',
+            nivelId: o.origemTurma?.nivelId ?? null,
+            nivelNome: o.origemTurma?.nivel ? o.origemTurma.nivel.nome : null,
+            quadraNome: o.quadra.nome,
+            data: formatDateOnly(o.data),
+            horaInicio: formatTimeOnly(o.horaInicio),
+            horaFim: formatTimeOnly(o.horaFim),
+            vagas,
+          };
+        })
+        // SPEC-064/TASK-007 — a ocorrencia CHEIA e o que o card 5331 chama de
+        // "encontra a aula para repor, mas nao tem vaga". Ela so sai daqui
+        // quando alguem pede, e quem pede e a tela que sabe oferecer a fila.
+        .filter((o) => incluirSemVaga || o.vagas > 0)
+    );
   }
 
   /**
