@@ -4,7 +4,9 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { criarNiveisPadrao } from './nivel-efetivo';
 import { NivelResponseDto } from './dto/people-response.dto';
 import type { CreateLevelDto } from './dto/create-level.dto';
 import type { UpdateLevelDto } from './dto/update-level.dto';
@@ -12,6 +14,26 @@ import type { UpdateLevelDto } from './dto/update-level.dto';
 @Injectable()
 export class LevelsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * SPEC-075/D7 — **o método público de MOD-003 que semeia os níveis padrão**
+   * de uma empresa nova, na transação de quem a cria.
+   *
+   * Existe para MOD-002 não escrever em `niveis` (`TARGET_ARCHITECTURE.md`,
+   * seção 5: "só MOD-003"). O molde é o `StudentsService.criarPerfilDeAluno`,
+   * pelo qual MOD-001 provisiona aluno sem escrever em `alunos`. A lista mora
+   * em `NIVEIS_PADRAO` (`nivel-efetivo.ts`), e não aqui.
+   *
+   * Sem a trava de nível da empresa (D13) de propósito: a empresa acabou de
+   * nascer numa transação ainda não comitada — não tem aluno nem turma, e
+   * ninguém mais a enxerga.
+   */
+  semearNiveisPadrao(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+  ): Promise<void> {
+    return criarNiveisPadrao(tx, companyId);
+  }
 
   list(companyId: string) {
     return this.prisma.nivel.findMany({

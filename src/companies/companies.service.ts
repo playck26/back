@@ -9,6 +9,7 @@ import { parseTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { AuthService } from '../auth/auth.service';
+import { LevelsService } from '../people/levels.service';
 import {
   AdminDaEmpresaResponseDto,
   EmpresaCriadaResponseDto,
@@ -79,6 +80,8 @@ export class CompaniesService {
     // SPEC-018/TASK-006: quem resolve `logo_key` -> URL, com o fallback
     // para `logo_url` (AC-013), é um lugar só. Ver `LogoDaEmpresaService`.
     private readonly logos: LogoDaEmpresaService,
+    // SPEC-075/D7 — MOD-003, para os níveis padrão da empresa nova.
+    private readonly niveis: LevelsService,
   ) {}
 
   async list(
@@ -190,6 +193,13 @@ export class CompaniesService {
             fechado: false,
           })),
         });
+
+        // SPEC-075/D7 (decisões 4 e 7): empresa nova nasce com Iniciante,
+        // Intermediário e Avançado — **na mesma transação** (INV-075f: nunca
+        // empresa sem nível, nem nível sem empresa) e **antes do admin
+        // inicial** (a sonda (b) da AC-013 prende esta ordem). Quem escreve é
+        // MOD-003; aqui só se delega.
+        await this.niveis.semearNiveisPadrao(tx, empresaCriada.id);
 
         const adminCriado = await tx.usuario.create({
           data: {

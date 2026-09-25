@@ -176,3 +176,44 @@ export async function recusaPorNivel(
     ),
   };
 }
+
+/**
+ * SPEC-075/D7 (decisões 4 e 7 do Israel) — **os níveis com que toda empresa
+ * nova nasce.** O único lugar do código que sabe quais são: o
+ * `LevelsService.semearNiveisPadrao` (a criação de empresa) e o seed (a empresa
+ * de QA) usam esta constante, e nenhum dos dois tem lista própria.
+ *
+ * Editáveis depois, como qualquer nível (D8). As empresas que já existiam
+ * antes da SPEC-075 não ganham nada (decisão 8).
+ */
+export const NIVEIS_PADRAO: readonly { nome: string; ordem: number }[] = [
+  { nome: 'Iniciante', ordem: 1 },
+  { nome: 'Intermediário', ordem: 2 },
+  { nome: 'Avançado', ordem: 3 },
+];
+
+/**
+ * SPEC-075/D7 — grava os níveis padrão, **pelo cliente de quem chama**.
+ *
+ * **Quem escreve `niveis` é MOD-003** (`TARGET_ARCHITECTURE.md`, seção 5): a
+ * criação de empresa (MOD-002) não chama isto direto — chama
+ * `LevelsService.semearNiveisPadrao(tx, …)`, o método público, no molde de
+ * `StudentsService.criarPerfilDeAluno` (MOD-001 → MOD-003). O seed, que não tem
+ * injeção de dependência, chama esta função.
+ *
+ * Os três nascem na mesma transação, com o mesmo `created_at` — por isso as
+ * `ordem` distintas: o desempate da D1 existe para os níveis que o gestor criar
+ * depois, não para estes.
+ */
+export async function criarNiveisPadrao(
+  db: Pick<Prisma.TransactionClient, 'nivel'>,
+  companyId: string,
+): Promise<void> {
+  await db.nivel.createMany({
+    data: NIVEIS_PADRAO.map((n) => ({
+      companyId,
+      nome: n.nome,
+      ordem: n.ordem,
+    })),
+  });
+}

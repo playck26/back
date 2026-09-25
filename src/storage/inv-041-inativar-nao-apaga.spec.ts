@@ -211,11 +211,13 @@ describe('INV-041 — inativar preserva a mídia (AC-012)', () => {
   it('inativar EMPRESA não zera a logo', async () => {
     const { prisma, updates } = capturador();
     const logos = { resolver: jest.fn(() => ({ logoUrl: null })) };
-    // O 2o argumento e o AuthService, que esta rota nao usa.
+    // O 2o argumento e o AuthService, e o 4o o LevelsService (SPEC-075), que
+    // esta rota nao usa.
     const service = new CompaniesService(
       prisma as never,
       {} as never,
       logos as never,
+      {} as never,
     );
 
     await service.updateStatus('e1', { status: 'inativa' } as never);

@@ -55,6 +55,9 @@ import { TeachersService } from './teachers.service';
   // esta spec vir antes dela.
   exports: [
     StudentsService,
+    // SPEC-075/D7 — a criação de empresa (MOD-002) semeia os níveis padrão
+    // pelo método público de MOD-003, e não escrevendo em `niveis`.
+    LevelsService,
     FotoDeProfessorService,
     DisponibilidadeProfessorService,
     // SPEC-047 — sai do modulo porque a rota de horarios do aluno mora em

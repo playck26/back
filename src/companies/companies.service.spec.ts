@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompaniesService } from './companies.service';
+import { LevelsService } from '../people/levels.service';
 
 // TEST-002 (SPEC-002): unit tests de MOD-002 com PrismaService mockado —
 // $transaction simulado chamando o callback direto com um objeto `tx`
@@ -18,6 +19,8 @@ interface TxMock {
   usuario: { create: jest.Mock };
   // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias.
   horarioFuncionamento: { createMany: jest.Mock };
+  // SPEC-075/D7: empresa nova nasce com os três níveis padrão.
+  nivel: { createMany: jest.Mock };
   // SPEC-020/TASK-008: editar a empresa sincroniza o catálogo de esportes,
   // e a sincronização precisa saber o que já existe e o que está em uso.
   esporteDeQuadra: {
@@ -54,6 +57,7 @@ function buildPrismaMock() {
     horarioFuncionamento: {
       createMany: jest.fn().mockResolvedValue({ count: 7 }),
     },
+    nivel: { createMany: jest.fn().mockResolvedValue({ count: 3 }) },
     // SPEC-020/TASK-008 — o padrão é "empresa sem catálogo nenhum": quem
     // testa remoção ou uso sobrescreve. Deixar o padrão vazio faz o caminho
     // de adicionar ser o exercitado por omissão, que é o mais comum.
@@ -112,6 +116,8 @@ describe('CompaniesService', () => {
           logoUrl: empresa.logoUrl,
         }),
       } as unknown as ConstructorParameters<typeof CompaniesService>[2],
+      // SPEC-075/D7 — o LevelsService de verdade: ele só delega ao `tx`.
+      new LevelsService(prisma),
     );
   });
 
@@ -247,6 +253,16 @@ describe('CompaniesService', () => {
 
       expect(tx.empresa.create).toHaveBeenCalledTimes(1);
       expect(tx.usuario.create).toHaveBeenCalledTimes(1);
+      // SPEC-075/D7 — os três níveis padrão, da empresa que acabou de nascer,
+      // pelo MESMO `tx`. A ordem (níveis antes do admin) é provada no banco,
+      // pela sonda da AC-013(b).
+      expect(tx.nivel.createMany).toHaveBeenCalledWith({
+        data: [
+          { companyId: 'e1', nome: 'Iniciante', ordem: 1 },
+          { companyId: 'e1', nome: 'Intermediário', ordem: 2 },
+          { companyId: 'e1', nome: 'Avançado', ordem: 3 },
+        ],
+      });
       expect(result.empresa).toEqual({
         id: 'e1',
         nome: dto.nome,
