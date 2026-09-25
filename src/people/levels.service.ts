@@ -82,6 +82,21 @@ export class LevelsService {
       );
     }
 
+    // SPEC-075/D9 (INV-075e) — **apagar um nível nunca abre uma turma
+    // restrita.** Antes, a FK de `turmas` era `SET NULL`: apagar o nível
+    // deixava a turma sem nível, e turma sem nível é de todos. Agora a FK é
+    // `RESTRICT` e o banco recusa; esta conferência existe para a MENSAGEM —
+    // o banco é a garantia, o serviço é a explicação.
+    const emUsoPorTurma = await this.prisma.turma.count({
+      where: { nivelId: id, companyId },
+    });
+    if (emUsoPorTurma > 0) {
+      throw new UnprocessableEntityException(
+        'Nível em uso por turma(s) — não pode ser removido. Mude o nível ' +
+          'dessas turmas antes (SPEC-075).',
+      );
+    }
+
     await this.prisma.nivel.delete({ where: { id } });
   }
 }

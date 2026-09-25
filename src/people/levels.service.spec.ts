@@ -19,6 +19,9 @@ function buildPrismaMock() {
     aluno: {
       count: jest.fn(),
     },
+    turma: {
+      count: jest.fn(),
+    },
   } as unknown as PrismaService;
 }
 
@@ -78,9 +81,24 @@ describe('LevelsService', () => {
       expect(prisma.nivel.delete).not.toHaveBeenCalled();
     });
 
+    it('rejeita remoção com 422 quando em uso por turma (SPEC-075, INV-075e)', async () => {
+      (prisma.nivel.findFirst as jest.Mock).mockResolvedValue({ id: 'n1' });
+      (prisma.aluno.count as jest.Mock).mockResolvedValue(0);
+      (prisma.turma.count as jest.Mock).mockResolvedValue(1);
+
+      await expect(service.remove('c1', 'n1')).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      expect(prisma.turma.count).toHaveBeenCalledWith({
+        where: { nivelId: 'n1', companyId: 'c1' },
+      });
+      expect(prisma.nivel.delete).not.toHaveBeenCalled();
+    });
+
     it('remove quando não está em uso', async () => {
       (prisma.nivel.findFirst as jest.Mock).mockResolvedValue({ id: 'n1' });
       (prisma.aluno.count as jest.Mock).mockResolvedValue(0);
+      (prisma.turma.count as jest.Mock).mockResolvedValue(0);
       (prisma.nivel.delete as jest.Mock).mockResolvedValue({});
 
       await service.remove('c1', 'n1');

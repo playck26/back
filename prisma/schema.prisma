@@ -211,6 +211,10 @@ model Nivel {
   convites ConviteAluno[]
 
   @@unique([companyId, nome])
+  /// SPEC-075/D9 — o alvo das FKs compostas de `alunos`, `turmas` e
+  /// `convites_aluno`. Redundante como chave (`id` ja e PK); existe para o
+  /// banco recusar o nivel de outra empresa.
+  @@unique([companyId, id])
   @@index([companyId])
   @@map("niveis")
 }
@@ -303,7 +307,9 @@ model Aluno {
   movimentosDeCredito MovimentoDeCredito[]
   usuario             Usuario              @relation(fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, map: "alunos_usuario_fkey")
   empresa             Empresa              @relation(fields: [companyId], references: [id])
-  nivel               Nivel?               @relation(fields: [nivelId], references: [id])
+  /// SPEC-075/D9 — FK composta, e `RESTRICT`: um nivel em uso por aluno nao
+  /// se apaga (o servico ja recusava; o banco passa a garantir).
+  nivel               Nivel?               @relation(fields: [companyId, nivelId], references: [companyId, id], onDelete: Restrict, map: "alunos_nivel_fkey")
   ocupacoes           OcupacaoQuadra[]
   turmaAlunos         TurmaAluno[]
   faltasAvisadas      FaltaAvisada[]
@@ -612,7 +618,9 @@ model Turma {
   createdAt   DateTime    @default(now()) @map("created_at")
 
   empresa   Empresa          @relation(fields: [companyId], references: [id])
-  nivel     Nivel?           @relation(fields: [nivelId], references: [id])
+  /// SPEC-075/D9 — FK composta, e `RESTRICT`: com o nivel decidindo acesso,
+  /// o `SET NULL` de antes abriria a turma restrita a todos ao apagar o nivel.
+  nivel     Nivel?           @relation(fields: [companyId, nivelId], references: [companyId, id], onDelete: Restrict, map: "turmas_nivel_fkey")
   professor Professor?       @relation(fields: [professorId], references: [id])
   /// DEF-022 — FK composta, mesmo motivo de `ocupacoes_quadra.quadra`: turma
   /// da empresa A não pode ser marcada numa quadra da empresa B.
@@ -881,7 +889,14 @@ model ConviteAluno {
 
   empresa   Empresa @relation(fields: [companyId], references: [id])
   criadoPor Usuario @relation("ConviteCriadoPor", fields: [criadoPorId], references: [id])
-  nivel     Nivel?  @relation(fields: [nivelId], references: [id])
+  /// SPEC-075/D9 — **o banco faz `ON DELETE SET NULL (nivel_id)`, com a
+  /// coluna NOMEADA, e o Prisma NAO SABE ESCREVER ISSO** (o mesmo caso de
+  /// `ListaDeEspera.falta`, SPEC-064). O `SetNull` que o Prisma gera anularia
+  /// tambem `company_id`, que e NOT NULL, e o DELETE do nivel morreria com
+  /// `23502`. Aqui vai `NoAction`, que e o que o Prisma consegue dizer; a acao
+  /// real esta na migration `20260925200000_spec075_nivel_por_empresa`. **Nao
+  /// rode `prisma migrate dev` sobre este modelo esperando reproduzir o banco.**
+  nivel     Nivel?  @relation(fields: [companyId, nivelId], references: [companyId, id], onDelete: NoAction, onUpdate: Cascade, map: "convites_nivel_fkey")
   /// SPEC-037/D8 — o convite carrega o plano, e e ai que a jornada fecha: o
   /// gestor convida ja dizendo qual, e o aceite cria conta + aceite do
   /// contrato + MATRICULA na mesma transacao (AC-015).
