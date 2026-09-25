@@ -147,6 +147,10 @@ export const TABELAS_DA_EMPRESA = [
   // quebrar esta spec depois de pronta". **O segundo apareceu no mesmo dia, e
   // e este arquivo.**
   'lista_de_espera',
+  // SPEC-074: ANTES de `alunos` e `quadras` — as duas FKs sao RESTRICT. Nao
+  // aponta para ocupacao nem para falta, entao nao disputa ordem com as de
+  // baixo; fica ao lado da fila, que e a vizinha de dominio.
+  'pre_reservas',
   'reposicoes_de_aula',
   'faltas_avisadas',
   'ocupacoes_quadra',
