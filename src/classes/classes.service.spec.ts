@@ -748,7 +748,11 @@ describe('ClassesService', () => {
     });
 
     it('rejeita alocar o N+1-ésimo aluno numa turma de capacidade N com 409 (AC-002, INV-003)', async () => {
-      tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
+      // SPEC-075 — o SELECT de verdade traz `nivel_id`; turma sem nível e a
+      // regra inerte, para o caso provar só a capacidade.
+      tx.$queryRaw.mockResolvedValue([
+        { id: 't1', capacidade: 2, nivel_id: null },
+      ]);
       tx.aluno.findFirst.mockResolvedValue({ id: 'a3' });
       tx.turmaAluno.findFirst.mockResolvedValue(null);
       tx.turmaAluno.count.mockResolvedValue(2);
@@ -760,7 +764,11 @@ describe('ClassesService', () => {
     });
 
     it('aloca aluno quando há vaga disponível', async () => {
-      tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
+      // SPEC-075 — o SELECT de verdade traz `nivel_id`; turma sem nível e a
+      // regra inerte, para o caso provar só a capacidade.
+      tx.$queryRaw.mockResolvedValue([
+        { id: 't1', capacidade: 2, nivel_id: null },
+      ]);
       tx.aluno.findFirst.mockResolvedValue({ id: 'a1' });
       tx.turmaAluno.findFirst.mockResolvedValue(null);
       tx.turmaAluno.count.mockResolvedValue(1);

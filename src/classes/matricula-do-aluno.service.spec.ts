@@ -24,7 +24,7 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 interface TxMock {
   $queryRaw: jest.Mock;
   $executeRaw: jest.Mock;
-  aluno: { findFirst: jest.Mock };
+  aluno: { findFirst: jest.Mock; findUniqueOrThrow: jest.Mock };
   empresa: { findUniqueOrThrow: jest.Mock };
   turmaAluno: {
     findFirst: jest.Mock;
@@ -75,19 +75,33 @@ function montar(opcoes?: {
   };
 
   const tx: TxMock = {
-    $queryRaw: jest
-      .fn()
-      .mockResolvedValue(
-        o.turmaExiste
-          ? [{ id: TURMA, capacidade: o.capacidade, status: o.statusDaTurma }]
-          : [],
-      ),
+    $queryRaw: jest.fn().mockResolvedValue(
+      o.turmaExiste
+        ? [
+            {
+              id: TURMA,
+              capacidade: o.capacidade,
+              status: o.statusDaTurma,
+              // SPEC-075 — o SELECT de verdade traz a coluna; turma sem nível
+              // é `null`. **O dublê traz o mesmo**: o serviço trata a coluna
+              // ausente como recusa (falha fechada), e não como "sem nível".
+              nivel_id: null,
+            },
+          ]
+        : [],
+    ),
     // SPEC-064 — `$executeRaw` entrou no duble porque `encerrarFila` escreve por
     // ele. **Devolve 0, e nao `undefined`:** o valor e a contagem de linhas
     // encerradas, e um `undefined` circulando faria o proximo teste desta familia
     // passar por engano.
     $executeRaw: jest.fn().mockResolvedValue(0),
-    aluno: { findFirst: jest.fn() },
+    // SPEC-075 — `findUniqueOrThrow` lê o nível do aluno pelo `tx`, antes da
+    // capacidade. Sem nível e com a turma sem nível, a regra fica inerte: cada
+    // teste deste arquivo continua provando só o que já provava.
+    aluno: {
+      findFirst: jest.fn(),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ nivelId: null }),
+    },
     // Padrao: empresa SEM configuracao — que e o estado da maioria hoje, e o
     // ramo em que a regra `AULA_HOJE` do rollout passo 1 continua valendo.
     configOperacaoEmpresa: {
@@ -336,9 +350,14 @@ describe('sair', () => {
 
 describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
   /**
-   * **AC-023 — o nível precisa CHEGAR à tela.** O filtro é de exibição
-   * (D14): quem decide o que aparece é o cliente, e ele não tem como
-   * decidir sobre um campo que o contrato não carrega.
+   * **AC-023 — o nível precisa CHEGAR à tela.** A tela mostra o nível de cada
+   * turma, e não tem como mostrar um campo que o contrato não carrega.
+   *
+   * *(SPEC-075/D11: a razão escrita aqui era "o filtro é de exibição (D14)" —
+   * derrubada pela ADR-026: o servidor agora recusa e recorta por nível. O que
+   * o bloco afirma continua valendo; a razão mudou. E o mundo do dublê ficou
+   * coerente com a regra nova: o aluno não tem nível, e `nivel-1` é o PRIMEIRO
+   * nível da empresa — então ele conta como `nivel-1` e a turma aparece.)*
    *
    * **AC-024 — e o nulo vem como nulo.** As duas colunas (`alunos.nivel_id`
    * e `turmas.nivel_id`) são anuláveis, e o nulo é o estado normal — a
@@ -351,6 +370,12 @@ describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
         findFirst: jest
           .fn()
           .mockResolvedValue({ id: 'aluno-1', vinculo: 'aprovado' }),
+      },
+      // SPEC-075 — o primeiro nível da empresa é `nivel-1`.
+      nivel: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'nivel-1', nome: 'Iniciante' }),
       },
       empresa: {
         findUniqueOrThrow: jest
@@ -445,10 +470,13 @@ describe('disponíveis', () => {
             capacidade: 2,
             encontros: [],
             _count: { alunos: 2 },
+            nivelId: null,
           },
         ]),
       },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+      // SPEC-075 — empresa sem nível: a regra fica inerte.
+      nivel: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
 
     const [turma] = await new MatriculaDoAlunoService(
@@ -487,10 +515,13 @@ describe('disponíveis', () => {
             capacidade: 8,
             encontros: [],
             _count: { alunos: 1 },
+            nivelId: null,
           },
         ]),
       },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+      // SPEC-075 — empresa sem nível: a regra fica inerte.
+      nivel: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
 
     const [turma] = await new MatriculaDoAlunoService(

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,11 @@ import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
+import {
+  nivelEfetivoDoAluno,
+  podeEntrarPorNivel,
+  recusaPorNivel,
+} from '../people/nivel-efetivo';
 
 /**
  * SPEC-023 — **o aluno entra e sai de turma sozinho.**
@@ -97,36 +103,52 @@ export class MatriculaDoAlunoService {
       empresa.limiteTurmasPorAluno !== null &&
       minhasIds.size >= empresa.limiteTurmasPorAluno;
 
-    return turmas.map((turma) => {
-      const matriculados = turma._count.alunos;
-      const jaEstouNela = minhasIds.has(turma.id);
-      const motivo = this.motivoDeBloqueio({
-        jaEstouNela,
-        status: turma.status,
-        matriculados,
-        capacidade: turma.capacidade,
-        vinculo: aluno.vinculo,
-        noLimite,
-      });
+    // SPEC-075/D3 (INV-075b) — **a lista não oferece o que o servidor recusa.**
+    // Some a turma que o aluno não pode entrar por nível E na qual ele não
+    // está: a turma em que ele já está (de antes da regra, D6) continua,
+    // porque é por ela que ele sai. O recorte não vira `motivo` — um motivo
+    // novo apareceria como texto que o Cliente no ar não conhece.
+    const efetivo = await nivelEfetivoDoAluno(
+      this.prisma,
+      companyId,
+      aluno.nivelId,
+    );
 
-      return {
-        id: turma.id,
-        nome: turma.nome,
-        status: turma.status,
-        capacidade: turma.capacidade,
-        matriculados,
-        jaEstouNela,
-        podeEntrar: motivo === null && !jaEstouNela,
-        motivo,
-        nivelId: turma.nivelId,
-        nivelNome: turma.nivel ? turma.nivel.nome : null,
-        encontros: turma.encontros.map((encontro) => ({
-          diaSemana: encontro.diaSemana,
-          horaInicio: encontro.horaInicio.toISOString().slice(11, 16),
-          horaFim: encontro.horaFim.toISOString().slice(11, 16),
-        })),
-      };
-    });
+    return turmas
+      .filter(
+        (turma) =>
+          minhasIds.has(turma.id) || podeEntrarPorNivel(turma.nivelId, efetivo),
+      )
+      .map((turma) => {
+        const matriculados = turma._count.alunos;
+        const jaEstouNela = minhasIds.has(turma.id);
+        const motivo = this.motivoDeBloqueio({
+          jaEstouNela,
+          status: turma.status,
+          matriculados,
+          capacidade: turma.capacidade,
+          vinculo: aluno.vinculo,
+          noLimite,
+        });
+
+        return {
+          id: turma.id,
+          nome: turma.nome,
+          status: turma.status,
+          capacidade: turma.capacidade,
+          matriculados,
+          jaEstouNela,
+          podeEntrar: motivo === null && !jaEstouNela,
+          motivo,
+          nivelId: turma.nivelId,
+          nivelNome: turma.nivel ? turma.nivel.nome : null,
+          encontros: turma.encontros.map((encontro) => ({
+            diaSemana: encontro.diaSemana,
+            horaInicio: encontro.horaInicio.toISOString().slice(11, 16),
+            horaFim: encontro.horaFim.toISOString().slice(11, 16),
+          })),
+        };
+      });
   }
 
   /**
@@ -182,9 +204,15 @@ export class MatriculaDoAlunoService {
     turmaId: string,
   ) {
     const turmaRows = await tx.$queryRaw<
-      { id: string; capacidade: number; status: string }[]
+      {
+        id: string;
+        capacidade: number;
+        status: string;
+        nivel_id: string | null;
+      }[]
     >`
-      SELECT id, capacidade, status::text AS status FROM turmas
+      SELECT id, capacidade, status::text AS status, nivel_id::text AS nivel_id
+        FROM turmas
       WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
       FOR UPDATE
     `;
@@ -237,6 +265,26 @@ export class MatriculaDoAlunoService {
         });
       }
     }
+
+    // SPEC-075/D3 — **o nível, a última recusa antes da de capacidade.** Depois
+    // do `jaAlocado` (tocar de novo numa turma em que já está devolve a
+    // matrícula que existe, D6) e antes de `TURMA_CHEIA`: "cheia" é passageira
+    // e leva à fila, que recusaria por nível — dizer "cheia" a quem nunca
+    // poderia entrar é mandá-lo a uma porta trancada. Lido pelo `tx`, sem lock
+    // novo; lançado depois de leituras e antes de escrever, que é o que faz a
+    // confirmação da fila encerrar a linha em vez de abortar (SPEC-064).
+    const doAluno = await tx.aluno.findUniqueOrThrow({
+      where: { id: aluno.id },
+      select: { nivelId: true },
+    });
+    const recusa = await recusaPorNivel(
+      tx,
+      companyId,
+      turma.nivel_id,
+      doAluno.nivelId,
+      'aluno',
+    );
+    if (recusa) throw new UnprocessableEntityException(recusa);
 
     // Por último, e sob a trava: é a checagem que a concorrência ataca.
     const alocados = await tx.turmaAluno.count({ where: { turmaId } });

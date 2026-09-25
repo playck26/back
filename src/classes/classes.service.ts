@@ -15,6 +15,7 @@ import {
   parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
+import { recusaPorNivel } from '../people/nivel-efetivo';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
@@ -748,9 +749,9 @@ export class ClassesService {
       // turma serializa checagens de capacidade concorrentes — não
       // expressável no query builder do Prisma, raw query necessária.
       const turmaRows = await tx.$queryRaw<
-        { id: string; capacidade: number }[]
+        { id: string; capacidade: number; nivel_id: string | null }[]
       >`
-        SELECT id, capacidade FROM turmas
+        SELECT id, capacidade, nivel_id::text AS nivel_id FROM turmas
         WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
         FOR UPDATE
       `;
@@ -781,6 +782,20 @@ export class ClassesService {
       if (jaAlocado) {
         return jaAlocado;
       }
+
+      // SPEC-075/D5 (decisão 5 do Israel) — **o gestor também é recusado.**
+      // Sem parâmetro, flag ou papel que contorne: o caminho que sobra é mudar
+      // o nível do aluno, e a mensagem o diz (D4, o texto do gestor). Depois do
+      // `jaAlocado` (a alocação que já existe continua, D6) e antes da
+      // capacidade — a mesma posição dos gestos do aluno (D3).
+      const recusa = await recusaPorNivel(
+        tx,
+        companyId,
+        turma.nivel_id,
+        aluno.nivelId,
+        'gestor',
+      );
+      if (recusa) throw new UnprocessableEntityException(recusa);
 
       const alocados = await tx.turmaAluno.count({ where: { turmaId } });
       if (alocados >= turma.capacidade) {

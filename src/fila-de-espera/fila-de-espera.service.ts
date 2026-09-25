@@ -11,6 +11,7 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 import { MatriculaDoAlunoService } from '../classes/matricula-do-aluno.service';
 import { ReposicaoService } from '../classes/reposicao.service';
 import { situacaoDoCredito } from '../classes/credito-de-reposicao';
+import { recusaPorNivel } from '../people/nivel-efetivo';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -84,12 +85,13 @@ export class FilaDeEsperaService {
   private async alunoDoUsuario(
     companyId: string,
     usuarioId: string,
-  ): Promise<{ id: string; vinculo: string }> {
+  ): Promise<{ id: string; vinculo: string; nivelId: string | null }> {
     // `vinculo` entra porque a confirmacao de TURMA o exige: `entrarNaTransacao`
     // recusa quem nao esta aprovado, e le o vinculo do objeto que recebe.
+    // `nivelId` entra pela SPEC-075: entrar na fila tambem recusa por nivel.
     const aluno = await this.prisma.aluno.findFirst({
       where: { companyId, usuarioId },
-      select: { id: true, vinculo: true },
+      select: { id: true, vinculo: true, nivelId: true },
     });
     if (!aluno) throw new NotFoundException();
     return aluno;
@@ -229,7 +231,7 @@ export class FilaDeEsperaService {
 
     const turma = await this.prisma.turma.findFirst({
       where: { id: turmaId, companyId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, nivelId: true },
     });
     if (!turma) throw new NotFoundException();
     if (turma.status !== 'ativa') {
@@ -241,6 +243,18 @@ export class FilaDeEsperaService {
     }
 
     await this.recusarSeJaMatriculado(turma.id, aluno.id);
+
+    // SPEC-075/D3 — o nivel, a ultima recusa antes de escrever. **A fila e
+    // porta, nao garantia**: sem transacao aqui, e quem entra ainda passa pela
+    // confirmacao, que reconfere sob lock pelo `entrarNaTransacao`.
+    const recusa = await recusaPorNivel(
+      this.prisma,
+      companyId,
+      turma.nivelId,
+      aluno.nivelId,
+      'aluno',
+    );
+    if (recusa) throw new UnprocessableEntityException(recusa);
 
     return this.inserir({
       id: crypto.randomUUID(),
@@ -281,6 +295,8 @@ export class FilaDeEsperaService {
         data: true,
         statusPagamento: true,
         origemTurmaId: true,
+        // SPEC-075 — o nivel da turma da aula, para a recusa por nivel.
+        origemTurma: { select: { nivelId: true } },
       },
     });
     if (!alvo?.origemTurmaId) throw new NotFoundException();
@@ -311,6 +327,18 @@ export class FilaDeEsperaService {
           'A fila de espera de uma aula é só para quem tem crédito de reposição.',
       });
     }
+
+    // SPEC-075/D3 — o nivel, a ultima recusa antes de escrever (depois de
+    // `SEM_CREDITO`, cuja leitura nao escreve nada). A confirmacao reconfere
+    // pelo `marcarNaTransacao`.
+    const recusa = await recusaPorNivel(
+      this.prisma,
+      companyId,
+      alvo.origemTurma?.nivelId ?? null,
+      aluno.nivelId,
+      'aluno',
+    );
+    if (recusa) throw new UnprocessableEntityException(recusa);
 
     return this.inserir({
       id: crypto.randomUUID(),

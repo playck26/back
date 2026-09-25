@@ -91,8 +91,8 @@ export class MeFilaDeEsperaController {
   })
   @ApiUnprocessableEntityResponse({
     description:
-      'Turma fora de operação (`TURMA_INATIVA`) ou já matriculado nela ' +
-      '(`JA_MATRICULADO_NA_TURMA`).',
+      'Turma fora de operação (`TURMA_INATIVA`), já matriculado nela ' +
+      '(`JA_MATRICULADO_NA_TURMA`) ou turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075).',
   })
   @Roles('aluno')
   entrarNaTurma(
@@ -120,7 +120,8 @@ export class MeFilaDeEsperaController {
       '(`PRAZO_DE_CANCELAMENTO`).',
   })
   @ApiUnprocessableEntityResponse({
-    description: 'Já matriculado na turma da aula (`JA_MATRICULADO_NA_TURMA`).',
+    description:
+      'Já matriculado na turma da aula (`JA_MATRICULADO_NA_TURMA`) ou turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075).',
   })
   @Roles('aluno')
   entrarNaAula(
@@ -155,6 +156,7 @@ export class MeFilaDeEsperaController {
       'A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu ' +
       '(`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino ' +
       '(`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, ' +
+      '`NIVEL_INCOMPATIVEL` (SPEC-075), ' +
       '`TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**',
   })
   @HttpCode(200)

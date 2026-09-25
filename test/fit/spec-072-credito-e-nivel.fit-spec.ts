@@ -1,6 +1,6 @@
 /**
- * SPEC-072/TASK-001 — **o crédito diz de qual ocorrência nasceu, e o servidor
- * continua não olhando o nível.**
+ * SPEC-072/TASK-001 — **o crédito diz de qual ocorrência nasceu** — e, desde a
+ * SPEC-075, **o servidor olha o nível**.
  *
  * Duas provas, pelo app real e pela rede, porque nenhuma das duas sobrevive a
  * um dublê:
@@ -9,12 +9,15 @@
  *       antes e **depois** de marcada a reposição. Sem a metade de depois,
  *       trocar origem por destino passaria; sem a de antes, publicar o
  *       `faltaId` dentro do campo passaria na AC-001, que só olha o contrato.
- *   (b) **AC-004, metade do Back — aluno de nível A marca em turma de nível
- *       B, e o servidor ACEITA.** É a `INV-072a`: nível nunca foi autoridade,
- *       é recorte de tela. A metade do Cliente prova o recorte; esta prova
- *       que tirar o recorte não tranca ninguém. **O teste do Cliente usa o
- *       serviço mockado e não diria nada sobre o servidor** — foi o B02 da 1ª
- *       rodada de validação.
+ *   (b) **INV-075a (SPEC-075) — aluno de nível A marca em turma de nível B, e
+ *       o servidor RECUSA.** Até a SPEC-075 este caso afirmava o contrário — o
+ *       servidor ACEITAVA, era a `INV-072a` ("nível é recorte de tela, nunca
+ *       autoridade"). A ADR-026 derrubou a INV-072a, e a D11 da SPEC-075 manda
+ *       **inverter, nunca silenciar**: a fixture que cruza nível FICA (o caso
+ *       que a afirma continua aqui embaixo), e mudam o nome, o status e o
+ *       estado final esperados. A metade AC-002(b) da SPEC-072 — "depois de
+ *       marcada, a origem não se move" — precisava de uma reposição marcada de
+ *       verdade, e mudou para um caso próprio, com destino do nível dele.
  *
  * **A premissa da fixture é afirmada, não suposta.** Um cenário em que o
  * aluno e a turma ficassem os dois sem nível deixaria (b) verde provando
@@ -67,6 +70,11 @@ const TURMA_B = `${BASE}34`;
 const OC_ORIGEM = `${BASE}35`;
 const OC_DESTINO = `${BASE}36`;
 const FALTA = `${BASE}37`;
+/** SPEC-075 — o destino DO NÍVEL DELE, para a AC-002(b) continuar tendo uma
+ *  reposição marcada de verdade depois que o destino de outro nível passou a
+ *  ser recusado. */
+const TURMA_A2 = `${BASE}38`;
+const OC_DESTINO_MESMO_NIVEL = `${BASE}39`;
 
 const ROTA = '/api/v1/me/reposicoes';
 
@@ -130,6 +138,7 @@ beforeAll(async () => {
   for (const [id, nome, nivel] of [
     [TURMA_A, 'Turma do nivel dele', NIVEL_A],
     [TURMA_B, 'Turma de OUTRO nivel', NIVEL_B],
+    [TURMA_A2, 'Outra turma do nivel dele', NIVEL_A],
   ] as const) {
     await q(
       `INSERT INTO turmas (id,company_id,nome,nivel_id,quadra_id,capacidade,status) VALUES ('${id}','${C.EMPRESA}','${nome}','${nivel}','${C.QUADRA_TURMAS}',10,'ativa')`,
@@ -149,6 +158,7 @@ beforeAll(async () => {
   // A aula que ele perdeu (origem) e a que ele quer frequentar (destino).
   await ocorrencia(OC_ORIGEM, TURMA_A, emDias(-3), '19:00');
   await ocorrencia(OC_DESTINO, TURMA_B, emDias(5), '20:00');
+  await ocorrencia(OC_DESTINO_MESMO_NIVEL, TURMA_A2, emDias(6), '20:00');
   await q(
     `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at) VALUES ('${FALTA}','${C.EMPRESA}','${OC_ORIGEM}','${C.ALUNO1}',now())`,
   );
@@ -204,20 +214,35 @@ describe('SPEC-072/TASK-001 — a ocupação do crédito, e o nível', () => {
     expect(falta.ocupacaoId).not.toBe(falta.faltaId);
   });
 
-  it('AC-004 (Back) + AC-002(b): o POST fora do nível é ACEITO, e o crédito continua apontando para a ORIGEM', async () => {
+  it('INV-075a (SPEC-075, invertido da INV-072a): o POST fora do nível é RECUSADO, e o crédito fica intacto', async () => {
     const res = await request(app.getHttpServer())
       .post(ROTA)
       .set(comToken())
       .send({ faltaId: FALTA, ocupacaoId: OC_DESTINO });
 
-    // **Aceito.** Nenhuma recusa por nível existe no servidor, e a SPEC-072
-    // tira o seletor da tela contando com isso (INV-072a). Se alguém
-    // acrescentar a regra no `marcar()`, é aqui que aparece — e a metade do
-    // Cliente continuaria verde, que é por que são duas.
+    // **Recusado.** Até a SPEC-075 este caso esperava `201` — a INV-072a dizia
+    // que o servidor não olhava o nível. A mesma fixture cruzada, o resultado
+    // invertido (D11 da SPEC-075).
+    expect(res.status).toBe(422);
+    expect((res.body as { code?: string }).code).toBe('NIVEL_INCOMPATIVEL');
+
+    // E nada foi gasto: o crédito continua disponível, apontando para a origem.
+    const depois = await credito();
+    expect(depois.creditos).toBe(1);
+    expect(depois.faltas[0].reposicao).toBeNull();
+    expect(depois.faltas[0].ocupacaoId).toBe(OC_ORIGEM);
+  });
+
+  it('AC-002(b): marcada a reposição (num destino do nível dele), o crédito continua apontando para a ORIGEM', async () => {
+    const res = await request(app.getHttpServer())
+      .post(ROTA)
+      .set(comToken())
+      .send({ faltaId: FALTA, ocupacaoId: OC_DESTINO_MESMO_NIVEL });
+
     expect(res.status).toBe(201);
     const criada = res.body as CorpoDaReposicao;
     expect(criada.faltaId).toBe(FALTA);
-    expect(criada.ocupacaoId).toBe(OC_DESTINO);
+    expect(criada.ocupacaoId).toBe(OC_DESTINO_MESMO_NIVEL);
 
     const depois = await credito();
     const falta = depois.faltas[0];
@@ -226,7 +251,7 @@ describe('SPEC-072/TASK-001 — a ocupação do crédito, e o nível', () => {
     // `reposicao` — trocar um pelo outro é o que este caso pega.
     expect(falta.reposicao).not.toBeNull();
     expect(falta.ocupacaoId).toBe(OC_ORIGEM);
-    expect(falta.ocupacaoId).not.toBe(OC_DESTINO);
+    expect(falta.ocupacaoId).not.toBe(OC_DESTINO_MESMO_NIVEL);
     // O crédito foi consumido: a falta deixou de contar como saldo.
     expect(depois.creditos).toBe(0);
   });

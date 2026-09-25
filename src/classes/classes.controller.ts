@@ -20,6 +20,7 @@ import {
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
+  ApiUnprocessableEntityResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import {
@@ -336,6 +337,10 @@ export class ClassesController {
 
   @Post(':id/students/:alunoId')
   @ApiCreatedResponse({ type: MatriculaEmTurmaResponseDto })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'Aluno desligado (`ALUNO_INATIVO`), ou de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075/D5): o gestor também é recusado, e a mensagem diz o que fazer — mudar o nível do aluno.',
+  })
   allocateStudent(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', UuidCanonicoPipe) id: string,

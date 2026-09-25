@@ -4578,6 +4578,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Aluno desligado (`ALUNO_INATIVO`), ou de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075/D5): o gestor também é recusado, e a mensagem diz o que fazer — mudar o nível do aluno."
           }
         },
         "security": [
@@ -4797,6 +4800,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075). A mensagem diz o nível da turma e o do aluno — ou que ele ainda não tem nível e conta como o primeiro."
           }
         },
         "security": [
@@ -5459,7 +5465,7 @@
             "description": "Sem crédito (`SEM_CREDITO_DE_REPOSICAO`), falta já reposta (`FALTA_JA_REPOSTA`), aula cheia (`TURMA_SEM_VAGA`), teto do mês (`TETO_DE_REPOSICAO`), aula cancelada (`OCUPACAO_CANCELADA`) ou dentro do prazo (`PRAZO_DE_CANCELAMENTO`)."
           },
           "422": {
-            "description": "Já matriculado na turma de destino (`JA_MATRICULADO_NA_TURMA`) ou turma fora de operação (`TURMA_INATIVA`)."
+            "description": "Já matriculado na turma de destino (`JA_MATRICULADO_NA_TURMA`), turma fora de operação (`TURMA_INATIVA`) ou turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075)."
           }
         },
         "security": [
@@ -6018,7 +6024,7 @@
             "description": "Já está nesta fila (`JA_NA_FILA`)."
           },
           "422": {
-            "description": "Turma fora de operação (`TURMA_INATIVA`) ou já matriculado nela (`JA_MATRICULADO_NA_TURMA`)."
+            "description": "Turma fora de operação (`TURMA_INATIVA`), já matriculado nela (`JA_MATRICULADO_NA_TURMA`) ou turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075)."
           }
         },
         "security": [
@@ -6060,7 +6066,7 @@
             "description": "Já está nesta fila (`JA_NA_FILA`), sem crédito de reposição (`SEM_CREDITO`), aula cancelada (`OCUPACAO_CANCELADA`) ou já passada (`PRAZO_DE_CANCELAMENTO`)."
           },
           "422": {
-            "description": "Já matriculado na turma da aula (`JA_MATRICULADO_NA_TURMA`)."
+            "description": "Já matriculado na turma da aula (`JA_MATRICULADO_NA_TURMA`) ou turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075)."
           }
         },
         "security": [
@@ -6098,7 +6104,7 @@
             }
           },
           "409": {
-            "description": "A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu (`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino (`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, `TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**"
+            "description": "A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu (`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino (`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, `NIVEL_INCOMPATIVEL` (SPEC-075), `TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**"
           }
         },
         "security": [

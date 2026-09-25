@@ -10,6 +10,11 @@ import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
+import {
+  filtroDeTurmaPorNivel,
+  nivelEfetivoDoAluno,
+  recusaPorNivel,
+} from '../people/nivel-efetivo';
 import { calcularOcupacao, carregarConjuntos } from './ocupacao-da-ocorrencia';
 import { expiracaoDoCredito, situacaoDoCredito } from './credito-de-reposicao';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
@@ -69,10 +74,10 @@ export class ReposicaoService {
     companyId: string,
     usuarioId: string,
     tx: Prisma.TransactionClient | PrismaService = this.prisma,
-  ): Promise<{ id: string }> {
+  ): Promise<{ id: string; nivelId: string | null }> {
     const aluno = await tx.aluno.findFirst({
       where: { companyId, usuarioId },
-      select: { id: true },
+      select: { id: true, nivelId: true },
     });
     if (!aluno) throw new NotFoundException();
     return aluno;
@@ -244,6 +249,16 @@ export class ReposicaoService {
     });
     const minhasIds = minhas.map((m) => m.turmaId);
 
+    // SPEC-075/D3 (INV-075b) — o recorte por nível vai **no `where`**, antes do
+    // `take: 200`: cortar depois devolveria lista vazia a quem tem 200
+    // ocorrências de outro nível antes da primeira do seu. É o mesmo predicado
+    // de `podeEntrarPorNivel`, escrito para o banco (`nivel-efetivo.ts`).
+    const efetivo = await nivelEfetivoDoAluno(
+      this.prisma,
+      companyId,
+      aluno.nivelId,
+    );
+
     const ocorrencias = await this.prisma.ocupacaoQuadra.findMany({
       where: {
         companyId,
@@ -253,7 +268,7 @@ export class ReposicaoService {
         origemTurmaId: { notIn: minhasIds.length > 0 ? minhasIds : undefined },
         // AC-006 — turma inativa não recebe visita (SPEC-035): ela está fora de
         // operação, e a grade dela só existe por legado.
-        origemTurma: { status: 'ativa' },
+        origemTurma: { status: 'ativa', ...filtroDeTurmaPorNivel(efetivo) },
       },
       select: {
         id: true,
@@ -384,9 +399,14 @@ export class ReposicaoService {
     // (1) TURMA — nível 1 do INV-029, e o motivo da D8: sem ele um
     // `allocateStudent` concorrente entra entre a contagem e a escrita.
     const turmas = await tx.$queryRaw<
-      { id: string; capacidade: number; status: string }[]
+      {
+        id: string;
+        capacidade: number;
+        status: string;
+        nivel_id: string | null;
+      }[]
     >`
-      SELECT id, capacidade, status::text AS status
+      SELECT id, capacidade, status::text AS status, nivel_id::text AS nivel_id
         FROM turmas
        WHERE id = ${alvo.origemTurmaId}::uuid
          AND company_id = ${companyId}::uuid
@@ -405,8 +425,10 @@ export class ReposicaoService {
     // (2) ALUNO — `FOR KEY SHARE` e não `FOR UPDATE`: esta rota **lê** o
     // aluno, e o que precisa é que ele não suma enquanto a reposição nasce.
     // Mesma escolha da `FaltaAvisadaService`.
-    const alunos = await tx.$queryRaw<{ id: string }[]>`
-      SELECT a.id
+    const alunos = await tx.$queryRaw<
+      { id: string; nivel_id: string | null }[]
+    >`
+      SELECT a.id, a.nivel_id::text AS nivel_id
         FROM alunos a
        WHERE a.company_id = ${companyId}::uuid
          AND a.usuario_id = ${usuarioId}::uuid
@@ -533,6 +555,20 @@ export class ReposicaoService {
             : 'Esta aula já começou.',
       });
     }
+
+    // SPEC-075/D3 — **o nível, a última recusa antes da de vaga.** Depois de
+    // tudo o que já existia (a falta, o crédito, o teto, o prazo), e antes de
+    // `TURMA_SEM_VAGA`: "sem vaga" é passageira e leva à fila de aula, que
+    // recusaria por nível. Lido pelo `tx`, sem lock novo; lançado antes de
+    // escrever, para a confirmação da fila encerrar a linha (SPEC-064).
+    const recusaNivel = await recusaPorNivel(
+      tx,
+      companyId,
+      turma.nivel_id,
+      aluno.nivel_id,
+      'aluno',
+    );
+    if (recusaNivel) throw new UnprocessableEntityException(recusaNivel);
 
     // AC-010 — a vaga. Com `turmas` e a ocorrência travadas, esta leitura é
     // a verdade até o COMMIT. SPEC-057/TASK-005/D17 — pela MESMA projeção

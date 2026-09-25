@@ -101,7 +101,7 @@ export class MeReposicoesController {
   })
   @ApiUnprocessableEntityResponse({
     description:
-      'Já matriculado na turma de destino (`JA_MATRICULADO_NA_TURMA`) ou turma fora de operação (`TURMA_INATIVA`).',
+      'Já matriculado na turma de destino (`JA_MATRICULADO_NA_TURMA`), turma fora de operação (`TURMA_INATIVA`) ou turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075).',
   })
   @Roles('aluno')
   marcar(
