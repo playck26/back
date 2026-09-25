@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import {
   calcularOcupacao,
   carregarConjuntos,
@@ -63,8 +64,16 @@ import {
 /** D4 — a vez dura no máximo 12 h. */
 export const PRAZO_DO_CHAMADO_MS = 12 * 60 * 60 * 1000;
 
-/** D4 — e nunca passa de 2 h antes da aula. */
-export const ANTECEDENCIA_MINIMA_MS = 2 * 60 * 60 * 1000;
+/**
+ * D4 — e nunca passa de **X horas** antes da aula.
+ *
+ * **SPEC-064/TASK-008: o X deixou de ser uma constante daqui.** Era
+ * `ANTECEDENCIA_MINIMA_MS = 2 h`, fixo, e o card 5331 pede (RN3) *"Admin define
+ * a antecedência"*. Agora vem de `ConfigOperacaoService.antecedenciaDaFilaDeAula`,
+ * que devolve o valor do clube ou o padrão — e o padrão continua sendo 2 h,
+ * para o clube que nunca configurou ver exatamente o comportamento de antes.
+ */
+const UMA_HORA_MS = 60 * 60 * 1000;
 
 export interface ResultadoDaVarredura {
   /** Alvos com fila que o ciclo olhou. */
@@ -94,7 +103,10 @@ interface AlvoComFila {
 export class VarredorDaFilaService {
   private readonly logger = new Logger(VarredorDaFilaService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigOperacaoService,
+  ) {}
 
   async executarCiclo(
     agora: () => number = Date.now,
@@ -330,7 +342,18 @@ export class VarredorDaFilaService {
         if (!linha) return 'nada';
 
         const chamadoEm = new Date(agora());
-        const chamadoAte = this.prazoDoChamado(chamadoEm, ocupacao);
+        // SPEC-064/TASK-008 — **pelo `tx`**, e so quando ha aula: a fila de
+        // turma nao tem antecedencia (D4), e ler por outra conexao segurando
+        // os locks de turma e ocorrencia e o defeito que a SPEC-034 pagou caro.
+        const antecedenciaMs = ocupacao
+          ? (await this.config.antecedenciaDaFilaDeAula(alvo.companyId, tx)) *
+            UMA_HORA_MS
+          : 0;
+        const chamadoAte = this.prazoDoChamado(
+          chamadoEm,
+          ocupacao,
+          antecedenciaMs,
+        );
 
         if (chamadoAte === null) {
           // D4 — prazo que já nasce vencido **não chama ninguém**: a linha
@@ -422,9 +445,10 @@ export class VarredorDaFilaService {
   }
 
   /**
-   * D4 — `chamado_ate = min(chamado_em + 12h, início da aula − 2h)`.
+   * D4 — `chamado_ate = min(chamado_em + 12h, início da aula − X)`, com o X do
+   * clube (SPEC-064/TASK-008; padrão 2 h).
    *
-   * **A antecedência de 2 h vale só para a fila de AULA, e isso é
+   * **A antecedência vale só para a fila de AULA, e isso é
    * interpretação declarada.** A D4 escreve a fórmula uma vez, sem distinguir
    * as duas filas — mas a fila de turma **não tem "a aula"**: o alvo é a turma,
    * e entrar nela não é comparecer a uma ocorrência específica.
@@ -439,6 +463,8 @@ export class VarredorDaFilaService {
   private prazoDoChamado(
     chamadoEm: Date,
     ocupacao: { data: Date; horaInicio: Date } | null,
+    /** A antecedência do clube, já em ms. Ignorada sem `ocupacao` (D4). */
+    antecedenciaMs: number,
   ): Date | null {
     const teto = new Date(chamadoEm.getTime() + PRAZO_DO_CHAMADO_MS);
     if (!ocupacao) return teto;
@@ -453,7 +479,7 @@ export class VarredorDaFilaService {
     // fixar UTC-3: Sao Paulo nao tem horario de verao desde 2019, e uma regra
     // que embutisse o numero quebraria calada no dia em que voltar a ter.
     const inicio = instanteNoFusoDoClube(ocupacao.data, ocupacao.horaInicio);
-    const limite = new Date(inicio.getTime() - ANTECEDENCIA_MINIMA_MS);
+    const limite = new Date(inicio.getTime() - antecedenciaMs);
     const prazo = limite < teto ? limite : teto;
     return prazo > chamadoEm ? prazo : null;
   }

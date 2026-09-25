@@ -55,7 +55,8 @@ const p = db as unknown as PrismaService;
 const q = (sql: string) => db.$executeRawUnsafe(sql);
 
 const operacao = () => new ConfigOperacaoService(p);
-const varredor = () => new VarredorDaFilaService(p);
+const varredor = () =>
+  new VarredorDaFilaService(p, new ConfigOperacaoService(p));
 const faltas = () => new FaltaAvisadaService(p, operacao());
 const reposicoes = () => new ReposicaoService(p, operacao());
 const matriculas = () => new MatriculaDoAlunoService(p, operacao());

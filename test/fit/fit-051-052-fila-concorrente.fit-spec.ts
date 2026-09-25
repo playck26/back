@@ -55,7 +55,10 @@ const dbC = new PrismaClient();
 const q = (sql: string) => semear.$executeRawUnsafe(sql);
 
 const varredor = (c: PrismaClient) =>
-  new VarredorDaFilaService(c as unknown as PrismaService);
+  new VarredorDaFilaService(
+    c as unknown as PrismaService,
+    new ConfigOperacaoService(c as unknown as PrismaService),
+  );
 
 const fila = (c: PrismaClient) => {
   const p = c as unknown as PrismaService;

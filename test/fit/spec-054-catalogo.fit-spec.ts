@@ -207,6 +207,12 @@ describe('SPEC-054/REQ-001 — os nomes de tipo', () => {
       precoAulaPadrao: 150,
       nomeTipoQuadra: 'Espaço',
       nomeTipoAula: 'Aula com professor',
+      // SPEC-064/TASK-008 — **este `toEqual`, em banco real, acusou os dois
+      // campos novos**, e ele e tambem a prova de que o corpo do Admin de hoje
+      // (sem a antecedencia) nao quebra nada: ela fica `null`, que e "usa o
+      // padrao", e o padrao vem ao lado.
+      antecedenciaFilaAulaHoras: null,
+      antecedenciaFilaAulaPadraoHoras: 2,
     });
 
     await comGestor(api().put('/api/v1/company-settings/nomes-de-tipo'))
@@ -221,6 +227,9 @@ describe('SPEC-054/REQ-001 — os nomes de tipo', () => {
       precoAulaPadrao: 150,
       nomeTipoQuadra: 'Quadra',
       nomeTipoAula: 'Aula particular',
+      // E o `PUT` de nomes tambem nao mexe na antecedencia.
+      antecedenciaFilaAulaHoras: null,
+      antecedenciaFilaAulaPadraoHoras: 2,
     });
   });
 });

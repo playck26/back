@@ -1362,6 +1362,11 @@ model ConfigOperacaoEmpresa {
   /// seria "nenhuma reposicao permitida", o oposto de "o clube nao configurou".
   reposicoesPorMes              Int?     @map("reposicoes_por_mes")
   reposicaoValidadeDias         Int?     @map("reposicao_validade_dias")
+  /// SPEC-064/TASK-008 — card 5331, RN3: "Admin define a antecedência". Com
+  /// quantas horas antes da aula a fila de AULA ainda chama alguém. Nulo =
+  /// **usa o padrão de 2 h**, o comportamento de antes; zero não existe
+  /// (`CHECK >= 1`). **Só a fila de aula**: a de turma não tem "a aula" (D4).
+  antecedenciaFilaAulaHoras     Int?     @map("antecedencia_fila_aula_horas")
   /// SPEC-047/D1 — o preco de aula particular quando o professor nao tem o
   /// seu. Nulo aqui E no professor significa que o clube nao vende aula
   /// particular pelo app; o aluno nao ve ninguem, e a tentativa direta e

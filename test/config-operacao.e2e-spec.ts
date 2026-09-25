@@ -74,6 +74,9 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         prazoCancelamentoAulaHoras: 2,
         prazoCancelamentoReservaHoras: 4,
         precoAulaPadrao: null,
+        // SPEC-064/TASK-008 — o duble precisa TER a coluna nova: o `select`
+        // do servico a pede, e o banco de verdade a devolveria.
+        antecedenciaFilaAulaHoras: null,
       });
 
       const res = await request(app.getHttpServer())
@@ -92,6 +95,14 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         prazoCancelamentoAulaHoras: 2,
         prazoCancelamentoReservaHoras: 4,
         precoAulaPadrao: null,
+        // SPEC-064/TASK-008 — **este `toEqual` acusou o campo novo no dia em
+        // que entrou**, como acusou o da SPEC-047. Acrescentado de proposito, e
+        // nao afrouxando para `toMatchObject`.
+        //
+        // **E o padrao NAO esta aqui, de proposito:** esta resposta e a base, e
+        // a base e tambem o corpo que o Admin manda no PUT. Um campo so de
+        // leitura aqui obrigaria o Admin a manda-lo — e o Back responderia 400.
+        antecedenciaFilaAulaHoras: null,
       });
 
       // O `companyId` vem do TOKEN, nunca do corpo — não há id na URL para
@@ -110,6 +121,7 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         precoAulaPadrao: 150,
         nomeTipoQuadra: 'Espaço',
         nomeTipoAula: null,
+        antecedenciaFilaAulaHoras: 5,
       });
 
       const res = await request(app.getHttpServer())
@@ -127,6 +139,9 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         // aparece, e o nulo vira o padrao.
         nomeTipoQuadra: 'Espaço',
         nomeTipoAula: 'Aula particular',
+        // SPEC-064/TASK-008 — o gravado, CRU, e o padrao ao lado.
+        antecedenciaFilaAulaHoras: 5,
+        antecedenciaFilaAulaPadraoHoras: 2,
       });
     });
 
@@ -154,6 +169,11 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         // SPEC-054/D8 — sem configuracao, os nomes padrao, nunca `null`.
         nomeTipoQuadra: 'Quadra',
         nomeTipoAula: 'Aula particular',
+        // SPEC-064/TASK-008 — **nulo, e nao 2.** O "nao configurou" tem de
+        // sobreviver ao `GET` para o `PUT` de ida e volta nao gravar um 2
+        // explicito que ninguem escolheu. O 2 vem no campo do padrao.
+        antecedenciaFilaAulaHoras: null,
+        antecedenciaFilaAulaPadraoHoras: 2,
       });
     });
   });
@@ -208,6 +228,90 @@ describe('SPEC-031 — configuração de operação (REQ-001, REQ-002)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ prazoCancelamentoAulaHoras: 2 })
         .expect(400);
+    });
+  });
+
+  /**
+   * SPEC-064/TASK-008 — **a antecedência da fila de aula, na mesma régua dos
+   * prazos**: inteiro `>= 1` ou `null`. Zero não existe (INV-065) — chamar
+   * alguém com zero hora de antecedência é chamá-lo para uma aula que está
+   * começando.
+   */
+  describe('TASK-008 — a antecedência da fila de aula', () => {
+    const casos: Array<[string, unknown]> = [
+      ['zero', 0],
+      ['negativo', -3],
+      ['fracionario', 2.5],
+      ['texto', '4'],
+    ];
+
+    it.each(casos)('%s sai em 400, e nada e gravado', async (_nome, valor) => {
+      const token = await comoGestor();
+      await request(app.getHttpServer())
+        .put(ROTA_GESTOR)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          prazoCancelamentoAulaHoras: null,
+          prazoCancelamentoReservaHoras: null,
+          antecedenciaFilaAulaHoras: valor,
+        })
+        .expect(400);
+      expect(prisma.configOperacaoEmpresa.upsert).not.toHaveBeenCalled();
+    });
+
+    it('um inteiro >= 1 chega ao banco como ele e', async () => {
+      const token = await comoGestor();
+      prisma.configOperacaoEmpresa.upsert.mockResolvedValue({
+        prazoCancelamentoAulaHoras: null,
+        prazoCancelamentoReservaHoras: null,
+        precoAulaPadrao: null,
+        antecedenciaFilaAulaHoras: 6,
+      });
+
+      await request(app.getHttpServer())
+        .put(ROTA_GESTOR)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          prazoCancelamentoAulaHoras: null,
+          prazoCancelamentoReservaHoras: null,
+          antecedenciaFilaAulaHoras: 6,
+        })
+        .expect(200);
+
+      const chamada = prisma.configOperacaoEmpresa.upsert.mock.calls[0] as [
+        { update: { antecedenciaFilaAulaHoras: number | null } },
+      ];
+      expect(chamada[0].update.antecedenciaFilaAulaHoras).toBe(6);
+    });
+
+    /**
+     * **O custo declarado do `?? null`, provado em vez de suposto.** Um Admin
+     * antigo não manda o campo, e o `PUT` é substituição total: o valor
+     * gravado volta a `null` — que é o padrão de 2 h, o comportamento de antes.
+     * Volta ao padrão, e não desliga nada.
+     */
+    it('campo AUSENTE grava null — o Admin antigo volta ao padrao, nao desliga', async () => {
+      const token = await comoGestor();
+      prisma.configOperacaoEmpresa.upsert.mockResolvedValue({
+        prazoCancelamentoAulaHoras: null,
+        prazoCancelamentoReservaHoras: null,
+        precoAulaPadrao: null,
+        antecedenciaFilaAulaHoras: null,
+      });
+
+      await request(app.getHttpServer())
+        .put(ROTA_GESTOR)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          prazoCancelamentoAulaHoras: null,
+          prazoCancelamentoReservaHoras: null,
+        })
+        .expect(200);
+
+      const chamada = prisma.configOperacaoEmpresa.upsert.mock.calls[0] as [
+        { update: { antecedenciaFilaAulaHoras: number | null } },
+      ];
+      expect(chamada[0].update.antecedenciaFilaAulaHoras).toBeNull();
     });
   });
 

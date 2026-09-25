@@ -19,6 +19,7 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { VarredorDaFilaService } from '../../src/fila-de-espera/varredor-da-fila.service';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { TIPO_LISTA_ESPERA } from '../../src/fila-de-espera/aviso-do-chamado';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
@@ -34,7 +35,10 @@ const TURMA_ALVO = '06430000-0000-4000-8000-00000000000b';
 const db = new PrismaClient();
 const q = (sql: string) => db.$executeRawUnsafe(sql);
 const varredor = () =>
-  new VarredorDaFilaService(db as unknown as PrismaService);
+  new VarredorDaFilaService(
+    db as unknown as PrismaService,
+    new ConfigOperacaoService(db as unknown as PrismaService),
+  );
 
 function emDias(dias: number): string {
   const d = hojeNoFusoDoClube();
@@ -397,6 +401,88 @@ describe('SPEC-064/TASK-003 — o relógio (AC-004)', () => {
     expect(r.prazoImpossivel).toBe(0);
     const depois = await linha(fila);
     expect(depois.chamadoAte!.getTime()).toBe(agora + 12 * 60 * 60 * 1000);
+  });
+});
+
+/**
+ * SPEC-064/TASK-008 — **a antecedência é do CLUBE** (card 5331, RN3: *"Admin
+ * define a antecedência"*).
+ *
+ * Os três casos usam o MESMO relógio e a MESMA aula do primeiro caso do
+ * relógio acima — aula às 18h no fuso do clube (21h UTC), relógio às 12h UTC —,
+ * e mudam só a configuração. **É a diferença entre eles que prova**: um teste
+ * que só configurasse e visse alguém ser chamado passaria com o `2` fixo de
+ * volta no código, porque 2 h também chamaria.
+ */
+describe('SPEC-064/TASK-008 — a antecedência configurada pelo clube', () => {
+  async function comAntecedencia(horas: number) {
+    await q(
+      `INSERT INTO config_operacao_empresa (id,company_id,antecedencia_fila_aula_horas,created_at,updated_at)
+       VALUES (gen_random_uuid(),'${EMPRESA}',${horas},now(),now())
+       ON CONFLICT (company_id) DO UPDATE SET antecedencia_fila_aula_horas = ${horas}`,
+    );
+  }
+
+  async function filaDeAulaAsDezoito() {
+    const a = await aluno('Quer repor');
+    const m1 = await aluno('Matriculado');
+    await matricular(TURMA_ALVO, m1.alunoId);
+    const alvo = await ocorrencia(TURMA_ALVO, emDias(0), '18:00');
+    const perdida = await ocorrencia(TURMA, emDias(-2), '08:00');
+    await matricular(TURMA, a.alunoId);
+    const credito = await falta(a.alunoId, perdida);
+    return naFila({ alunoId: a.alunoId, ocupacaoId: alvo, faltaId: credito });
+  }
+
+  const meioDia = () => new Date(`${emDias(0)}T12:00:00.000Z`).getTime();
+  const inicioUtc = () => new Date(`${emDias(0)}T21:00:00.000Z`).getTime();
+  const HORA = 60 * 60 * 1000;
+
+  it('5 h configuradas: o limite é início − 5h, e não mais − 2h', async () => {
+    await comAntecedencia(5);
+    const fila = await filaDeAulaAsDezoito();
+
+    const r = await varredor().executarCiclo(meioDia);
+
+    expect(r.chamados).toBe(1);
+    const depois = await linha(fila);
+    // **Igualdade**, e não desigualdade: com o `2` fixo de volta o prazo seria
+    // início − 2h, três horas DEPOIS deste valor.
+    expect(depois.chamadoAte!.getTime()).toBe(inicioUtc() - 5 * HORA);
+  });
+
+  /**
+   * **O caso que separa os dois comportamentos de forma inconfundível.** Com o
+   * padrão, esta aula CHAMA (o limite é 19h UTC, depois do meio-dia); com 10 h
+   * configuradas o limite é 11h UTC, que já passou — ninguém é chamado.
+   */
+  it('10 h configuradas: a MESMA aula que o padrão chamaria vira prazo impossível', async () => {
+    await comAntecedencia(10);
+    const fila = await filaDeAulaAsDezoito();
+
+    const r = await varredor().executarCiclo(meioDia);
+
+    expect(r.chamados).toBe(0);
+    expect(r.prazoImpossivel).toBe(1);
+    const depois = await linha(fila);
+    expect(depois.estado).toBe('encerrada');
+    expect(depois.motivoFim).toBe('prazo impossivel');
+  });
+
+  /** A D4 continua valendo: configurar a antecedência não alcança a fila de TURMA. */
+  it('a fila de TURMA ignora a antecedência configurada — só o teto de 12h', async () => {
+    await comAntecedencia(10);
+    const a = await aluno('Quer a vaga');
+    await ocorrencia(TURMA_ALVO, emDias(0), '10:00');
+    const fila = await naFila({ alunoId: a.alunoId, turmaId: TURMA_ALVO });
+
+    const agora = Date.now();
+    const r = await varredor().executarCiclo(() => agora);
+
+    expect(r.chamados).toBe(1);
+    expect(r.prazoImpossivel).toBe(0);
+    const depois = await linha(fila);
+    expect(depois.chamadoAte!.getTime()).toBe(agora + 12 * HORA);
   });
 });
 
