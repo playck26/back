@@ -27,6 +27,8 @@ function buildPrismaMock() {
     // matrícula nenhuma — a conferência não acha par, e cada caso aqui continua
     // provando só o que já provava.
     turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-075/D13 — a trava de nível da empresa (`pg_advisory_xact_lock`).
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: jest.fn(),
   };
   mock.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>

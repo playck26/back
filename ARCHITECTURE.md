@@ -2,6 +2,16 @@
 
 **Fonte: análise direta do código.** Data: **2026-09-25** (era 2026-09-24).
 
+**Números conferidos por comando em 2026-09-25, na branch da SPEC-075
+(`spec075/nivel`):** **54 migrations, 43 tabelas, 23 triggers** não-internas,
+**120 caminhos / 165 operações** no `openapi.json`.
+
+*Mudou: **+1 migration** (`20260925200000_spec075_nivel_por_empresa`, que troca
+três FKs), e **nada mais na contagem**: a SPEC-075 não cria tabela, trigger nem
+rota — muda o que as rotas que existem **recusam**, e o `openapi.json` só ganha
+descrições e duas respostas `422` documentadas. A seção "O nível decide o
+acesso" abaixo diz o que mudou.*
+
 **Números conferidos por comando em 2026-09-25, na branch da SPEC-074
 (`spec074/pre-reserva`):** **53 migrations, 43 tabelas, 23 triggers**
 não-internas, **120 caminhos / 165 operações** no `openapi.json` — os mesmos
@@ -498,8 +508,8 @@ a replicar:
 ## 3. Modelo de domínio
 
 **42 modelos e 18 enums** no `schema.prisma` (conferido por
-`grep -c '^model'` / `'^enum'` em **2026-09-25**, com a SPEC-074), **53
-migrations** (`ls -d prisma/migrations/*/ | wc -l`). *Eram "40 tabelas e 16
+`grep -c '^model'` / `'^enum'` em **2026-09-25**, com a SPEC-075 — os mesmos da
+SPEC-074), **54 migrations** (`ls -d prisma/migrations/*/ | wc -l`). *Eram "40 tabelas e 16
 enums / 47 migrations", conferidos em 2026-09-20 e não atualizados por quatro
 specs; modelo do Prisma e tabela do Postgres não são a mesma conta — o topo
 conta `pg_tables` (43).*
@@ -591,7 +601,7 @@ conta `pg_tables` (43).*
 | `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload. **SPEC-054/D9:** pedido sem adicional (ou com lista vazia) grava `quadraId\|data\|slots` byte a byte como antes; com adicional, ganha `\|adicionais=<id>:<q>,…` em ordem de id — a comparação é `!==`, e mudar o formato de todo pedido quebraria o replay de chaves já gravadas |
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
 | `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
-| `niveis` | MOD-003 | único por `(company_id, nome)` |
+| `niveis` | MOD-003 | único por `(company_id, nome)`; **e por `(company_id, id)`** (SPEC-075), o alvo das FKs compostas de `alunos`, `turmas` e `convites_aluno`. Só MOD-003 escreve — a empresa nova delega (`LevelsService.semearNiveisPadrao`) |
 | `quadras` | MOD-005 | `preco_hora` é o preço **atual**; o cobrado fica em `ocupacoes_quadra.valor`. `imagem_key` é **pública** e vem com `imagem_confirmada_por`/`_em`: as três vivem e morrem juntas por CHECK (SPEC-018, decisão 1) **SPEC-057/TASK-005/D19:** `cor` (`varchar(7)`, default `#00763A`, `CHECK quadras_cor_paleta_check` com as seis cores canônicas) e `codigo_agenda` (`GENERATED ALWAYS AS IDENTITY`, `UNIQUE`, `CHECK > 0`) — o código é o que separa homônimas na agenda, e a API não o edita; a cor é auxiliar (INV-140) |
 | `ocupacoes_quadra` | MOD-005 | **linha do tempo da quadra**. `origem_tipo` AVULSO/TURMA. Ocupação de turma **não tem `aluno_id`** — origem do GAP-008. **SPEC-039:** ganhou `professor_id` (nulável), e a aula particular é uma linha `AVULSO` com ele preenchido — **não** um terceiro `origem_tipo`. O professor é atributo, não origem; `origem_tipo` responde "quem criou esta ocupação", e a resposta continua sendo "um pedido avulso" **SPEC-059/D2:** a LISTAGEM (`GET /bookings`) passou a devolver `tipo` (`quadra`/`aula_particular`, derivado de `professor_id`), `professorNome` e `quadraNome`, mais a janela `de`/`ate` — só no `ItemDaListaDeReservasDto`, como o `canceladaPorMim`: pôr no DTO compartilhado obrigaria `POST` e `PATCH` a carregar duas relações para devolver o que acabaram de receber |
 | `horarios_funcionamento` | MOD-005 | `quadra_id` nulo = padrão da empresa. Herança é **ausência de registro**, não cópia |
@@ -922,6 +932,60 @@ recusado pelo `forbidNonWhitelisted`. O banco recusa o que passar por fora:
 > a escrita produz turma acima da capacidade. *A sabotagem provou que essa
 > corrida é a única que o lock da turma protege — reposição × reposição já é
 > serializada pelo lock da ocupação.*
+
+### O nível decide o acesso (SPEC-075, ADR-026)
+
+**Até a SPEC-075 o nível era recorte de tela** (INV-072a): o servidor não
+recusava nada por nível. Agora ele recusa, e **a regra mora num arquivo só**,
+`src/people/nivel-efetivo.ts` — sem import do Nest e sem alias de caminho, porque
+o seed o importa por caminho relativo.
+
+- **O nível EFETIVO** (D1): o do aluno, ou — para quem não tem — **o primeiro da
+  empresa** (menor `ordem`, depois `created_at`, depois `id`). Resolvido na hora,
+  nunca gravado. **Toda regra futura que dependa do nível lê o efetivo**, nunca
+  `alunos.nivel_id` direto (ADR-026).
+- **A regra** (D2): nível **exato**; turma sem nível é de todos.
+- **Cinco gestos recusam** com `422 NIVEL_INCOMPATIVEL` e texto de quem lê
+  (aluno ou gestor): `entrar`, `marcar` reposição, entrar na fila de turma e de
+  aula, e **`allocateStudent` — o gestor também** (decisão 5). A recusa é a
+  **última antes da de capacidade** (ou de escrever, na fila), lançada depois de
+  leituras: é o que faz a **confirmação da fila herdar** a regra e **encerrar**
+  a linha (`409` com o `code`).
+- **As duas listas do aluno recortam no servidor**: `disponiveis` em memória,
+  mantendo a turma em que ele já está; `oportunidades` **no `where`**, antes do
+  `take: 200`, pelo mesmo predicado escrito para o Prisma
+  (`filtroDeTurmaPorNivel`).
+- **As edições de nível não criam par incompatível NOVO** (D12): nível do aluno,
+  da turma, criar/reordenar nível — comparando os pares (aluno, turma) antes e
+  depois da escrita, na transação, **por identidade de par**. `422
+  NIVEL_INCOMPATIVEL_COM_MATRICULAS`.
+- **A trava de nível da empresa** (D13): `pg_advisory_xact_lock` **bloqueante**
+  com chave de `ChaveDeLock.deTexto('nivel-da-empresa:<id>')`, **primeira
+  instrução** da transação dos oito caminhos que matriculam ou mudam nível (os
+  cinco do Back que tocam turma e aluno, os dois de nível, e o seed). Ao contrário
+  da INV-042 (advisory *depois* de lock de linha, que vale para `pg_try_…`), esta
+  **espera** — por isso vem **antes** de tudo: é o **nível 0** da ordem de locks
+  da SPEC-064 (turma 1, aluno 2, ocupação 3, fila 4). Medido: a transação mais
+  pesada sob ela (`ClassesService.update` com nível e encontros, regenerando 24
+  ocorrências) segurou **87 ms** num Postgres local. Não há promessa de latência
+  (LIM-075k).
+- **Empresa nova nasce com Iniciante, Intermediário e Avançado** (D7), escritos
+  por **MOD-003** (`LevelsService.semearNiveisPadrao(tx)`) dentro da transação de
+  `CompaniesService.create` — o `CompaniesModule` passa a importar o
+  `PeopleModule` (DELTA-006 no `TARGET_ARCHITECTURE.md`; sem ciclo).
+- **Integridade** (D9): as FKs de `alunos`, `turmas` e `convites_aluno` para
+  `niveis` são **compostas** `(company_id, nivel_id)`; apagar nível usado por
+  aluno ou turma é `RESTRICT` (o Postgres devolve **`23001`**, e não `23503`);
+  convite é `SET NULL (nivel_id)`, que o Prisma não expressa (o schema documenta).
+
+**Os gates:** `test/banco/spec-075-*.db-spec.ts` (integridade, acesso, empresa
+nova, edições), o **FIT-055** (`test/fit/spec-075-trava-de-nivel.fit-spec.ts`:
+presença da trava por caminho, ordem com handshake em `pg_stat_activity`, a
+corrida, o seed como processo) e a **varredura de escritores**
+(`src/classes/escritores-de-matricula.spec.ts`), que falha com escritor novo de
+`turma_alunos` ou `niveis`, ou chamador novo de `entrarNaTransacao`. **O "Import
+boundary lint" que o `TARGET_ARCHITECTURE.md` cita não existe** — a varredura é
+o que prende a fronteira de `niveis`.
 
 **`GET /matriculas/vencimentos` é a primeira rota de matrícula por EMPRESA
 (SPEC-045).** As três que existiam eram por aluno, e a consequência era que o

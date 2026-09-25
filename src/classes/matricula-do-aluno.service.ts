@@ -15,6 +15,7 @@ import {
   nivelEfetivoDoAluno,
   podeEntrarPorNivel,
   recusaPorNivel,
+  travarNivelDaEmpresa,
 } from '../people/nivel-efetivo';
 
 /**
@@ -181,9 +182,14 @@ export class MatriculaDoAlunoService {
    */
   async entrar(companyId: string, usuarioId: string, turmaId: string) {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
-    return this.prisma.$transaction((tx) =>
-      this.entrarNaTransacao(tx, companyId, aluno, turmaId),
-    );
+    return this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução, antes
+      // do `FOR UPDATE` da turma que o `entrarNaTransacao` toma. O
+      // `entrarNaTransacao` não a toma: quem o chama já a tomou (este `entrar`
+      // e o `confirmar` da fila) — e a AC-029 fixa quem pode chamá-lo.
+      await travarNivelDaEmpresa(tx, companyId);
+      return this.entrarNaTransacao(tx, companyId, aluno, turmaId);
+    });
   }
 
   /**

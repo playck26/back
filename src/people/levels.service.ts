@@ -10,6 +10,7 @@ import {
   conferirEdicaoDeNivel,
   criarNiveisPadrao,
   primeiroNivel,
+  travarNivelDaEmpresa,
 } from './nivel-efetivo';
 import { NivelResponseDto } from './dto/people-response.dto';
 import type { CreateLevelDto } from './dto/create-level.dto';
@@ -115,6 +116,8 @@ export class LevelsService {
     escrever: (tx: Prisma.TransactionClient) => Promise<NivelResponseDto>,
   ): Promise<NivelResponseDto> {
     return this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução.
+      await travarNivelDaEmpresa(tx, companyId);
       const antigo = await primeiroNivel(tx, companyId);
       const r = await conferirEdicaoDeNivel(
         tx,

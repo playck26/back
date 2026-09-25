@@ -11,7 +11,7 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 import { MatriculaDoAlunoService } from '../classes/matricula-do-aluno.service';
 import { ReposicaoService } from '../classes/reposicao.service';
 import { situacaoDoCredito } from '../classes/credito-de-reposicao';
-import { recusaPorNivel } from '../people/nivel-efetivo';
+import { recusaPorNivel, travarNivelDaEmpresa } from '../people/nivel-efetivo';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -435,6 +435,12 @@ export class FilaDeEsperaService {
 
     return this.prisma.$transaction(async (tx) => {
       const fila = linha.ocupacaoId ? 'aula' : 'turma';
+
+      // SPEC-075/D13 — na fila de TURMA a confirmação vira matrícula, e toma a
+      // trava de nível da empresa como PRIMEIRA instrução, antes do `FOR
+      // UPDATE` da turma (nível 0 da ordem de locks). Na fila de AULA ela vira
+      // reposição, que não é par da D12 — e não precisa.
+      if (fila === 'turma') await travarNivelDaEmpresa(tx, companyId);
 
       // Sem lock: so para descobrir QUAL turma travar primeiro.
       const ocupacao = linha.ocupacaoId

@@ -15,7 +15,11 @@ import {
   parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
-import { conferirEdicaoDeNivel, recusaPorNivel } from '../people/nivel-efetivo';
+import {
+  conferirEdicaoDeNivel,
+  recusaPorNivel,
+  travarNivelDaEmpresa,
+} from '../people/nivel-efetivo';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
@@ -518,6 +522,11 @@ export class ClassesService {
     // muda, cancelar as ocupações futuras antigas e gerar as novas
     // acontece na mesma transação da atualização da turma.
     const turma = await this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — quando o corpo traz `nivelId`, a trava de nível da
+      // empresa é a PRIMEIRA instrução, antes do `FOR UPDATE` da turma logo
+      // abaixo. Sem `nivelId` a edição não mexe em nível, e não trava.
+      if (dto.nivelId !== undefined) await travarNivelDaEmpresa(tx, companyId);
+
       // SPEC-068/D6 — **o professor anterior sai da linha TRAVADA**, e só
       // quando o `PATCH` traz `professorId`.
       //
@@ -766,6 +775,11 @@ export class ClassesService {
 
   async allocateStudent(companyId: string, turmaId: string, alunoId: string) {
     return this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução, antes
+      // do `FOR UPDATE` da turma: esta alocação e uma edição de nível da mesma
+      // empresa nunca correm juntas.
+      await travarNivelDaEmpresa(tx, companyId);
+
       // REQ-004/INV-003 (DATA_MODEL.md): SELECT ... FOR UPDATE na linha da
       // turma serializa checagens de capacidade concorrentes — não
       // expressável no query builder do Prisma, raw query necessária.

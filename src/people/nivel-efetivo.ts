@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { ChaveDeLock } from '../common/lock/chave-de-lock';
 
 /**
  * SPEC-075 — **o nível decide o acesso, e a regra mora aqui, num lugar só.**
@@ -384,4 +385,44 @@ export async function conferirEdicaoDeNivel<T>(
       message: mensagemDeEdicaoRecusada(edicao, novos),
     },
   };
+}
+
+// ==========================================================================
+// SPEC-075/D13 — a trava de nível da empresa
+// ==========================================================================
+
+/**
+ * D13 (INV-075h) — **edição de nível e criação de matrícula de uma empresa
+ * nunca correm juntas.**
+ *
+ * O furo que ela fecha (3ª rodada, N3-02): a edição lê que o aluno não está na
+ * turma; a alocação lê o nível antigo e valida; as duas gravam; as duas comitam
+ * — e nasce o par que a decisão 6 proíbe. Um gestor só, com duas requisições,
+ * chega lá; e os locks de linha de hoje não impedem (o `UPDATE` do nível toma
+ * `FOR NO KEY UPDATE`, o `INSERT` da matrícula toma `FOR KEY SHARE` pela FK).
+ *
+ * **Bloqueante, e a PRIMEIRA instrução da transação** de quem a toma — ao
+ * contrário da INV-042 (`advisory-lock.ts`), que manda o advisory vir DEPOIS dos
+ * locks de linha. Aquela regra é para `pg_try_…`, que não espera. Esta espera:
+ * tomada depois de um lock de linha, ela fecharia ciclo (o `confirmar` segurando
+ * a turma e esperando a trava; o `allocateStudent` segurando a trava e
+ * esperando a turma). Tomada sempre primeiro, por todos, não há ciclo que passe
+ * por ela — e ela entra como o **nível 0** da ordem de locks da SPEC-064.
+ *
+ * **A chave é a EMPRESA**: mudar quem é o primeiro nível mexe no nível efetivo
+ * de todo aluno sem nível dela. **E vem de `ChaveDeLock.deTexto`** (INV-043),
+ * nunca de outro cálculo — duas contas diferentes para a mesma empresa seriam
+ * duas travas que não se veem.
+ *
+ * Os oito caminhos que a tomam estão na tabela da D13 da spec; a AC-029
+ * (`escritores-de-matricula.spec.ts`) falha com um escritor novo fora dela.
+ */
+export async function travarNivelDaEmpresa(
+  db: Pick<Prisma.TransactionClient, '$executeRaw'>,
+  companyId: string,
+): Promise<void> {
+  const chave = ChaveDeLock.deTexto(`nivel-da-empresa:${companyId}`);
+  // `$executeRaw`, e não `$queryRaw`: a função devolve `void`, que o Prisma
+  // não desserializa (medido na 4ª rodada, com `pg_sleep`).
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(${chave}::bigint)`;
 }

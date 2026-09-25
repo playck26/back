@@ -25,7 +25,7 @@ import type { UpdateStudentDto } from './dto/update-student.dto';
 import { calcularCompletude } from './completude-do-cadastro';
 import type { CamposDoCadastroDto } from './dto/campos-do-cadastro.dto';
 import { normalizarNascimento } from './normalizar-nascimento';
-import { conferirEdicaoDeNivel } from './nivel-efetivo';
+import { conferirEdicaoDeNivel, travarNivelDaEmpresa } from './nivel-efetivo';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -510,6 +510,11 @@ export class StudentsService {
     }
 
     const aluno = await this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — quando o corpo traz `nivelId` (inclusive `null`), a
+      // trava de nível da empresa é a PRIMEIRA instrução, antes das escritas
+      // em `usuarios` logo abaixo.
+      if (dto.nivelId !== undefined) await travarNivelDaEmpresa(tx, companyId);
+
       if (dto.nome !== undefined || dto.telefone !== undefined) {
         await tx.usuario.update({
           where: { id: existente.usuarioId },
