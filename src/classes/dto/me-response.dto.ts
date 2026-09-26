@@ -336,6 +336,29 @@ export class ChamadaResponseDto {
   desfazerNaoHouveAte!: string | null;
 
   /**
+   * SPEC-076/D1 — o estado da ocorrência, pelo MESMO resolvedor das listas.
+   * Sem ele a tela não distingue "aguardando o fechamento automático"
+   * (`pendente`) de "sem registro de presença" (`sem_registro`): nos dois
+   * não há cabeçalho nem linha. Back anterior à SPEC-076 não manda o campo.
+   */
+  @ApiProperty({
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+      'sem_registro',
+      'cancelada',
+    ],
+    description:
+      'O estado da ocorrência, pelo mesmo resolvedor da lista da turma e do histórico do gestor.',
+  })
+  estado!: string;
+
+  /**
    * SPEC-014 — era o token de concorrência otimista do `PUT` da chamada, que
    * saiu (SPEC-076/D1). Continua no contrato (LIM-076d), inerte.
    */

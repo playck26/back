@@ -12202,6 +12202,21 @@
             "nullable": true,
             "example": "2026-10-03T03:00:00.000Z"
           },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "futura",
+              "em_andamento",
+              "pendente",
+              "feita",
+              "legada",
+              "nao_houve",
+              "sem_participantes",
+              "sem_registro",
+              "cancelada"
+            ],
+            "description": "O estado da ocorrência, pelo mesmo resolvedor da lista da turma e do histórico do gestor."
+          },
           "versao": {
             "type": "string",
             "description": "Sem uso de escrita desde a SPEC-076 (o `PUT` da chamada saiu)."
@@ -12225,6 +12240,7 @@
           "origemInicial",
           "corrigivelAte",
           "desfazerNaoHouveAte",
+          "estado",
           "versao",
           "alunos"
         ]

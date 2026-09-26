@@ -318,6 +318,22 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
     ],
   ],
 
+  // SPEC-076/D1 — o GET da chamada publica o estado, pelo mesmo resolvedor;
+  // a lista inclui `cancelada` porque a chamada de aula cancelada é lida.
+  [
+    'ChamadaResponseDto.estado',
+    [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+      'sem_registro',
+      'cancelada',
+    ],
+  ],
   // SPEC-076/D3 — a resposta do "Desfazer" devolve o estado da ocorrência
   // depois de desfeito, pelo MESMO resolvedor; a lista é a da turma porque
   // o desfazer não esconde cancelada (ela responde `cancelada`).

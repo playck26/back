@@ -145,6 +145,12 @@ describe('SPEC-076/D5 — `sem_registro` em cada consumidor (AC-015)', () => {
       expect(lista.data.find((o) => o.ocupacaoId === oc)?.estado).toBe(estado);
       expect(historico.find((o) => o.ocupacaoId === oc)?.estado).toBe(estado);
     }
+    // SPEC-076/D1 — e o GET da chamada diz o mesmo, aula por aula.
+    for (const [oc, estado] of Object.entries(esperado)) {
+      expect((await presenca().chamada(EMPRESA, UPROF, oc)).estado).toBe(
+        estado,
+      );
+    }
     // `sem_registro` não é "chamada feita" em nenhum dos dois.
     expect(
       lista.data.find((o) => o.ocupacaoId === m.semRegistro)?.chamadaFeita,

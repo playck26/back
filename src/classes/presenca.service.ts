@@ -778,6 +778,12 @@ export class PresencaService {
         ocupacao.data,
         agora,
       ),
+      // SPEC-076/D1 — o estado, pelo resolvedor único (o mesmo das listas).
+      estado: await this.estadoAtual(
+        companyId,
+        ocupacao.origemTurmaId,
+        ocupacaoId,
+      ),
       // SPEC-057/TASK-001/D4 — `M ∪ V ∪ S`. SPEC-076: sem uso de escrita.
       versao: this.versaoDe(presencas, cabecalho, [
         ...matriculados,

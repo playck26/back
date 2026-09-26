@@ -537,17 +537,23 @@ describe('PresencaService.chamada — a completude que volta (SPEC-030)', () => 
     completude: string | null,
     presencas: unknown[] = [],
   ) {
+    const ocupacao = {
+      id: 'oc1',
+      origemTurmaId: TURMA,
+      origemTipo: 'TURMA',
+      statusPagamento: 'pendente_pagamento',
+      data: diaRelativo(-1),
+      horaInicio: new Date('1970-01-01T00:00:00.000Z'),
+      horaFim: new Date('1970-01-01T23:59:00.000Z'),
+    };
     const prisma = {
       professor: { findFirst: jest.fn().mockResolvedValue({ id: 'p1' }) },
       ocupacaoQuadra: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'oc1',
-          origemTurmaId: TURMA,
-          origemTipo: 'TURMA',
-          statusPagamento: 'pendente_pagamento',
-          data: diaRelativo(-1),
-          horaInicio: new Date('1970-01-01T00:00:00.000Z'),
-          horaFim: new Date('1970-01-01T23:59:00.000Z'),
+        findFirst: jest.fn().mockResolvedValue(ocupacao),
+        // SPEC-076/D1 — o `estado` do GET relê a ocorrência.
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          ...ocupacao,
+          chamadas: completude === null ? [] : [{ completude }],
         }),
       },
       presenca: { findMany: jest.fn().mockResolvedValue(presencas) },

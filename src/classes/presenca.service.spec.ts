@@ -105,7 +105,11 @@ function buildMocks() {
   const prisma = {
     professor: { findFirst: jest.fn() },
     turma: { findFirst: jest.fn() },
-    ocupacaoQuadra: { findFirst: jest.fn(), findMany: jest.fn() },
+    ocupacaoQuadra: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      findFirstOrThrow: jest.fn(),
+    },
     turmaAluno: { findMany: jest.fn() },
     presenca: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -117,6 +121,15 @@ function buildMocks() {
     reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn((cb: (tx: TxMock) => unknown) => cb(tx)),
   };
+  // SPEC-076/D1 — o `estado` do GET relê a ocorrência: a mesma que o teste
+  // armou em `findFirst`, sem cabeçalho. O estado em si é provado no db-spec
+  // (`spec-076-estado`), pelo resolvedor real.
+  prisma.ocupacaoQuadra.findFirstOrThrow.mockImplementation(
+    async (...args: unknown[]) => ({
+      chamadas: [],
+      ...((await prisma.ocupacaoQuadra.findFirst(...args)) as object),
+    }),
+  );
   // A matrícula lida DENTRO da transação é a mesma que o teste arma em
   // `prisma.turmaAluno.findMany` — delegar evita ter de armar duas vezes.
   tx.turmaAluno.findMany = jest.fn(
