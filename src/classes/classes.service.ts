@@ -15,6 +15,7 @@ import {
   parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
+import { aulaQueAMatriculaLotaria, diaEMes } from './ocupacao-da-ocorrencia';
 import {
   conferirEdicaoDeNivel,
   recusaPorNivel,
@@ -837,6 +838,25 @@ export class ClassesService {
         throw new ConflictException(
           'Capacidade da turma excedida (INV-003, AC-002)',
         );
+      }
+
+      // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
+      // (decisão do Israel, 2026-09-26). Antes, marcar a reposição na última
+      // vaga de um dia e DEPOIS alocar deixava aquele dia acima da capacidade
+      // — o FIT-035 só passava por sorte de ordem.
+      const lotaria = await aulaQueAMatriculaLotaria(
+        tx,
+        companyId,
+        turma,
+        alunoId,
+        new Date(),
+      );
+      if (lotaria) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'AULA_LOTADA',
+          message: `A aula de ${diaEMes(lotaria.data)} desta turma já está lotada, contando as reposições marcadas. Alocar agora deixaria esse dia acima da capacidade.`,
+        });
       }
 
       return tx.turmaAluno.create({ data: { turmaId, alunoId } });

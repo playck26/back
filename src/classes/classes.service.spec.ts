@@ -36,7 +36,7 @@ interface TxMock {
   // SPEC-031/TASK-005: a remocao passou a ler a configuracao e a ocorrencia
   // pelo MESMO `tx`, e a gravar acao + evento de matricula.
   configOperacaoEmpresa: { findUnique: jest.Mock };
-  ocupacaoQuadra: { findFirst: jest.Mock };
+  ocupacaoQuadra: { findFirst: jest.Mock; findMany: jest.Mock };
   acaoAdministrativa: { create: jest.Mock };
   eventoDeMatricula: { create: jest.Mock };
 }
@@ -66,7 +66,12 @@ function buildMocks() {
     // Padrao: empresa sem prazo configurado e sem ocorrencia a frente — a
     // remocao passa, que e o comportamento de hoje.
     configOperacaoEmpresa: { findUnique: jest.fn().mockResolvedValue(null) },
-    ocupacaoQuadra: { findFirst: jest.fn().mockResolvedValue(null) },
+    // `findMany`: a alocação confere as aulas futuras da turma (2026-09-26);
+    // nenhuma aula futura no dublê — a conferência não acha dia lotado.
+    ocupacaoQuadra: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     acaoAdministrativa: {
       create: jest.fn().mockResolvedValue({ id: 'acao-1' }),
     },

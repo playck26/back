@@ -987,6 +987,19 @@ corrida, o seed como processo) e a **varredura de escritores**
 boundary lint" que o `TARGET_ARCHITECTURE.md` cita não existe** — a varredura é
 o que prende a fronteira de `niveis`.
 
+**A matrícula conta as reposições das próximas aulas** (decisão do Israel,
+2026-09-26, no PR da SPEC-075, depois que o FIT-035 ficou vermelho no CI).
+Contar só `turma_alunos` deixava a matrícula feita **depois** de uma reposição
+na última vaga de um dia passar da capacidade naquele dia — em sequência, sem
+corrida. Uma função, `aulasQueAMatriculaLotaria` (`ocupacao-da-ocorrencia.ts`):
+simula o aluno entre os matriculados de cada aula da turma que ainda não
+terminou e aplica `calcularOcupacao`. Quatro leitores: os dois escritores
+(`entrarNaTransacao` → `409 TURMA_CHEIA` com o dia; `allocateStudent` → `409
+AULA_LOTADA` com o dia), a lista `disponiveis` (`motivo: TURMA_CHEIA`, uma ida
+para todas as turmas) e o varredor da fila de turma (não chama; conta com o
+aluno da linha, depois do último lock). Gate:
+`test/banco/spec-075-lotacao-da-matricula.db-spec.ts`, 18 casos.
+
 **`GET /matriculas/vencimentos` é a primeira rota de matrícula por EMPRESA
 (SPEC-045).** As três que existiam eram por aluno, e a consequência era que o
 gestor abria ficha por ficha para saber quem vence — medido, dez fichas no

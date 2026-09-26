@@ -32,7 +32,7 @@ interface TxMock {
     create: jest.Mock;
     delete: jest.Mock;
   };
-  ocupacaoQuadra: { findFirst: jest.Mock };
+  ocupacaoQuadra: { findFirst: jest.Mock; findMany: jest.Mock };
   // SPEC-031/D16, passo 4: a configuracao e lida pelo MESMO `tx`.
   configOperacaoEmpresa: { findUnique: jest.Mock };
 }
@@ -146,6 +146,10 @@ function montar(opcoes?: {
               ? { id: 'ocupacao-1' }
               : null,
         ),
+      // A matrícula confere as aulas futuras da turma (decisão de 2026-09-26,
+      // na SPEC-075). O dublê: nenhuma aula futura — a conferência não acha
+      // dia lotado, e cada caso aqui continua provando só o que provava.
+      findMany: jest.fn().mockResolvedValue([]),
     },
   };
 
@@ -384,6 +388,10 @@ describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
       },
       turma: { findMany: jest.fn().mockResolvedValue(turmas) },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+      // A lista confere as próximas aulas (a regra de 2026-09-26): nenhuma
+      // aula futura no dublê, e a turma continua marcada só pelo que o caso
+      // prova.
+      ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
   }
 

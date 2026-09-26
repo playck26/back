@@ -61,7 +61,8 @@ export class TurmaDisponivelResponseDto {
       'LIMITE_DE_TURMAS',
       'TURMA_CHEIA',
     ],
-    description: 'Por que não pode entrar. `null` quando pode.',
+    description:
+      'Por que não pode entrar. `null` quando pode. `TURMA_CHEIA` também quando há vaga de matrícula mas uma das próximas aulas já está lotada contando as reposições marcadas — a matrícula deixaria esse dia acima da capacidade.',
   })
   motivo!: string | null;
 
@@ -111,7 +112,7 @@ export class ErroDeMatriculaResponseDto {
       'PRAZO_DE_CANCELAMENTO',
     ],
     description:
-      'O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy.',
+      'O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy. `TURMA_CHEIA` vem também quando uma das próximas aulas já está lotada contando as reposições marcadas, e então a mensagem diz o dia.',
   })
   code!: string;
 

@@ -12,6 +12,11 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
 import {
+  aulaQueAMatriculaLotaria,
+  aulasQueAMatriculaLotaria,
+  diaEMes,
+} from './ocupacao-da-ocorrencia';
+import {
   nivelEfetivoDoAluno,
   podeEntrarPorNivel,
   recusaPorNivel,
@@ -115,41 +120,61 @@ export class MatriculaDoAlunoService {
       aluno.nivelId,
     );
 
-    return turmas
-      .filter(
-        (turma) =>
-          minhasIds.has(turma.id) || podeEntrarPorNivel(turma.nivelId, efetivo),
-      )
-      .map((turma) => {
-        const matriculados = turma._count.alunos;
-        const jaEstouNela = minhasIds.has(turma.id);
-        const motivo = this.motivoDeBloqueio({
-          jaEstouNela,
-          status: turma.status,
-          matriculados,
-          capacidade: turma.capacidade,
-          vinculo: aluno.vinculo,
-          noLimite,
-        });
+    const visiveis = turmas.filter(
+      (turma) =>
+        minhasIds.has(turma.id) || podeEntrarPorNivel(turma.nivelId, efetivo),
+    );
 
-        return {
-          id: turma.id,
-          nome: turma.nome,
-          status: turma.status,
-          capacidade: turma.capacidade,
-          matriculados,
-          jaEstouNela,
-          podeEntrar: motivo === null && !jaEstouNela,
-          motivo,
-          nivelId: turma.nivelId,
-          nivelNome: turma.nivel ? turma.nivel.nome : null,
-          encontros: turma.encontros.map((encontro) => ({
-            diaSemana: encontro.diaSemana,
-            horaInicio: encontro.horaInicio.toISOString().slice(11, 16),
-            horaFim: encontro.horaFim.toISOString().slice(11, 16),
-          })),
-        };
+    // A regra de 2026-09-26 (`aulasQueAMatriculaLotaria`): a turma com vaga
+    // de matrícula mas com uma próxima aula lotada por reposições aparece
+    // CHEIA — senão a lista oferece "Entrar" e o `POST` recusa. Só para as
+    // que chegariam à checagem de vaga, e numa ida só para todas.
+    const lotadas = await aulasQueAMatriculaLotaria(
+      this.prisma,
+      companyId,
+      visiveis.filter(
+        (turma) =>
+          !minhasIds.has(turma.id) &&
+          aluno.vinculo === 'aprovado' &&
+          turma.status === 'ativa' &&
+          !noLimite &&
+          turma._count.alunos < turma.capacidade,
+      ),
+      aluno.id,
+      new Date(),
+    );
+
+    return visiveis.map((turma) => {
+      const matriculados = turma._count.alunos;
+      const jaEstouNela = minhasIds.has(turma.id);
+      const motivo = this.motivoDeBloqueio({
+        jaEstouNela,
+        status: turma.status,
+        matriculados,
+        capacidade: turma.capacidade,
+        vinculo: aluno.vinculo,
+        noLimite,
+        aulaLotada: lotadas.has(turma.id),
       });
+
+      return {
+        id: turma.id,
+        nome: turma.nome,
+        status: turma.status,
+        capacidade: turma.capacidade,
+        matriculados,
+        jaEstouNela,
+        podeEntrar: motivo === null && !jaEstouNela,
+        motivo,
+        nivelId: turma.nivelId,
+        nivelNome: turma.nivel ? turma.nivel.nome : null,
+        encontros: turma.encontros.map((encontro) => ({
+          diaSemana: encontro.diaSemana,
+          horaInicio: encontro.horaInicio.toISOString().slice(11, 16),
+          horaFim: encontro.horaFim.toISOString().slice(11, 16),
+        })),
+      };
+    });
   }
 
   /**
@@ -164,12 +189,14 @@ export class MatriculaDoAlunoService {
     capacidade: number;
     vinculo: string;
     noLimite: boolean;
+    aulaLotada: boolean;
   }): string | null {
     if (dados.jaEstouNela) return null;
     if (dados.vinculo !== 'aprovado') return 'ALUNO_NAO_APROVADO';
     if (dados.status !== 'ativa') return 'TURMA_INATIVA';
     if (dados.noLimite) return 'LIMITE_DE_TURMAS';
     if (dados.matriculados >= dados.capacidade) return 'TURMA_CHEIA';
+    if (dados.aulaLotada) return 'TURMA_CHEIA';
     return null;
   }
 
@@ -292,13 +319,32 @@ export class MatriculaDoAlunoService {
     );
     if (recusa) throw new UnprocessableEntityException(recusa);
 
-    // Por último, e sob a trava: é a checagem que a concorrência ataca.
+    // Sob a trava: é a checagem que a concorrência ataca.
     const alocados = await tx.turmaAluno.count({ where: { turmaId } });
     if (alocados >= turma.capacidade) {
       throw new ConflictException({
         statusCode: 409,
         code: 'TURMA_CHEIA',
         message: 'Esta turma já está com todas as vagas ocupadas.',
+      });
+    }
+
+    // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
+    // (decisão do Israel, 2026-09-26): a vaga de um dia já dada a uma
+    // reposição não pode ser dada de novo a quem entra na turma. Mesmo `code`
+    // de turma cheia — é o que o Cliente no ar sabe mostrar —, com o dia.
+    const lotaria = await aulaQueAMatriculaLotaria(
+      tx,
+      companyId,
+      { id: turmaId, capacidade: turma.capacidade },
+      aluno.id,
+      new Date(),
+    );
+    if (lotaria) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'TURMA_CHEIA',
+        message: `A aula de ${diaEMes(lotaria.data)} desta turma já está com todas as vagas ocupadas, contando as reposições marcadas.`,
       });
     }
 

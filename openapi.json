@@ -4579,6 +4579,9 @@
               }
             }
           },
+          "409": {
+            "description": "Turma sem vaga de matrícula (capacidade), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia."
+          },
           "422": {
             "description": "Aluno desligado (`ALUNO_INATIVO`), ou de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075/D5): o gestor também é recusado, e a mensagem diz o que fazer — mudar o nível do aluno."
           }
@@ -11377,7 +11380,7 @@
               "LIMITE_DE_TURMAS",
               "TURMA_CHEIA"
             ],
-            "description": "Por que não pode entrar. `null` quando pode."
+            "description": "Por que não pode entrar. `null` quando pode. `TURMA_CHEIA` também quando há vaga de matrícula mas uma das próximas aulas já está lotada contando as reposições marcadas — a matrícula deixaria esse dia acima da capacidade."
           },
           "nivelId": {
             "type": "string",
@@ -11476,7 +11479,7 @@
               "TURMA_CHEIA",
               "PRAZO_DE_CANCELAMENTO"
             ],
-            "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy."
+            "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy. `TURMA_CHEIA` vem também quando uma das próximas aulas já está lotada contando as reposições marcadas, e então a mensagem diz o dia."
           },
           "message": {
             "type": "string",
