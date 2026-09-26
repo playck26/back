@@ -19,6 +19,11 @@ import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
+import {
+  ligarPresencaAutomatica,
+  redefinirConfigDePresenca,
+} from './config-de-presenca';
+import { comValvula } from './valvula-de-presenca';
 
 jest.setTimeout(120_000);
 
@@ -120,9 +125,11 @@ async function aula(
     // versão desta fixture passou `0` e o banco recusou, que é o
     // comportamento certo dele.
     const esperados = chamada === 'completa' ? '3' : 'NULL';
-    await q(
+    // SPEC-076/D10 — chamada HUMANA: o banco passou a recusá-la fora da
+    // válvula de teste, e é por ela que a fixture grava o legado.
+    await comValvula(db, [
       `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_em,registrada_por,updated_at,completude,esperados) VALUES ('${id}','TURMA','${empresaId}',now(),'${UPROF_A}',now(),'${chamada}',${esperados})`,
-    );
+    ]);
   }
 }
 
@@ -145,12 +152,35 @@ async function montar(): Promise<void> {
     await q(
       `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${turma}','${emp}','${nome}','${quadra}','${prof}',10,'ativa')`,
     );
+    // SPEC-076/D5 — um aluno por turma: sem participante, a aula pós-corte
+    // sem cabeçalho é `sem_participantes`, e não `pendente`.
+    const sufixo = turma.slice(-2);
+    const usuario = `f0130000-0000-4000-8000-0000000009${sufixo}`;
+    const alunoId = `f0130000-0000-4000-8000-0000000008${sufixo}`;
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${usuario}','fit013-aluno-${sufixo}@teste.local','x','Aluno ${sufixo}','aluno','${emp}',now())`,
+    );
+    await q(
+      `INSERT INTO alunos (id,usuario_id,company_id,vinculo,status) VALUES ('${alunoId}','${usuario}','${emp}','aprovado','ativo')`,
+    );
+    await q(
+      `INSERT INTO turma_alunos (id,turma_id,aluno_id,created_at) VALUES (gen_random_uuid(),'${turma}','${alunoId}',now())`,
+    );
   }
+  // SPEC-076/D5 — **o corte, antes das aulas destas provas.** Esta suíte
+  // rodava sem corte, e "sem linha em `chamadas`" era `pendente`. Com a D5,
+  // sem corte a aula terminada é `sem_registro`: o único `pendente` que resta
+  // é a aula pós-corte que o worker ainda não fechou — e é ela que estas
+  // provas passam a montar. O worker não roda aqui.
+  await ligarPresencaAutomatica(db, new Date('2026-08-01T03:00:00.000Z'));
 }
 
 afterAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await limparEmpresa(db, OUTRA_EMPRESA);
+  // A config de presença é única no banco: devolve o estado de sempre para
+  // as suítes seguintes.
+  await redefinirConfigDePresenca(db);
   await db.$disconnect();
 });
 
@@ -770,6 +800,8 @@ describe('FIT-013 — SPEC-027: futura não é pendente', () => {
    * que ainda não começou"* (`presenca.service.spec.ts`), que usa 23:58 — o
    * único caso que só o portão por hora alcança. Essa cai na sabotagem.
    */
+  // SPEC-076/D7 — o `PUT` da chamada saiu; o portão continua, e é o mesmo
+  // do "a aula não aconteceu". A regra provada aqui não mudou.
   it('e a chamada RECUSA a aula futura — a tela não é o portão', async () => {
     // Esconder o botão resolve o engano honesto; só o servidor resolve o
     // pedido montado à mão. A chamada é o retrato de quem estava lá.
@@ -784,12 +816,11 @@ describe('FIT-013 — SPEC-027: futura não é pendente', () => {
     );
 
     await expect(
-      presenca.salvarChamada(
+      presenca.registrarNaoHouve(
         EMPRESA,
-        UPROF_A,
         'f0130000-0000-4000-8000-000000000304',
-        '0',
-        [],
+        UPROF_A,
+        true,
       ),
     ).rejects.toMatchObject({ response: { code: 'AULA_FUTURA' } });
   });

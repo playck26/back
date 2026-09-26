@@ -341,7 +341,7 @@ describe('sair', () => {
   });
 
   it('a saída também trava a linha da turma', async () => {
-    // Não é sobre capacidade: é o par do lock que `salvarChamada` pega.
+    // Não é sobre capacidade: é o par do lock que o portão da chamada pega.
     // Quem não pede lock não respeita lock — foi o cenário 5 do
     // `bloq7-concorrencia.ts`.
     const { service, tx } = montar({ jaAlocado: true });

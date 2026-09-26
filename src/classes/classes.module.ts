@@ -12,6 +12,7 @@ import { AvaliacaoDeAulaService } from './avaliacao-de-aula.service';
 import { MeTeacherAgendaController } from './me-teacher-agenda.controller';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { PresencaService } from './presenca.service';
+import { RelogioDaPresenca } from './relogio-da-presenca';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
 import { FaltaAvisadaService } from './falta-avisada.service';
 import { MeReposicoesController } from './me-reposicoes.controller';
@@ -42,6 +43,8 @@ import { PresencaAutomaticaModule } from '../presenca-automatica/presenca-automa
     AvaliacaoDeAulaService,
     MatriculaDoAlunoService,
     PresencaService,
+    // SPEC-076/D11 — o relógio único do portão da chamada.
+    RelogioDaPresenca,
   ],
   // SPEC-064 — a confirmação da fila de espera precisa matricular e criar
   // reposição DENTRO da transação dela (AC-007), então ela compõe os dois

@@ -1,13 +1,9 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresencaService } from './presenca.service';
 import type { CorteDaPresenca } from '../presenca-automatica/corte-da-presenca';
+import type { RelogioDaPresenca } from './relogio-da-presenca';
 
 // TEST (SPEC-014): unit tests de `presencas` com Prisma mockado.
 //
@@ -19,7 +15,7 @@ import type { CorteDaPresenca } from '../presenca-automatica/corte-da-presenca';
 // do professor e composição da chamada.
 
 interface TxMock {
-  presenca: { findMany: jest.Mock; upsert: jest.Mock };
+  presenca: { findMany: jest.Mock; upsert: jest.Mock; count: jest.Mock };
   chamada: { findUnique: jest.Mock; upsert: jest.Mock };
   // SPEC-031/AC-019: a chamada passou a marcar quem avisou falta.
   faltaAvisada: { findMany: jest.Mock };
@@ -28,7 +24,7 @@ interface TxMock {
   $queryRaw: jest.Mock;
 }
 
-// SPEC-015/AC-000i — `salvarChamada` **não** usa mais
+// SPEC-015/AC-000i — o portão da chamada **não** usa mais
 // `prisma.ocupacaoQuadra.findFirst`. Ele faz dois statements dentro da
 // transação: (0a) descobre e trava a linha da turma, (0b) relê ocorrência e
 // dono já com o lock na mão. Os dois passam por `$queryRaw`, e o mock
@@ -59,11 +55,17 @@ function buildMocks() {
     professorIdDaTurma: 'p1',
   };
   // Ímpar = 0a (o lock), par = 0b (a releitura). Alterna em vez de contar
-  // uma vez só, para que um teste que chame `salvarChamada` duas vezes não
+  // uma vez só, para que um teste que passe pelo portão duas vezes não
   // caia num estado impossível.
   let statement = 0;
   const tx: TxMock = {
-    presenca: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn() },
+    // SPEC-076 — o portão agora é exercitado pelo `registrarNaoHouve`, que
+    // conta as presenças antes de gravar o cabeçalho.
+    presenca: {
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
     faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
     // SPEC-046 — o duble precisa TER o delegate: a chamada passou a
     // carregar quem vem repor, e sem esta linha 32 casos morrem com
@@ -72,7 +74,9 @@ function buildMocks() {
     reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
     chamada: {
       findUnique: jest.fn().mockResolvedValue(null),
-      upsert: jest.fn(),
+      upsert: jest
+        .fn()
+        .mockResolvedValue({ ocupacaoId: 'oc1', completude: 'nao_houve' }),
     },
     turmaAluno: { findMany: jest.fn() },
     $queryRaw: jest.fn((sql: unknown) => {
@@ -189,18 +193,25 @@ const semCorte = {
   ler: () => Promise.resolve(null),
 } as unknown as CorteDaPresenca;
 
+/**
+ * SPEC-076/D11 — o portão lê `agora` do `RelogioDaPresenca`, e não mais do
+ * `$queryRaw` da transação. Aqui ele é o relógio do processo, que respeita o
+ * `setSystemTime` dos testes de horário.
+ */
+const relogioDoProcesso = {
+  agora: () => Promise.resolve(new Date()),
+} as unknown as RelogioDaPresenca;
+
 describe('PresencaService (SPEC-014)', () => {
   let prisma: PrismaService;
-  let tx: TxMock;
   let estado: EstadoDaOcorrencia;
   let service: PresencaService;
 
   beforeEach(() => {
     const b = buildMocks();
     prisma = b.prisma;
-    tx = b.tx;
     estado = b.estado;
-    service = new PresencaService(prisma, semCorte);
+    service = new PresencaService(prisma, semCorte, relogioDoProcesso);
     (prisma.professor.findFirst as jest.Mock).mockResolvedValue({ id: 'p1' });
     // O `GET` monta a lista com o nome do aluno; o `PUT` só usa `alunoId`.
     // Um mock só serve os dois, e é o que permite os testes irem por
@@ -219,50 +230,37 @@ describe('PresencaService (SPEC-014)', () => {
     jest.useRealTimers();
   });
 
-  // SPEC-015/INV-026: o padrão passou a ser a turma **inteira** (a1 e a2).
-  // Antes era um aluno só — e a suíte inteira passava, o que é a prova de
-  // que nada cobrava completude. A DEF-002 morava exatamente aqui.
-  // SPEC-015/AC-000j — `versao` é string OPACA, e o teste não deve saber
-  // montá-la. Desde a v8 ela inclui o cabeçalho e a impressão digital da
-  // matrícula; fixar `'0'` aqui fazia a suíte inteira bater em 409 e, pior,
-  // um teste que recalcula a versão do jeito que o serviço calcula não
-  // consegue pegar erro nenhum na regra da versão. Então o caminho é o do
-  // produto: `GET` primeiro, `PUT` com o que ele devolveu.
-  const versaoAtual = async () =>
-    (await service.chamada('c1', 'u1', 'oc1')).versao;
-
-  const salvar = async (
-    itens: {
-      alunoId: string;
-      status: 'presente' | 'ausente' | 'justificado';
-    }[] = [
-      { alunoId: 'a1', status: 'presente' },
-      { alunoId: 'a2', status: 'presente' },
-    ],
-    versao?: string,
-  ) =>
-    service.salvarChamada(
-      'c1',
-      'u1',
-      'oc1',
-      versao ?? (await versaoAtual()),
-      itens,
-    );
+  /**
+   * SPEC-076/D7 — **o portão é exercitado pelo `nao_houve`.** O `PUT` da
+   * chamada saiu (D1); o portão (`travarEValidarOcorrencia`) continua, e é o
+   * mesmo para registrar e para desfazer "a aula não aconteceu". Os testes de
+   * janela, cancelamento e escopo, que passavam pelo `PUT`, passam por aqui.
+   */
+  const naoHouve = () => service.registrarNaoHouve('c1', 'oc1', 'u1', true);
 
   describe('INV-018 — quem escreve', () => {
     it('recusa usuário com papel de professor mas sem ficha na empresa', async () => {
       (prisma.professor.findFirst as jest.Mock).mockResolvedValue(null);
 
-      await expect(salvar()).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(naoHouve()).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     // O `professorId` entra no WHERE. Ocorrência de colega devolve 404, não
     // 403 — 403 confirmaria que ela existe, e o professor mapearia a grade
     // dos colegas por tentativa e erro.
-    it('ocorrência de turma de colega devolve 404', async () => {
+    it('ocorrência de turma de colega devolve 404 — no portão', async () => {
+      armarOcupacao(prisma, estado, ocupacao());
+      estado.professorIdDaTurma = 'colega';
+
+      await expect(naoHouve()).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('ocorrência de turma de colega devolve 404 — na leitura', async () => {
       armarOcupacao(prisma, estado, null);
 
-      await expect(salvar()).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.chamada('c1', 'u1', 'oc1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
       expect(prisma.ocupacaoQuadra.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -313,7 +311,7 @@ describe('PresencaService (SPEC-014)', () => {
         }),
       );
 
-      await expect(salvar()).rejects.toMatchObject({
+      await expect(naoHouve()).rejects.toMatchObject({
         response: { code: 'AULA_FUTURA' },
       });
     });
@@ -332,7 +330,9 @@ describe('PresencaService (SPEC-014)', () => {
         }),
       );
 
-      await expect(salvar()).resolves.toMatchObject({ total: 2 });
+      await expect(naoHouve()).resolves.toMatchObject({
+        completude: 'nao_houve',
+      });
     });
 
     it('a aula em andamento (começou, não terminou) é aceita', async () => {
@@ -349,13 +349,15 @@ describe('PresencaService (SPEC-014)', () => {
         }),
       );
 
-      await expect(salvar()).resolves.toMatchObject({ total: 2 });
+      await expect(naoHouve()).resolves.toMatchObject({
+        completude: 'nao_houve',
+      });
     });
 
     it('recusa aula futura (o toque na linha errada da grade)', async () => {
       armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(1) }));
 
-      await expect(salvar()).rejects.toMatchObject({
+      await expect(naoHouve()).rejects.toMatchObject({
         response: { code: 'AULA_FUTURA' },
       });
     });
@@ -363,15 +365,19 @@ describe('PresencaService (SPEC-014)', () => {
     it('aceita a aula de hoje', async () => {
       armarOcupacao(prisma, estado, ocupacao());
 
-      await expect(salvar()).resolves.toMatchObject({ total: 2 });
+      await expect(naoHouve()).resolves.toMatchObject({
+        completude: 'nao_houve',
+      });
     });
 
     it('aceita aula de 7 dias atrás e recusa a de 8', async () => {
       armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(-7) }));
-      await expect(salvar()).resolves.toMatchObject({ total: 2 });
+      await expect(naoHouve()).resolves.toMatchObject({
+        completude: 'nao_houve',
+      });
 
       armarOcupacao(prisma, estado, ocupacao({ data: diaRelativo(-8) }));
-      await expect(salvar()).rejects.toMatchObject({
+      await expect(naoHouve()).rejects.toMatchObject({
         response: { code: 'AULA_ANTIGA' },
       });
     });
@@ -381,97 +387,9 @@ describe('PresencaService (SPEC-014)', () => {
     it('recusa chamada em aula cancelada', async () => {
       armarOcupacao(prisma, estado, ocupacao({ statusPagamento: 'cancelado' }));
 
-      await expect(salvar()).rejects.toMatchObject({
+      await expect(naoHouve()).rejects.toMatchObject({
         response: { code: 'AULA_CANCELADA' },
       });
-    });
-  });
-
-  describe('AC-006 — só aluno alocado', () => {
-    beforeEach(() => {
-      armarOcupacao(prisma, estado, ocupacao());
-    });
-
-    // "nada é gravado": a chamada inteira falha. Gravar os válidos e
-    // recusar o resto deixaria a aula meio marcada, e o professor sem saber
-    // qual metade valeu.
-    it('recusa a chamada inteira e não grava nada', async () => {
-      await expect(
-        salvar([
-          { alunoId: 'a1', status: 'presente' },
-          { alunoId: 'intruso', status: 'presente' },
-        ]),
-      ).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(tx.presenca.upsert).not.toHaveBeenCalled();
-    });
-
-    it('recusa o mesmo aluno duas vezes no corpo', async () => {
-      await expect(
-        salvar([
-          { alunoId: 'a1', status: 'presente' },
-          { alunoId: 'a1', status: 'ausente' },
-        ]),
-      ).rejects.toMatchObject({ response: { code: 'ALUNO_REPETIDO' } });
-    });
-
-    // A decisão registrada na spec: alocação é o único requisito.
-    // `alunos.status` e `vinculo` não bloqueiam — quem assistiu segunda e
-    // foi desligado terça esteve lá na segunda.
-    it('não consulta status nem vínculo do aluno', async () => {
-      await salvar();
-
-      expect(prisma.turmaAluno.findMany).toHaveBeenCalledWith({
-        where: { turmaId: 't1' },
-        select: { alunoId: true },
-      });
-    });
-  });
-
-  describe('INV-019 — versão otimista', () => {
-    beforeEach(() => {
-      armarOcupacao(prisma, estado, ocupacao());
-    });
-
-    it('recusa com 409 quando a chamada mudou desde a leitura', async () => {
-      tx.presenca.findMany.mockResolvedValueOnce([
-        { updatedAt: new Date(1_700_000_000_000) },
-      ]);
-
-      await expect(salvar()).rejects.toBeInstanceOf(ConflictException);
-      expect(tx.presenca.upsert).not.toHaveBeenCalled();
-    });
-
-    // A conferência acontece **dentro** da transação. Fora dela sobraria a
-    // janela entre ler e gravar, que é a corrida que este controle existe
-    // para fechar.
-    it('confere a versão dentro da transação', async () => {
-      await salvar();
-
-      expect(prisma.$transaction).toHaveBeenCalled();
-      expect(tx.presenca.findMany).toHaveBeenCalled();
-    });
-
-    // SPEC-015/AC-000j — `versao` é OPACA. Este teste fixava
-    // `'1:1700000000000'` e quebrou quando a v8 acrescentou a impressão
-    // digital da matrícula. Fixar formato é transformar detalhe interno em
-    // contrato: o teste falhava por uma mudança pretendida, e não teria
-    // pegado nada se o formato ficasse igual e o VALOR errasse.
-    //
-    // O que importa é a propriedade, e é ela que está aqui: a versão
-    // devolvida **muda** depois da gravação. Sem isso, salvar duas vezes na
-    // mesma tela bateria em 409 contra a própria escrita anterior — que é a
-    // razão de o servidor devolver a versão nova.
-    it('devolve versão nova depois de gravar', async () => {
-      const antes = await versaoAtual();
-      tx.presenca.findMany
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ updatedAt: new Date(1_700_000_000_000) }]);
-
-      const res = (await salvar(undefined, antes)) as { versao: string };
-
-      expect(typeof res.versao).toBe('string');
-      expect(res.versao.length).toBeGreaterThan(0);
-      expect(res.versao).not.toBe(antes);
     });
   });
 
@@ -603,119 +521,9 @@ describe('PresencaService (SPEC-014)', () => {
       expect(res.alunos.every((a) => a.status === null)).toBe(true);
     });
   });
-  // SPEC-015/DEF-002 — a correção. O defeito não era um caso de borda: a
-  // UI mandava só os alunos em que o professor tocou, e o servidor gravava
-  // sem perguntar pelo resto.
-  describe('INV-026/INV-027 — chamada completa e o cabeçalho', () => {
-    beforeEach(() => {
-      armarOcupacao(prisma, estado, ocupacao());
-    });
-
-    it('recusa chamada que não cobre todos os esperados, e não grava nada', async () => {
-      await expect(
-        salvar([{ alunoId: 'a1', status: 'presente' }]),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          code: 'CHAMADA_INCOMPLETA',
-          alunoIds: ['a2'],
-        }),
-      });
-
-      expect(tx.presenca.upsert).not.toHaveBeenCalled();
-      expect(tx.chamada.upsert).not.toHaveBeenCalled();
-    });
-
-    // AC-000e: quem cai aqui na janela entre os dois deploys está com o
-    // bundle antigo e não tem como saber disso. A mensagem tem de dizer o
-    // que fazer, não só que deu errado.
-    it('a mensagem do 422 é acionável para cliente antigo', async () => {
-      await expect(
-        salvar([{ alunoId: 'a1', status: 'presente' }]),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          message: expect.stringContaining('Atualize o app'),
-        }),
-      });
-    });
-
-    it('grava o cabeçalho como completa, com os esperados, na mesma transação', async () => {
-      await salvar();
-
-      expect(tx.chamada.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { ocupacaoId: 'oc1' },
-          create: expect.objectContaining({
-            completude: 'completa',
-            esperados: 2,
-            origemTipo: 'TURMA',
-          }),
-          update: expect.objectContaining({
-            completude: 'completa',
-            esperados: 2,
-          }),
-        }),
-      );
-    });
-
-    // AC-000b — antes da correção isto era recusado: o aluno removido caía
-    // em ALUNO_FORA_DA_TURMA e a chamada dele ficava sem conserto. Os
-    // esperados são a **união** justamente por isso.
-    it('aceita corrigir a chamada de quem saiu da turma depois', async () => {
-      (prisma.turmaAluno.findMany as jest.Mock).mockResolvedValue([
-        { alunoId: 'a1', aluno: { usuario: { nome: 'Aluno 1' } } },
-      ]);
-      // `a2` saiu da turma, mas tem registro: o `GET` devolve a união, e é
-      // dela que sai a versão que o `PUT` usa.
-      const registradas = [
-        {
-          alunoId: 'a1',
-          status: 'presente',
-          updatedAt: new Date(1_700_000_000_000),
-          aluno: { usuario: { nome: 'Aluno 1' } },
-        },
-        {
-          alunoId: 'a2',
-          status: 'presente',
-          updatedAt: new Date(1_700_000_000_000),
-          aluno: { usuario: { nome: 'Saiu Depois' } },
-        },
-      ];
-      (prisma.presenca.findMany as jest.Mock).mockResolvedValue(registradas);
-      tx.presenca.findMany.mockResolvedValue(registradas);
-
-      await expect(
-        salvar([
-          { alunoId: 'a1', status: 'presente' },
-          { alunoId: 'a2', status: 'ausente' },
-        ]),
-      ).resolves.toMatchObject({ total: 2 });
-    });
-
-    // O par do teste acima: a união não é frouxidão — quem nunca esteve na
-    // turma nem foi registrado continua barrado.
-    it('continua recusando aluno que não é da turma nem tem registro', async () => {
-      await expect(
-        salvar([
-          { alunoId: 'a1', status: 'presente' },
-          { alunoId: 'a2', status: 'presente' },
-          { alunoId: 'estranho', status: 'presente' },
-        ]),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({ code: 'ALUNO_FORA_DA_TURMA' }),
-      });
-    });
-
-    // AC-000g — sem o cabeçalho na versão, promover `desconhecida` para
-    // `completa` não mudaria a versão, e duas abas se sobrescreveriam no
-    // caso exato que a INV-019 existe para pegar.
-    it('a versão enxerga mudança só no cabeçalho', async () => {
-      tx.chamada.findUnique.mockResolvedValue({
-        completude: 'desconhecida',
-        esperados: null,
-        updatedAt: new Date(1_700_000_000_000),
-      });
-
-      await expect(salvar()).rejects.toBeInstanceOf(ConflictException);
-    });
-  });
+  // SPEC-076/D7 — os blocos "AC-006 — só aluno alocado", "INV-019 — versão
+  // otimista" e "INV-026/INV-027 — chamada completa e o cabeçalho" saíram:
+  // provavam a gravação da chamada pelo `PUT`, que não existe mais (D1). O
+  // que os substitui é a AC-001 (a rota dá 404 e nada muda) e a AC-002 (o
+  // banco recusa presença com autor humano) — ver o `CLI_AUDIT.md`.
 });

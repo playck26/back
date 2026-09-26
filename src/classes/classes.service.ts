@@ -936,8 +936,9 @@ export class ClassesService {
     await this.assertTurmaDaEmpresa(companyId, turmaId);
     const agora = new Date();
 
-    // SPEC-015/AC-000i (v9, BLOQ-1 da 7ª rodada) — o par do lock que
-    // `PresencaService.salvarChamada` passou a pegar. Sem este lado, o de
+    // SPEC-015/AC-000i (v9, BLOQ-1 da 7ª rodada) — o par do lock que o
+    // portão da chamada (`PresencaService`, hoje só `registrarNaoHouve` e
+    // `desfazerNaoHouve` desde a SPEC-076) passou a pegar. Sem este lado, o de
     // lá não trava nada: quem não pede lock não respeita lock.
     //
     // A entrada (`allocateStudent`) já estava coberta sem saber — a FK
@@ -1554,7 +1555,8 @@ export class ClassesService {
    *
    * O que importa aqui é a consequência: este método **começa** por
    * `turmas FOR UPDATE` (D12) porque sem isso a afirmação de lá vira falsa e
-   * `salvarChamada` passa a poder gravar chamada numa aula recém-cancelada.
+   * o portão da chamada (o `nao_houve`, desde a SPEC-076) passa a poder
+   * gravar numa aula recém-cancelada.
    * O FIT-023 (AC-016) é o teste que prova isso.
    *
    * ### A ordem dentro da transação

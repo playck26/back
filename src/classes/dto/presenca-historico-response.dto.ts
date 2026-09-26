@@ -142,6 +142,21 @@ export class OcorrenciaNoHistoricoResponseDto {
   })
   origemInicial!: string | null;
 
+  /**
+   * SPEC-076/D3 — **até quando o `nao_houve` desta aula pode ser desfeito**:
+   * o limite do portão — fechamento automático + 7 dias se a chamada nasceu
+   * automática, o fim da janela retroativa da data da aula se não. Não nulo
+   * **só** quando há `nao_houve` gravado e o relógio do portão está dentro
+   * dele. Ausente ou `null`: a tela não oferece "Desfazer".
+   */
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: '2026-10-03T03:00:00.000Z',
+  })
+  desfazerNaoHouveAte!: string | null;
+
   @ApiProperty({ type: [AlunoNoHistoricoResponseDto] })
   alunos!: AlunoNoHistoricoResponseDto[];
 }

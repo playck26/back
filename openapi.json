@@ -4217,6 +4217,47 @@
         "tags": [
           "classes"
         ]
+      },
+      "delete": {
+        "operationId": "ClassesController_desfazerNaoHouve",
+        "parameters": [
+          {
+            "name": "turmaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NaoHouveDesfeitoResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "classes"
+        ]
       }
     },
     "/api/v1/classes": {
@@ -5255,49 +5296,6 @@
         "tags": [
           "me"
         ]
-      },
-      "put": {
-        "operationId": "MeTeacherAttendanceController_salvar",
-        "parameters": [
-          {
-            "name": "ocupacaoId",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SalvarChamadaDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChamadaSalvaResponseDto"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "me"
-        ]
       }
     },
     "/api/v1/me/teacher/attendance/{ocupacaoId}/nao-houve": {
@@ -5320,6 +5318,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChamadaNaoHouveResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "me"
+        ]
+      },
+      "delete": {
+        "operationId": "MeTeacherAttendanceController_desfazerNaoHouve",
+        "parameters": [
+          {
+            "name": "ocupacaoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NaoHouveDesfeitoResponseDto"
                 }
               }
             }
@@ -10790,6 +10821,12 @@
             ],
             "nullable": true
           },
+          "desfazerNaoHouveAte": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2026-10-03T03:00:00.000Z"
+          },
           "alunos": {
             "type": "array",
             "items": {
@@ -10808,6 +10845,7 @@
           "registradoPor",
           "origem",
           "origemInicial",
+          "desfazerNaoHouveAte",
           "alunos"
         ]
       },
@@ -10826,6 +10864,34 @@
         "required": [
           "ocupacaoId",
           "completude"
+        ]
+      },
+      "NaoHouveDesfeitoResponseDto": {
+        "type": "object",
+        "properties": {
+          "ocupacaoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "futura",
+              "em_andamento",
+              "pendente",
+              "feita",
+              "legada",
+              "nao_houve",
+              "sem_participantes",
+              "sem_registro",
+              "cancelada"
+            ],
+            "description": "`feita` (refechada, com o instante de antes), `sem_participantes`, `pendente` (pós-corte, o worker fecha) ou `sem_registro` (anterior ao corte) — ou o estado de antes, quando não havia `nao_houve`."
+          }
+        },
+        "required": [
+          "ocupacaoId",
+          "estado"
         ]
       },
       "TurmaEncontroResponseDto": {
@@ -11967,7 +12033,8 @@
             "example": 8
           },
           "podeLancar": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Dentro do prazo de registrar que a aula não aconteceu. Ninguém lança presença à mão (SPEC-076)."
           },
           "estado": {
             "type": "string",
@@ -12126,10 +12193,18 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "example": "2026-09-25T17:00:00.000Z"
+            "example": "2026-09-25T17:00:00.000Z",
+            "description": "Prazo da exceção do `nao_houve` sobre chamada automática: o fechamento automático + 7 dias. Ninguém corrige presença (SPEC-076)."
+          },
+          "desfazerNaoHouveAte": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2026-10-03T03:00:00.000Z"
           },
           "versao": {
-            "type": "string"
+            "type": "string",
+            "description": "Sem uso de escrita desde a SPEC-076 (o `PUT` da chamada saiu)."
           },
           "alunos": {
             "type": "array",
@@ -12149,69 +12224,9 @@
           "origem",
           "origemInicial",
           "corrigivelAte",
+          "desfazerNaoHouveAte",
           "versao",
           "alunos"
-        ]
-      },
-      "ItemChamadaDto": {
-        "type": "object",
-        "properties": {
-          "alunoId": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "presente",
-              "ausente",
-              "justificado"
-            ]
-          }
-        },
-        "required": [
-          "alunoId",
-          "status"
-        ]
-      },
-      "SalvarChamadaDto": {
-        "type": "object",
-        "properties": {
-          "versao": {
-            "type": "string",
-            "description": "Opaca: devolva exatamente o que o GET entregou, sem interpretar. O formato já mudou duas vezes (ganhou o cabecalho e a impressao digital da matricula) e pode mudar de novo — quem fizer parse quebra sem aviso. Serve so para comparacao de igualdade.",
-            "example": "<opaco — devolva o valor recebido no GET>"
-          },
-          "itens": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ItemChamadaDto"
-            }
-          }
-        },
-        "required": [
-          "versao",
-          "itens"
-        ]
-      },
-      "ChamadaSalvaResponseDto": {
-        "type": "object",
-        "properties": {
-          "ocupacaoId": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "versao": {
-            "type": "string"
-          },
-          "total": {
-            "type": "number",
-            "example": 8
-          }
-        },
-        "required": [
-          "ocupacaoId",
-          "versao",
-          "total"
         ]
       },
       "DiaDaAgendaDoProfessorDto": {

@@ -276,6 +276,8 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'legada',
       'nao_houve',
       'sem_participantes',
+      // SPEC-076/D5 — do mesmo resolvedor.
+      'sem_registro',
     ],
   ],
   // SPEC-030 — a lista da turma (professor) e o historico (gestor) publicam
@@ -294,6 +296,8 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'nao_houve',
       // SPEC-057/TASK-001/D4 — do mesmo resolvedor.
       'sem_participantes',
+      // SPEC-076/D5 — do mesmo resolvedor.
+      'sem_registro',
       'cancelada',
     ],
   ],
@@ -308,6 +312,26 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'nao_houve',
       // SPEC-057/TASK-001/D4 — do mesmo resolvedor.
       'sem_participantes',
+      // SPEC-076/D5 — do mesmo resolvedor.
+      'sem_registro',
+      'cancelada',
+    ],
+  ],
+
+  // SPEC-076/D3 — a resposta do "Desfazer" devolve o estado da ocorrência
+  // depois de desfeito, pelo MESMO resolvedor; a lista é a da turma porque
+  // o desfazer não esconde cancelada (ela responde `cancelada`).
+  [
+    'NaoHouveDesfeitoResponseDto.estado',
+    [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+      'sem_registro',
       'cancelada',
     ],
   ],

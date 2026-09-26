@@ -47,6 +47,7 @@ import {
   reiniciarSequencias,
   runtime,
   visita,
+  ratificarNaFixture,
 } from './presenca-automatica-fixture';
 import { AgendaDoProfessorService } from '../../src/classes/agenda-do-professor.service';
 import { PresencaService } from '../../src/classes/presenca.service';
@@ -94,9 +95,6 @@ async function automaticaDeOntem() {
   return { a1, a2, oc };
 }
 
-const todosPresentes = (ids: string[]) =>
-  ids.map((alunoId) => ({ alunoId, status: 'presente' as const }));
-
 // ======================================================================
 describe('AC-005 — a exceção estreita do `nao_houve` (D5)', () => {
   it.each([
@@ -123,15 +121,9 @@ describe('AC-005 — a exceção estreita do `nao_houve` (D5)', () => {
   );
 
   it('automática RATIFICADA: 422 CHAMADA_COM_PRESENCA, nada apagado', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(
-      EMPRESA,
-      UPROF,
-      oc,
-      lida.versao,
-      todosPresentes([a1.alunoId, a2.alunoId]),
-    );
+    const { oc } = await automaticaDeOntem();
+    // SPEC-076/D7 — ratificada pela fixture (o `PUT` que ratificava saiu).
+    await ratificarNaFixture(oc);
 
     expect(
       await codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true)),
@@ -150,7 +142,8 @@ describe('AC-005 — a exceção estreita do `nao_houve` (D5)', () => {
     ).toBe('CHAMADA_COM_PRESENCA');
   });
 
-  it('fechada há mais de 7 dias: nao_houve E PUT recebem 422 AULA_ANTIGA — mesmo com a aula de ontem', async () => {
+  // SPEC-076/D7 — era "nao_houve E PUT"; o `PUT` saiu, fica o `nao_houve`.
+  it('fechada há mais de 7 dias: nao_houve recebe 422 AULA_ANTIGA — mesmo com a aula de ontem', async () => {
     const a1 = await aluno('Ana');
     await matricular(TURMA_A, a1.alunoId);
     const oc = await aula(TURMA_A, -1);
@@ -161,44 +154,9 @@ describe('AC-005 — a exceção estreita do `nao_houve` (D5)', () => {
     expect(
       await codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true)),
     ).toBe('AULA_ANTIGA');
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    expect(
-      await codigoDe(
-        presenca().salvarChamada(
-          EMPRESA,
-          UPROF,
-          oc,
-          lida.versao,
-          todosPresentes([a1.alunoId]),
-        ),
-      ),
-    ).toBe('AULA_ANTIGA');
   });
 
-  it('ratificada continua corrigível pelo PUT até 7 dias do fechamento, mesmo com a aula antiga', async () => {
-    const a1 = await aluno('Ana');
-    await matricular(TURMA_A, a1.alunoId);
-    const oc = await aula(TURMA_A, -9);
-    // Nasceu automática há 6 dias e já foi ratificada.
-    await chamadaCrua(oc, 'automatica', [[a1.alunoId, 'presente']], {
-      fechadaSql: "clock_timestamp() - interval '6 days'",
-    });
-    await db.$executeRawUnsafe(
-      `UPDATE chamadas SET origem = 'professor', registrada_por = '${UPROF}' WHERE ocupacao_id = '${oc}'`,
-    );
-    await db.$executeRawUnsafe(
-      `UPDATE presencas SET registrado_por = '${UPROF}' WHERE ocupacao_id = '${oc}'`,
-    );
-
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    expect(
-      await codigoDe(
-        presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
-          { alunoId: a1.alunoId, status: 'ausente' },
-        ]),
-      ),
-    ).toBe('ok');
-  });
+  // SPEC-076/D7 — APAGADO: "ratificada continua corrigível pelo PUT…". A correção pelo `PUT` saiu (D1); substituta: AC-001.
 
   it('aula cancelada: 422 AULA_CANCELADA, e cancelar não apagou presença (INV-025)', async () => {
     const { oc } = await automaticaDeOntem();
@@ -214,85 +172,20 @@ describe('AC-005 — a exceção estreita do `nao_houve` (D5)', () => {
     expect(await linhasDe(oc)).toHaveLength(2);
   });
 
-  it('corrida, ordem 1: revisão vence → exceção recebe 422', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
+  // SPEC-076/D7 — APAGADO: "corrida, ordem 1: revisão vence…". A "revisão" era o `PUT` (D1); com um escritor só, não há corrida D5. Substituta: AC-001.
 
-    await presenca().salvarChamada(
-      EMPRESA,
-      UPROF,
-      oc,
-      lida.versao,
-      todosPresentes([a1.alunoId, a2.alunoId]),
-    );
-    expect(
-      await codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UGESTOR, false)),
-    ).toBe('CHAMADA_COM_PRESENCA');
-  });
+  // SPEC-076/D7 — APAGADO: "corrida, ordem 2: exceção vence…". Idem; substituta: AC-001.
 
-  it('corrida, ordem 2: exceção vence → PUT com a versão velha recebe 409', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-
-    await presenca().registrarNaoHouve(EMPRESA, oc, UGESTOR, false);
-    expect(
-      await codigoDe(
-        presenca().salvarChamada(
-          EMPRESA,
-          UPROF,
-          oc,
-          lida.versao,
-          todosPresentes([a1.alunoId, a2.alunoId]),
-        ),
-      ),
-    ).toBe('CHAMADA_DESATUALIZADA');
-  });
-
-  it('corrida simultânea: exatamente um dos dois desfechos da D5', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-
-    const [put, excecao] = await Promise.all([
-      codigoDe(
-        presenca().salvarChamada(
-          EMPRESA,
-          UPROF,
-          oc,
-          lida.versao,
-          todosPresentes([a1.alunoId, a2.alunoId]),
-        ),
-      ),
-      codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UGESTOR, false)),
-    ]);
-
-    expect([
-      ['ok', 'CHAMADA_COM_PRESENCA'],
-      ['CHAMADA_DESATUALIZADA', 'ok'],
-    ]).toContainEqual([put, excecao]);
-  });
+  // SPEC-076/D7 — APAGADO: "corrida simultânea: exatamente um dos dois desfechos…". Idem; substituta: AC-001.
 });
 
 // ======================================================================
 describe('AC-006 — ratificação e proveniência', () => {
-  it('o gestor não ganha PUT de chamada', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
+  // SPEC-076/D7 — APAGADO: "o gestor não ganha PUT de chamada…". Ninguém mais tem `PUT` de chamada (D1, decisão 9); substitutas: AC-001 e AC-002.
 
-    expect(
-      await codigoDe(
-        presenca().salvarChamada(
-          EMPRESA,
-          UGESTOR,
-          oc,
-          lida.versao,
-          todosPresentes([a1.alunoId, a2.alunoId]),
-        ),
-      ),
-    ).toBe('ForbiddenException');
-    expect(await cabecalhoDe(oc)).toMatchObject({ origem: 'automatica' });
-  });
-
-  it('cabeçalho do binário antigo nasce legada_humana e continua assim como origem inicial depois do PUT', async () => {
+  // SPEC-076/D7 — era "…e continua assim depois do PUT"; o `PUT` saiu. Fica
+  // a origem com que o legado nasce, que é o que a leitura depende.
+  it('cabeçalho do binário antigo nasce legada_humana', async () => {
     const a1 = await aluno('Ana');
     await matricular(TURMA_A, a1.alunoId);
     const oc = await aula(TURMA_A, -1);
@@ -301,32 +194,22 @@ describe('AC-006 — ratificação e proveniência', () => {
       origem: 'legada_humana',
       origemInicial: 'legada_humana',
     });
-
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
-      { alunoId: a1.alunoId, status: 'ausente' },
-    ]);
-
-    expect(await cabecalhoDe(oc)).toMatchObject({
-      origem: 'professor',
-      origemInicial: 'legada_humana',
-      fechada: null,
-    });
   });
 
-  it('chamada humana nova nasce professor/professor e nunca vira automática pelo serviço', async () => {
+  // SPEC-076/D7 — convertido: a única chamada humana NOVA que existe agora é
+  // o "a aula não aconteceu". Ela nasce professor/professor, e o worker não a
+  // transforma em automática.
+  it('chamada humana nova (`nao_houve`) nasce professor/professor e nunca vira automática pelo serviço', async () => {
     const a1 = await aluno('Ana');
     await matricular(TURMA_A, a1.alunoId);
     const oc = await aula(TURMA_A, -1);
     await ligarPresencaAutomatica(db, diasAtras(3));
 
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
-      { alunoId: a1.alunoId, status: 'presente' },
-    ]);
+    await presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true);
     await worker().executarTick();
 
     expect(await cabecalhoDe(oc)).toMatchObject({
+      completude: 'nao_houve',
       origem: 'professor',
       origemInicial: 'professor',
       registradaPor: UPROF,
@@ -337,15 +220,13 @@ describe('AC-006 — ratificação e proveniência', () => {
 
 // ======================================================================
 describe('AC-008 — `justificado` legado', () => {
-  it('o cliente antigo ainda grava `justificado`, e ele volta na leitura', async () => {
+  // SPEC-076/D7 — convertido: ninguém grava mais (D1); o `justificado`
+  // LEGADO continua nas linhas antigas e na leitura.
+  it('o `justificado` legado volta na leitura', async () => {
     const a1 = await aluno('Ana');
     await matricular(TURMA_A, a1.alunoId);
     const oc = await aula(TURMA_A, -1);
-
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
-      { alunoId: a1.alunoId, status: 'justificado' },
-    ]);
+    await chamadaCrua(oc, 'professor', [[a1.alunoId, 'justificado']]);
 
     const relida = await presenca().chamada(EMPRESA, UPROF, oc);
     expect(relida.alunos[0].status).toBe('justificado');
@@ -475,20 +356,18 @@ describe('AC-003 — `sem_participantes` nos cinco consumidores', () => {
 // ======================================================================
 describe('DEF-035 — visitante não é ex-aluno, no histórico do gestor', () => {
   it('quem repôs sai marcado como reposição; quem saiu da turma, não', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
+    const a1 = await aluno('Ana');
+    const a2 = await aluno('Bruno');
+    await matricular(TURMA_A, a1.alunoId);
+    await matricular(TURMA_A, a2.alunoId);
+    const oc = await aula(TURMA_A, -1);
     const visitante = await aluno('Visitante');
     await matricular(TURMA_ORIGEM, visitante.alunoId);
     await visita(visitante.alunoId, oc);
-    // A chamada automática já existe: refazê-la com o visitante dentro é o
-    // caminho do produto — o professor ratifica a lista inteira.
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(
-      EMPRESA,
-      UPROF,
-      oc,
-      lida.versao,
-      todosPresentes([a1.alunoId, a2.alunoId, visitante.alunoId]),
-    );
+    // SPEC-076/D7 — o visitante entra ANTES do fechamento, e o worker o põe na
+    // chamada (M ∪ V). Antes ele entrava pela ratificação do `PUT`, que saiu.
+    await ligarPresencaAutomatica(db, diasAtras(3));
+    await worker().executarTick();
     // E a2 sai da turma depois da aula: ele É um ex-aluno com registro.
     await db.$executeRawUnsafe(
       `DELETE FROM turma_alunos WHERE turma_id = '${TURMA_A}' AND aluno_id = '${a2.alunoId}'`,
@@ -510,18 +389,18 @@ describe('DEF-035 — visitante não é ex-aluno, no histórico do gestor', () =
   });
 
   it('no relatório de frequência da turma, o visitante vem com `visitante: true`', async () => {
-    const { a1, a2, oc } = await automaticaDeOntem();
+    const a1 = await aluno('Ana');
+    const a2 = await aluno('Bruno');
+    await matricular(TURMA_A, a1.alunoId);
+    await matricular(TURMA_A, a2.alunoId);
+    const oc = await aula(TURMA_A, -1);
     const visitante = await aluno('Visitante');
     await matricular(TURMA_ORIGEM, visitante.alunoId);
     await visita(visitante.alunoId, oc);
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(
-      EMPRESA,
-      UPROF,
-      oc,
-      lida.versao,
-      todosPresentes([a1.alunoId, a2.alunoId, visitante.alunoId]),
-    );
+    // SPEC-076/D7 — o visitante entra ANTES do fechamento, e o worker o põe na
+    // chamada (M ∪ V). Antes ele entrava pela ratificação do `PUT`, que saiu.
+    await ligarPresencaAutomatica(db, diasAtras(3));
+    await worker().executarTick();
 
     const turma = await frequencia().daTurma(EMPRESA, TURMA_A, 30);
     const linha = turma.alunos.find((x) => x.alunoId === visitante.alunoId);
@@ -667,10 +546,8 @@ describe('AC-010 — os cinco datasets do veredito v2 (A5/P06)', () => {
     const ratificada = await aula(TURMA_A, -1);
     await ligarPresencaAutomatica(db, diasAtras(3));
     await worker().executarTick();
-    const lida = await presenca().chamada(EMPRESA, UPROF, ratificada);
-    await presenca().salvarChamada(EMPRESA, UPROF, ratificada, lida.versao, [
-      { alunoId: a1.alunoId, status: 'presente' },
-    ]);
+    // SPEC-076/D7 — ratificada pela fixture (o `PUT` que ratificava saiu).
+    await ratificarNaFixture(ratificada);
 
     const turma = await frequencia().daTurma(EMPRESA, TURMA_A, 30);
 

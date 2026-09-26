@@ -119,7 +119,16 @@ export class OcorrenciaDaTurmaResponseDto {
   @ApiProperty({ type: Number, example: 8 })
   totalAlunos!: number;
 
-  @ApiProperty({ type: Boolean })
+  /**
+   * SPEC-076 — continua no contrato (LIM-076d), com outro sentido: ninguém
+   * lança presença à mão. É **"dentro do prazo de registrar que a aula não
+   * aconteceu"**.
+   */
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Dentro do prazo de registrar que a aula não aconteceu. Ninguém lança presença à mão (SPEC-076).',
+  })
   podeLancar!: boolean;
 
   /**
@@ -306,21 +315,41 @@ export class ChamadaResponseDto {
     format: 'date-time',
     nullable: true,
     example: '2026-09-25T17:00:00.000Z',
+    description:
+      'Prazo da exceção do `nao_houve` sobre chamada automática: o fechamento automático + 7 dias. Ninguém corrige presença (SPEC-076).',
   })
   corrigivelAte!: string | null;
 
   /**
-   * SPEC-014 — o token de concorrência otimista. Volta no `PUT`, e duas abas
-   * abertas na mesma chamada não sobrescrevem uma à outra em silêncio.
+   * SPEC-076/D3 — **até quando o `nao_houve` desta aula pode ser desfeito**:
+   * o limite do portão — fechamento automático + 7 dias se a chamada nasceu
+   * automática, o fim da janela retroativa da data da aula se não. Não nulo
+   * **só** quando há `nao_houve` gravado e o relógio do portão está dentro
+   * dele. Ausente ou `null`: a tela não oferece "Desfazer".
    */
-  @ApiProperty({ type: String })
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: '2026-10-03T03:00:00.000Z',
+  })
+  desfazerNaoHouveAte!: string | null;
+
+  /**
+   * SPEC-014 — era o token de concorrência otimista do `PUT` da chamada, que
+   * saiu (SPEC-076/D1). Continua no contrato (LIM-076d), inerte.
+   */
+  @ApiProperty({
+    type: String,
+    description:
+      'Sem uso de escrita desde a SPEC-076 (o `PUT` da chamada saiu).',
+  })
   versao!: string;
 
   @ApiProperty({ type: [LinhaDaChamadaResponseDto] })
   alunos!: LinhaDaChamadaResponseDto[];
 }
 
-/** O que o `PUT` da chamada devolve: a versão nova, para a tela continuar. */
 /**
  * SPEC-030 — a resposta de "não houve aula".
  *
@@ -341,15 +370,30 @@ export class ChamadaNaoHouveResponseDto {
   completude!: string;
 }
 
-export class ChamadaSalvaResponseDto {
+/**
+ * SPEC-076/D3 — a resposta do "Desfazer" do `nao_houve`: **sempre `200`, com o
+ * estado atual** — inclusive quando não havia nada a desfazer (idempotente).
+ */
+export class NaoHouveDesfeitoResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   ocupacaoId!: string;
 
-  @ApiProperty({ type: String })
-  versao!: string;
-
-  @ApiProperty({ type: Number, example: 8 })
-  total!: number;
+  @ApiProperty({
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+      'sem_registro',
+      'cancelada',
+    ],
+    description:
+      '`feita` (refechada, com o instante de antes), `sem_participantes`, `pendente` (pós-corte, o worker fecha) ou `sem_registro` (anterior ao corte) — ou o estado de antes, quando não havia `nao_houve`.',
+  })
+  estado!: string;
 }
 
 /**

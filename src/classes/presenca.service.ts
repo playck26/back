@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -14,20 +13,30 @@ import type {
 } from '@prisma/client';
 import {
   ChamadaResponseDto,
-  ChamadaSalvaResponseDto,
+  NaoHouveDesfeitoResponseDto,
   OcorrenciaDaTurmaResponseDto,
 } from './dto/me-response.dto';
 import { OcorrenciaNoHistoricoResponseDto } from './dto/presenca-historico-response.dto';
 import {
   chamadaJaRegistrada,
   resolverEstadoDaChamada,
+  type EstadoDaChamada,
 } from './estado-da-chamada';
 import {
   aulaJaComecou,
   formatDateOnly,
   formatTimeOnly,
   hojeNoFusoDoClube,
+  instanteNoFusoDoClube,
 } from '../courts/date-time.util';
+import {
+  dentroDaJanelaAutomatica,
+  RelogioDaPresenca,
+} from './relogio-da-presenca';
+import {
+  gravarPresencasDoFechamento,
+  participantesDaOcorrencia,
+} from '../presenca-automatica/fechamento-automatico.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CorteDaPresenca,
@@ -52,11 +61,13 @@ export type OrigemHumana = 'professor' | 'gestor';
 export interface CabecalhoSobLock {
   origem: string;
   origemInicial: string;
+  completude: CompletudeChamada;
   fechadaAutomaticamenteEm: Date | null;
   /**
-   * `fechada_automaticamente_em + 7 dias > clock_timestamp()`, calculado
-   * **pelo banco** (INV-143): o relógio do processo não decide o prazo.
-   * `null` quando a chamada não nasceu automática.
+   * `fechada_automaticamente_em + 7 dias > agora`. **SPEC-076/D11:** o `agora`
+   * é o que o portão leu uma vez, do `RelogioDaPresenca` — em produção, o
+   * relógio do banco; era `clock_timestamp()` no próprio SQL, um terceiro
+   * relógio no mesmo portão. `null` quando a chamada não nasceu automática.
    */
   dentroDaJanelaAutomatica: boolean | null;
 }
@@ -91,11 +102,6 @@ export interface LinhaDaChamada {
   faltaAvisada: boolean;
 }
 
-export interface ItemChamada {
-  alunoId: string;
-  status: StatusPresenca;
-}
-
 /**
  * SPEC-014 — chamada por ocorrência de aula.
  *
@@ -112,6 +118,8 @@ export class PresencaService {
     private readonly corteDaPresenca: CorteDaPresenca = new CorteDaPresenca(
       prisma,
     ),
+    // SPEC-076/D11 — o relógio único do portão. O db-spec o substitui.
+    private readonly relogio: RelogioDaPresenca = new RelogioDaPresenca(),
   ) {}
 
   /**
@@ -229,8 +237,9 @@ export class PresencaService {
    * SPEC-030:TASK-004 — **o portão da escrita de chamada, num lugar só.**
    *
    * Travar a turma, reler sob o lock e recusar o que não pode receber
-   * chamada. Era o começo de `salvarChamada`; virou método próprio quando
-   * `registrarNaoHouve` passou a precisar exatamente das mesmas guardas.
+   * chamada. Era o começo do `salvarChamada` (que a SPEC-076 removeu); virou
+   * método próprio quando `registrarNaoHouve` passou a precisar exatamente
+   * das mesmas guardas.
    *
    * **Copiar este bloco teria sido o pior desfecho possível da SPEC-030.**
    * Ele carrega o raciocínio do BLOQUEADOR da 9ª rodada de validação
@@ -277,6 +286,8 @@ export class PresencaService {
     statusPagamento: string;
     professorId: string | null;
     cabecalho: CabecalhoSobLock | null;
+    /** SPEC-076/D11 — o instante que decidiu tudo abaixo, lido uma vez. */
+    agora: Date;
   }> {
     // (0a) descobrir a turma da ocorrência e TRAVAR a linha.
     // `origem_turma_id` é gravado na criação e nunca alterado — os três
@@ -384,24 +395,36 @@ export class PresencaService {
     }
 
     // SPEC-057/TASK-001/D5 — o cabeçalho, relido **com o lock na mão** pela
-    // mesma razão da releitura acima. A origem inicial decide qual relógio
-    // guarda a janela, e o prazo da automática é calculado pelo banco.
-    const [cabecalho] = await tx.$queryRaw<CabecalhoSobLock[]>`
+    // mesma razão da releitura acima. A origem inicial decide qual janela
+    // vale.
+    const [lido] = await tx.$queryRaw<
+      Omit<CabecalhoSobLock, 'dentroDaJanelaAutomatica'>[]
+    >`
       SELECT c.origem                      AS "origem",
              c.origem_inicial              AS "origemInicial",
-             c.fechada_automaticamente_em  AS "fechadaAutomaticamenteEm",
-             (c.fechada_automaticamente_em
-                + make_interval(days => ${JANELA_DA_AUTOMATICA_DIAS}::int)
-                > clock_timestamp())       AS "dentroDaJanelaAutomatica"
+             c.completude                  AS "completude",
+             c.fechada_automaticamente_em  AS "fechadaAutomaticamenteEm"
         FROM chamadas c
        WHERE c.ocupacao_id = ${ocupacaoId}::uuid
     `;
+
+    // SPEC-076/D11 — **um relógio só**, lido uma vez, depois da raiz. Tudo
+    // o que o portão decide sobre tempo sai deste instante: a aula já
+    // começou, a janela retroativa e a da automática. Em produção é o
+    // relógio do banco; o db-spec injeta um controlado (AC-009 iii).
+    const agora = await this.relogio.agora(tx);
+    const cabecalho: CabecalhoSobLock | undefined = lido && {
+      ...lido,
+      dentroDaJanelaAutomatica: lido.fechadaAutomaticamenteEm
+        ? dentroDaJanelaAutomatica(lido.fechadaAutomaticamenteEm, agora)
+        : null,
+    };
 
     // INV-017. O limite futuro impede a chamada de virar previsão — o caso
     // real é banal: o professor abre a grade da semana e toca na linha
     // errada. O limite passado existe porque a turma de hoje deixa de ser um
     // retrato confiável do que era há muito tempo (LIM-003).
-    const hoje = this.hoje().getTime();
+    const hoje = hojeNoFusoDoClube(agora).getTime();
     const dia = ocupacao.data.getTime();
     // SPEC-027 — **o portão passou a olhar a HORA, não só o dia.**
     //
@@ -409,7 +432,7 @@ export class PresencaService {
     // 8h da manhã. **Isto é o portão de verdade, e a tela não substitui:**
     // esconder o botão resolve o engano honesto; só o servidor resolve o
     // pedido montado à mão.
-    if (!aulaJaComecou(ocupacao.data, ocupacao.horaInicio)) {
+    if (!aulaJaComecou(ocupacao.data, ocupacao.horaInicio, agora)) {
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'AULA_FUTURA',
@@ -438,7 +461,7 @@ export class PresencaService {
           message: `A chamada fechada automaticamente pode ser corrigida em até ${JANELA_DA_AUTOMATICA_DIAS} dias após o fechamento.`,
         });
       }
-      return { ...ocupacao, cabecalho };
+      return { ...ocupacao, cabecalho, agora };
     }
     if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
       throw new UnprocessableEntityException({
@@ -448,7 +471,7 @@ export class PresencaService {
       });
     }
 
-    return { ...ocupacao, cabecalho: cabecalho ?? null };
+    return { ...ocupacao, cabecalho: cabecalho ?? null, agora };
   }
 
   /**
@@ -644,6 +667,8 @@ export class PresencaService {
       ]);
     const avisaram = new Set(faltas.map((f) => f.alunoId));
     const repondo = new Set(reposicoes.map((r) => r.alunoId));
+    // SPEC-076/D11 — o mesmo provedor do portão, uma leitura por pedido.
+    const agora = await this.relogio.agora(this.prisma);
 
     // SPEC-015/AC-000c — o que devolver depende da **completude declarada
     // pelo cabeçalho**, não de haver ou não linhas em `presencas`.
@@ -748,7 +773,12 @@ export class PresencaService {
         cabecalho.fechadaAutomaticamenteEm
           ? prazoDaAutomatica(cabecalho.fechadaAutomaticamenteEm).toISOString()
           : null,
-      // SPEC-057/TASK-001/D4 — `M ∪ V ∪ S`, o mesmo conjunto do `PUT`.
+      desfazerNaoHouveAte: limiteDoDesfazerNaoHouve(
+        cabecalho,
+        ocupacao.data,
+        agora,
+      ),
+      // SPEC-057/TASK-001/D4 — `M ∪ V ∪ S`. SPEC-076: sem uso de escrita.
       versao: this.versaoDe(presencas, cabecalho, [
         ...matriculados,
         ...reposicoes,
@@ -804,10 +834,9 @@ export class PresencaService {
       : undefined;
 
     return this.prisma.$transaction(async (tx) => {
-      // As mesmas guardas de `salvarChamada`, e é de propósito: aula
-      // cancelada (`AULA_CANCELADA`), aula futura (`AULA_FUTURA`) e janela
-      // retroativa (`AULA_ANTIGA`) valem igual. Quem não pode lançar chamada
-      // também não pode declarar que não houve aula.
+      // O portão comum, e é de propósito: aula cancelada (`AULA_CANCELADA`),
+      // aula futura (`AULA_FUTURA`) e janela (`AULA_ANTIGA`) valem igual para
+      // registrar e para desfazer (SPEC-076/D3).
       // A URL precisa dizer a verdade sobre o que altera, e a conferência
       // roda DENTRO do portão, no grupo dos 404 — ver o comentário lá.
       const { cabecalho: atual } = await this.travarEValidarOcorrencia(
@@ -888,284 +917,126 @@ export class PresencaService {
     });
   }
 
-  async salvarChamada(
+  /**
+   * SPEC-076/D3 — **desfazer "a aula não aconteceu"** (decisões 3 e 5).
+   *
+   * Era possível só por um `PUT` da chamada por cima (SPEC-030/D4), e esse
+   * `PUT` saiu (D1). Agora é rota própria, para o professor e para o gestor,
+   * pelo **mesmo portão** de registrar — mesma janela, mesmos `404`/`422`.
+   *
+   * **Só escreve quando há `nao_houve` gravado** (INV-076c): lido sob a raiz,
+   * no portão. Sem ele, devolve o estado atual e não toca em nada — o retry
+   * depois de um refechamento não apaga a chamada nova (AC-012).
+   *
+   * - **nasceu sobre chamada automática** (há `fechada_automaticamente_em`):
+   *   a aula é **refechada na hora**, pela mesma função do worker, com **o
+   *   mesmo instante de fechamento** — se desfazer deixasse o worker refechar,
+   *   o instante seria novo e os sete dias recomeçariam (INV-076f). `M ∪ V`
+   *   vazio → o cabeçalho sai e a aula vira `sem_participantes`;
+   * - **nasceu humano**: o cabeçalho sai. Pós-corte, o worker a fecha no
+   *   próximo tick (o primeiro fechamento dela); anterior ao corte, vira
+   *   `sem_registro`.
+   */
+  async desfazerNaoHouve(
     companyId: string,
-    usuarioId: string,
     ocupacaoId: string,
-    versao: string,
-    itens: ItemChamada[],
-  ): Promise<ChamadaSalvaResponseDto> {
-    // SPEC-015/AC-000i (v10, BLOQUEADOR da 8ª rodada) — só isto fica fora
-    // da transação, e fica porque é de OUTRO agregado: "este usuário é
-    // professor desta empresa?" se resolve em `professores`, que o lock da
-    // turma não cobre e não deveria cobrir.
-    //
-    // Tudo o que depende da TURMA — quem é o dono dela e qual é o estado da
-    // ocorrência — mudou de lugar na v10: desceu para dentro da transação,
-    // depois do lock. A v9 lia isso aqui em cima e chamava o `FOR UPDATE`
-    // de "passo 0" sem ser: entre autorizar e travar cabia um
-    // `ClassesService.update` trocando o professor, e o `PUT` gravava sem
-    // revalidar. Provado em `bloq8-autorizacao.ts`.
-    const professor = await this.professorDoUsuario(companyId, usuarioId);
+    usuarioId: string,
+    comoProfessor: boolean,
+    turmaIdDaRota?: string,
+  ): Promise<NaoHouveDesfeitoResponseDto> {
+    const professorIdScope = comoProfessor
+      ? (await this.professorDoUsuario(companyId, usuarioId)).id
+      : undefined;
 
-    const idsRecebidos = itens.map((i) => i.alunoId);
-    if (new Set(idsRecebidos).size !== idsRecebidos.length) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'ALUNO_REPETIDO',
-        message: 'O mesmo aluno apareceu duas vezes na chamada.',
-      });
-    }
-
-    // AC-006 — alocação é o **único** requisito. `alunos.status` e
-    // `vinculo` não bloqueiam, e isso é decisão registrada na spec:
-    // presença registra o que aconteceu, e quem assistiu segunda e foi
-    // desligado terça esteve lá na segunda.
-    //
-    // SPEC-015/INV-026 — os **esperados** são a união de "matriculados
-    // hoje" com "já registrados nesta ocorrência". A união, e não só os
-    // matriculados, porque corrigir a chamada de quem saiu da turma depois
-    // precisa continuar possível (AC-004 da SPEC-014) — antes disso ele
-    // caía no 422 abaixo e a correção era recusada.
-    // SPEC-015/INV-028 (BLOQ-2 da 6ª validação cruzada) — nada de regra de
-    // domínio sobre estado compartilhado ANTES da checagem de versão. Ler
-    // fora da transação e validar antes do controle otimista faz uma aba
-    // desatualizada levar 422 acusando um aluno invisível, quando a resposta
-    // certa é 409 "recarregue". Daqui para baixo tudo é lido dentro da
-    // transação, e a versão é a primeira coisa conferida.
-
-    // SPEC-015/DEF-002/INV-026 — chamada salva é completa.
-    //
-    // A mensagem é deliberadamente **acionável para cliente antigo**
-    // (AC-000e): na janela entre a publicação da tela nova e este deploy,
-    // um professor com o bundle velho manda só os alunos que tocou e cai
-    // aqui. Ele não tem como saber que existe uma janela; o texto precisa
-    // dizer o que fazer.
-    return this.prisma.$transaction(async (tx) => {
-      // SPEC-015/AC-000i (v9, BLOQ-1 da 7ª rodada) — o passo 0, e ele é o
-      // que torna a ordem dos passos 1..5 uma garantia em vez de uma
-      // promessa. Ler dentro da transação NÃO congela o que foi lido:
-      // em READ COMMITTED cada statement pega um snapshot novo, então
-      // `turma_alunos` pode mudar e commitar entre o passo 1 e o passo 5,
-      // e a versão — conferida no passo 2 — já passou. O resultado é
-      // gravar sobre domínio velho sem 409 nenhum. Provado por execução
-      // em `bloq7-concorrencia.ts`, cenário 1.
-      //
-      // Isolamento não resolve, e a razão não é a que a v9 dava aqui.
-      // Dizia-se que SERIALIZABLE só garante entre transações que estejam
-      // todas em SERIALIZABLE, e que bastaria pôr todo mundo lá. Medido:
-      // com os DOIS lados em SERIALIZABLE o `PUT` continua sendo aceito
-      // (cenários 7 e 8 de `bloq7-concorrencia.ts`).
-      //
-      // A razão verdadeira: ao banco basta existir ALGUMA ordem serial
-      // válida, e "PUT antes da matrícula" é uma delas — serializável, e
-      // ainda assim o que a regra de produto proíbe. SSI detecta anomalia,
-      // não impõe a ordem que o domínio quer. O lock pessimista impõe.
-      //
-      // O lock na linha da turma resolve, e não é disciplina nova: é a
-      // MESMA de REQ-004/INV-003 que `ClassesService.allocateStudent` já
-      // usa em produção. Raw query porque `FOR UPDATE` não é expressável
-      // no query builder do Prisma.
-      //
-      // Só vale acompanhado do par em `removeStudent` (v9, peça 2): lock
-      // de um lado só não trava nada. A entrada está protegida de graça
-      // pela FK `turma_alunos -> turmas`, que obriga o INSERT a pegar
-      // `FOR KEY SHARE` na turma; a SAÍDA não, porque DELETE de filho não
-      // checa FK no pai. Cenários 4 e 5.
-      // O passo 0 são DOIS statements, e a ordem entre eles é o contrato:
-      // **travar primeiro, ler depois**.
-      //
-      // A v10 fazia num ato só — um JOIN com `FOR UPDATE OF t` — e isso
-      // parecia bastar. Não basta, e o BLOQUEADOR da 9ª rodada mostrou por
-      // quê: em READ COMMITTED o snapshot é do STATEMENT. Quando esse
-      // statement esbarra no lock de `turmas` e espera, o Postgres, ao ser
-      // liberado, reavalia só a linha travada (EvalPlanQual) — as outras
-      // relações do JOIN continuam com o snapshot de antes da espera.
-      //
-      // É por isso que a v10 acertava a troca de professor (`professor_id`
-      // vem de `t`, a relação travada, e é reavaliada) e errava o
-      // cancelamento (`status_pagamento` vem de `o`, que não é). Medido em
-      // `bloq9-snapshot.ts`: o JOIN devolveu `pendente_pagamento` com o
-      // banco já em `cancelado`; uma releitura em statement novo, com o
-      // lock na mão, devolveu `cancelado`.
-      //
-      // Continua travando SÓ `turmas`: raiz única é o que garante ordem de
-      // aquisição única (INV-029) e, portanto, ausência de deadlock. E não
-      // faz falta travar a ocorrência, porque **todo caminho que CANCELA
-      // ocorrência de TURMA passa por este mesmo lock**.
-      //
-      // **Este parágrafo é a fonte única da afirmação.** Ele já foi contado de
-      // três jeitos ao mesmo tempo — "DOIS" aqui, "três/o quarto" em
-      // `classes.service.ts`, "um quinto" duas linhas abaixo —, e a validação
-      // cruzada de 2026-09-05 apontou a contradição. A causa era usar a
-      // palavra "caminho" para DOIS conjuntos diferentes. Separados:
-      //
-      // **Cancelam, e por isso passam por este lock — são 2:**
-      //
-      //   1. `cancelFutureClassOccupancies`, chamado de dentro do
-      //      `ClassesService.update`, que trava esta linha antes;
-      //   2. `ClassesService.cancelarOcorrencia` (SPEC-034/TASK-004, D12),
-      //      que **começa** por `turmas FOR UPDATE` exatamente para manter
-      //      esta afirmação verdadeira.
-      //
-      // **Escrevem em `ocupacoes_quadra` mas RECUSAM ocorrência de turma com
-      // `OCUPACAO_DE_TURMA` — são 3:** `cancelBooking`, `updatePaymentStatus`
-      // e `moveBooking` (SPEC-034/TASK-003). Não precisam do lock justamente
-      // porque recusam.
-      //
-      // **Quem escrever um caminho novo que cancele ocorrência de turma tem
-      // de vir por aqui** — sem número, porque o número é o que envelhece. A
-      // validação cruzada da SPEC-034 v1 pegou exatamente isso: a spec criava
-      // uma rota nova sem o lock e tornava este parágrafo falso em silêncio.
-      // O FIT-023 (SPEC-034/AC-016) é o teste que quebra no dia em que
-      // alguém remover o `FOR UPDATE` do passo 0a.
-
-      const ocupacao = await this.travarEValidarOcorrencia(
+    const turmaId = await this.prisma.$transaction(async (tx) => {
+      const { origemTurmaId, cabecalho } = await this.travarEValidarOcorrencia(
         tx,
         companyId,
         ocupacaoId,
-        professor.id,
+        professorIdScope,
+        turmaIdDaRota,
       );
+      if (cabecalho?.completude !== 'nao_houve') return origemTurmaId;
 
-      const [atuais, cabecalhoAtual, matriculados, visitantes] =
-        await Promise.all([
-          tx.presenca.findMany({
-            where: { ocupacaoId },
-            select: { alunoId: true, updatedAt: true },
-          }),
-          tx.chamada.findUnique({ where: { ocupacaoId } }),
-          tx.turmaAluno.findMany({
-            where: { turmaId: ocupacao.origemTurmaId },
-            select: { alunoId: true },
-          }),
-          // SPEC-057/TASK-001/D4 — `V`, lido sob a mesma raiz: os escritores
-          // de reposição também começam por `turmas FOR UPDATE`.
-          tx.reposicaoDeAula.findMany({
-            where: { ocupacaoId },
-            select: { alunoId: true },
-          }),
-        ]);
-      const observaveis = [...matriculados, ...visitantes];
-
-      // INV-019 — controle otimista, e é a PRIMEIRA regra a rodar. Qualquer
-      // recusa de domínio antes dela poderia estar julgando uma tela velha
-      // com o estado novo.
-      if (this.versaoDe(atuais, cabecalhoAtual, observaveis) !== versao) {
-        // SPEC-057/TASK-001/D2 — o sinal diz **por que** pode ter mudado. Só
-        // afirma o fechamento automático quando a chamada nasceu dele; fora
-        // disso a mensagem não atribui a mudança a ninguém.
-        const fechamentoAutomatico =
-          ocupacao.cabecalho?.origemInicial === 'automatica';
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'CHAMADA_DESATUALIZADA',
-          fechamentoAutomatico,
-          message: fechamentoAutomatico
-            ? 'Esta aula foi fechada automaticamente e a chamada mudou desde sua leitura. Revise a versão atual.'
-            : 'Esta chamada mudou desde que você abriu. Revise a versão atual.',
-        });
-      }
-
-      // SPEC-015/DEF-006 — teto e piso são conjuntos DIFERENTES. Usar um só
-      // para os dois papéis era o defeito: com cabeçalho `completa` o `GET`
-      // devolve o snapshot, e a escrita exigia a união — então salvar de
-      // volta o que a tela mostrou virava 422.
-      //
-      // SPEC-057/TASK-001/D4 — o teto é `M ∪ V ∪ S`. Sem `V`, o visitante que
-      // o `GET` mostrou voltava no `PUT` como `ALUNO_FORA_DA_TURMA`.
-      const permitidos = new Set([
-        ...observaveis.map((m) => m.alunoId),
-        ...atuais.map((p) => p.alunoId),
-      ]);
-      const forasteiros = idsRecebidos.filter((id) => !permitidos.has(id));
-      if (forasteiros.length > 0) {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'ALUNO_FORA_DA_TURMA',
-          message: 'Há aluno que não está nesta turma.',
-          alunoIds: forasteiros,
-        });
-      }
-
-      // AC-000h — o piso é, por construção, a lista que o `GET` devolveu.
-      const exigidos =
-        cabecalhoAtual?.completude === 'completa'
-          ? new Set(atuais.map((p) => p.alunoId))
-          : permitidos;
-      const recebidos = new Set(idsRecebidos);
-      const faltando = [...exigidos].filter((id) => !recebidos.has(id));
-      if (faltando.length > 0) {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'CHAMADA_INCOMPLETA',
-          message:
-            'A chamada precisa incluir todos os alunos da turma. Atualize o app e marque quem faltou antes de salvar.',
-          alunoIds: faltando,
-        });
-      }
-
-      // INV-027 — o cabeçalho primeiro, e na mesma transação. A ordem
-      // importa a partir do `contract`: a FK de `presencas` para `chamadas`
-      // recusa linha sem cabeçalho. Escrever nesta ordem desde agora evita
-      // que a fase seguinte precise mexer neste código de novo.
-      await tx.chamada.upsert({
-        where: { ocupacaoId },
-        create: {
-          ocupacaoId,
-          origemTipo: 'TURMA',
+      if (cabecalho.fechadaAutomaticamenteEm) {
+        const participantes = await participantesDaOcorrencia(
+          tx,
           companyId,
-          registradaPor: usuarioId,
-          origem: 'professor',
-          origemInicial: 'professor',
-          completude: 'completa',
-          esperados: itens.length,
-        },
-        // Promoção de `desconhecida` para `completa` num **único** UPDATE:
-        // os dois campos andam juntos, e o CHECK do banco recusa o estado
-        // intermediário (achado da 4ª validação cruzada).
-        //
-        // SPEC-057/TASK-001/D5 — **isto é a ratificação.** Sobre a chamada
-        // automática, o professor assume a lista inteira: a origem atual vira
-        // `professor`, e a inicial — como a chamada nasceu — fica. O autor de
-        // cada linha é escrito abaixo, no mesmo laço de sempre.
-        update: {
-          registradaPor: usuarioId,
-          origem: 'professor',
-          completude: 'completa',
-          esperados: itens.length,
-        },
-      });
-
-      for (const item of itens) {
-        await tx.presenca.upsert({
-          where: {
-            ocupacaoId_alunoId: { ocupacaoId, alunoId: item.alunoId },
-          },
-          create: {
-            companyId,
-            ocupacaoId,
-            origemTipo: 'TURMA',
-            alunoId: item.alunoId,
-            status: item.status,
-            registradoPor: usuarioId,
-          },
-          update: { status: item.status, registradoPor: usuarioId },
-        });
+          origemTurmaId,
+          ocupacaoId,
+        );
+        if (participantes.length === 0) {
+          await tx.chamada.delete({ where: { ocupacaoId } });
+          return origemTurmaId;
+        }
+        // Um UPDATE só: `completa` e `automatica` andam juntos, e o gatilho da
+        // D10 recusaria `completa` com origem humana. O instante NÃO é
+        // escrito — `chamadas_fechamento_imutavel` recusaria trocá-lo.
+        await tx.$executeRaw`
+          UPDATE chamadas
+             SET completude = 'completa'::completude_chamada,
+                 origem = 'automatica',
+                 registrada_por = NULL,
+                 esperados = ${participantes.length}::int,
+                 updated_at = timezone('UTC', clock_timestamp())
+           WHERE ocupacao_id = ${ocupacaoId}::uuid
+        `;
+        await gravarPresencasDoFechamento(
+          tx,
+          companyId,
+          ocupacaoId,
+          participantes,
+        );
+        return origemTurmaId;
       }
 
-      const [depois, cabecalhoDepois] = await Promise.all([
-        tx.presenca.findMany({
-          where: { ocupacaoId },
-          select: { updatedAt: true },
-        }),
-        tx.chamada.findUnique({ where: { ocupacaoId } }),
-      ]);
-      return {
-        ocupacaoId,
-        versao: this.versaoDe(depois, cabecalhoDepois, observaveis),
-        total: itens.length,
-      };
+      await tx.chamada.delete({ where: { ocupacaoId } });
+      return origemTurmaId;
     });
+
+    return {
+      ocupacaoId,
+      estado: await this.estadoAtual(companyId, turmaId, ocupacaoId),
+    };
+  }
+
+  /** O estado de UMA ocorrência, pelo resolvedor, depois de escrever. */
+  private async estadoAtual(
+    companyId: string,
+    turmaId: string,
+    ocupacaoId: string,
+  ): Promise<EstadoDaChamada> {
+    const o = await this.prisma.ocupacaoQuadra.findFirstOrThrow({
+      where: { id: ocupacaoId, companyId },
+      select: {
+        id: true,
+        data: true,
+        horaInicio: true,
+        horaFim: true,
+        statusPagamento: true,
+        chamadas: { select: { completude: true } },
+      },
+    });
+    const agora = await this.relogio.agora(this.prisma);
+    const paraEstado = {
+      cancelada: o.statusPagamento === 'cancelado',
+      completude: o.chamadas[0]?.completude,
+      data: o.data,
+      horaInicio: o.horaInicio,
+      horaFim: o.horaFim,
+    };
+    const corte = await this.corteDaPresenca.ler();
+    const participantes = await participantesDasCandidatas(
+      this.prisma,
+      companyId,
+      corte,
+      [{ ...paraEstado, id: o.id, turmaId }],
+      agora,
+    );
+    return resolverEstadoDaChamada(
+      { ...paraEstado, corte, participantes: participantes.get(o.id) },
+      agora,
+    );
   }
 
   /**
@@ -1220,6 +1091,8 @@ export class PresencaService {
             completude: true,
             origem: true,
             origemInicial: true,
+            // SPEC-076/D3 — o limite do "Desfazer" depende de como nasceu.
+            fechadaAutomaticamenteEm: true,
             registrante: { select: { nome: true } },
           },
         },
@@ -1230,7 +1103,9 @@ export class PresencaService {
       },
       orderBy: [{ data: 'desc' }],
     });
-    const agora = new Date();
+    // SPEC-076/D11 — o relógio do portão, para o `desfazerNaoHouveAte` e o
+    // estado saírem do mesmo instante.
+    const agora = await this.relogio.agora(this.prisma);
     const paraEstado = (o: (typeof ocorrencias)[number]) => ({
       cancelada: o.statusPagamento === 'cancelado',
       completude: o.chamadas[0]?.completude,
@@ -1285,6 +1160,11 @@ export class PresencaService {
           null,
         origem: cabecalho?.origem ?? null,
         origemInicial: cabecalho?.origemInicial ?? null,
+        desfazerNaoHouveAte: limiteDoDesfazerNaoHouve(
+          cabecalho ?? null,
+          o.data,
+          agora,
+        ),
         alunos: o.presencas
           .map((p) => ({
             alunoId: p.alunoId,
@@ -1302,6 +1182,40 @@ export class PresencaService {
       };
     });
   }
+}
+
+/**
+ * SPEC-076/D3 — **até quando o `nao_houve` desta aula pode ser desfeito**, o
+ * mesmo limite do portão: `fechada_automaticamente_em + 7 dias` se a chamada
+ * nasceu automática; o fim da janela retroativa da data da aula se não — o
+ * portão aceita enquanto o dia do clube de `agora` for até `data + 7`, então o
+ * limite é a meia-noite do dia `data + 8` no fuso do clube.
+ *
+ * Não nulo **só** quando há `nao_houve` gravado e `agora` está dentro dele. A
+ * tela mostra "Desfazer (até …)" com esta data; sem ela, não mostra — é assim
+ * que o frontend novo fica certo com o Back antigo, que não manda o campo
+ * (D12). Nunca "7 dias a partir do último gesto".
+ */
+export function limiteDoDesfazerNaoHouve(
+  cabecalho: {
+    completude: CompletudeChamada;
+    fechadaAutomaticamenteEm: Date | null;
+  } | null,
+  dataDaAula: Date,
+  agora: Date,
+): string | null {
+  if (cabecalho?.completude !== 'nao_houve') return null;
+  let limite: Date;
+  if (cabecalho.fechadaAutomaticamenteEm) {
+    limite = prazoDaAutomatica(cabecalho.fechadaAutomaticamenteEm);
+  } else {
+    const diaSeguinteAoPrazo = new Date(dataDaAula);
+    diaSeguinteAoPrazo.setUTCDate(
+      diaSeguinteAoPrazo.getUTCDate() + JANELA_RETROATIVA_DIAS + 1,
+    );
+    limite = instanteNoFusoDoClube(diaSeguinteAoPrazo, new Date(0));
+  }
+  return limite.getTime() > agora.getTime() ? limite.toISOString() : null;
 }
 
 /** SPEC-057/TASK-001/D5 — fechamento automático + janela, para exibição. */

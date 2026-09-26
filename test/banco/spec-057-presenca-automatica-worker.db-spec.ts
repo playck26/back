@@ -45,7 +45,6 @@ import {
   aula,
   cabecalhoDe,
   chamadaCrua,
-  codigoDe,
   db,
   desconectarTodos,
   diasAtras,
@@ -56,7 +55,6 @@ import {
   operador,
   q,
   reiniciarSequencias,
-  respostaDe,
   runtime,
   runtime2,
   segurarTurma,
@@ -182,7 +180,9 @@ describe('AC-001 — o fechamento automático grava M ∪ V', () => {
     expect(Number(n.n)).toBe(1);
   });
 
-  it('GET→PUT sem cabeçalho aceita o visitante: sem ALUNO_REPETIDO, sem ALUNO_FORA_DA_TURMA', async () => {
+  // SPEC-076/D7 — era "GET→PUT … aceita o visitante"; o `PUT` saiu (D1).
+  // Fica a leitura: `M ∪ V` sem repetir ninguém.
+  it('GET sem cabeçalho lista M ∪ V, sem repetir quem é matriculado e visitante', async () => {
     const { a1, a2, oc } = await cenarioBasico();
     const visitante = await aluno('Visitante');
     await matricular(TURMA_ORIGEM, visitante.alunoId);
@@ -197,16 +197,6 @@ describe('AC-001 — o fechamento automático grava M ∪ V', () => {
     expect(ids.sort()).toEqual(
       [a1.alunoId, a2.alunoId, visitante.alunoId].sort(),
     );
-
-    await expect(
-      presenca().salvarChamada(
-        EMPRESA,
-        UPROF,
-        oc,
-        lida.versao,
-        ids.map((alunoId) => ({ alunoId, status: 'presente' as const })),
-      ),
-    ).resolves.toMatchObject({ total: 3 });
   });
 });
 
@@ -415,7 +405,9 @@ describe('AC-004 — o que a aplicação respeita da autoridade (D3)', () => {
     expect(r.lotes).toBeGreaterThanOrEqual(1);
   });
 
-  it('retomada além de 7 dias: fecha a aula antiga e ela fica corrigível por 7 dias desde o fechamento', async () => {
+  // SPEC-076/D7 — convertido: "corrigível" era pelo `PUT` (saiu); a janela
+  // do fechamento continua valendo para o "a aula não aconteceu".
+  it('retomada além de 7 dias: fecha a aula antiga, e o `nao_houve` cabe por 7 dias desde o fechamento', async () => {
     const a1 = await aluno('Ana');
     const a2 = await aluno('Bruno');
     await matricular(TURMA_A, a1.alunoId);
@@ -430,138 +422,21 @@ describe('AC-004 — o que a aplicação respeita da autoridade (D3)', () => {
 
     // A aula tem 10 dias — pela janela da data ela seria AULA_ANTIGA.
     await expect(
-      presenca().salvarChamada(EMPRESA, UPROF, antiga, lida.versao, [
-        { alunoId: a1.alunoId, status: 'presente' },
-        { alunoId: a2.alunoId, status: 'ausente' },
-      ]),
-    ).resolves.toBeDefined();
+      presenca().registrarNaoHouve(EMPRESA, antiga, UPROF, true),
+    ).resolves.toMatchObject({ completude: 'nao_houve' });
   });
 });
 
 // ======================================================================
-describe('AC-007 — a corrida medida e a versão com visitante', () => {
-  it('abrir 13:30, tick 14:00, salvar 14:10 → 409 com fechamentoAutomatico; revisar e salvar ratifica', async () => {
-    const { a1, a2, oc } = await cenarioBasico();
-
-    // 13:30 — o professor abre a chamada ainda sem cabeçalho.
-    const aberta = await presenca().chamada(EMPRESA, UPROF, oc);
-    expect(aberta.completude).toBeNull();
-    // 14:00 — o tick fecha.
-    await worker().executarTick();
-    const fechada = await cabecalhoDe(oc);
-
-    // 14:10 — o professor salva com a versão de 13:30.
-    const recusa = await respostaDe(
-      presenca().salvarChamada(EMPRESA, UPROF, oc, aberta.versao, [
-        { alunoId: a1.alunoId, status: 'presente' },
-        { alunoId: a2.alunoId, status: 'ausente' },
-      ]),
-    );
-    expect(recusa).toMatchObject({
-      code: 'CHAMADA_DESATUALIZADA',
-      fechamentoAutomatico: true,
-    });
-    expect(String((recusa as { message: string }).message)).toContain(
-      'fechada automaticamente',
-    );
-    // Nada gravado pela tentativa vencida.
-    expect(await cabecalhoDe(oc)).toEqual(fechada);
-
-    // Revisar a versão atual (GET) e salvar de novo: ratifica.
-    const revisada = await presenca().chamada(EMPRESA, UPROF, oc);
-    expect(revisada.origem).toBe('automatica');
-    await presenca().salvarChamada(EMPRESA, UPROF, oc, revisada.versao, [
-      { alunoId: a1.alunoId, status: 'presente' },
-      { alunoId: a2.alunoId, status: 'ausente' },
-    ]);
-
-    const ratificada = await cabecalhoDe(oc);
-    expect(ratificada).toMatchObject({
-      origem: 'professor',
-      origemInicial: 'automatica',
-      registradaPor: UPROF,
-    });
-    expect(ratificada?.fechada?.getTime()).toBe(fechada?.fechada?.getTime());
-    const linhas = await linhasDe(oc);
-    expect(linhas.every((l) => l.autor === UPROF)).toBe(true);
-    expect(linhas.find((l) => l.alunoId === a2.alunoId)?.status).toBe(
-      'ausente',
-    );
-  });
-
-  it('abrir DEPOIS do tick salva direto', async () => {
-    const { a1, a2, oc } = await cenarioBasico();
-    await worker().executarTick();
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-
-    expect(
-      await codigoDe(
-        presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
-          { alunoId: a1.alunoId, status: 'presente' },
-          { alunoId: a2.alunoId, status: 'presente' },
-        ]),
-      ),
-    ).toBe('ok');
-  });
-
-  it('409 sobre chamada humana não atribui a mudança ao fechamento automático', async () => {
-    const { a1, a2, oc } = await cenarioBasico();
-    const aberta = await presenca().chamada(EMPRESA, UPROF, oc);
-    await chamadaCrua(oc, 'professor', [
-      [a1.alunoId, 'presente'],
-      [a2.alunoId, 'presente'],
-    ]);
-
-    expect(
-      await respostaDe(
-        presenca().salvarChamada(EMPRESA, UPROF, oc, aberta.versao, [
-          { alunoId: a1.alunoId, status: 'presente' },
-          { alunoId: a2.alunoId, status: 'presente' },
-        ]),
-      ),
-    ).toMatchObject({
-      code: 'CHAMADA_DESATUALIZADA',
-      fechamentoAutomatico: false,
-    });
-  });
-
-  it('visitante marcado/desmarcado muda a versão SEM cabeçalho, e não muda a de snapshot completo', async () => {
-    const { a1, a2, oc } = await cenarioBasico();
-    const visitante = await aluno('Visitante');
-    await matricular(TURMA_ORIGEM, visitante.alunoId);
-
-    const v1 = (await presenca().chamada(EMPRESA, UPROF, oc)).versao;
-    const { reposicaoId } = await visita(visitante.alunoId, oc);
-    const v2 = (await presenca().chamada(EMPRESA, UPROF, oc)).versao;
-    expect(v2).not.toBe(v1);
-    // PUT com a versão de antes do visitante é 409, não 422.
-    expect(
-      await codigoDe(
-        presenca().salvarChamada(EMPRESA, UPROF, oc, v1, [
-          { alunoId: a1.alunoId, status: 'presente' },
-          { alunoId: a2.alunoId, status: 'presente' },
-        ]),
-      ),
-    ).toBe('CHAMADA_DESATUALIZADA');
-
-    await presenca().salvarChamada(EMPRESA, UPROF, oc, v2, [
-      { alunoId: a1.alunoId, status: 'presente' },
-      { alunoId: a2.alunoId, status: 'presente' },
-      { alunoId: visitante.alunoId, status: 'presente' },
-    ]);
-    const v3 = (await presenca().chamada(EMPRESA, UPROF, oc)).versao;
-
-    const outro = await aluno('Outro visitante');
-    await matricular(TURMA_ORIGEM, outro.alunoId);
-    await visita(outro.alunoId, oc);
-    expect((await presenca().chamada(EMPRESA, UPROF, oc)).versao).toBe(v3);
-    await q(`DELETE FROM reposicoes_de_aula WHERE id = '${reposicaoId}'`);
-    expect((await presenca().chamada(EMPRESA, UPROF, oc)).versao).toBe(v3);
-  });
-});
+// SPEC-076/D7 — o bloco "AC-007 — a corrida medida e a versão com
+// visitante" saiu inteiro (4 casos): media a versão otimista do `PUT` e a
+// ratificação — abrir antes do tick e salvar (409 com `fechamentoAutomatico`),
+// abrir depois e salvar, o 409 sobre chamada humana, e o visitante mudando a
+// versão. O `PUT` saiu (D1) e a `versao` ficou inerte (LIM-076d). Substituta:
+// AC-001.
 
 // ======================================================================
-describe('INV-144 — worker, PUT e desmarcar param na mesma raiz', () => {
+describe('INV-144 — worker e desmarcar param na mesma raiz', () => {
   it('o worker espera quem segura a turma, e relê: aula que ganhou chamada humana não é tocada', async () => {
     const { a1, a2, oc } = await cenarioBasico();
     const trava = await segurarTurma(TURMA_A);
@@ -613,9 +488,10 @@ describe('INV-144 — worker, PUT e desmarcar param na mesma raiz', () => {
 });
 
 // ======================================================================
-describe('AC-009/D8 — fechar e ratificar não tocam falta avisada, reposição nem crédito', () => {
+// SPEC-076/D7 — era "fechar e ratificar"; ratificar era o `PUT` (saiu).
+describe('AC-009/D8 — fechar não toca falta avisada, reposição nem crédito', () => {
   it('contagens e crédito do visitante iguais antes e depois', async () => {
-    const { a1, a2, oc } = await cenarioBasico();
+    const { a1, oc } = await cenarioBasico();
     const visitante = await aluno('Visitante');
     await matricular(TURMA_ORIGEM, visitante.alunoId);
     await visita(visitante.alunoId, oc);
@@ -635,12 +511,6 @@ describe('AC-009/D8 — fechar e ratificar não tocam falta avisada, reposição
     expect(
       (await linhasDe(oc)).find((l) => l.alunoId === a1.alunoId)?.status,
     ).toBe('ausente');
-    const lida = await presenca().chamada(EMPRESA, UPROF, oc);
-    await presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
-      { alunoId: a1.alunoId, status: 'ausente' },
-      { alunoId: a2.alunoId, status: 'presente' },
-      { alunoId: visitante.alunoId, status: 'presente' },
-    ]);
 
     expect(await contagemDeCredito()).toEqual(antes);
     expect(await reposicoes().meuCredito(EMPRESA, visitante.usuarioId)).toEqual(
