@@ -399,25 +399,29 @@ describe('AC-003 — `sem_participantes` nos cinco consumidores', () => {
     expect(await cabecalhoDe(oc)).toBeNull();
   });
 
-  it('vazia PRÉ-corte conserva a regra legada: pendente nos cinco', async () => {
+  // SPEC-076/D7 — convertido: era "conserva a regra legada: pendente nos
+  // cinco". A D5 fez da aula anterior ao corte `sem_registro`, em todos os
+  // consumidores, sem pendência — e ela continua no total físico.
+  it('vazia PRÉ-corte: `sem_registro` nos cinco, sem pendência', async () => {
     const oc = await aula(TURMA_VAZIA, -5);
     await ligarPresencaAutomatica(db, diasAtras(3));
 
     const r = await osCinco(oc, -5);
 
-    expect(r.mes).toMatchObject({ aulas: 1, pendentes: 1 });
-    expect(r.dia).toBe('pendente');
-    expect(r.lista).toBe('pendente');
-    expect(r.historico).toBe('pendente');
+    expect(r.mes).toMatchObject({ aulas: 1, pendentes: 0 });
+    expect(r.dia).toBe('sem_registro');
+    expect(r.lista).toBe('sem_registro');
+    expect(r.historico).toBe('sem_registro');
     expect(r.aconteceram).toBe(1);
   });
 
-  it('ambiente que nunca ativou: vazia continua pendente', async () => {
+  // SPEC-076/D7 — convertido: era "vazia continua pendente".
+  it('ambiente que nunca ativou: vazia é `sem_registro`', async () => {
     const oc = await aula(TURMA_VAZIA, -1);
 
     const r = await osCinco(oc, -1);
 
-    expect(r.dia).toBe('pendente');
+    expect(r.dia).toBe('sem_registro');
     expect(r.aconteceram).toBe(1);
   });
 

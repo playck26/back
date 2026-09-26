@@ -8,7 +8,6 @@ import type { CompletudeChamada } from '@prisma/client';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import {
   chamadaJaRegistrada,
-  pendenciaLegada,
   resolverEstadoDaChamada,
 } from '../classes/estado-da-chamada';
 import {
@@ -245,7 +244,9 @@ export class FrequenciaService {
       semParticipantes: estadoDoCabecalho === 'sem_participantes',
       origem: cab?.origem ?? null,
       origemInicial: cab?.origemInicial ?? null,
-      pendenteLegada: !cab && pendenciaLegada(paraEstado),
+      // SPEC-076/D5 — lê o ESTADO: a `pendenciaLegada` deixou de existir, e
+      // esta contagem passou a ser a de `sem_registro`.
+      pendenteLegada: estadoDoCabecalho === 'sem_registro',
     };
   }
 

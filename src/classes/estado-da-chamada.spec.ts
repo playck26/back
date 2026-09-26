@@ -41,6 +41,16 @@ function as(hora: number, minuto = 0) {
   return new Date(Date.UTC(2026, 7, 20, hora + 3, minuto));
 }
 
+/**
+ * SPEC-076/D5 — corte ANTES da aula, com participante: o único caminho que
+ * ainda chega a `pendente` (pós-corte, o worker ainda não fechou). Sem corte,
+ * ou com a aula anterior a ele, é `sem_registro`.
+ */
+const POS_CORTE = {
+  corte: new Date(Date.UTC(2026, 0, 1)),
+  participantes: 2,
+};
+
 describe('SPEC-030 — o estado da chamada tem um dono só (INV-030b)', () => {
   describe('o cabeçalho manda sobre o relógio', () => {
     // Esta é a regra que substituiu `_count.presencas > 0`, e o caso abaixo
@@ -93,8 +103,12 @@ describe('SPEC-030 — o estado da chamada tem um dono só (INV-030b)', () => {
       expect(chamadaPendente(estado)).toBe(false);
     });
 
-    it('depois do fim: `pendente` — o vermelho do calendário', () => {
-      expect(resolverEstadoDaChamada(ocorrencia(), as(19, 1))).toBe('pendente');
+    // SPEC-076/D7 — convertido: sem corte, a aula terminada é `sem_registro`
+    // (D5); o vermelho do calendário ficou só para a pós-corte.
+    it('depois do fim, pós-corte: `pendente` — o vermelho do calendário', () => {
+      expect(resolverEstadoDaChamada(ocorrencia(POS_CORTE), as(19, 1))).toBe(
+        'pendente',
+      );
     });
   });
 
@@ -158,29 +172,32 @@ describe('SPEC-030 — o estado da chamada tem um dono só (INV-030b)', () => {
       ).toBe('sem_participantes');
     });
 
-    it('término IGUAL ou ANTERIOR ao corte: regra legada, `pendente`', () => {
+    // SPEC-076/D7 — convertido: era "regra legada, `pendente`". A D5 fez da
+    // aula anterior ao corte `sem_registro` (AC-014).
+    it('término IGUAL ou ANTERIOR ao corte: `sem_registro`', () => {
       const fimExato = new Date(Date.UTC(2026, 7, 20, 22, 0));
       expect(
         resolverEstadoDaChamada(
           ocorrencia({ corte: fimExato, participantes: 0 }),
           as(23),
         ),
-      ).toBe('pendente');
+      ).toBe('sem_registro');
       expect(
         resolverEstadoDaChamada(
           ocorrencia({ corte: DEPOIS_DO_FIM, participantes: 0 }),
           as(23),
         ),
-      ).toBe('pendente');
+      ).toBe('sem_registro');
     });
 
-    it('ambiente nunca ativado (corte nulo): regra legada', () => {
+    // SPEC-076/D7 — convertido: era "regra legada" (`pendente`).
+    it('ambiente nunca ativado (corte nulo): `sem_registro`', () => {
       expect(
         resolverEstadoDaChamada(
           ocorrencia({ corte: null, participantes: 0 }),
           as(23),
         ),
-      ).toBe('pendente');
+      ).toBe('sem_registro');
     });
 
     it('com participante, pós-corte e sem cabeçalho: continua `pendente` até o job fechar', () => {
@@ -231,6 +248,70 @@ describe('SPEC-030 — o estado da chamada tem um dono só (INV-030b)', () => {
   //   - presenca.service.spec.ts             (lista da turma e histórico)
   //   - frequencia.service.spec.ts           (relatório)
   it('documenta a sabotagem A', () => {
-    expect(resolverEstadoDaChamada(ocorrencia(), as(19, 1))).toBe('pendente');
+    expect(resolverEstadoDaChamada(ocorrencia(POS_CORTE), as(19, 1))).toBe(
+      'pendente',
+    );
+  });
+
+  /**
+   * SPEC-076/D5 — **a aula anterior à automação não é pendência.** Era
+   * `pendente` para sempre: nada a fechava (o worker ignora o que terminou
+   * antes do corte) e ninguém podia lançar (fora da janela de sete dias).
+   */
+  describe('SPEC-076/D5 — `sem_registro`', () => {
+    const CORTE = new Date(Date.UTC(2026, 7, 21, 12, 0)); // depois da aula
+
+    it('AC-014: terminada sem cabeçalho ANTES do corte → `sem_registro`', () => {
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: CORTE, participantes: 2 }),
+          as(23),
+        ),
+      ).toBe('sem_registro');
+    });
+
+    it('AC-014: DEPOIS do corte e antes do worker → `pendente`', () => {
+      expect(resolverEstadoDaChamada(ocorrencia(POS_CORTE), as(23))).toBe(
+        'pendente',
+      );
+    });
+
+    it('AC-014: sem corte → `sem_registro`', () => {
+      expect(
+        resolverEstadoDaChamada(ocorrencia({ participantes: 2 }), as(23)),
+      ).toBe('sem_registro');
+    });
+
+    it('AC-014: zero participantes pós-corte → `sem_participantes`', () => {
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ ...POS_CORTE, participantes: 0 }),
+          as(23),
+        ),
+      ).toBe('sem_participantes');
+    });
+
+    it('o cabeçalho continua mandando: anterior ao corte COM chamada é o estado dela', () => {
+      expect(
+        resolverEstadoDaChamada(
+          ocorrencia({ corte: CORTE, completude: 'nao_houve' }),
+          as(23),
+        ),
+      ).toBe('nao_houve');
+    });
+
+    it('antes de terminar, o corte não importa: `futura` e `em_andamento`', () => {
+      expect(
+        resolverEstadoDaChamada(ocorrencia({ corte: CORTE }), as(17)),
+      ).toBe('futura');
+      expect(
+        resolverEstadoDaChamada(ocorrencia({ corte: CORTE }), as(18, 30)),
+      ).toBe('em_andamento');
+    });
+
+    it('AC-016: `sem_registro` não é registrada nem pendente', () => {
+      expect(chamadaJaRegistrada('sem_registro')).toBe(false);
+      expect(chamadaPendente('sem_registro')).toBe(false);
+    });
   });
 });

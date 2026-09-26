@@ -6669,7 +6669,8 @@
           },
           "pendentesLegadas": {
             "type": "number",
-            "example": 1
+            "example": 1,
+            "description": "Aulas anteriores à automação sem registro de presença — não cobram ação."
           },
           "pendentesAtuais": {
             "type": "number",
@@ -10760,6 +10761,7 @@
               "legada",
               "nao_houve",
               "sem_participantes",
+              "sem_registro",
               "cancelada"
             ]
           },
@@ -11977,6 +11979,7 @@
               "legada",
               "nao_houve",
               "sem_participantes",
+              "sem_registro",
               "cancelada"
             ],
             "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou sem chamada. `feita` = chamada declarada completa. `legada` = chamada anterior à SPEC-015. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem participante (SPEC-057); não é pendência. `cancelada` = ocorrência cancelada."
@@ -12292,7 +12295,8 @@
               "feita",
               "legada",
               "nao_houve",
-              "sem_participantes"
+              "sem_participantes",
+              "sem_registro"
             ],
             "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); **não** é pendência e não pinta o ponto vermelho. `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem ninguém matriculado nem repondo (SPEC-057); não é pendência. `cancelada` não aparece aqui: o filtro do calendário a exclui antes. **`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem chamada, e resolver um estado ali pintaria `pendente` numa aula que nunca poderá receber uma — ponto vermelho que o professor não limpa.",
             "nullable": true

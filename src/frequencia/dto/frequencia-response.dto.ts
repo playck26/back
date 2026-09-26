@@ -77,8 +77,15 @@ export class OrigensDaCoberturaResponseDto {
   @ApiProperty({ type: Number, example: 3 })
   humanas!: number;
 
-  /** Sem cabeçalho, anterior ao corte — ou ambiente que nunca ativou. */
-  @ApiProperty({ type: Number, example: 1 })
+  /**
+   * SPEC-076/D5 — o nome ficou (LIM-076d); o sentido é o de `sem_registro`.
+   */
+  @ApiProperty({
+    type: Number,
+    example: 1,
+    description:
+      'Aulas anteriores à automação sem registro de presença — não cobram ação.',
+  })
   pendentesLegadas!: number;
 
   /** Sem cabeçalho, depois do corte: o job ainda não passou. */

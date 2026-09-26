@@ -93,6 +93,9 @@ export class AulaDoDiaDoProfessorDto {
       // SPEC-057/TASK-001/D4 — sem cabeçalho, terminada pós-corte e com
       // `M ∪ V` vazio: não cobra ninguém.
       'sem_participantes',
+      // SPEC-076/D5 — terminada sem cabeçalho ANTES do corte (ou sem corte):
+      // anterior à automação, sem registro. Não é pendência.
+      'sem_registro',
     ],
     description:
       '`futura` = ainda não começou; a chamada **não** pode ser lançada. ' +
