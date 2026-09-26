@@ -163,7 +163,9 @@ export class OcorrenciaDaTurmaResponseDto {
     ],
     description:
       '`futura` = ainda não começou. `em_andamento` = começou e não ' +
-      'terminou. `pendente` = terminou sem chamada. `feita` = chamada ' +
+      'terminou. `pendente` = terminou depois do corte e o fechamento ' +
+      'automático ainda não passou. `sem_registro` = terminou sem chamada ' +
+      'antes do corte, anterior à automação (SPEC-076/D5). `feita` = chamada ' +
       'declarada completa. `legada` = chamada anterior à SPEC-015. ' +
       '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). ' +
       '`sem_participantes` = terminou depois do corte da presença ' +

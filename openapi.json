@@ -12049,7 +12049,7 @@
               "sem_registro",
               "cancelada"
             ],
-            "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou sem chamada. `feita` = chamada declarada completa. `legada` = chamada anterior à SPEC-015. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem participante (SPEC-057); não é pendência. `cancelada` = ocorrência cancelada."
+            "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou depois do corte e o fechamento automático ainda não passou. `sem_registro` = terminou sem chamada antes do corte, anterior à automação (SPEC-076/D5). `feita` = chamada declarada completa. `legada` = chamada anterior à SPEC-015. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem participante (SPEC-057); não é pendência. `cancelada` = ocorrência cancelada."
           }
         },
         "required": [
@@ -12270,7 +12270,7 @@
           "pendentes": {
             "type": "number",
             "example": 1,
-            "description": "Quantas ainda sem chamada registrada. É esta contagem que faz o calendário valer: a grade ele já conhece de cabeça; o que falta registrar, não. **Aula particular nunca entra aqui** (SPEC-039/LIM-039a), mas conta em `aulas`."
+            "description": "Quantas aulas `pendente`: terminaram depois do corte e o fechamento automático ainda não passou. **Não é cobrança do professor** desde a SPEC-076 (ninguém lança presença à mão); fica no contrato por compatibilidade (LIM-076d). `sem_registro` não entra. **Aula particular nunca entra aqui** (SPEC-039/LIM-039a), mas conta em `aulas`."
           }
         },
         "required": [
@@ -12329,7 +12329,7 @@
               "sem_participantes",
               "sem_registro"
             ],
-            "description": "`futura` = ainda não começou; a chamada **não** pode ser lançada. `em_andamento` = começou e não terminou; pode lançar, e não é pendência. `pendente` = já terminou e não há linha em `chamadas`. `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030); **não** é pendência e não pinta o ponto vermelho. `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem ninguém matriculado nem repondo (SPEC-057); não é pendência. `cancelada` não aparece aqui: o filtro do calendário a exclui antes. **`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem chamada, e resolver um estado ali pintaria `pendente` numa aula que nunca poderá receber uma — ponto vermelho que o professor não limpa.",
+            "description": "`futura` = ainda não começou. `em_andamento` = começou e não terminou. `pendente` = terminou depois do corte da presença automática e o fechamento automático ainda não passou (SPEC-076: aguardando, não é cobrança). `sem_registro` = terminou sem chamada ANTES do corte (ou sem corte): anterior à automação, não é pendência (SPEC-076/D5). `legada` = chamada de antes da SPEC-015, com `completude: desconhecida`. `nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). `sem_participantes` = terminou depois do corte da presença automática, sem chamada e sem ninguém matriculado nem repondo (SPEC-057); não é pendência. `cancelada` não aparece aqui: o filtro do calendário a exclui antes. **`null` na aula PARTICULAR** (SPEC-039/LIM-039a): ela não tem chamada, e resolver um estado ali diria `pendente` numa aula que nunca poderá receber uma.",
             "nullable": true
           },
           "faltasAvisadas": {
