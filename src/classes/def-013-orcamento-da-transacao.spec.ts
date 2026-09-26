@@ -346,6 +346,9 @@ function buildPrismaForaDaTransacao(tx: Prisma.TransactionClient) {
       }),
     },
     turmaEncontro: { findMany: jest.fn().mockResolvedValue([]) },
+    // O `findOne` do fim lê as próximas aulas para a `proximaAulaLotada`
+    // (ADR-027) — **fora** da transação, então também fora do orçamento.
+    ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn((cb: (t: Prisma.TransactionClient) => unknown) =>
       cb(tx),
     ),

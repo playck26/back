@@ -15,7 +15,12 @@ import {
   parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
-import { aulaQueAMatriculaLotaria, diaEMes } from './ocupacao-da-ocorrencia';
+import {
+  ALUNO_NOVO,
+  aulaQueAMatriculaLotaria,
+  aulasQueAMatriculaLotaria,
+  diaEMes,
+} from './ocupacao-da-ocorrencia';
 import {
   conferirEdicaoDeNivel,
   recusaPorNivel,
@@ -175,12 +180,44 @@ export class ClassesService {
       this.prisma.turma.count({ where: { companyId } }),
     ]);
 
+    const lotadas = await this.proximasAulasLotadas(companyId, rows);
     return {
-      data: rows.map((turma) => this.toResponse(turma)),
+      data: rows.map((turma) => ({
+        ...this.toResponse(turma),
+        proximaAulaLotada: lotadas.get(turma.id) ?? null,
+      })),
       page,
       pageSize,
       total,
     };
+  }
+
+  /**
+   * ADR-027 (achado A-04) — a primeira aula em que um aluno NOVO não caberia,
+   * por turma, **só para as que têm vaga de matrícula**: sem vaga, a turma já
+   * aparece cheia. A mesma função da alocação, numa ida só para a página.
+   */
+  private async proximasAulasLotadas(
+    companyId: string,
+    turmas: readonly {
+      id: string;
+      capacidade: number;
+      _count: { alunos: number };
+    }[],
+  ): Promise<Map<string, string>> {
+    const lotadas = await aulasQueAMatriculaLotaria(
+      this.prisma,
+      companyId,
+      turmas.filter((t) => t._count.alunos < t.capacidade),
+      ALUNO_NOVO,
+      new Date(),
+    );
+    return new Map(
+      [...lotadas].map(([turmaId, aula]) => [
+        turmaId,
+        formatDateOnly(aula.data),
+      ]),
+    );
   }
 
   /**
@@ -346,8 +383,10 @@ export class ClassesService {
     if (!turma) {
       throw new NotFoundException();
     }
+    const lotadas = await this.proximasAulasLotadas(companyId, [turma]);
     return {
       ...this.toResponse(turma),
+      proximaAulaLotada: lotadas.get(turma.id) ?? null,
       alunos: turma.alunos.map((alocacao) => ({
         alunoId: alocacao.alunoId,
         nome: alocacao.aluno.usuario.nome,

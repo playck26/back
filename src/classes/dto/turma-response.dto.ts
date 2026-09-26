@@ -85,9 +85,28 @@ export class TurmaResponseDto {
   alunosAlocados!: number;
 }
 
+/**
+ * ADR-027 e achado A-04 da validação da implementação da SPEC-075 — **a tela
+ * do gestor não anuncia a vaga que a alocação recusa.** `alunosAlocados` conta
+ * matrícula; a alocação também exige caber em todas as próximas aulas, contando
+ * as reposições. Sem este campo, o gestor via "3/8" e recebia `409
+ * AULA_LOTADA`.
+ */
+export class TurmaComLotacaoResponseDto extends TurmaResponseDto {
+  @ApiProperty({
+    type: String,
+    format: 'date',
+    nullable: true,
+    example: '2026-10-03',
+    description:
+      'A primeira aula que ainda não terminou em que um aluno novo NÃO caberia, contando as reposições marcadas (ADR-027). Só vem preenchida quando a turma tem vaga de matrícula (`alunosAlocados < capacidade`) — sem vaga, a turma já está cheia e isto não acrescenta nada. `null` quando cabe. Quem já é visitante daquela aula ainda pode ser alocado: a alocação decide com o aluno de verdade.',
+  })
+  proximaAulaLotada!: string | null;
+}
+
 export class TurmaPaginadaResponseDto {
-  @ApiProperty({ type: [TurmaResponseDto] })
-  data!: TurmaResponseDto[];
+  @ApiProperty({ type: [TurmaComLotacaoResponseDto] })
+  data!: TurmaComLotacaoResponseDto[];
 
   @ApiProperty({ type: Number, example: 1 })
   page!: number;
@@ -110,7 +129,7 @@ export class AlunoDaTurmaResponseDto {
   email!: string;
 }
 
-export class TurmaDetalheResponseDto extends TurmaResponseDto {
+export class TurmaDetalheResponseDto extends TurmaComLotacaoResponseDto {
   @ApiProperty({ type: [AlunoDaTurmaResponseDto] })
   alunos!: AlunoDaTurmaResponseDto[];
 }

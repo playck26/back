@@ -109,7 +109,10 @@ function buildMocks() {
       findMany: jest.fn(),
       delete: jest.fn(),
     },
-    ocupacaoQuadra: { findMany: jest.fn() },
+    // `[]` por padrão: o `findOne` (e o `update`, que termina nele) lê as
+    // próximas aulas da turma para a `proximaAulaLotada` (ADR-027). Nenhuma
+    // aula no dublê — os casos que dependem das aulas armam a sua.
+    ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
   const courtsService = {

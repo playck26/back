@@ -43,6 +43,7 @@ import { HorarioFuncionamentoService } from '../../src/courts/horario-funcioname
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import { CreditosService } from '../../src/creditos/creditos.service';
 import { VarredorDaFilaService } from '../../src/fila-de-espera/varredor-da-fila.service';
+import { aulasQueAMatriculaLotaria } from '../../src/classes/ocupacao-da-ocorrencia';
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import { StudentsService } from '../../src/people/students.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
@@ -353,35 +354,72 @@ describe('a matrícula conta as reposições das próximas aulas', () => {
   });
 
   /**
-   * Hoje, as duas pontas do dia: a das 00h00 às 00h01 já terminou, a das 23h
-   * às 23h59 ainda vai acontecer. (Rodado exatamente à 00h00 ou depois das
-   * 23h59 no fuso do clube, um dos dois mudaria de lado — janela de 2 minutos
-   * em 1.440, declarada.)
+   * **"Hoje" com o relógio FIXO** (achado A-07 da validação da implementação).
+   * A versão anterior usava o relógio de verdade, com uma aula das 00h00 às
+   * 00h01 e outra das 23h às 23h59 — janela de 2 minutos em que o teste mudava
+   * de lado, e o recorte das 21h às 00h (o dia UTC já virou, o do clube não)
+   * nunca era exercitado. Aqui a função é chamada com o instante injetado, e a
+   * aula é num dia fixo, longe do relógio real (as aulas de `montar` ficam no
+   * passado desse instante e não entram).
+   *
+   * Aula de 15/01/2030, das 22h às 23h no fuso do clube (UTC−3).
    */
-  it('hoje: a aula que já terminou não conta', async () => {
-    await montar(1);
-    const madrugada = await aula(ALVO_TURMA, emDias(0), '00:00', '00:01');
-    await visitanteEm(madrugada);
-    const novato = await aluno();
-    expect(
-      (
-        await desfecho(
-          classes().allocateStudent(EMPRESA, ALVO_TURMA, novato.alunoId),
-        )
-      ).code,
-    ).toBe('OK');
+  describe('hoje, com o relógio fixo', () => {
+    const DIA = '2030-01-15';
+    const lotada = (agoraUtc: string, alunoId: string) =>
+      aulasQueAMatriculaLotaria(
+        p,
+        EMPRESA,
+        [{ id: ALVO_TURMA, capacidade: 1 }],
+        alunoId,
+        new Date(agoraUtc),
+      );
+
+    async function comAulaLotadaNoDia(): Promise<{
+      aulaId: string;
+      novato: string;
+    }> {
+      await montar(1);
+      const aulaId = await aula(ALVO_TURMA, DIA, '22:00', '23:00');
+      await visitanteEm(aulaId);
+      return { aulaId, novato: (await aluno()).alunoId };
+    }
+
+    it('às 22h30 do clube, com o dia UTC JÁ VIRADO (01h30Z do dia 16), a aula em andamento conta', async () => {
+      const { aulaId, novato } = await comAulaLotadaNoDia();
+      const r = await lotada('2030-01-16T01:30:00Z', novato);
+      expect(r.get(ALVO_TURMA)?.id).toBe(aulaId);
+    });
+
+    it('às 23h30 do clube (02h30Z do dia 16), a aula já terminou e não conta', async () => {
+      const { novato } = await comAulaLotadaNoDia();
+      const r = await lotada('2030-01-16T02:30:00Z', novato);
+      expect(r.has(ALVO_TURMA)).toBe(false);
+    });
+
+    it('de manhã (09h do clube), a aula da noite ainda vai acontecer e conta', async () => {
+      const { aulaId, novato } = await comAulaLotadaNoDia();
+      const r = await lotada('2030-01-15T12:00:00Z', novato);
+      expect(r.get(ALVO_TURMA)?.id).toBe(aulaId);
+    });
   });
 
-  it('hoje: a aula que ainda vai acontecer conta', async () => {
+  /**
+   * **Todas as aulas, e não só a primeira** (achado A-03: a sabotagem `take: 1`
+   * na leitura das aulas passava os 18 casos, porque em todos eles a aula
+   * lotada era a primeira). Aqui a primeira cabe e só a seguinte lota.
+   */
+  it('a primeira aula cabe e a da semana seguinte lota: recusa, citando a da semana seguinte', async () => {
     await montar(1);
-    const noite = await aula(ALVO_TURMA, emDias(0), '23:00', '23:59');
-    await visitanteEm(noite);
+    const semanaQueVem = await aula(ALVO_TURMA, emDias(13), '20:00', '21:00');
+    await visitanteEm(semanaQueVem);
     const novato = await aluno();
     const r = await desfecho(
       classes().allocateStudent(EMPRESA, ALVO_TURMA, novato.alunoId),
     );
     expect(r.code).toBe('AULA_LOTADA');
-    expect(r.message).toContain(`A aula de ${ddmm(emDias(0))} `);
+    expect(r.message).toContain(`A aula de ${ddmm(emDias(13))} `);
+    expect(await matriculados()).toBe(0);
   });
 
   it('a recusa cita a aula MAIS CEDO que lotaria', async () => {
@@ -425,6 +463,78 @@ describe('quem oferece a vaga segue a mesma regra', () => {
     expect(await daLista(novato.usuarioId)).toMatchObject({
       podeEntrar: true,
       motivo: null,
+    });
+  });
+
+  /**
+   * **Duas turmas no mesmo lote** (achado A-03): a lista lê as aulas de todas
+   * numa ida só, e um corte que olhasse só a primeira aula do lote — ou só a
+   * primeira de cada turma — erraria aqui. A turma B tem a primeira aula livre
+   * e a seguinte lotada; a alvo não tem nada lotado, e aula mais cedo que B.
+   */
+  it('duas turmas no lote: marca CHEIA só a que tem uma aula POSTERIOR lotada, e deixa a outra', async () => {
+    await montar(1);
+    const TURMA_B = '07510000-0000-4000-8000-00000000000c';
+    await q(
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_B}','${EMPRESA}','B','${QUADRA}',1,'ativa')`,
+    );
+    await aula(TURMA_B, emDias(7), '20:00', '21:00');
+    const bLotada = await aula(TURMA_B, emDias(14), '20:00', '21:00');
+    await visitanteEm(bLotada);
+    const novato = await aluno();
+
+    const lista = await matricula().disponiveis(EMPRESA, novato.usuarioId);
+    expect(lista.find((t) => t.id === TURMA_B)).toMatchObject({
+      podeEntrar: false,
+      motivo: 'TURMA_CHEIA',
+    });
+    expect(lista.find((t) => t.id === ALVO_TURMA)).toMatchObject({
+      podeEntrar: true,
+      motivo: null,
+    });
+  });
+
+  /**
+   * **A tela do GESTOR** (ADR-027, achado A-04): a lista e o detalhe da turma
+   * dizem o dia em que um aluno novo não caberia — antes, o gestor via "0/1" e
+   * recebia `409 AULA_LOTADA` ao alocar.
+   */
+  describe('a turma do gestor diz a próxima aula lotada', () => {
+    const daListaDoGestor = async () =>
+      (await classes().list(EMPRESA, { page: 1, pageSize: 50 })).data.find(
+        (t) => t.id === ALVO_TURMA,
+      );
+
+    it('com o sábado lotado por reposição: a lista E o detalhe dizem o sábado', async () => {
+      await montar(1);
+      await visitanteEm(SABADO);
+      expect(await daListaDoGestor()).toMatchObject({
+        alunosAlocados: 0,
+        proximaAulaLotada: emDias(6),
+      });
+      expect(await classes().findOne(EMPRESA, ALVO_TURMA)).toMatchObject({
+        proximaAulaLotada: emDias(6),
+      });
+    });
+
+    it('controle: sem reposição, nada lotado', async () => {
+      await montar(1);
+      expect((await daListaDoGestor())?.proximaAulaLotada).toBeNull();
+      expect(
+        (await classes().findOne(EMPRESA, ALVO_TURMA)).proximaAulaLotada,
+      ).toBeNull();
+    });
+
+    it('turma já cheia por matrícula: nulo — ela já aparece cheia, e o campo não acrescenta nada', async () => {
+      await montar(1);
+      const membro = await aluno();
+      await q(
+        `INSERT INTO turma_alunos (id,turma_id,aluno_id,created_at) VALUES (gen_random_uuid(),'${ALVO_TURMA}','${membro.alunoId}',now())`,
+      );
+      expect(await daListaDoGestor()).toMatchObject({
+        alunosAlocados: 1,
+        proximaAulaLotada: null,
+      });
     });
   });
 
