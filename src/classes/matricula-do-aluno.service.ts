@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,17 @@ import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
+import {
+  aulaQueAMatriculaLotaria,
+  aulasQueAMatriculaLotaria,
+  diaEMes,
+} from './ocupacao-da-ocorrencia';
+import {
+  nivelEfetivoDoAluno,
+  podeEntrarPorNivel,
+  recusaPorNivel,
+  travarNivelDaEmpresa,
+} from '../people/nivel-efetivo';
 
 /**
  * SPEC-023 — **o aluno entra e sai de turma sozinho.**
@@ -97,7 +109,42 @@ export class MatriculaDoAlunoService {
       empresa.limiteTurmasPorAluno !== null &&
       minhasIds.size >= empresa.limiteTurmasPorAluno;
 
-    return turmas.map((turma) => {
+    // SPEC-075/D3 (INV-075b) — **a lista não oferece o que o servidor recusa.**
+    // Some a turma que o aluno não pode entrar por nível E na qual ele não
+    // está: a turma em que ele já está (de antes da regra, D6) continua,
+    // porque é por ela que ele sai. O recorte não vira `motivo` — um motivo
+    // novo apareceria como texto que o Cliente no ar não conhece.
+    const efetivo = await nivelEfetivoDoAluno(
+      this.prisma,
+      companyId,
+      aluno.nivelId,
+    );
+
+    const visiveis = turmas.filter(
+      (turma) =>
+        minhasIds.has(turma.id) || podeEntrarPorNivel(turma.nivelId, efetivo),
+    );
+
+    // A regra de 2026-09-26 (`aulasQueAMatriculaLotaria`): a turma com vaga
+    // de matrícula mas com uma próxima aula lotada por reposições aparece
+    // CHEIA — senão a lista oferece "Entrar" e o `POST` recusa. Só para as
+    // que chegariam à checagem de vaga, e numa ida só para todas.
+    const lotadas = await aulasQueAMatriculaLotaria(
+      this.prisma,
+      companyId,
+      visiveis.filter(
+        (turma) =>
+          !minhasIds.has(turma.id) &&
+          aluno.vinculo === 'aprovado' &&
+          turma.status === 'ativa' &&
+          !noLimite &&
+          turma._count.alunos < turma.capacidade,
+      ),
+      aluno.id,
+      new Date(),
+    );
+
+    return visiveis.map((turma) => {
       const matriculados = turma._count.alunos;
       const jaEstouNela = minhasIds.has(turma.id);
       const motivo = this.motivoDeBloqueio({
@@ -107,6 +154,7 @@ export class MatriculaDoAlunoService {
         capacidade: turma.capacidade,
         vinculo: aluno.vinculo,
         noLimite,
+        aulaLotada: lotadas.has(turma.id),
       });
 
       return {
@@ -141,12 +189,14 @@ export class MatriculaDoAlunoService {
     capacidade: number;
     vinculo: string;
     noLimite: boolean;
+    aulaLotada: boolean;
   }): string | null {
     if (dados.jaEstouNela) return null;
     if (dados.vinculo !== 'aprovado') return 'ALUNO_NAO_APROVADO';
     if (dados.status !== 'ativa') return 'TURMA_INATIVA';
     if (dados.noLimite) return 'LIMITE_DE_TURMAS';
     if (dados.matriculados >= dados.capacidade) return 'TURMA_CHEIA';
+    if (dados.aulaLotada) return 'TURMA_CHEIA';
     return null;
   }
 
@@ -159,9 +209,14 @@ export class MatriculaDoAlunoService {
    */
   async entrar(companyId: string, usuarioId: string, turmaId: string) {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
-    return this.prisma.$transaction((tx) =>
-      this.entrarNaTransacao(tx, companyId, aluno, turmaId),
-    );
+    return this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução, antes
+      // do `FOR UPDATE` da turma que o `entrarNaTransacao` toma. O
+      // `entrarNaTransacao` não a toma: quem o chama já a tomou (este `entrar`
+      // e o `confirmar` da fila) — e a AC-029 fixa quem pode chamá-lo.
+      await travarNivelDaEmpresa(tx, companyId);
+      return this.entrarNaTransacao(tx, companyId, aluno, turmaId);
+    });
   }
 
   /**
@@ -182,9 +237,15 @@ export class MatriculaDoAlunoService {
     turmaId: string,
   ) {
     const turmaRows = await tx.$queryRaw<
-      { id: string; capacidade: number; status: string }[]
+      {
+        id: string;
+        capacidade: number;
+        status: string;
+        nivel_id: string | null;
+      }[]
     >`
-      SELECT id, capacidade, status::text AS status FROM turmas
+      SELECT id, capacidade, status::text AS status, nivel_id::text AS nivel_id
+        FROM turmas
       WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
       FOR UPDATE
     `;
@@ -238,13 +299,52 @@ export class MatriculaDoAlunoService {
       }
     }
 
-    // Por último, e sob a trava: é a checagem que a concorrência ataca.
+    // SPEC-075/D3 — **o nível, a última recusa antes da de capacidade.** Depois
+    // do `jaAlocado` (tocar de novo numa turma em que já está devolve a
+    // matrícula que existe, D6) e antes de `TURMA_CHEIA`: "cheia" é passageira
+    // e leva à fila, que recusaria por nível — dizer "cheia" a quem nunca
+    // poderia entrar é mandá-lo a uma porta trancada. Lido pelo `tx`, sem lock
+    // novo; lançado depois de leituras e antes de escrever, que é o que faz a
+    // confirmação da fila encerrar a linha em vez de abortar (SPEC-064).
+    const doAluno = await tx.aluno.findUniqueOrThrow({
+      where: { id: aluno.id },
+      select: { nivelId: true },
+    });
+    const recusa = await recusaPorNivel(
+      tx,
+      companyId,
+      turma.nivel_id,
+      doAluno.nivelId,
+      'aluno',
+    );
+    if (recusa) throw new UnprocessableEntityException(recusa);
+
+    // Sob a trava: é a checagem que a concorrência ataca.
     const alocados = await tx.turmaAluno.count({ where: { turmaId } });
     if (alocados >= turma.capacidade) {
       throw new ConflictException({
         statusCode: 409,
         code: 'TURMA_CHEIA',
         message: 'Esta turma já está com todas as vagas ocupadas.',
+      });
+    }
+
+    // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
+    // (decisão do Israel, 2026-09-26): a vaga de um dia já dada a uma
+    // reposição não pode ser dada de novo a quem entra na turma. Mesmo `code`
+    // de turma cheia — é o que o Cliente no ar sabe mostrar —, com o dia.
+    const lotaria = await aulaQueAMatriculaLotaria(
+      tx,
+      companyId,
+      { id: turmaId, capacidade: turma.capacidade },
+      aluno.id,
+      new Date(),
+    );
+    if (lotaria) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'TURMA_CHEIA',
+        message: `A aula de ${diaEMes(lotaria.data)} desta turma já está com todas as vagas ocupadas, contando as reposições marcadas.`,
       });
     }
 

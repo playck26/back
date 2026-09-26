@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LevelsService } from './levels.service';
 
 function buildPrismaMock() {
-  return {
+  const mock = {
     nivel: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -19,7 +19,22 @@ function buildPrismaMock() {
     aluno: {
       count: jest.fn(),
     },
-  } as unknown as PrismaService;
+    turma: {
+      count: jest.fn(),
+    },
+    // SPEC-075/D12 — criar e editar nível conferem, numa transação, os pares
+    // dos alunos sem nível. O dublê: a transação é o próprio dublê, e não há
+    // matrícula nenhuma — a conferência não acha par, e cada caso aqui continua
+    // provando só o que já provava.
+    turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-075/D13 — a trava de nível da empresa (`pg_advisory_xact_lock`).
+    $executeRaw: jest.fn().mockResolvedValue(1),
+    $transaction: jest.fn(),
+  };
+  mock.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+    cb(mock),
+  );
+  return mock as unknown as PrismaService;
 }
 
 describe('LevelsService', () => {
@@ -78,9 +93,24 @@ describe('LevelsService', () => {
       expect(prisma.nivel.delete).not.toHaveBeenCalled();
     });
 
+    it('rejeita remoção com 422 quando em uso por turma (SPEC-075, INV-075e)', async () => {
+      (prisma.nivel.findFirst as jest.Mock).mockResolvedValue({ id: 'n1' });
+      (prisma.aluno.count as jest.Mock).mockResolvedValue(0);
+      (prisma.turma.count as jest.Mock).mockResolvedValue(1);
+
+      await expect(service.remove('c1', 'n1')).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+      expect(prisma.turma.count).toHaveBeenCalledWith({
+        where: { nivelId: 'n1', companyId: 'c1' },
+      });
+      expect(prisma.nivel.delete).not.toHaveBeenCalled();
+    });
+
     it('remove quando não está em uso', async () => {
       (prisma.nivel.findFirst as jest.Mock).mockResolvedValue({ id: 'n1' });
       (prisma.aluno.count as jest.Mock).mockResolvedValue(0);
+      (prisma.turma.count as jest.Mock).mockResolvedValue(0);
       (prisma.nivel.delete as jest.Mock).mockResolvedValue({});
 
       await service.remove('c1', 'n1');

@@ -8,6 +8,14 @@
 import { randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 import { PrismaClient } from '@prisma/client';
+// SPEC-075/D13 — por caminho RELATIVO: o seed roda por `ts-node prisma/seed.ts`
+// sem `tsconfig-paths` (package.json, `prisma.seed`). Por isso
+// `nivel-efetivo.ts` e `chave-de-lock.ts` não importam Nest nem usam alias.
+import {
+  criarNiveisPadrao,
+  recusaPorNivel,
+  travarNivelDaEmpresa,
+} from '../src/people/nivel-efetivo';
 
 const prisma = new PrismaClient();
 
@@ -177,7 +185,7 @@ async function seedEtapa2(companyId: string) {
   );
 }
 
-// Etapa 3 (SPEC-003, fatia de turmas): 2 niveis, 1 professor, 3
+// Etapa 3 (SPEC-003, fatia de turmas): os niveis, 1 professor, 3
 // usuarios+alunos e 1 turma (usando a quadra semeada pela etapa 2), com os
 // 3 alunos alocados em turma_alunos. `niveis` tem UNIQUE(company_id, nome)
 // -> upsert; `professores`/`turmas` não têm chave única de negócio própria
@@ -186,19 +194,48 @@ async function seedEtapa2(companyId: string) {
 // aleatória nunca exposta/logada) para não duplicar regra de negócio fora
 // da service layer.
 async function seedEtapa3(companyId: string) {
-  const niveisDemo = [
-    { nome: 'Iniciante', ordem: 1 },
-    { nome: 'Intermediário', ordem: 2 },
-  ];
-  const niveisIds: string[] = [];
-  for (const dadosNivel of niveisDemo) {
-    const nivel = await prisma.nivel.upsert({
-      where: { companyId_nome: { companyId, nome: dadosNivel.nome } },
-      update: {},
-      create: { companyId, ...dadosNivel },
+  // SPEC-075/D13 + AC-030 — **o seed só cria níveis numa empresa SEM nível.**
+  //
+  // Antes ele fazia `upsert` de Iniciante e Intermediário. Numa empresa de QA
+  // que só tivesse o Intermediário, recriar o Iniciante mudava QUEM É O
+  // PRIMEIRO — e um aluno sem nível numa turma Intermediário ficava fora do
+  // nível dela, em sequência, sem corrida nenhuma (5ª rodada, N5-02). Numa
+  // empresa sem nível nenhum, nenhuma turma tem nível, e criar níveis ali não
+  // pode quebrar par. E a lista criada é a MESMA da empresa nova (decisão 7),
+  // pela mesma função — o seed não tem lista própria.
+  //
+  // Com nível, o seed não escreve nível nenhum e exige só o que ele usa: o
+  // Iniciante, que é o dos alunos e da turma demo. Os bancos de QA de antes
+  // (com Iniciante e Intermediário) seguem funcionando.
+  //
+  // **A trava só onde se escreve.** Numa empresa que já tem nível, o seed não
+  // escreve nível nenhum — e não trava. Numa empresa sem nível, a escrita vai
+  // numa transação cuja PRIMEIRA instrução é a trava de nível da empresa (D13),
+  // e a contagem é refeita SOB ela: um gestor da empresa de QA criando nível no
+  // mesmo instante não corre junto. (Travar sempre, como na primeira versão,
+  // fazia o seed estourar na trava dos níveis antes de chegar às matrículas — e
+  // a prova da trava das matrículas nunca as exercitava: a sabotagem L08
+  // passava verde.)
+  if ((await prisma.nivel.count({ where: { companyId } })) === 0) {
+    await prisma.$transaction(async (tx) => {
+      await travarNivelDaEmpresa(tx, companyId);
+      if ((await tx.nivel.count({ where: { companyId } })) === 0) {
+        await criarNiveisPadrao(tx, companyId);
+      }
     });
-    niveisIds.push(nivel.id);
   }
+  const iniciante = await prisma.nivel.findUnique({
+    where: { companyId_nome: { companyId, nome: 'Iniciante' } },
+    select: { id: true },
+  });
+  if (!iniciante) {
+    throw new Error(
+      'seed: a empresa de QA já tem níveis, e falta o Iniciante. O seed não ' +
+        'cria nível numa empresa que já tem nível (SPEC-075, AC-030) — crie o ' +
+        'Iniciante pelo Admin, ou apague os níveis da empresa de QA.',
+    );
+  }
+  const niveisIds = [iniciante.id];
 
   let professor = await prisma.professor.findFirst({
     where: { companyId, nome: 'Professor Demo' },
@@ -307,16 +344,49 @@ async function seedEtapa3(companyId: string) {
     });
   }
 
-  for (const alunoId of alunosIds) {
-    await prisma.turmaAluno.upsert({
-      where: { turmaId_alunoId: { turmaId: turma.id, alunoId } },
-      update: {},
-      create: { turmaId: turma.id, alunoId },
-    });
-  }
+  // SPEC-075/D13 + INV-075a — **as matrículas demo, numa transação só, sob a
+  // trava de nível da empresa (PRIMEIRA instrução), e cada par NOVO conferido
+  // pelo mesmo predicado da API.** Um aluno demo que o gestor de QA tenha
+  // mudado de nível, e tirado da turma, não volta para ela fora do nível: o
+  // seed ABORTA, com o nome do aluno e da turma — abortar, e não pular, porque
+  // pular deixaria a demo diferente do que o log diz (decisão operacional,
+  // julgada na 5ª rodada, R5-03). Matrícula que já existe não é reescrita.
+  const turmaDemo = turma;
+  await prisma.$transaction(async (tx) => {
+    await travarNivelDaEmpresa(tx, companyId);
+    for (const alunoId of alunosIds) {
+      const jaExiste = await tx.turmaAluno.findUnique({
+        where: { turmaId_alunoId: { turmaId: turmaDemo.id, alunoId } },
+        select: { id: true },
+      });
+      if (jaExiste) continue;
+      const doAluno = await tx.aluno.findUniqueOrThrow({
+        where: { id: alunoId },
+        select: { nivelId: true, usuario: { select: { nome: true } } },
+      });
+      const recusa = await recusaPorNivel(
+        tx,
+        companyId,
+        turmaDemo.nivelId,
+        doAluno.nivelId,
+        'gestor',
+      );
+      if (recusa) {
+        throw new Error(
+          `seed: ${doAluno.usuario.nome} não entra na turma "${turmaDemo.nome}" — ` +
+            `${recusa.message} (SPEC-075, INV-075a)`,
+        );
+      }
+      await tx.turmaAluno.upsert({
+        where: { turmaId_alunoId: { turmaId: turmaDemo.id, alunoId } },
+        update: {},
+        create: { turmaId: turmaDemo.id, alunoId },
+      });
+    }
+  });
 
   console.log(
-    `[seed] etapa 3 ok — ${niveisDemo.length} níveis, 1 professor, ${alunosIds.length} alunos, turma "${turma.nome}" (${alunosIds.length} alocações em turma_alunos)`,
+    `[seed] etapa 3 ok — níveis da empresa de QA prontos, 1 professor, ${alunosIds.length} alunos, turma "${turma.nome}" (${alunosIds.length} alocações em turma_alunos)`,
   );
 }
 

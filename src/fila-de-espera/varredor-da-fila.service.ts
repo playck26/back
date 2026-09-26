@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import {
+  aulaQueAMatriculaLotaria,
   calcularOcupacao,
   carregarConjuntos,
 } from '../classes/ocupacao-da-ocorrencia';
@@ -42,8 +43,9 @@ import {
  *
  * ## Duas contas de capacidade, e elas não se misturam
  *
- * - fila de **turma** → `|matriculados| >= turmas.capacidade`, a mesma de
- *   `allocateStudent`;
+ * - fila de **turma** → `|matriculados| >= turmas.capacidade` e, desde
+ *   2026-09-26, a matrícula do aluno da linha cabendo em todas as próximas
+ *   aulas (`aulaQueAMatriculaLotaria`) — as duas contas de `allocateStudent`;
  * - fila de **aula** → `calcularOcupacao`, que trabalha por **conjuntos**.
  *
  * **Não é a fórmula da SPEC-046**, que a SPEC-057/D17 abandonou por dar vaga
@@ -256,8 +258,9 @@ export class VarredorDaFilaService {
    * **O orçamento de idas ao banco é fixo** (DEF-013 conta idas): 1 lock de
    * turma, 1 de ocupação (só fila de aula), 3 do `carregarConjuntos` (só fila
    * de aula), 1 contagem de matrícula (só fila de turma), 1 `FOR UPDATE` da
-   * linha, 1 leitura do usuário, 1 `UPDATE`, 1 `INSERT`. **Nenhum laço por
-   * linha** — o alvo é um só.
+   * linha, 1 leitura das próximas aulas e 3 do `carregarConjuntos` (só fila
+   * de turma, a regra de 2026-09-26), 1 leitura do usuário, 1 `UPDATE`, 1
+   * `INSERT`. **Nenhum laço por linha** — o alvo é um só.
    */
   private async chamarNoAlvo(
     alvo: AlvoComFila,
@@ -341,6 +344,26 @@ export class VarredorDaFilaService {
         const linha = linhas[0];
         if (!linha) return 'nada';
 
+        // Fila de TURMA: a vaga de matrícula também precisa caber em todas as
+        // próximas aulas, contando as reposições (a regra de 2026-09-26, a
+        // mesma do `entrarNaTransacao` que a confirmação vai chamar). Sem
+        // isto, o varredor chamaria para uma vaga que a confirmação recusa, e
+        // a linha seria encerrada — uma por ciclo, até a fila acabar. Com o
+        // aluno da linha, e não um genérico: se ele já é visitante da aula
+        // lotada, para ele cabe. Só leitura, depois do último lock.
+        if (
+          !ocupacao &&
+          (await aulaQueAMatriculaLotaria(
+            tx,
+            alvo.companyId,
+            turma,
+            linha.alunoId,
+            new Date(agora()),
+          ))
+        ) {
+          return 'sem_vaga';
+        }
+
         const chamadoEm = new Date(agora());
         // SPEC-064/TASK-008 — **pelo `tx`**, e so quando ha aula: a fila de
         // turma nao tem antecedencia (D4), e ler por outra conexao segurando
@@ -414,7 +437,8 @@ export class VarredorDaFilaService {
     }
   }
 
-  /** `|matriculados| >= capacidade` — a mesma conta de `allocateStudent`. */
+  /** `|matriculados| >= capacidade` — a primeira conta de `allocateStudent`;
+   *  a segunda (as próximas aulas) vem depois da linha, porque depende do aluno. */
   private async vagaNaTurma(
     tx: Prisma.TransactionClient,
     turmaId: string,

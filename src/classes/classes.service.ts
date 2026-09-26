@@ -15,6 +15,12 @@ import {
   parseDateOnly,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
+import { aulaQueAMatriculaLotaria, diaEMes } from './ocupacao-da-ocorrencia';
+import {
+  conferirEdicaoDeNivel,
+  recusaPorNivel,
+  travarNivelDaEmpresa,
+} from '../people/nivel-efetivo';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
@@ -517,6 +523,11 @@ export class ClassesService {
     // muda, cancelar as ocupações futuras antigas e gerar as novas
     // acontece na mesma transação da atualização da turma.
     const turma = await this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — quando o corpo traz `nivelId`, a trava de nível da
+      // empresa é a PRIMEIRA instrução, antes do `FOR UPDATE` da turma logo
+      // abaixo. Sem `nivelId` a edição não mexe em nível, e não trava.
+      if (dto.nivelId !== undefined) await travarNivelDaEmpresa(tx, companyId);
+
       // SPEC-068/D6 — **o professor anterior sai da linha TRAVADA**, e só
       // quando o `PATCH` traz `professorId`.
       //
@@ -550,31 +561,52 @@ export class ClassesService {
         }
       }
 
-      const atualizada = await tx.turma.update({
-        where: { id },
-        data: {
-          nome: dto.nome,
-          nivelId: dto.nivelId,
-          professorId: dto.professorId,
-          quadraId: dto.quadraId,
-          capacidade: dto.capacidade,
-          status: dto.status,
-          ...(dto.encontros === undefined
-            ? {}
-            : {
-                // **Substitui a lista inteira**, na mesma transação. Não há
-                // edição parcial de recorrência: ver `UpdateClassDto`.
-                encontros: {
-                  deleteMany: {},
-                  create: dto.encontros.map((encontro) => ({
-                    diaSemana: encontro.diaSemana,
-                    horaInicio: parseTimeOnly(encontro.horaInicio),
-                    horaFim: parseTimeOnly(encontro.horaFim),
-                  })),
-                },
-              }),
-        },
-      });
+      const gravarTurma = () =>
+        tx.turma.update({
+          where: { id },
+          data: {
+            nome: dto.nome,
+            nivelId: dto.nivelId,
+            professorId: dto.professorId,
+            quadraId: dto.quadraId,
+            capacidade: dto.capacidade,
+            status: dto.status,
+            ...(dto.encontros === undefined
+              ? {}
+              : {
+                  // **Substitui a lista inteira**, na mesma transação. Não há
+                  // edição parcial de recorrência: ver `UpdateClassDto`.
+                  encontros: {
+                    deleteMany: {},
+                    create: dto.encontros.map((encontro) => ({
+                      diaSemana: encontro.diaSemana,
+                      horaInicio: parseTimeOnly(encontro.horaInicio),
+                      horaFim: parseTimeOnly(encontro.horaFim),
+                    })),
+                  },
+                }),
+          },
+        });
+
+      // SPEC-075/D12 (decisão 6) — **mudar o nível da turma não pode deixar
+      // fora do nível um aluno que está nela.** Só quando o corpo traz
+      // `nivelId` (inclusive `null`, que nunca recusa: turma sem nível é de
+      // todos). Compara os pares antes e depois da escrita, na mesma transação;
+      // a recusa desfaz tudo.
+      let atualizada: Awaited<ReturnType<typeof gravarTurma>>;
+      if (dto.nivelId !== undefined) {
+        const r = await conferirEdicaoDeNivel(
+          tx,
+          companyId,
+          { turmaId: id },
+          { tipo: 'turma' },
+          gravarTurma,
+        );
+        if (r.recusa) throw new UnprocessableEntityException(r.recusa);
+        atualizada = r.resultado;
+      } else {
+        atualizada = await gravarTurma();
+      }
 
       // SPEC-064/D6 — **turma inativada mata a fila de TURMA dela.**
       //
@@ -744,13 +776,18 @@ export class ClassesService {
 
   async allocateStudent(companyId: string, turmaId: string, alunoId: string) {
     return this.prisma.$transaction(async (tx) => {
+      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução, antes
+      // do `FOR UPDATE` da turma: esta alocação e uma edição de nível da mesma
+      // empresa nunca correm juntas.
+      await travarNivelDaEmpresa(tx, companyId);
+
       // REQ-004/INV-003 (DATA_MODEL.md): SELECT ... FOR UPDATE na linha da
       // turma serializa checagens de capacidade concorrentes — não
       // expressável no query builder do Prisma, raw query necessária.
       const turmaRows = await tx.$queryRaw<
-        { id: string; capacidade: number }[]
+        { id: string; capacidade: number; nivel_id: string | null }[]
       >`
-        SELECT id, capacidade FROM turmas
+        SELECT id, capacidade, nivel_id::text AS nivel_id FROM turmas
         WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
         FOR UPDATE
       `;
@@ -782,11 +819,44 @@ export class ClassesService {
         return jaAlocado;
       }
 
+      // SPEC-075/D5 (decisão 5 do Israel) — **o gestor também é recusado.**
+      // Sem parâmetro, flag ou papel que contorne: o caminho que sobra é mudar
+      // o nível do aluno, e a mensagem o diz (D4, o texto do gestor). Depois do
+      // `jaAlocado` (a alocação que já existe continua, D6) e antes da
+      // capacidade — a mesma posição dos gestos do aluno (D3).
+      const recusa = await recusaPorNivel(
+        tx,
+        companyId,
+        turma.nivel_id,
+        aluno.nivelId,
+        'gestor',
+      );
+      if (recusa) throw new UnprocessableEntityException(recusa);
+
       const alocados = await tx.turmaAluno.count({ where: { turmaId } });
       if (alocados >= turma.capacidade) {
         throw new ConflictException(
           'Capacidade da turma excedida (INV-003, AC-002)',
         );
+      }
+
+      // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
+      // (decisão do Israel, 2026-09-26). Antes, marcar a reposição na última
+      // vaga de um dia e DEPOIS alocar deixava aquele dia acima da capacidade
+      // — o FIT-035 só passava por sorte de ordem.
+      const lotaria = await aulaQueAMatriculaLotaria(
+        tx,
+        companyId,
+        turma,
+        alunoId,
+        new Date(),
+      );
+      if (lotaria) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'AULA_LOTADA',
+          message: `A aula de ${diaEMes(lotaria.data)} desta turma já está lotada, contando as reposições marcadas. Alocar agora deixaria esse dia acima da capacidade.`,
+        });
       }
 
       return tx.turmaAluno.create({ data: { turmaId, alunoId } });

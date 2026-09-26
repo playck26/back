@@ -14,6 +14,7 @@ import {
 import {
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiUnprocessableEntityResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
@@ -178,6 +179,10 @@ export class MeClassesController {
   @ApiOkResponse({ type: MatriculaDoAlunoResponseDto })
   @ApiForbiddenResponse({ type: ErroDeMatriculaResponseDto })
   @ApiConflictResponse({ type: ErroDeMatriculaResponseDto })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'Turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075). A mensagem diz o nível da turma e o do aluno — ou que ele ainda não tem nível e conta como o primeiro.',
+  })
   @ApiNotFoundResponse({
     description:
       'Turma inexistente — ou de outra empresa. São 404 iguais de propósito (INV-023b): distinguir já entregaria informação sobre o outro clube.',

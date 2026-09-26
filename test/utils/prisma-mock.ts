@@ -29,6 +29,9 @@ export interface TxMock {
   // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias, na mesma
   // transação da criação.
   horarioFuncionamento: { createMany: jest.Mock };
+  // SPEC-075/D7: empresa nova nasce com os três níveis padrão, na mesma
+  // transação (pelo `LevelsService.semearNiveisPadrao`, de MOD-003).
+  nivel: { createMany: jest.Mock };
   // SPEC-020/TASK-008: editar a empresa sincroniza o catálogo de esportes
   // DENTRO da transação — sincronizar e gravar acontecem juntos ou não
   // acontecem.
@@ -197,6 +200,7 @@ export function buildPrismaMock(): PrismaMock {
     horarioFuncionamento: {
       createMany: jest.fn().mockResolvedValue({ count: 7 }),
     },
+    nivel: { createMany: jest.fn().mockResolvedValue({ count: 3 }) },
     empresa: {
       create: jest.fn(),
       // Padrão: nenhum slug colidindo.
