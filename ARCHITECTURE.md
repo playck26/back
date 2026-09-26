@@ -997,8 +997,18 @@ terminou e aplica `calcularOcupacao`. Quatro leitores: os dois escritores
 (`entrarNaTransacao` → `409 TURMA_CHEIA` com o dia; `allocateStudent` → `409
 AULA_LOTADA` com o dia), a lista `disponiveis` (`motivo: TURMA_CHEIA`, uma ida
 para todas as turmas) e o varredor da fila de turma (não chama; conta com o
-aluno da linha, depois do último lock). Gate:
-`test/banco/spec-075-lotacao-da-matricula.db-spec.ts`, 18 casos.
+aluno da linha, depois do último lock). E a tela do gestor sabe antes de
+alocar: `GET /classes` e `GET /classes/:id` trazem `proximaAulaLotada` (a data,
+ou `null`), pela mesma função com um aluno que não é de ninguém
+(`ALUNO_NOVO`), só para turma com vaga de matrícula. A regra é a **ADR-027**.
+Gate: `test/banco/spec-075-lotacao-da-matricula.db-spec.ts`, 24 casos, com o
+"hoje" em relógio fixo (a função recebe o instante).
+
+**O rollback das FKs de nível está pronto e provado:**
+`prisma/rollback/075-fks-de-nivel-simples.sql` — fora de `prisma/migrations`,
+porque migration pendente é aplicada —, executado dentro de uma transação que
+desfaz por `test/banco/spec-075-rollback.db-spec.ts`. Reverter o merge do Back
+não troca as FKs de volta; este arquivo é a segunda metade.
 
 **`GET /matriculas/vencimentos` é a primeira rota de matrícula por EMPRESA
 (SPEC-045).** As três que existiam eram por aluno, e a consequência era que o

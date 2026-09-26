@@ -244,6 +244,16 @@ export async function aulasQueAMatriculaLotaria(
   return lotadas;
 }
 
+/**
+ * **Um aluno que não é de ninguém** — para perguntar "um aluno NOVO caberia?"
+ * sem ter um aluno na mão (a tela de turmas do gestor, ADR-027 e achado A-04
+ * da validação). O UUID nulo nunca é gerado pelo banco (`gen_random_uuid`), então
+ * ele não coincide com matriculado nem visitante: é o caso comum, o de quem
+ * ainda não tem nada naquela aula. O visitante daquela aula ainda cabe — e
+ * quem decide, no fim, é a alocação, com o aluno de verdade.
+ */
+export const ALUNO_NOVO = '00000000-0000-0000-0000-000000000000';
+
 /** Uma turma só: a aula mais cedo que a matrícula lotaria, ou `null`. */
 export async function aulaQueAMatriculaLotaria(
   db: LeitorDeConjuntos & Pick<Prisma.TransactionClient, 'ocupacaoQuadra'>,

@@ -10850,7 +10850,7 @@
           "horaFim"
         ]
       },
-      "TurmaResponseDto": {
+      "TurmaComLotacaoResponseDto": {
         "type": "object",
         "properties": {
           "id": {
@@ -10899,6 +10899,13 @@
           "alunosAlocados": {
             "type": "number",
             "example": 4
+          },
+          "proximaAulaLotada": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "example": "2026-10-03",
+            "description": "A primeira aula que ainda não terminou em que um aluno novo NÃO caberia, contando as reposições marcadas (ADR-027). Só vem preenchida quando a turma tem vaga de matrícula (`alunosAlocados < capacidade`) — sem vaga, a turma já está cheia e isto não acrescenta nada. `null` quando cabe. Quem já é visitante daquela aula ainda pode ser alocado: a alocação decide com o aluno de verdade."
           }
         },
         "required": [
@@ -10911,7 +10918,8 @@
           "encontros",
           "capacidade",
           "status",
-          "alunosAlocados"
+          "alunosAlocados",
+          "proximaAulaLotada"
         ]
       },
       "TurmaPaginadaResponseDto": {
@@ -10920,7 +10928,7 @@
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/TurmaResponseDto"
+              "$ref": "#/components/schemas/TurmaComLotacaoResponseDto"
             }
           },
           "page": {
@@ -10999,6 +11007,70 @@
           "capacidade"
         ]
       },
+      "TurmaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Turma Iniciante"
+          },
+          "nivelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "professorId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "quadraId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encontros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaEncontroResponseDto"
+            }
+          },
+          "capacidade": {
+            "type": "number",
+            "example": 10
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ativa",
+              "inativa"
+            ]
+          },
+          "alunosAlocados": {
+            "type": "number",
+            "example": 4
+          }
+        },
+        "required": [
+          "id",
+          "companyId",
+          "nome",
+          "nivelId",
+          "professorId",
+          "quadraId",
+          "encontros",
+          "capacidade",
+          "status",
+          "alunosAlocados"
+        ]
+      },
       "AlunoDaTurmaResponseDto": {
         "type": "object",
         "properties": {
@@ -11069,6 +11141,13 @@
             "type": "number",
             "example": 4
           },
+          "proximaAulaLotada": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "example": "2026-10-03",
+            "description": "A primeira aula que ainda não terminou em que um aluno novo NÃO caberia, contando as reposições marcadas (ADR-027). Só vem preenchida quando a turma tem vaga de matrícula (`alunosAlocados < capacidade`) — sem vaga, a turma já está cheia e isto não acrescenta nada. `null` quando cabe. Quem já é visitante daquela aula ainda pode ser alocado: a alocação decide com o aluno de verdade."
+          },
           "alunos": {
             "type": "array",
             "items": {
@@ -11087,6 +11166,7 @@
           "capacidade",
           "status",
           "alunosAlocados",
+          "proximaAulaLotada",
           "alunos"
         ]
       },
