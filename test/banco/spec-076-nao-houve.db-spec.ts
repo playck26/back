@@ -419,13 +419,19 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
   });
 
   it('o corpo de `travarEValidarOcorrencia` não tem outro relógio', () => {
+    // Fim de linha normalizado: com `core.autocrlf=true` o checkout no
+    // Windows é CRLF, e o recorte por `'\n  }\n'` devolvia -1 — o `slice`
+    // pegava o resto do arquivo e achava o `clock_timestamp()` legítimo do
+    // refechamento (achado A2 da validação independente da implementação).
     const fonte = readFileSync(
       join(__dirname, '..', '..', 'src', 'classes', 'presenca.service.ts'),
       'utf8',
-    );
+    ).replace(/\r\n/g, '\n');
     const inicio = fonte.indexOf('private async travarEValidarOcorrencia(');
     const fim = fonte.indexOf('\n  }\n', inicio);
     expect(inicio).toBeGreaterThan(0);
+    // O recorte achou o fim do MÉTODO, e não o do arquivo.
+    expect(fim).toBeGreaterThan(inicio);
     const corpo = fonte.slice(inicio, fim);
     expect(corpo).toContain('this.relogio.agora(tx)');
     expect(corpo).not.toContain('clock_timestamp');
