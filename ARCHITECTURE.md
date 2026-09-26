@@ -1,6 +1,19 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-25** (era 2026-09-24).
+**Fonte: análise direta do código.** Data: **2026-09-26** (era 2026-09-25).
+
+**Números conferidos por comando em 2026-09-26, na branch da SPEC-076
+(`spec076/chamada`):** **55 migrations, 43 tabelas, 25 triggers** não-internas,
+**120 caminhos / 166 operações** no `openapi.json` (`ls -d prisma/migrations/*/`;
+`pg_tables` sem `_prisma_migrations` e `pg_trigger` sem as internas, num banco
+com as 55 aplicadas).
+
+*Mudou: **+1 migration** (`20260926120000_spec076_presenca_sem_autor_humano`),
+**+2 triggers** (`presencas_sem_autor_humano`, `chamadas_completa_so_automatica`)
+e **+1 operação**: saiu o `PUT /me/teacher/attendance/{id}` e entraram os dois
+`DELETE …/nao-houve` (professor e gestor). Os caminhos já existiam — pelo `GET`
+e pelo `PUT …/nao-houve` —, então a contagem de caminhos fica. A seção "A chamada
+que ninguém marca" abaixo diz o que mudou.*
 
 **Números conferidos por comando em 2026-09-25, na branch da SPEC-075
 (`spec075/nivel`):** **54 migrations, 43 tabelas, 23 triggers** não-internas,
@@ -666,9 +679,12 @@ ou `EXCLUDE`. Isso muda, e vale saber por quê antes de copiar o padrão.
 | `adicional_cabe_no_estoque`, `ocupacao_com_adicionais_confere_estoque` (SPEC-054/INV-133) | **o estoque conferido pelo banco no momento em que a unidade é tomada** — na inserção do item e quando a ocupação com item muda de intervalo ou sai de `cancelado`. `FOR UPDATE` no adicional e a soma em instrução separada de função `VOLATILE`: sob `READ COMMITTED` a segunda instrução enxerga quem venceu a espera. Recusam com `P3303` (esgotado) e `P3304` (inativo, só na inserção), e a mensagem nomeia o adicional |
 | `ocupacao_marca_transacao_de_criacao`, `ocupacao_transacao_de_criacao_imutavel`, `adicionais_da_ocupacao_append_only` (SPEC-054/INV-134) | **o item só nasce na transação da reserva e não muda.** O marcador é do banco (sobrescreve o valor enviado — forjar no `INSERT` não basta) e a inserção do item exige `transacao_de_criacao IS NOT DISTINCT FROM txid_current()` |
 | `adicionais_cabem_no_valor`, `valor_com_adicionais_imutavel` (SPEC-054/INV-135) | a soma dos itens cabe no `valor` da ocupação, e o `valor` de ocupação com item não muda |
+| `presencas_sem_autor_humano`, `chamadas_completa_so_automatica` (SPEC-076/D10, ADR-028) | **a primeira que recusa por AUTORIA.** `BEFORE INSERT OR UPDATE`: presença com `registrado_por` preenchido, e cabeçalho `completa` de origem não automática, recebem `23514`. Quem escreve presença passou a ser só o fechamento automático (autor nulo), o refechamento do "Desfazer" (a mesma função) e a D9 do script de limpeza. **Mesma válvula** da append-only (GUC **e** `playck_test_cleanup`), que as fixtures de chamada humana legada usam por `test/banco/valvula-de-presenca.ts`. A compensatória mora **fora** de `prisma/migrations` (`prisma/rollback/076-presenca-sem-autor-humano.sql`) — migration pendente é aplicada —, e a ordem de uso é normativa: a compensatória com o binário novo no ar, **depois** o revert do merge (AC-034) |
 
-**São dezessete triggers desde a SPEC-054** (eram dez; `SELECT tgname FROM
-pg_trigger WHERE NOT tgisinternal`, conferido contra Postgres 18.4 local). *A
+**São 25 triggers na SPEC-076** (medido em 2026-09-26; eram dezessete na
+SPEC-054 e dez antes dela; `SELECT tgname FROM pg_trigger WHERE NOT
+tgisinternal`, conferido contra Postgres 18.4 local). A tabela acima nomeia as
+que têm raciocínio próprio, não todas. *A
 tabela chegou a ficar parada na SPEC-031 com três.*
 
 **A SPEC-054 é a primeira em que a trigger RECUSA POR REGRA DE NEGÓCIO** — as
@@ -730,7 +746,8 @@ src/
                    `estado-da-chamada.ts` é a **fonte única** do estado de
                    uma chamada (SPEC-030/INV-030b) e é importado também por
                    `frequencia/` — a regra é de MOD-004, que é dono de
-                   `chamadas`
+                   `chamadas`. `relogio-da-presenca.ts` é o relógio
+                   único do portão da chamada (SPEC-076/D11)
   courts/          MOD-005 — quadras, ocupações, horários, agenda
   payment-config/  MOD-006 — meio de pagamento e status
   frequencia/      SPEC-015 — relatórios de frequência (sem MOD próprio)
@@ -740,7 +757,9 @@ src/
                    (`FechamentoAutomaticoService` + `AgendadorDeFechamento`),
                    trava de credencial e a CLI operacional
                    (`cli/presenca-auto.ts`). **Sem controller, e de
-                   propósito**: nenhuma rota ativa ou pausa o job
+                   propósito**: nenhuma rota ativa ou pausa o job.
+                   SPEC-076: o script de operador da limpeza
+                   (`cli/limpeza-chamada.ts` + `cli/fecho-de-linhas.ts`)
   dashboard/       MOD-007 — agregações de leitura
   storage/         MOD-008 — porta, adaptador S3, validador WebP, gramática
                    da chave, StorageService, fonte única do upload, fila,
@@ -1168,9 +1187,12 @@ A regra vencedora é **o cabeçalho, não a contagem de presenças**: uma turma
 onde todo mundo faltou tem cabeçalho e zero presenças, e a chamada foi feita.
 
 Os valores: `futura | em_andamento | pendente | feita | legada | nao_houve |
-cancelada`. `pendente` é a ausência de linha em `chamadas` numa aula que já
-terminou — o dia que o professor esqueceu. `legada` é `desconhecida`, de
-antes da SPEC-015. `nao_houve` é a SPEC-030.
+sem_participantes | sem_registro | cancelada`. **Desde a SPEC-076, `pendente`
+não é esquecimento de ninguém:** é a aula que terminou **depois do corte** da
+presença automática e que o fechamento ainda não fechou — ninguém lança
+presença à mão. A que terminou sem cabeçalho **antes** do corte (ou sem corte)
+é `sem_registro`, e não é pendência (D5). `legada` é `desconhecida`, de antes da
+SPEC-015. `nao_houve` é a SPEC-030. `sem_participantes` é a SPEC-057.
 
 **O relatório de frequência é a exceção declarada, e não uma regressão:** ele
 não usa o estado colapsado, porque o resolvedor responde `cancelada` **antes**
@@ -1182,6 +1204,79 @@ o campo ao lado.
 do gestor: lá, `parseDateOnly('banana')` monta um `Invalid Date`, o Prisma
 consulta com ele e a resposta volta **vazia** — indistinguível de "não há
 aula nesse dia". Aqui é `400`.
+
+### A chamada que ninguém marca (SPEC-076, ADR-028)
+
+**O professor lê; ninguém grava presença à mão** (decisões 1 e 9 do Israel).
+O `PUT /me/teacher/attendance/:ocupacaoId` saiu do controller, e com ele
+`salvarChamada`, `SalvarChamadaDto`/`ItemChamadaDto` e `ChamadaSalvaResponseDto`
+— chamado, dá `404` do roteador ("Cannot PUT"), e o FIT-076 confere a mensagem,
+porque um handler que sobrasse e jogasse `NotFoundException` não diria isso.
+O `GET` fica, e ganhou `estado` (pelo mesmo resolvedor das listas) e
+`desfazerNaoHouveAte`.
+
+**Quem escreve presença, depois dela:** o fechamento automático, que agora
+grava **`ausente` para quem avisou falta** naquela ocorrência (D2, inverte o
+LIM-057m) — a função é uma só (`gravarPresencasDoFechamento`), chamada pelo
+worker e pelo refechamento do "Desfazer"; a D9 do script; e o
+`registrarNaoHouve`, que só **apaga** linhas automáticas. **O banco garante a
+autoria, não o escritor** (LIM-076a): os gatilhos da D10 recusam autor humano
+em `presencas` e `completa` humana em `chamadas`, mas um escritor novo que
+grave sem autor passaria como se fosse o worker.
+
+**O "Desfazer" do `nao_houve` tem rota própria** (D3):
+`DELETE /me/teacher/attendance/:id/nao-houve` e
+`DELETE /classes/:turmaId/presencas/:id/nao-houve`, pelo mesmo portão. Só age
+com `completude = 'nao_houve'` lido sob a raiz (INV-076c); sem ele, `200` com o
+estado atual e nada escrito — e um retry depois do refechamento não destrói a
+chamada nova. Sobre chamada que nasceu automática, **refecha na hora com o
+`fechada_automaticamente_em` de antes**: apagar e deixar o worker refechar
+daria um instante novo, e alternar "não aconteceu"/"desfazer" renovaria a
+janela para sempre (INV-076f). Sobre registro humano, apaga o cabeçalho.
+`desfazerNaoHouveAte` é o limite do portão (o fechamento + 7 dias, ou o fim da
+janela retroativa da data), não nulo só com `nao_houve` gravado e dentro dele.
+
+**Um relógio só** (D11): o portão usava três — `clock_timestamp()` no SQL para
+a janela automática, `this.hoje()` para a retroativa e o relógio do Node para
+"a aula já começou". Agora `RelogioDaPresenca.agora(tx)` lê
+`clock_timestamp()` **uma vez por pedido**, e as três decisões usam esse
+instante. É também o que deixa a prova do laço (AC-009 iii) controlar o tempo:
+com o relógio injetado em `T + 7 dias + 1 s`, o `PUT …/nao-houve` dá `422
+AULA_ANTIGA`.
+
+**`sem_registro`** (D5): ver "O calendário do professor" acima. A frequência
+conta essa aula em `pendentesLegadas`, com a descrição trocada ("não cobram
+ação"), e não em pendência.
+
+**O script da limpeza** (D8 e D9), `pnpm limpeza-chamada -- contar|aplicar
+--ambiente <nome> --instancia <uuid> [--plano <impressão>]`, só com
+`MIGRATION_DATABASE_URL`. Por empresa, numa transação: primeiro a D9 (presença
+`presente` de quem avisou, em chamada **ainda** automática, vira `ausente`; a
+ratificada fica, decisão 12), depois a D8 — cada aula legada sem cabeçalho
+some com o **fecho de LINHAS** dela, lido do `pg_constraint` na hora, descendo
+por **toda** FK (`SET NULL` inclusive: a `fila_falta_fkey` anulada numa fila
+ativa cairia no `fila_credito_chk`), sob um `SAVEPOINT` próprio. O erro de um
+`DELETE` do fecho volta ao savepoint e **a aula fica inteira** (o banco
+protege: `eventos_de_ocupacao` é só-acréscimo); trava que não vem e timeout
+desfazem a empresa. Só **ciclo de linhas** aborta — a autorreferência de
+`movimentos_de_credito` é ciclo de tabela, que o fecho nunca percorre porque
+nenhuma aula `TURMA` chega lá. O script **não mexe em gatilho, papel nem DDL**
+(o db-spec lê o código-fonte para afirmar isso).
+
+`contar` executa e desfaz (LIM-076i), e imprime a **impressão do plano**: o
+`sha256` das raízes, de cada linha do fecho e de cada presença da D9, por
+empresa, mais o catálogo alcançável e as opções. `aplicar` só roda com ela e a
+confere duas vezes: antes de escrever, e em cada empresa **depois de travar as
+turmas e as linhas do fecho** (`FOR UPDATE`, na ordem das camadas, da tabela e
+da chave — R13). É a trava das linhas, e não a das turmas, que fecha a janela:
+`entrarNaAula` é um `INSERT` direto, mas a FK dele precisa da trava de chave
+da falta, e espera. Medido: 300 aulas legadas em ~5,5 s no banco local.
+
+**O que prova cada coisa:** `spec-076-worker` (D2), `spec-076-estado` (D5, os
+consumidores e o `GET`), `spec-076-nao-houve` (D3/D11, com relógio
+controlado), `spec-076-autoria` (D10 pelo login runtime), `spec-076-rollback`
+(a compensatória executada), `spec-076-limpeza` (D8/D9, 17 casos, dez
+sabotagens) e o FIT `spec-076-chamada` (as rotas pela rede).
 
 ### A avaliação é da AULA; a média é da TURMA (SPEC-025)
 
@@ -1508,8 +1603,8 @@ como owner ou operador. Gate: `test/banco/spec-057-presenca-automatica-banco`
 `spec-057-presenca-automatica-worker` (serviços pela conexão do runtime).
 Roteiro operacional: `OPERATIONS.md`, "Runbook — Presença automática".
 
-**O conjunto observável da chamada (D4/INV-144).** GET, versão, teto/piso do
-PUT e worker usam `M ∪ V ∪ S` (matriculados, visitantes com reposição,
+**O conjunto observável da chamada (D4/INV-144).** GET, versão e worker usam
+`M ∪ V ∪ S` (o teto/piso do PUT saiu com ele, na SPEC-076) (matriculados, visitantes com reposição,
 snapshot). `reposicao.service.ts` `marcar` **e** `desmarcar` tomam a mesma
 raiz `turmas FOR UPDATE` → `alunos` → `ocupacoes_quadra` antes de escrever.
 
@@ -1555,7 +1650,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | 7 | Sem e-mail transacional (GAP-004): recuperação de senha é manual, via admin | Baixa — ADR-013 |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
 | 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
-| 11 | **DEF-006 — o `GET` e o `PUT` da chamada discordam sobre quem ela cobre.** `chamada()` com cabeçalho `completa` devolve o snapshot (INV-020 estrita); `salvarChamada()` recalcula `esperados` como `matriculados hoje ∪ já registrados`. Matrícula posterior a uma chamada completa faz o `PUT` do que o próprio `GET` devolveu virar 422 `CHAMADA_INCOMPLETA`, acusando aluno que a tela não mostra — e sem saída pelo produto (LIM-002: o gestor só lê) | **Alta quando ocorrer** — reproduzida em produção em 2026-08-23 |
+| 11 | ~~**DEF-006 — o `GET` e o `PUT` da chamada discordam sobre quem ela cobre.**~~ — **fechado em 2026-09-26 (SPEC-076)**: o `PUT` saiu, e não há mais escritor humano de presença para discordar do `GET`. `chamada()` com cabeçalho `completa` devolve o snapshot (INV-020 estrita); `salvarChamada()` recalcula `esperados` como `matriculados hoje ∪ já registrados`. Matrícula posterior a uma chamada completa faz o `PUT` do que o próprio `GET` devolveu virar 422 `CHAMADA_INCOMPLETA`, acusando aluno que a tela não mostra — e sem saída pelo produto (LIM-002: o gestor só lê) | **Alta quando ocorrer** — reproduzida em produção em 2026-08-23 |
 | 12 | ~~**O histórico do gestor não expõe `completude`**~~ — **fechado em 2026-08-30 (SPEC-030)**. Ele devolvia `chamadaFeita` derivado de `presencas.length > 0`; agora devolve `estado` resolvido pela fonte única, e `registradoPor` vem do cabeçalho antes das presenças — sem isso uma aula `nao_houve`, que não tem nenhuma presença, não mostraria quem a fechou | — |
 | 13 | **`ocorrenciasDaTurma` ordena `data desc` sem teto futuro**, então as ocorrências futuras ficam acima da única lançável: o card "fazer chamada" é sempre o último da lista. Medido em produção em 2026-08-23 (9º de 9 na Turma 02; 15º de 16 na turma 01, que ainda tem 8 ocupações canceladas duplicando as ativas) | Baixa — atrito na operação mais frequente do professor |
 | 14 | **`PUT /courts/:id/horarios` com o corpo que o `GET` devolveu quebra a herança.** Quadra que herda o padrão devolve `origem: "herdado"` e os 7 dias herdados; salvar isso sem alterar nada cria horário próprio e a quadra para de acompanhar o padrão da empresa. **Não é defeito hoje** — a tela avisa (*"Salvar aqui cria um horário próprio para ela"*) e oferece "Voltar a usar o padrão". **Mas a segurança mora na frase da tela, não no contrato:** qualquer outro cliente que faça a ida e volta quebra a herança em silêncio | Baixa — declarada na UI, não no contrato |
@@ -1606,8 +1701,12 @@ linha esperando outra coisa.
 **Concorrência: `turmas` é a raiz de lock do agregado da turma (INV-029).**
 Quatro caminhos a travam antes de qualquer outra linha —
 `allocateStudent`, `removeStudent`, `ClassesService.update` (por
-`tx.turma.update`, que já é lock exclusivo) e `PresencaService.salvarChamada`
-(passo 0). Ordem de aquisição única, logo sem ciclo de lock.
+`tx.turma.update`, que já é lock exclusivo) e o portão da chamada
+(`travarEValidarOcorrencia`, passo 0 de `registrarNaoHouve` e de
+`desfazerNaoHouve`; até a SPEC-076 era o do `salvarChamada`, que saiu). O
+script da limpeza (SPEC-076/D8) começa pelas `turmas` da empresa, em ordem de
+id, e só depois trava as LINHAS do fecho. Ordem de aquisição única, logo sem
+ciclo de lock.
 
 Duas armadilhas, cada uma descoberta por uma rodada de validação cruzada:
 **ler antes de travar** é ter o lock sem a garantia; e **travar e ler no
@@ -2120,15 +2219,19 @@ neste código, com onde vê-los:
   serrote que reiniciava a cada 20 itens. Quem pagina é quem ordena;
 - **Estado resolvido no servidor, não deduzido na tela** (SPEC-026/027/030):
   a chamada de uma aula sai como `futura | em_andamento | pendente | feita |
-  legada | nao_houve | cancelada`, já comparada com o relógio do clube. A tela
+  legada | nao_houve | sem_participantes | sem_registro | cancelada`, já
+  comparada com o relógio do clube — e, desde a SPEC-076, também no `GET` da
+  chamada (`estado`). A tela
   escolhe cor e texto e não conhece a regra — se conhecesse, seria a segunda
   cópia dela. **E "resolvido no servidor" não bastava:** até a SPEC-030 havia
   quatro resoluções diferentes no próprio servidor, publicando o mesmo
   vocabulário por três regras. Hoje a fonte é `estado-da-chamada.ts`, e a
   prova de sabotagem exige que mexer nele derrube prova nos quatro
   consumidores;
-- **Portão de escrita extraído, não copiado** (SPEC-030): `salvarChamada` e
-  `registrarNaoHouve` compartilham `travarEValidarOcorrencia` — o bloco que
+- **Portão de escrita extraído, não copiado** (SPEC-030, SPEC-076):
+  `registrarNaoHouve` e `desfazerNaoHouve` compartilham
+  `travarEValidarOcorrencia` (o primeiro a usá-lo, `salvarChamada`, saiu com o
+  `PUT` na SPEC-076), e o portão lê **um relógio só** (`RelogioDaPresenca`, D11) — o bloco que
   trava a turma, relê sob o lock e recusa aula cancelada/futura/antiga. Ele
   carrega o raciocínio do bloqueador da 9ª rodada (EvalPlanQual em `READ
   COMMITTED`), e uma cópia que não acompanhasse a próxima correção reabriria

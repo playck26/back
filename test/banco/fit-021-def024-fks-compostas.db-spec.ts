@@ -208,13 +208,16 @@ describe('FIT-021 — DEF-024 fase 1: a empresa entra na chave', () => {
    * dar o teste por bom, que é exatamente para isso que ele exige o nome da
    * constraint. Sem essa exigência, o caso teria passado verde provando nada.
    */
+  // SPEC-076/D10 — autor NULO: presença com autor humano é recusada pelo
+  // gatilho `presencas_sem_autor_humano` antes da FK, e o que esta prova
+  // julga é a FK composta do aluno.
   it('presencas não registra aluno de outra empresa', async () => {
     await recusaPelaFK(
-      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_TURMA_A}','TURMA','${ALUNO_B}','presente','${CHAMADA_PROF}',now())`,
+      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_TURMA_A}','TURMA','${ALUNO_B}','presente',NULL,now())`,
       'presencas_aluno_fkey',
     );
     await aceitaOParCerto(
-      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_TURMA_A}','TURMA','${ALUNO_A}','presente','${CHAMADA_PROF}',now())`,
+      `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${EMPRESA_A}','${OCUPACAO_TURMA_A}','TURMA','${ALUNO_A}','presente',NULL,now())`,
     );
   });
 
