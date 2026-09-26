@@ -23,6 +23,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comValvula } from './valvula-de-presenca';
 import { sqlstateDoErro } from '../../src/courts/recusas-de-estoque';
 import {
   LOGIN_OPERADOR_DE_TESTE,
@@ -144,11 +145,13 @@ afterAll(async () => {
 });
 
 describe('SPEC-057/D1/INV-137 — proveniência do cabeçalho (CHECK)', () => {
+  // SPEC-076/D10 — `completa` humana só entra pela válvula (o legado que a
+  // produção tem); o que se julga aqui é o DEFAULT da origem.
   it('INSERT antigo, sem origem, nasce legada_humana e continua válido', async () => {
     const oc = await ocorrencia();
-    await q(
+    await comValvula(db, [
       `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,completude,esperados,updated_at) VALUES ('${oc}','TURMA','${EMPRESA}','${PROFESSOR_USUARIO}','completa',1,now())`,
-    );
+    ]);
     const [c] = await db.$queryRawUnsafe<
       {
         origem: string;
@@ -226,14 +229,17 @@ describe('SPEC-057/D5/INV-143 — o instante do fechamento automático', () => {
     ).toBe('23514');
   });
 
+  // SPEC-076 — a ratificação saiu do produto (ADR-028), e o gatilho da D10
+  // a recusa; pela válvula (o legado ratificado), o instante continua
+  // preservado pelo `chamadas_fechamento_imutavel`, que é o que se julga.
   it('ratificar (origem → professor, com autor) PRESERVA o instante', async () => {
     const oc = await automatica();
     const [antes] = await db.$queryRawUnsafe<{ f: Date }[]>(
       `SELECT fechada_automaticamente_em AS f FROM chamadas WHERE ocupacao_id='${oc}'`,
     );
-    await q(
+    await comValvula(db, [
       `UPDATE chamadas SET origem='professor', registrada_por='${PROFESSOR_USUARIO}' WHERE ocupacao_id='${oc}'`,
-    );
+    ]);
     const [depois] = await db.$queryRawUnsafe<
       { f: Date; origem_inicial: string }[]
     >(
@@ -243,16 +249,22 @@ describe('SPEC-057/D5/INV-143 — o instante do fechamento automático', () => {
     expect(depois.origem_inicial).toBe('automatica');
   });
 
-  it('raw SQL CONSEGUE trocar a origem inicial de uma humana — proteção de aplicação, LIM-057j', async () => {
+  // SPEC-076/D10 — ERA "raw SQL CONSEGUE trocar a origem inicial de uma
+  // humana (LIM-057j)". Para cabeçalho `completa` humano, não consegue mais:
+  // o gatilho `chamadas_completa_so_automatica` recusa todo UPDATE que o
+  // mantenha `completa` e humano — as linhas legadas ficaram imutáveis
+  // (LIM-076e). A LIM-057j continua valendo para o resto (nao_houve,
+  // desconhecida), que o gatilho não olha.
+  it('raw SQL NÃO troca mais a origem inicial de uma humana COMPLETA — o gatilho da D10 recusa (LIM-076e)', async () => {
     const oc = await ocorrencia();
-    await q(
+    await comValvula(db, [
       `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,origem,origem_inicial,registrada_por,completude,esperados,updated_at) VALUES ('${oc}','TURMA','${EMPRESA}','professor','professor','${PROFESSOR_USUARIO}','completa',1,now())`,
-    );
+    ]);
     expect(
       await sqlstate(
         `UPDATE chamadas SET origem_inicial='gestor' WHERE ocupacao_id='${oc}'`,
       ),
-    ).toBe('ok');
+    ).toBe('23514');
   });
 });
 

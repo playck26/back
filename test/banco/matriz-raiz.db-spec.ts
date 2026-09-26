@@ -40,7 +40,7 @@ jest.setTimeout(120_000);
 // aponta para o Neon de produção (achado da validação cruzada).
 exigirBancoLocal();
 
-const A = new PrismaClient(); // o PUT
+const A = new PrismaClient(); // o escritor (SPEC-076: o `nao_houve`)
 const B = new PrismaClient(); // quem segura a raiz
 
 const ids = {
@@ -148,12 +148,10 @@ async function respostaSobConcorrencia(
   }
   const aula = await novaAula();
 
+  // SPEC-076/D7 — o `PUT` da chamada saiu (D1). O escritor que resta pelo
+  // portão é o "a aula não aconteceu", e é ele que entra enquanto a
+  // concorrente segura a raiz. A pergunta da suíte não muda.
   const service = new PresencaService(A as unknown as PrismaService);
-  const g = await service.chamada(ids.empresa, ids.uprof1, aula);
-  const corpo = g.alunos.map((al) => ({
-    alunoId: al.alunoId,
-    status: 'presente' as const,
-  }));
 
   let abrir: () => void = () => undefined;
   const portao = new Promise<void>((r) => {
@@ -182,7 +180,7 @@ async function respostaSobConcorrencia(
 
   let resposta = '200';
   try {
-    await service.salvarChamada(ids.empresa, ids.uprof1, aula, g.versao, corpo);
+    await service.registrarNaoHouve(ids.empresa, aula, ids.uprof1, true);
   } catch (e) {
     const err = e as {
       getStatus?: () => number;
@@ -205,23 +203,9 @@ describe('AC-000i/INV-029 — o PUT observa tudo que decide escrita depois da ra
     await B.$disconnect();
   });
 
-  it('aluno ENTRA na turma → 409', async () => {
-    const r = await respostaSobConcorrencia([ids.a1], (tb) =>
-      tb.$executeRawUnsafe(
-        `INSERT INTO turma_alunos (id,turma_id,aluno_id) VALUES (gen_random_uuid(),'${ids.turma}','${ids.a2}')`,
-      ),
-    );
-    expect(r).toBe('409 CHAMADA_DESATUALIZADA');
-  });
-
-  it('aluno SAI da turma → 409', async () => {
-    const r = await respostaSobConcorrencia([ids.a1, ids.a2], (tb) =>
-      tb.$executeRawUnsafe(
-        `DELETE FROM turma_alunos WHERE turma_id='${ids.turma}' AND aluno_id='${ids.a2}'`,
-      ),
-    );
-    expect(r).toBe('409 CHAMADA_DESATUALIZADA');
-  });
+  // SPEC-076/D7 — "aluno ENTRA na turma → 409" e "aluno SAI da turma → 409"
+  // saíram: mediam a versão otimista do `PUT`, que não existe mais (AC-001).
+  // O `nao_houve` não depende da matrícula.
 
   // A v9 falhava aqui: autorizava fora da transação e não revalidava.
   it('turma troca de PROFESSOR → 404', async () => {
@@ -260,8 +244,16 @@ describe('AC-000i/INV-029 — o PUT observa tudo que decide escrita depois da ra
     expect(r).toBe('422 AULA_ANTIGA');
   });
 
-  it('outro PUT grava a chamada antes → 409', async () => {
+  // SPEC-076/D7 — era "outro PUT grava a chamada antes → 409". O que a
+  // concorrente grava agora é uma chamada HUMANA LEGADA (pela válvula de
+  // teste — a D10 recusa autor humano fora dela), e o `nao_houve` que chega
+  // depois tem de enxergá-la: `422 CHAMADA_COM_PRESENCA`.
+  it('uma chamada com presença aparece antes → 422 CHAMADA_COM_PRESENCA', async () => {
     const r = await respostaSobConcorrencia([ids.a1], async (tb, aula) => {
+      await tb.$executeRawUnsafe(`SET LOCAL ROLE playck_test_cleanup`);
+      await tb.$executeRawUnsafe(
+        `SELECT set_config('playck.limpeza_append_only', 'on', true)`,
+      );
       await tb.$executeRawUnsafe(
         `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,updated_at,completude,esperados) VALUES ('${aula}','TURMA','${ids.empresa}','${ids.uprof1}',now(),'completa',1)`,
       );
@@ -269,6 +261,6 @@ describe('AC-000i/INV-029 — o PUT observa tudo que decide escrita depois da ra
         `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at) VALUES (gen_random_uuid(),'${ids.empresa}','${aula}','TURMA','${ids.a1}','ausente','${ids.uprof1}',now())`,
       );
     });
-    expect(r).toBe('409 CHAMADA_DESATUALIZADA');
+    expect(r).toBe('422 CHAMADA_COM_PRESENCA');
   });
 });

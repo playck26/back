@@ -51,7 +51,10 @@ import {
   MatriculaEmTurmaResponseDto,
   OcorrenciaNoHistoricoResponseDto,
 } from './dto/presenca-historico-response.dto';
-import { ChamadaNaoHouveResponseDto } from './dto/me-response.dto';
+import {
+  ChamadaNaoHouveResponseDto,
+  NaoHouveDesfeitoResponseDto,
+} from './dto/me-response.dto';
 import { FrequenciaDaTurmaResponseDto } from '../frequencia/dto/frequencia-response.dto';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
@@ -183,6 +186,26 @@ export class ClassesController {
       // Ressalva da validação cruzada: o `turmaId` da URL deixou de ser
       // decorativo. Sem ele, esta rota alterava ocorrência de OUTRA turma da
       // mesma empresa e devolvia 200.
+      turmaId,
+    );
+  }
+
+  /**
+   * SPEC-076/D3 — o "Desfazer" do gestor, com o `:turmaId` conferido pelo
+   * portão, como no registrar. Sempre `200` com o estado atual.
+   */
+  @Delete(':turmaId/presencas/:ocupacaoId/nao-houve')
+  @ApiOkResponse({ type: NaoHouveDesfeitoResponseDto })
+  desfazerNaoHouve(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('turmaId', UuidCanonicoPipe) turmaId: string,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.presencas.desfazerNaoHouve(
+      user.companyId as string,
+      ocupacaoId,
+      user.sub,
+      false,
       turmaId,
     );
   }

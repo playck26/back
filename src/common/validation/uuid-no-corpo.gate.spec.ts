@@ -39,7 +39,7 @@ import { criarValidationPipe } from './configurar-app';
  * **Descoberta pelo contrato, não por nome de arquivo.** Um DTO é de entrada
  * quando alguma rota REGISTRADA no `AppModule` o usa como tipo de `@Body`,
  * `@Query` ou `@Param` — mais o que for alcançável por `@Type(() => X)`
- * (`ItemChamadaDto` chega por aí). DTO de resposta não entra, porque ninguém
+ * (`EncontroDto` chega por aí). DTO de resposta não entra, porque ninguém
  * o valida; e nenhuma renomeação de arquivo ou classe tira um DTO de entrada
  * do julgamento.
  *
@@ -203,7 +203,7 @@ function dtosDeEntrada(): Set<Construtor> {
     }
   }
 
-  // `@Type(() => X)` — `ItemChamadaDto` chega por aqui, aninhado.
+  // `@Type(() => X)` — `EncontroDto` chega por aqui, aninhado.
   while (fila.length > 0) {
     const Ctor = fila.pop() as Construtor;
     if (achados.has(Ctor)) continue;
@@ -321,9 +321,10 @@ describe('gate: a fronteira do UUID de CORPO está declarada', () => {
   it('a descoberta acha os DTOs de entrada pelo contrato das rotas', () => {
     expect(dtos.size).toBeGreaterThan(10);
     expect(props.length).toBeGreaterThan(12);
-    // `ItemChamadaDto` só é alcançável por `@Type(() => …)`. Se a travessia
-    // de aninhados quebrar ele some — e foi ele o exemplo do achado.
-    expect([...dtos].map((d) => d.name)).toContain('ItemChamadaDto');
+    // `EncontroDto` só é alcançável por `@Type(() => …)`. Se a travessia
+    // de aninhados quebrar ele some. O exemplo do achado original era o
+    // `ItemChamadaDto`, que saiu com o `PUT` da chamada (SPEC-076/D1).
+    expect([...dtos].map((d) => d.name)).toContain('EncontroDto');
   });
 
   it('toda propriedade de id tem `isUuid` REGISTRADO', () => {

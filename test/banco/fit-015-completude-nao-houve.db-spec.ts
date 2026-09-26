@@ -23,6 +23,7 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { diasAtrasNoClube } from './hoje-no-clube-sql';
+import { comValvula } from './valvula-de-presenca';
 
 jest.setTimeout(120_000);
 
@@ -51,8 +52,15 @@ function ocupacaoId(n: number) {
  * de uma coluna", e uma prova assim continua verde depois de a constraint
  * sumir. A exigência aqui é o nome dela na mensagem.
  */
+/**
+ * SPEC-076/D10 — o cabeçalho destas provas é HUMANO (`registrada_por` = o
+ * professor), e o gatilho `chamadas_completa_so_automatica` recusa `completa`
+ * humana **antes** de o CHECK ser avaliado. O que se julga aqui é o CHECK de
+ * `esperados`, então o INSERT entra pela válvula de teste — como o legado
+ * humano que a produção tem.
+ */
 async function recusaPeloCheck(sql: string): Promise<void> {
-  const erro: unknown = await q(sql).then(
+  const erro: unknown = await comValvula(db, [sql]).then(
     () => null,
     (e: unknown) => e,
   );
@@ -205,7 +213,7 @@ describe('FIT-015 — o CHECK de `esperados`', () => {
 
   it('`completa` com `esperados > 0` continua sendo aceita', async () => {
     await expect(
-      q(inserirChamada(ocupacaoId(6), 'completa', '3')),
-    ).resolves.toBeDefined();
+      comValvula(db, [inserirChamada(ocupacaoId(6), 'completa', '3')]),
+    ).resolves.toBeUndefined();
   });
 });

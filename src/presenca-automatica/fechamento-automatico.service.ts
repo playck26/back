@@ -47,9 +47,12 @@ interface Config {
  * SPEC-057/TASK-001/D2 — **o fechamento automático da chamada.**
  *
  * A aula que terminou há mais de uma hora, depois do corte, sem cabeçalho,
- * ganha uma chamada completa com todo o conjunto observável `M ∪ V` presente,
- * origem `automatica` e autor nulo. O professor corrige faltas por sete dias a
- * partir do fechamento (D5).
+ * ganha uma chamada completa com todo o conjunto observável `M ∪ V`, origem
+ * `automatica` e autor nulo. **SPEC-076/D2:** quem avisou falta pelo app
+ * naquela ocorrência é gravado `ausente`; os outros, `presente` — e ninguém
+ * corrige depois (decisões 1 e 9). As linhas saem de
+ * `gravarPresencasDoFechamento`, a mesma função que o "Desfazer" do
+ * `nao_houve` usa para refechar (D3).
  *
  * ## Ordem e atomicidade
  *
@@ -331,17 +334,7 @@ export class FechamentoAutomaticoService {
               'automatica', 'automatica', clock_timestamp()
             )
           `;
-          await tx.$executeRaw`
-            INSERT INTO presencas (
-              id, company_id, ocupacao_id, origem_tipo, aluno_id, status,
-              registrado_por, created_at, updated_at
-            )
-            SELECT gen_random_uuid(), ${companyId}::uuid, ${o.id}::uuid,
-                   'TURMA'::origem_tipo, aluno, 'presente'::status_presenca,
-                   NULL, timezone('UTC', clock_timestamp()),
-                   timezone('UTC', clock_timestamp())
-              FROM unnest(${participantes}::uuid[]) AS aluno
-          `;
+          await gravarPresencasDoFechamento(tx, companyId, o.id, participantes);
           fechadas += 1;
           atrasoMaximoMs = Math.max(
             atrasoMaximoMs,
@@ -372,6 +365,70 @@ export class FechamentoAutomaticoService {
       return fazer();
     }
   }
+}
+
+/**
+ * SPEC-076/D2 — **as linhas de um fechamento automático**, uma por
+ * participante: `ausente` se ele avisou falta NESTA ocorrência, `presente` se
+ * não. Autor nulo, sempre (a D10 recusa qualquer outro).
+ *
+ * Quem chama já segura a raiz (`turmas FOR UPDATE`) e a ocorrência: os dois
+ * escritores de `faltas_avisadas` passam por `comAOcorrenciaTravada`, então o
+ * conjunto de quem avisou está fixo aqui (fato 5 da spec). O filtro é pela
+ * **ocorrência**, e não pela turma — a falta de outra aula da mesma turma não
+ * conta (AC-005).
+ *
+ * Dois chamadores, uma regra: o worker e o refechamento do "Desfazer" da D3.
+ */
+export async function gravarPresencasDoFechamento(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  ocupacaoId: string,
+  participantes: readonly string[],
+): Promise<void> {
+  await tx.$executeRaw`
+    INSERT INTO presencas (
+      id, company_id, ocupacao_id, origem_tipo, aluno_id, status,
+      registrado_por, created_at, updated_at
+    )
+    SELECT gen_random_uuid(), ${companyId}::uuid, ${ocupacaoId}::uuid,
+           'TURMA'::origem_tipo, aluno,
+           CASE WHEN EXISTS (
+                  SELECT 1 FROM faltas_avisadas f
+                   WHERE f.company_id = ${companyId}::uuid
+                     AND f.ocupacao_id = ${ocupacaoId}::uuid
+                     AND f.aluno_id = aluno
+                )
+                THEN 'ausente'::status_presenca
+                ELSE 'presente'::status_presenca
+           END,
+           NULL, timezone('UTC', clock_timestamp()),
+           timezone('UTC', clock_timestamp())
+      FROM unnest(${[...participantes]}::uuid[]) AS aluno
+  `;
+}
+
+/**
+ * SPEC-076/D3 — `M ∪ V` de UMA ocorrência, ordenado, com a raiz na mão: os
+ * matriculados atuais da turma e os visitantes com reposição nela. É o mesmo
+ * conjunto que o worker monta por lote; o refechamento do "Desfazer" precisa
+ * dele para uma aula só.
+ */
+export async function participantesDaOcorrencia(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  turmaId: string,
+  ocupacaoId: string,
+): Promise<string[]> {
+  const linhas = await tx.$queryRaw<{ alunoId: string }[]>`
+    SELECT aluno_id AS "alunoId" FROM turma_alunos
+     WHERE turma_id = ${turmaId}::uuid
+    UNION
+    SELECT aluno_id AS "alunoId" FROM reposicoes_de_aula
+     WHERE company_id = ${companyId}::uuid
+       AND ocupacao_id = ${ocupacaoId}::uuid
+  `;
+  return linhas.map((l) => l.alunoId).sort();
 }
 
 /** Agrupa a página ordenada por turma: cada grupo é um lote, uma transação. */

@@ -323,9 +323,9 @@ describe('FIT-023 — cancelar × chamada, serializando em `turmas` (AC-016)', (
       // duas "ao mesmo tempo", não podia ser satisfeito.
       await esperarAte(() => jaPassouDe(inicio), 90_000, 'a virada do minuto');
 
-      const pChamada = presencas.salvarChamada(EMPRESA, UPROF, aula, '0', [
-        { alunoId: ALUNO, status: 'presente' },
-      ]);
+      // SPEC-076/D7 — o `PUT` da chamada saiu; o escritor que disputa a
+      // raiz com o cancelamento é o "a aula não aconteceu", pelo mesmo portão.
+      const pChamada = presencas.registrarNaoHouve(EMPRESA, aula, UPROF, true);
       const capturado = pChamada.catch((e: unknown) => e);
 
       // **A barreira.** Sem esta prova o teste não vale nada.
@@ -387,13 +387,16 @@ describe('FIT-023 — cancelar × chamada, serializando em `turmas` (AC-016)', (
     expect(erro?.getStatus?.()).toBe(409);
     expect(erro?.getResponse?.()?.code).toBe('PRAZO_DE_CANCELAMENTO');
 
-    // E a chamada, essa sim, é aceita.
-    const g = await presencas.chamada(EMPRESA, UPROF, aula);
-    await presencas.salvarChamada(EMPRESA, UPROF, aula, g.versao, [
-      { alunoId: ALUNO, status: 'presente' },
-    ]);
-    expect(await semear.presenca.count({ where: { ocupacaoId: aula } })).toBe(
-      1,
-    );
+    // E "a aula não aconteceu", esse sim, é aceito — é o caminho que a
+    // recusa aponta. (SPEC-076/D7: era o `PUT` da chamada, que saiu.)
+    await presencas.registrarNaoHouve(EMPRESA, aula, UPROF, true);
+    expect(
+      (
+        await semear.chamada.findUnique({
+          where: { ocupacaoId: aula },
+          select: { completude: true },
+        })
+      )?.completude,
+    ).toBe('nao_houve');
   });
 });

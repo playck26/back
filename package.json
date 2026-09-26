@@ -27,6 +27,7 @@
     "test:bucket": "jest --config ./test/jest-bucket.json --runInBand",
     "openapi:export": "ts-node -r tsconfig-paths/register src/openapi-export.ts",
     "presenca:auto": "ts-node -r tsconfig-paths/register src/presenca-automatica/cli/presenca-auto.ts",
+    "limpeza-chamada": "ts-node -r tsconfig-paths/register src/presenca-automatica/cli/limpeza-chamada.ts",
     "acesso:sadmin": "ts-node -r tsconfig-paths/register src/acesso/cli/acesso-super-admin.ts",
     "prisma:generate": "prisma generate",
     "db:migrate:deploy": "prisma migrate deploy",

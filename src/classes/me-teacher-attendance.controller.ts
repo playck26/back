@@ -1,6 +1,6 @@
 import {
-  Body,
   Controller,
+  Delete,
   Get,
   Param,
   Put,
@@ -15,12 +15,11 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import type { AccessTokenPayload } from '../common/types/jwt-payload.type';
 import {
   ChamadaResponseDto,
-  ChamadaSalvaResponseDto,
   ChamadaNaoHouveResponseDto,
+  NaoHouveDesfeitoResponseDto,
   OcorrenciasDaTurmaPaginadasResponseDto,
 } from './dto/me-response.dto';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
-import { SalvarChamadaDto } from './dto/salvar-chamada.dto';
 import { OcorrenciasDaTurmaQueryDto } from './dto/ocorrencias-da-turma-query.dto';
 import { PresencaService } from './presenca.service';
 
@@ -84,22 +83,10 @@ export class MeTeacherAttendanceController {
     );
   }
 
-  @Put('attendance/:ocupacaoId')
-  @ApiOkResponse({ type: ChamadaSalvaResponseDto })
-  @Roles('professor')
-  salvar(
-    @CurrentUser() user: AccessTokenPayload,
-    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
-    @Body() dto: SalvarChamadaDto,
-  ) {
-    return this.presencas.salvarChamada(
-      user.companyId as string,
-      user.sub,
-      ocupacaoId,
-      dto.versao,
-      dto.itens,
-    );
-  }
+  // SPEC-076/D1 — o `PUT /me/teacher/attendance/:ocupacaoId` SAIU (decisões 1
+  // e 9 do Israel): ninguém grava presença à mão. Quem fecha a chamada é o
+  // worker, e quem avisou falta pelo app vira "Faltou" (D2). Chamada àquela
+  // rota dá 404 do roteador.
 
   /**
    * SPEC-030 — **a aula não aconteceu.**
@@ -127,6 +114,26 @@ export class MeTeacherAttendanceController {
       // `true` = estreita para as turmas DELE. O `professorId` em si é
       // resolvido no serviço, a partir do banco — o JWT não o carrega
       // (INV-018).
+      true,
+    );
+  }
+
+  /**
+   * SPEC-076/D3 — **desfazer "a aula não aconteceu"**, pelo mesmo portão de
+   * registrar (mesma janela, decisão 5). Sempre `200` com o estado atual:
+   * sem `nao_houve` gravado, nada muda.
+   */
+  @Delete('attendance/:ocupacaoId/nao-houve')
+  @ApiOkResponse({ type: NaoHouveDesfeitoResponseDto })
+  @Roles('professor')
+  desfazerNaoHouve(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('ocupacaoId', UuidCanonicoPipe) ocupacaoId: string,
+  ) {
+    return this.presencas.desfazerNaoHouve(
+      user.companyId as string,
+      ocupacaoId,
+      user.sub,
       true,
     );
   }

@@ -355,7 +355,7 @@ export class MatriculaDoAlunoService {
    * SPEC-031/REQ-003 — sair da turma, com o prazo que o clube configurou.
    *
    * **Substitui a regra `AULA_HOJE` da SPEC-023.** O `FOR UPDATE` continua
-   * sendo o par do lock que `PresencaService.salvarChamada` pega: sem este
+   * sendo o par do lock que o portão da `PresencaService` pega: sem este
    * lado, o de lá não trava nada — quem não pede lock não respeita lock.
    *
    * ## A sequência do D16, e ela é dentro da MESMA transação

@@ -66,7 +66,15 @@ export type EstadoDaChamada =
    * visitante. Não cobra ninguém e não entra no denominador de preenchimento;
    * a aula continua contando no total físico (INV-129).
    */
-  | 'sem_participantes';
+  | 'sem_participantes'
+  /**
+   * SPEC-076/D5: terminou **em ou antes** do corte da presença automática —
+   * ou num ambiente que nunca a ativou —, sem cabeçalho e não cancelada.
+   * Anterior à automação, e ninguém registrou: **não é pendência** (nada a
+   * pode mais fechar, e o portão recusa lançar por `AULA_ANTIGA`). Era
+   * `pendente` para sempre (fato 6 da spec).
+   */
+  | 'sem_registro';
 
 /**
  * O que o resolvedor precisa saber. Deliberadamente **não é** uma linha do
@@ -135,9 +143,12 @@ export function resolverEstadoDaChamada(
   // SPEC-057/TASK-001/D4 — **só aqui, e só pós-corte.** Os consumidores não
   // repetem este predicado: passam o corte e a contagem, e o estado sai daqui
   // igual para o calendário, a lista da turma, o histórico e a frequência.
-  if (o.participantes === 0 && terminouDepoisDoCorte(o)) {
-    return 'sem_participantes';
+  if (!terminouDepoisDoCorte(o)) {
+    // SPEC-076/D5 — anterior ao corte (ou sem corte): nada a fecha mais.
+    return 'sem_registro';
   }
+  if (o.participantes === 0) return 'sem_participantes';
+  // Só a pós-corte que o worker ainda não fechou.
   return 'pendente';
 }
 
@@ -167,17 +178,6 @@ export function candidataASemParticipantes(
 }
 
 /**
- * SPEC-057/TASK-001/D6 — pendência **legada** ou **atual**.
- *
- * Sem cabeçalho e fora de `sem_participantes`: a aula que terminou em ou
- * antes do corte — ou num ambiente que nunca ativou — é pendência legada; a
- * que terminou depois dele é atual (o job ainda não passou, ou vai passar).
- */
-export function pendenciaLegada(o: OcorrenciaParaEstado): boolean {
-  return !terminouDepoisDoCorte(o);
-}
-
-/**
  * "A chamada já foi registrada?" — a pergunta booleana que os consumidores
  * faziam cada um do seu jeito.
  *
@@ -185,6 +185,8 @@ export function pendenciaLegada(o: OcorrenciaParaEstado): boolean {
  * não tem mais nada a pedir sobre ela. É essa linha que faz o ponto vermelho
  * sumir.
  */
+// SPEC-076/D5 — `sem_registro` NÃO é registrada: ninguém respondeu pela
+// aula. Também não é pendente (abaixo): não há mais quem a responda.
 export function chamadaJaRegistrada(estado: EstadoDaChamada): boolean {
   return estado === 'feita' || estado === 'legada' || estado === 'nao_houve';
 }
@@ -195,6 +197,8 @@ export function chamadaJaRegistrada(estado: EstadoDaChamada): boolean {
  * aconteceu, `cancelada` não vai acontecer e os três registrados já foram
  * respondidos.
  */
+// SPEC-076/D5 — `sem_registro` fica de fora: aula anterior à automação não
+// cobra ninguém.
 export function chamadaPendente(estado: EstadoDaChamada): boolean {
   return estado === 'pendente';
 }

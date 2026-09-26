@@ -119,7 +119,16 @@ export class OcorrenciaDaTurmaResponseDto {
   @ApiProperty({ type: Number, example: 8 })
   totalAlunos!: number;
 
-  @ApiProperty({ type: Boolean })
+  /**
+   * SPEC-076 — continua no contrato (LIM-076d), com outro sentido: ninguém
+   * lança presença à mão. É **"dentro do prazo de registrar que a aula não
+   * aconteceu"**.
+   */
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Dentro do prazo de registrar que a aula não aconteceu. Ninguém lança presença à mão (SPEC-076).',
+  })
   podeLancar!: boolean;
 
   /**
@@ -147,11 +156,16 @@ export class OcorrenciaDaTurmaResponseDto {
       // SPEC-057/TASK-001/D4 — sem cabeçalho, terminada pós-corte e com
       // `M ∪ V` vazio: não cobra ninguém.
       'sem_participantes',
+      // SPEC-076/D5 — terminada sem cabeçalho ANTES do corte (ou sem corte):
+      // anterior à automação, sem registro. Não é pendência.
+      'sem_registro',
       'cancelada',
     ],
     description:
       '`futura` = ainda não começou. `em_andamento` = começou e não ' +
-      'terminou. `pendente` = terminou sem chamada. `feita` = chamada ' +
+      'terminou. `pendente` = terminou depois do corte e o fechamento ' +
+      'automático ainda não passou. `sem_registro` = terminou sem chamada ' +
+      'antes do corte, anterior à automação (SPEC-076/D5). `feita` = chamada ' +
       'declarada completa. `legada` = chamada anterior à SPEC-015. ' +
       '`nao_houve` = alguém declarou que a aula não aconteceu (SPEC-030). ' +
       '`sem_participantes` = terminou depois do corte da presença ' +
@@ -303,21 +317,64 @@ export class ChamadaResponseDto {
     format: 'date-time',
     nullable: true,
     example: '2026-09-25T17:00:00.000Z',
+    description:
+      'Prazo da exceção do `nao_houve` sobre chamada automática: o fechamento automático + 7 dias. Ninguém corrige presença (SPEC-076).',
   })
   corrigivelAte!: string | null;
 
   /**
-   * SPEC-014 — o token de concorrência otimista. Volta no `PUT`, e duas abas
-   * abertas na mesma chamada não sobrescrevem uma à outra em silêncio.
+   * SPEC-076/D3 — **até quando o `nao_houve` desta aula pode ser desfeito**:
+   * o limite do portão — fechamento automático + 7 dias se a chamada nasceu
+   * automática, o fim da janela retroativa da data da aula se não. Não nulo
+   * **só** quando há `nao_houve` gravado e o relógio do portão está dentro
+   * dele. Ausente ou `null`: a tela não oferece "Desfazer".
    */
-  @ApiProperty({ type: String })
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: '2026-10-03T03:00:00.000Z',
+  })
+  desfazerNaoHouveAte!: string | null;
+
+  /**
+   * SPEC-076/D1 — o estado da ocorrência, pelo MESMO resolvedor das listas.
+   * Sem ele a tela não distingue "aguardando o fechamento automático"
+   * (`pendente`) de "sem registro de presença" (`sem_registro`): nos dois
+   * não há cabeçalho nem linha. Back anterior à SPEC-076 não manda o campo.
+   */
+  @ApiProperty({
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+      'sem_registro',
+      'cancelada',
+    ],
+    description:
+      'O estado da ocorrência, pelo mesmo resolvedor da lista da turma e do histórico do gestor.',
+  })
+  estado!: string;
+
+  /**
+   * SPEC-014 — era o token de concorrência otimista do `PUT` da chamada, que
+   * saiu (SPEC-076/D1). Continua no contrato (LIM-076d), inerte.
+   */
+  @ApiProperty({
+    type: String,
+    description:
+      'Sem uso de escrita desde a SPEC-076 (o `PUT` da chamada saiu).',
+  })
   versao!: string;
 
   @ApiProperty({ type: [LinhaDaChamadaResponseDto] })
   alunos!: LinhaDaChamadaResponseDto[];
 }
 
-/** O que o `PUT` da chamada devolve: a versão nova, para a tela continuar. */
 /**
  * SPEC-030 — a resposta de "não houve aula".
  *
@@ -338,15 +395,30 @@ export class ChamadaNaoHouveResponseDto {
   completude!: string;
 }
 
-export class ChamadaSalvaResponseDto {
+/**
+ * SPEC-076/D3 — a resposta do "Desfazer" do `nao_houve`: **sempre `200`, com o
+ * estado atual** — inclusive quando não havia nada a desfazer (idempotente).
+ */
+export class NaoHouveDesfeitoResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   ocupacaoId!: string;
 
-  @ApiProperty({ type: String })
-  versao!: string;
-
-  @ApiProperty({ type: Number, example: 8 })
-  total!: number;
+  @ApiProperty({
+    enum: [
+      'futura',
+      'em_andamento',
+      'pendente',
+      'feita',
+      'legada',
+      'nao_houve',
+      'sem_participantes',
+      'sem_registro',
+      'cancelada',
+    ],
+    description:
+      '`feita` (refechada, com o instante de antes), `sem_participantes`, `pendente` (pós-corte, o worker fecha) ou `sem_registro` (anterior ao corte) — ou o estado de antes, quando não havia `nao_houve`.',
+  })
+  estado!: string;
 }
 
 /**

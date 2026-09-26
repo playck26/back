@@ -14,6 +14,7 @@ import {
   CONEXAO_RUNTIME_DE_TESTE,
   urlDaConexaoDeTeste,
 } from './config-de-presenca';
+import { comValvula } from './valvula-de-presenca';
 
 export const EMPRESA = '05720000-0000-4000-8000-000000000001';
 export const QUADRA = '05720000-0000-4000-8000-000000000002';
@@ -164,6 +165,10 @@ type Status = 'presente' | 'ausente' | 'justificado';
  * - `professor`: autor = UPROF;
  * - `antigo`: INSERT **como o binário antigo escrevia** — sem as colunas novas,
  *   que caem no DEFAULT `legada_humana`.
+ *
+ * **SPEC-076/D10:** `professor` e `antigo` são chamada HUMANA, que o banco
+ * passou a recusar — entram pela válvula de teste (`comValvula`), como o
+ * legado que a produção tem. A `automatica` não precisa: autor nulo.
  */
 export async function chamadaCrua(
   ocupacaoId: string,
@@ -176,8 +181,9 @@ export async function chamadaCrua(
 ): Promise<void> {
   const completude = opcoes.completude ?? 'completa';
   const esperados = completude === 'completa' ? String(linhas.length) : 'NULL';
+  const sqls: string[] = [];
   if (tipo === 'antigo') {
-    await q(
+    sqls.push(
       `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,updated_at,completude,esperados)
        VALUES ('${ocupacaoId}','TURMA','${EMPRESA}','${UPROF}',now(),'${completude}',${esperados})`,
     );
@@ -188,18 +194,36 @@ export async function chamadaCrua(
       tipo === 'automatica'
         ? (opcoes.fechadaSql ?? 'clock_timestamp()')
         : 'NULL';
-    await q(
+    sqls.push(
       `INSERT INTO chamadas (ocupacao_id,origem_tipo,company_id,registrada_por,updated_at,completude,esperados,origem,origem_inicial,fechada_automaticamente_em)
        VALUES ('${ocupacaoId}','TURMA','${EMPRESA}',${autor},now(),'${completude}',${esperados},'${origem}','${origem}',${fechada})`,
     );
   }
   for (const [alunoId, status] of linhas) {
     const autor = tipo === 'automatica' ? 'NULL' : `'${UPROF}'`;
-    await q(
+    sqls.push(
       `INSERT INTO presencas (id,company_id,ocupacao_id,origem_tipo,aluno_id,status,registrado_por,updated_at)
        VALUES (gen_random_uuid(),'${EMPRESA}','${ocupacaoId}','TURMA','${alunoId}','${status}',${autor},now())`,
     );
   }
+  if (tipo === 'automatica') {
+    for (const sql of sqls) await q(sql);
+  } else {
+    await comValvula(db, sqls);
+  }
+}
+
+/**
+ * SPEC-076/D7 — **a ratificação, como a fixture a grava.** Era o `PUT` do
+ * professor por cima da automática (origem vira `professor`, autor em cada
+ * linha); o `PUT` saiu (D1), mas a produção TEM chamadas ratificadas, e a
+ * frequência, a D9 e a exceção do `nao_houve` precisam delas. Pela válvula.
+ */
+export async function ratificarNaFixture(ocupacaoId: string): Promise<void> {
+  await comValvula(db, [
+    `UPDATE chamadas SET origem = 'professor', registrada_por = '${UPROF}', updated_at = now() WHERE ocupacao_id = '${ocupacaoId}'`,
+    `UPDATE presencas SET registrado_por = '${UPROF}', updated_at = now() WHERE ocupacao_id = '${ocupacaoId}'`,
+  ]);
 }
 
 export interface CabecalhoLido {
