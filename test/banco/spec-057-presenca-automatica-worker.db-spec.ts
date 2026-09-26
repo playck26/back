@@ -619,7 +619,9 @@ describe('AC-009/D8 — fechar e ratificar não tocam falta avisada, reposição
     const visitante = await aluno('Visitante');
     await matricular(TURMA_ORIGEM, visitante.alunoId);
     await visita(visitante.alunoId, oc);
-    // a1 avisou falta nesta aula: continua presumido presente (LIM-057m).
+    // a1 avisou falta nesta aula. SPEC-076/D2 (decisão 2 do Israel) inverteu
+    // o LIM-057m: quem avisou é gravado `ausente` — e isso continua sem tocar
+    // falta avisada, reposição nem crédito, que é o que este caso mede.
     await q(
       `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','${oc}','${a1.alunoId}',now())`,
     );
@@ -632,7 +634,7 @@ describe('AC-009/D8 — fechar e ratificar não tocam falta avisada, reposição
     await worker().executarTick();
     expect(
       (await linhasDe(oc)).find((l) => l.alunoId === a1.alunoId)?.status,
-    ).toBe('presente');
+    ).toBe('ausente');
     const lida = await presenca().chamada(EMPRESA, UPROF, oc);
     await presenca().salvarChamada(EMPRESA, UPROF, oc, lida.versao, [
       { alunoId: a1.alunoId, status: 'ausente' },
