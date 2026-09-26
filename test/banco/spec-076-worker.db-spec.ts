@@ -146,7 +146,7 @@ describe('SPEC-076/D2 — quem avisou falta vira "Faltou" no fechamento', () => 
         data: new Date(),
         horaInicio: new Date(),
         horaFim: new Date(),
-      } as Parameters<typeof resolverEstadoDaChamada>[0]),
+      }),
     ).toBe('feita');
   });
 
