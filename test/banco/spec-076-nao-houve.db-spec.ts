@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { exigirBancoLocal } from './exigir-banco-local';
-import { chamadasDoCorpo, corpoDoMetodo, sqlDoCorpo } from './corpo-do-portao';
+import { inventarioDaConstante, inventarioDoCorpo } from './corpo-do-portao';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import {
@@ -518,6 +518,18 @@ describe('AC-030 — os outros relógios discordam, e o portão segue o injetado
     expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
   });
 
+  it('automática, 30 min ANTES do fim pelo injetado; Node e banco já fora: aceita (o caso da 6ª rodada)', async () => {
+    // Longe da fronteira, mas dentro da faixa em que a sabotagem da 6ª
+    // rodada trocava o instante pelo relógio do Node. É integração: o que
+    // fecha a classe é a gramática fechada do corpo, abaixo.
+    const oc = await automaticaDeAulaAntiga();
+    const fechada = await recuarFechamento(oc, 8);
+    const fim = fechada.getTime() + 7 * MS_DIA;
+    relogio.instante = new Date(fim - 30 * 60 * 1000);
+    expect(await decidir(new Date(fim + 30 * MS_DIA), oc)).toBe('ok');
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
   it('automática, NO instante do fim da janela pelo injetado; Node e banco ainda dentro: AULA_ANTIGA', async () => {
     const { oc, fechada } = await automaticaComFalta();
     relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA);
@@ -643,20 +655,103 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
     });
   });
 
-  it('o corpo de `travarEValidarOcorrencia` só faz as chamadas de uma lista FECHADA', () => {
-    // Lista do que PODE, e não do que não pode: a 5ª rodada mostrou que a
-    // busca por relógio não termina (callback, dependência). Qualquer chamada
-    // nova no portão — de pacote, de callback, de ORM, de helper — muda esta
-    // lista e derruba o teste, qualquer que seja a forma; quem a mudar tem de
-    // mostrar que ela não traz relógio. A leitura do relógio é UMA
-    // (`this.relogio.agora`) e a decisão de tempo é `decidirTempoDoPortao`,
-    // provada num realm sem relógio (`tempo-do-portao.spec.ts`).
+  it('o corpo de `travarEValidarOcorrencia` é escrito numa gramática FECHADA (AST do TypeScript)', () => {
+    // O que o corpo PODE conter, e nada mais, pelo parser da linguagem. A 6ª
+    // rodada atravessou a lista de chamadas da 5ª com `agora['setTime']
+    // (globalThis['Date']['now']())`: o léxico artesanal não via colchete.
+    // Aqui, para chegar a um relógio o corpo precisaria de um NOME livre
+    // (`Date`, `globalThis`, `Reflect`, `eval`, `require`…), de um nome de
+    // PROPRIEDADE (`constructor`, `now`, `setTime`, `call`…), de um acesso por
+    // COLCHETE, de um TIPO DE NÓ (função, classe, `import()`, `delete`…) ou de
+    // um OPERADOR (atribuição) que não está nestas listas. Quem mudar uma
+    // lista tem de mostrar que a mudança não traz relógio.
     const servico = join(SRC_CLASSES, 'presenca.service.ts');
-    const { codigo, estrutura } = corpoDoMetodo(
-      servico,
-      'travarEValidarOcorrencia',
-    );
-    expect(chamadasDoCorpo(estrutura)).toEqual([
+    const inv = inventarioDoCorpo(servico, 'travarEValidarOcorrencia');
+
+    // O que o corpo alcança pelo NOME: os parâmetros, dois construtores do
+    // Nest, a tabela de recusas e a decisão de tempo. Nenhum relógio.
+    expect(inv.livres).toEqual([
+      'NotFoundException',
+      'RECUSAS_DE_TEMPO',
+      'UnprocessableEntityException',
+      'companyId',
+      'decidirTempoDoPortao',
+      'ocupacaoId',
+      'professorIdScope',
+      'turmaIdDaRota',
+      'tx',
+    ]);
+    // O que o corpo alcança a partir de um objeto. Das 14, a única que leva a
+    // relógio é `relogio.agora` — a leitura única, e legítima.
+    expect(inv.propriedades).toEqual([
+      '$queryRaw',
+      'agora',
+      'data',
+      'dentroDaJanelaAutomatica',
+      'fechadaAutomaticamenteEm',
+      'horaInicio',
+      'id',
+      'origemInicial',
+      'origemTurmaId',
+      'professorId',
+      'recusa',
+      'relogio',
+      'statusPagamento',
+      'toLowerCase',
+    ]);
+    expect(inv.colchetes).toEqual([
+      'travadas[0]',
+      'linhas[0]',
+      'travadas[0]',
+      'RECUSAS_DE_TEMPO[tempo.recusa]',
+    ]);
+    // Sem atribuição: nada é trocado no lugar.
+    expect(inv.operadores).toEqual(['!==', '&&', '===', 'unário !', '||']);
+    // Os tipos de nó, pelo nome do enum do TypeScript (alguns saem pelo
+    // apelido: `FirstStatement` é `VariableStatement`, `FirstLiteralToken` é
+    // `NumericLiteral`, `LastTemplateToken` é `TemplateTail`). Sem função,
+    // arrow, classe, método de objeto, getter, `import()`, `delete`, `with`.
+    expect(inv.tiposDeNo).toEqual([
+      'AmpersandAmpersandToken',
+      'ArrayBindingPattern',
+      'AwaitExpression',
+      'BarBarToken',
+      'BinaryExpression',
+      'BindingElement',
+      'Block',
+      'CallExpression',
+      'ColonToken',
+      'ConditionalExpression',
+      'ElementAccessExpression',
+      'EqualsEqualsEqualsToken',
+      'ExclamationEqualsEqualsToken',
+      'FirstLiteralToken',
+      'FirstStatement',
+      'Identifier',
+      'IfStatement',
+      'LastTemplateToken',
+      'NewExpression',
+      'NullKeyword',
+      'ObjectLiteralExpression',
+      'PrefixUnaryExpression',
+      'PropertyAccessExpression',
+      'PropertyAssignment',
+      'QuestionToken',
+      'ReturnStatement',
+      'ShorthandPropertyAssignment',
+      'SpreadAssignment',
+      'StringLiteral',
+      'TaggedTemplateExpression',
+      'TemplateExpression',
+      'TemplateHead',
+      'TemplateMiddle',
+      'TemplateSpan',
+      'ThisKeyword',
+      'ThrowStatement',
+      'VariableDeclaration',
+      'VariableDeclarationList',
+    ]);
+    expect(inv.chamadas).toEqual([
       'tx.$queryRaw`',
       'new NotFoundException(',
       'tx.$queryRaw`',
@@ -670,15 +765,33 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
       'decidirTempoDoPortao(',
       'new UnprocessableEntityException(',
     ]);
-    // Nenhuma função é CRIADA no corpo: callback não tem onde nascer.
-    expect(/=>|\bfunction\b/.exec(estrutura)?.[0] ?? null).toBeNull();
 
     // O SQL é o revisado, byte a byte (espaço normalizado). Nenhum dos três lê
     // relógio; mudar um deles derruba o teste e pede nova revisão.
-    expect(sqlDoCorpo(codigo, estrutura)).toEqual([
+    expect(inv.sql).toEqual([
       "SELECT t.id FROM turmas t WHERE t.id = ( SELECT o.origem_turma_id FROM ocupacoes_quadra o WHERE o.id = $::uuid AND o.company_id = $::uuid AND o.origem_tipo = 'TURMA' ) FOR UPDATE",
       'SELECT o.origem_turma_id AS "origemTurmaId", o.data AS "data", o.hora_inicio AS "horaInicio", o.status_pagamento AS "statusPagamento", t.professor_id AS "professorId" FROM ocupacoes_quadra o JOIN turmas t ON t.id = o.origem_turma_id WHERE o.id = $::uuid AND o.company_id = $::uuid AND o.origem_tipo = \'TURMA\'',
       'SELECT c.origem AS "origem", c.origem_inicial AS "origemInicial", c.completude AS "completude", c.fechada_automaticamente_em AS "fechadaAutomaticamenteEm" FROM chamadas c WHERE c.ocupacao_id = $::uuid',
+    ]);
+
+    // A tabela de recusas, que o corpo lê, é só dado: objetos literais com
+    // texto e número, e as duas janelas no texto. Nenhuma chamada nem getter.
+    const recusas = inventarioDaConstante(servico, 'RECUSAS_DE_TEMPO');
+    expect(recusas.livres).toEqual([
+      'JANELA_DA_AUTOMATICA_DIAS',
+      'JANELA_RETROATIVA_DIAS',
+    ]);
+    expect(recusas.chamadas).toEqual([]);
+    expect(recusas.tiposDeNo).toEqual([
+      'FirstLiteralToken',
+      'Identifier',
+      'LastTemplateToken',
+      'ObjectLiteralExpression',
+      'PropertyAssignment',
+      'StringLiteral',
+      'TemplateExpression',
+      'TemplateHead',
+      'TemplateSpan',
     ]);
 
     // Os nomes da lista são os que se pensa: as exceções vêm do Nest, e a

@@ -1,207 +1,164 @@
 /**
- * SPEC-076/AC-030 — o que o db-spec lê do corpo do portão
- * (`PresencaService.travarEValidarOcorrencia`) para provar que ele só tem um
- * relógio: a lista de CHAMADAS que ele faz e o SQL que ele manda.
+ * SPEC-076/AC-030 — o corpo do portão (`travarEValidarOcorrencia`) escrito
+ * numa **gramática fechada**, conferida pela AST do próprio TypeScript.
  *
- * A prova é de lista fechada, e não de busca. Cinco rodadas de validação
- * mostraram que procurar "outro relógio" não termina (alias, helper,
- * callback, dependência): o db-spec compara as chamadas do corpo com uma
- * lista EXATA do que pode ser chamado, e o SQL com o texto EXATO que foi
- * revisado. Qualquer chamada nova — de pacote, de callback, de ORM — muda a
- * lista e derruba o teste, qualquer que seja a forma. A decisão de tempo é
- * `decidirTempoDoPortao`, provada num realm sem relógio no teste de unidade.
+ * A 6ª rodada de validação atravessou a lista de chamadas da 5ª com uma
+ * chamada computada — `agora['setTime'](globalThis['Date']['now']())` — que o
+ * léxico artesanal não via. Buscar formas de chamada é a mesma busca sem fim
+ * das rodadas anteriores. O que fecha é o inverso: descrever o que o corpo
+ * PODE conter, pelo parser da linguagem, e recusar o resto.
+ *
+ * `inventarioDoCorpo` devolve, do corpo do método, pela AST:
+ * - os **identificadores livres** (o que o corpo alcança pelo nome: global,
+ *   import, parâmetro) — sem `globalThis`, `Date`, `Reflect`, `eval`,
+ *   `require`, nenhum relógio é alcançável pelo nome;
+ * - os **nomes de propriedade** (`a.b`) — sem `constructor`, `now`,
+ *   `setTime`, `call`, nenhum relógio é alcançável a partir de um objeto;
+ * - os **acessos por colchete** (`a[b]`), por extenso;
+ * - os **tipos de nó** sintáticos — sem função, classe, `import()`, `delete`,
+ *   `with`, não há onde esconder código;
+ * - os **operadores** — sem atribuição, nada é trocado no lugar;
+ * - as chamadas, e o SQL de cada `tx.$queryRaw`.
+ *
+ * O db-spec compara cada um com uma lista EXATA. Os tipos (anotações e
+ * argumentos genéricos) ficam fora: não executam.
  */
 import { readFileSync } from 'node:fs';
+import * as ts from 'typescript';
+
+export interface Inventario {
+  livres: string[];
+  propriedades: string[];
+  colchetes: string[];
+  tiposDeNo: string[];
+  operadores: string[];
+  chamadas: string[];
+  sql: string[];
+}
+
+const ordenado = (s: Set<string>) => [...s].sort();
+
+const lerFonte = (arquivo: string) =>
+  ts.createSourceFile(
+    arquivo,
+    readFileSync(arquivo, 'utf8'),
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+export function inventarioDoCorpo(arquivo: string, metodo: string): Inventario {
+  const fonte = lerFonte(arquivo);
+  let alvo: ts.MethodDeclaration | undefined;
+  const achar = (n: ts.Node) => {
+    if (
+      ts.isMethodDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === metodo
+    ) {
+      alvo = n;
+    }
+    ts.forEachChild(n, achar);
+  };
+  achar(fonte);
+  if (!alvo?.body) throw new Error(`método ${metodo} não achado`);
+  return inventario(fonte, alvo.body);
+}
 
 /**
- * O código com comentários trocados por espaço e, na versão `estrutura`, o
- * conteúdo de strings também — mas NÃO as expressões `${…}` dos templates, que
- * são código. Mesmo comprimento, para os índices servirem às duas.
+ * O mesmo inventário para o INICIALIZADOR de uma constante de módulo que o
+ * corpo lê (a tabela de recusas): ela também não pode esconder código.
  */
-function lexar(fonte: string): { codigo: string; estrutura: string } {
-  const codigo = fonte.split('');
-  const estrutura = fonte.split('');
-  const pilha: ('codigo' | 'template')[] = ['codigo'];
-  const chaves: number[] = [];
-  let i = 0;
-  const branco = (a: number, b: number, tambemCodigo: boolean) => {
-    for (let k = a; k < b; k += 1) {
-      if (fonte[k] === '\n') continue;
-      estrutura[k] = ' ';
-      if (tambemCodigo) codigo[k] = ' ';
-    }
-  };
-  while (i < fonte.length) {
-    const topo = pilha[pilha.length - 1];
-    const c = fonte[i];
-    if (topo === 'template') {
-      if (c === '\\') {
-        branco(i, i + 2, false);
-        i += 2;
-      } else if (c === '`') {
-        pilha.pop();
-        i += 1;
-      } else if (c === '$' && fonte[i + 1] === '{') {
-        pilha.push('codigo');
-        chaves.push(0);
-        i += 2;
-      } else {
-        branco(i, i + 1, false);
-        i += 1;
-      }
-      continue;
-    }
-    if (c === '/' && fonte[i + 1] === '/') {
-      const fim = fonte.indexOf('\n', i);
-      const f = fim < 0 ? fonte.length : fim;
-      branco(i, f, true);
-      i = f;
-    } else if (c === '/' && fonte[i + 1] === '*') {
-      const fim = fonte.indexOf('*/', i + 2);
-      const f = fim < 0 ? fonte.length : fim + 2;
-      branco(i, f, true);
-      i = f;
-    } else if (c === "'" || c === '"') {
-      let k = i + 1;
-      while (k < fonte.length && fonte[k] !== c) k += fonte[k] === '\\' ? 2 : 1;
-      branco(i + 1, k, false);
-      i = k + 1;
-    } else if (c === '`') {
-      pilha.push('template');
-      i += 1;
-    } else if (c === '{' && pilha.length > 1) {
-      chaves[chaves.length - 1] += 1;
-      i += 1;
-    } else if (
-      c === '}' &&
-      pilha.length > 1 &&
-      chaves[chaves.length - 1] === 0
-    ) {
-      chaves.pop();
-      pilha.pop();
-      i += 1;
-    } else {
-      if (c === '}' && pilha.length > 1) chaves[chaves.length - 1] -= 1;
-      i += 1;
-    }
-  }
-  return { codigo: codigo.join(''), estrutura: estrutura.join('') };
-}
-
-/** Índice do fechamento que casa com a abertura em `inicio`. */
-function fechamento(estrutura: string, inicio: number): number {
-  const par: Record<string, string> = { '(': ')', '{': '}', '[': ']' };
-  const abre = estrutura[inicio];
-  const fecha = par[abre];
-  let nivel = 0;
-  for (let k = inicio; k < estrutura.length; k += 1) {
-    if (estrutura[k] === abre) nivel += 1;
-    else if (estrutura[k] === fecha) {
-      nivel -= 1;
-      if (nivel === 0) return k;
-    }
-  }
-  return -1;
-}
-
-/** O corpo de um método de classe (recuo de dois espaços), com os índices. */
-export function corpoDoMetodo(
+export function inventarioDaConstante(
   arquivo: string,
   nome: string,
-): { codigo: string; estrutura: string } {
-  const fonte = readFileSync(arquivo, 'utf8').replace(/\r\n/g, '\n');
-  const { codigo, estrutura } = lexar(fonte);
-  const m = new RegExp(
-    `\\n {2}(?:(?:private|public|protected|static|async)\\s+)*${nome}\\s*\\(`,
-  ).exec(estrutura);
-  if (!m) throw new Error(`método ${nome} não achado`);
-  const abre = m.index + m[0].length - 1;
-  const fechaParametros = fechamento(estrutura, abre);
-  // Depois dos parâmetros vem o tipo de retorno, que pode ter `{`: o corpo é
-  // o primeiro `{` no nível zero depois de `)` e de `>` do `Promise<…>`.
-  let k = fechaParametros + 1;
-  let nivel = 0;
-  for (; k < estrutura.length; k += 1) {
-    const c = estrutura[k];
-    if (c === '<' || c === '(' || c === '[') nivel += 1;
-    else if (c === '>' || c === ')' || c === ']') nivel -= 1;
-    else if (c === '{') {
-      const antes = estrutura.slice(fechaParametros + 1, k).trim();
-      if (nivel === 0 && antes.length > 0 && !/[:|&,<]$/.test(antes)) break;
-      k = fechamento(estrutura, k);
+): Inventario {
+  const fonte = lerFonte(arquivo);
+  let alvo: ts.Expression | undefined;
+  const achar = (n: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === nome &&
+      n.initializer
+    ) {
+      alvo = n.initializer;
     }
-  }
-  const fim = fechamento(estrutura, k);
-  return {
-    codigo: codigo.slice(k, fim + 1),
-    estrutura: estrutura.slice(k, fim + 1),
+    ts.forEachChild(n, achar);
   };
+  achar(fonte);
+  if (!alvo) throw new Error(`constante ${nome} não achada`);
+  return inventario(fonte, alvo);
 }
 
-const PALAVRAS = new Set([
-  'if',
-  'for',
-  'while',
-  'switch',
-  'catch',
-  'return',
-  'typeof',
-  'await',
-  'throw',
-]);
+function inventario(fonte: ts.SourceFile, corpo: ts.Node): Inventario {
+  // 1ª passada: o que o corpo DECLARA (não é livre).
+  const locais = new Set<string>();
+  const declarar = (nome: ts.BindingName) => {
+    if (ts.isIdentifier(nome)) locais.add(nome.text);
+    else
+      for (const e of nome.elements)
+        if (!ts.isOmittedExpression(e)) declarar(e.name);
+  };
+  const acharDeclaracoes = (n: ts.Node) => {
+    if (ts.isVariableDeclaration(n)) declarar(n.name);
+    ts.forEachChild(n, acharDeclaracoes);
+  };
+  acharDeclaracoes(corpo);
 
-/**
- * Toda chamada do corpo: `a.b.c(`, `new X(`, e o template marcado
- * `tx.$queryRaw<…>\`` — com os tipos genéricos pulados. Devolve os nomes, na
- * ordem, e marca `new`.
- */
-export function chamadasDoCorpo(estrutura: string): string[] {
-  const saida: string[] = [];
-  const re =
-    /(new\s+)?(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)\s*/g;
-  for (const m of estrutura.matchAll(re)) {
-    const nome = m[2].replace(/\s+/g, '');
-    if (PALAVRAS.has(nome)) continue;
-    let k = (m.index ?? 0) + m[0].length;
-    if (estrutura[k] === '<') {
-      // genérico: pula `<…>` balanceado (os `>` de `=>` não aparecem aqui)
-      let nivel = 0;
-      for (; k < estrutura.length; k += 1) {
-        if (estrutura[k] === '<') nivel += 1;
-        else if (estrutura[k] === '>') {
-          nivel -= 1;
-          if (nivel === 0) break;
-        }
-      }
-      k += 1;
-      while (/\s/.test(estrutura[k] ?? '')) k += 1;
-    }
-    if (estrutura[k] === '(' || estrutura[k] === '`') {
-      saida.push(
-        `${m[1] ? 'new ' : ''}${nome}${estrutura[k] === '`' ? '`' : '('}`,
-      );
-    }
-  }
-  return saida;
-}
+  const livres = new Set<string>();
+  const propriedades = new Set<string>();
+  const colchetes: string[] = [];
+  const tiposDeNo = new Set<string>();
+  const operadores = new Set<string>();
+  const chamadas: string[] = [];
+  const sql: string[] = [];
+  const texto = (n: ts.Node) => n.getText(fonte).replace(/\s+/g, ' ');
 
-/** O texto de cada template marcado `…$queryRaw\`…\``, com `${…}` como `$`. */
-export function sqlDoCorpo(codigo: string, estrutura: string): string[] {
-  const saida: string[] = [];
-  for (const m of estrutura.matchAll(/\$queryRaw[^`]*`/g)) {
-    const inicio = (m.index ?? 0) + m[0].length;
-    let k = inicio;
-    let texto = '';
-    while (k < codigo.length && codigo[k] !== '`') {
-      if (codigo[k] === '$' && codigo[k + 1] === '{') {
-        k = fechamento(estrutura, k + 1) + 1;
-        texto += '$';
-        continue;
-      }
-      texto += codigo[k];
-      k += 1;
+  const visitar = (n: ts.Node) => {
+    // Tipo não executa: anotação, genérico, `as`, `satisfies` ficam fora.
+    if (ts.isTypeNode(n)) return;
+    tiposDeNo.add(ts.SyntaxKind[n.kind]);
+    if (ts.isIdentifier(n)) {
+      const p = n.parent;
+      if (ts.isPropertyAccessExpression(p) && p.name === n)
+        propriedades.add(n.text);
+      else if (ts.isPropertyAssignment(p) && p.name === n) {
+        // chave de objeto literal: não é leitura
+      } else if (
+        (ts.isVariableDeclaration(p) || ts.isBindingElement(p)) &&
+        p.name === n
+      ) {
+        // declaração local
+      } else if (!locais.has(n.text)) livres.add(n.text);
     }
-    saida.push(texto.replace(/\s+/g, ' ').trim());
-  }
-  return saida;
+    if (ts.isElementAccessExpression(n)) colchetes.push(texto(n));
+    if (ts.isBinaryExpression(n))
+      operadores.add(ts.tokenToString(n.operatorToken.kind) ?? '?');
+    if (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) {
+      operadores.add(`unário ${ts.tokenToString(n.operator) ?? '?'}`);
+    }
+    if (ts.isCallExpression(n)) chamadas.push(`${texto(n.expression)}(`);
+    if (ts.isNewExpression(n)) chamadas.push(`new ${texto(n.expression)}(`);
+    if (ts.isTaggedTemplateExpression(n)) {
+      chamadas.push(`${texto(n.tag)}\``);
+      const t = n.template;
+      const partes = ts.isNoSubstitutionTemplateLiteral(t)
+        ? [t.text]
+        : [t.head.text, ...t.templateSpans.map((s) => s.literal.text)];
+      sql.push(partes.join('$').replace(/\s+/g, ' ').trim());
+    }
+    ts.forEachChild(n, visitar);
+  };
+  ts.forEachChild(corpo, visitar);
+
+  return {
+    livres: ordenado(livres),
+    propriedades: ordenado(propriedades),
+    colchetes,
+    tiposDeNo: ordenado(tiposDeNo),
+    operadores: ordenado(operadores),
+    chamadas,
+    sql,
+  };
 }
