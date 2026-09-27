@@ -33,6 +33,10 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { CourtsService } from '../../src/courts/courts.service';
+import {
+  formatDateOnly,
+  hojeNoFusoDoClube,
+} from '../../src/courts/date-time.util';
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
@@ -54,7 +58,14 @@ const ADMIN = 'f0240000-0000-4000-8000-000000000006';
 const RESERVA = 'f0240000-0000-4000-8000-00000000000a';
 
 /** Futura, para o cancelamento ser legítimo quando ele decide. */
-const FUTURO = '2026-12-10';
+/**
+ * SPEC-077/TASK-000 — relativa ao hoje do clube. Era `'2026-12-10'`: a
+ * partir daquele dia a reserva deixaria de ser futura, e os quatro casos
+ * deste arquivo mudariam de resposta sem nada ter mudado no código.
+ */
+const FUTURO = formatDateOnly(
+  new Date(hojeNoFusoDoClube().getTime() + 60 * 24 * 60 * 60 * 1000),
+);
 /** Passada, para onde o `moveBooking` tenta empurrá-la. */
 const PASSADO = '2026-01-05';
 
