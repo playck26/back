@@ -12,6 +12,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { exigirBancoLocal } from './exigir-banco-local';
+import {
+  entradaDaChamada,
+  impressaoDigital,
+  inventarioDaConstante,
+  inventarioDoCorpo,
+} from './corpo-do-portao';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import {
@@ -350,6 +356,279 @@ describe('AC-013 — o DELETE herda o portão', () => {
   });
 });
 
+/**
+ * AC-030, a prova de COMPORTAMENTO — **os outros relógios discordam de
+ * propósito**, e a decisão do portão segue o injetado.
+ *
+ * A prova textual (abaixo) fecha o que dá para ler; a 3ª rodada da validação
+ * mostrou que ler não fecha a classe: um alias de import e um helper externo
+ * com relógio padrão passavam. Esta prova não lê código. Em cada cenário o
+ * relógio do Node é falsificado (Date, hrtime, performance) num instante que
+ * inverteria a decisão, e o do banco (o real) também discorda do injetado onde
+ * isso é possível. Se QUALQUER outro relógio influir — por alias, helper,
+ * chamada transitiva, `Intl`, `Reflect.construct(Date)`, `SELECT now()` —, a
+ * decisão muda e o caso cai.
+ *
+ * **4ª rodada — a fronteira.** Cada janela do portão (a da automática, a
+ * retroativa e o início da aula) é testada **colada na fronteira** (1 ms de um
+ * lado, e o instante exato do outro), nas DUAS direções, com o relógio do Node
+ * E o do banco do lado oposto ao injetado — o do banco, movendo o fechamento
+ * para trás, porque ele não se deixa parar.
+ *
+ * **5ª rodada — a prova deixou de ser busca.** Um relógio por callback ou por
+ * dependência, numa faixa que nenhum caso tocava, passou pelo vigia desta
+ * suíte. O fechamento da classe agora é estrutural: a decisão de tempo é
+ * `decidirTempoDoPortao`, provada num realm sem relógio com cobertura total
+ * (`src/classes/tempo-do-portao.spec.ts`), e o corpo do portão só pode fazer
+ * as chamadas de uma lista fechada (o `describe` do fim deste arquivo). Estes
+ * casos continuam como prova de INTEGRAÇÃO: o `agora` que decide é o injetado.
+ */
+describe('AC-030 — os outros relógios discordam, e o portão segue o injetado', () => {
+  /** Roda `fn` com o relógio do Node parado em `instante`; os timers ficam reais. */
+  async function comNodeEm<T>(
+    instante: Date,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    jest.useFakeTimers({
+      now: instante,
+      doNotFake: [
+        'nextTick',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+        'queueMicrotask',
+      ],
+    });
+    try {
+      // A falsificação pegou: sem isto, o caso passaria sem ter discordado.
+      expect(Date.now()).toBe(instante.getTime());
+      expect(new Date().getTime()).toBe(instante.getTime());
+      return await fn();
+    } finally {
+      jest.useRealTimers();
+    }
+  }
+
+  /** O portão decide com o Node em `nodeEm`; devolve `ok` ou o `code` do 422. */
+  const decidir = (nodeEm: Date, oc: string): Promise<string> =>
+    comNodeEm(nodeEm, () =>
+      codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true)),
+    );
+
+  const HORA = { inicio: '10:00', fim: '10:50' };
+  /** `aaaa-mm-dd` da aula, como o banco a guarda. */
+  const dataDe = async (oc: string) => {
+    const [linha] = await db.$queryRawUnsafe<{ data: Date }[]>(
+      `SELECT data FROM ocupacoes_quadra WHERE id = $1::uuid`,
+      oc,
+    );
+    return linha.data.toISOString().slice(0, 10);
+  };
+  const maisDias = (dia: string, n: number) =>
+    new Date(Date.parse(`${dia}T00:00:00Z`) + n * MS_DIA)
+      .toISOString()
+      .slice(0, 10);
+  /** O clube é UTC−3 o ano inteiro (sem horário de verão desde 2019). */
+  const noClube = (dia: string, hora: string) =>
+    new Date(`${dia}T${hora}:00.000-03:00`);
+
+  /** Automática fechada pelo worker, de uma aula de 10 dias atrás. */
+  async function automaticaDeAulaAntiga() {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, -10, HORA);
+    await ligarPresencaAutomatica(db, diasAtras(12));
+    await worker().executarTick();
+    const cab = await cabecalhoDe(oc);
+    expect(cab).toMatchObject({ origem: 'automatica' });
+    return oc;
+  }
+
+  /**
+   * Leva o fechamento `dias` para trás, para o relógio do BANCO cair fora da
+   * janela. O gatilho `chamadas_fechamento_imutavel` protege a coluna, e é
+   * certo que proteja; a fixture o contorna só nesta transação.
+   */
+  async function recuarFechamento(oc: string, dias: number): Promise<Date> {
+    await db.$transaction(async (t) => {
+      await t.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`);
+      await t.$executeRawUnsafe(
+        `UPDATE chamadas SET fechada_automaticamente_em = fechada_automaticamente_em - make_interval(days => $2::int)
+          WHERE ocupacao_id = $1::uuid`,
+        oc,
+        dias,
+      );
+    });
+    const fechada = (await cabecalhoDe(oc))?.fechada as Date;
+    // O banco, agora, está FORA da janela.
+    const [{ fora }] = await db.$queryRawUnsafe<{ fora: boolean }[]>(
+      `SELECT $1::timestamptz + interval '7 days' <= clock_timestamp() AS fora`,
+      fechada,
+    );
+    expect(fora).toBe(true);
+    return fechada;
+  }
+
+  // -- longe da fronteira (3ª rodada) ----------------------------------------
+
+  it('automática DENTRO da janela pelo injetado, FORA pelo Node: aceita', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 60 * 60 * 1000);
+    expect(await decidir(new Date(fechada.getTime() + 30 * MS_DIA), oc)).toBe(
+      'ok',
+    );
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
+  it('automática FORA da janela pelo injetado, DENTRO pelo Node e pelo banco: AULA_ANTIGA', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA + 1000);
+    expect(
+      await decidir(new Date(fechada.getTime() + 60 * 60 * 1000), oc),
+    ).toBe('AULA_ANTIGA');
+    expect((await cabecalhoDe(oc))?.completude).toBe('completa');
+  });
+
+  it('retroativa VENCIDA pelo injetado, dentro pelo Node e pelo banco: AULA_ANTIGA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, -1);
+    const real = new Date();
+    relogio.instante = new Date(real.getTime() + 8 * MS_DIA);
+    expect(await decidir(real, oc)).toBe('AULA_ANTIGA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('aula JÁ COMEÇADA pelo injetado, futura pelo Node e pelo banco: aceita', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 2);
+    const real = new Date();
+    relogio.instante = new Date(real.getTime() + 3 * MS_DIA);
+    expect(await decidir(real, oc)).toBe('ok');
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
+  // -- COLADO na fronteira, nas duas direções (4ª rodada) --------------------
+
+  it('automática, 1 ms ANTES do fim da janela pelo injetado; Node e banco já fora: aceita', async () => {
+    const oc = await automaticaDeAulaAntiga();
+    const fechada = await recuarFechamento(oc, 8);
+    const fim = fechada.getTime() + 7 * MS_DIA;
+    relogio.instante = new Date(fim - 1);
+    expect(await decidir(new Date(fim + 30 * MS_DIA), oc)).toBe('ok');
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
+  it('automática, 30 min ANTES do fim pelo injetado; Node e banco já fora: aceita (o caso da 6ª rodada)', async () => {
+    // Longe da fronteira, mas dentro da faixa em que a sabotagem da 6ª
+    // rodada trocava o instante pelo relógio do Node. É integração: o que
+    // fecha a classe é a gramática fechada do corpo, abaixo.
+    const oc = await automaticaDeAulaAntiga();
+    const fechada = await recuarFechamento(oc, 8);
+    const fim = fechada.getTime() + 7 * MS_DIA;
+    relogio.instante = new Date(fim - 30 * 60 * 1000);
+    expect(await decidir(new Date(fim + 30 * MS_DIA), oc)).toBe('ok');
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
+  // -- os casos da 7ª rodada, pelo caminho do GESTOR ------------------------
+  // As três sabotagens da 7ª rodada só agiam quando havia `turmaIdDaRota`,
+  // o caminho do gestor; todos os casos acima eram do professor.
+
+  const decidirComoGestor = (oc: string): Promise<string> =>
+    codigoDe(
+      presenca().registrarNaoHouve(EMPRESA, oc, UGESTOR, false, TURMA_A),
+    );
+
+  it('gestor: automática fechada há 7 dias + 1 s pelo injetado: AULA_ANTIGA', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA + 1000);
+    expect(await decidirComoGestor(oc)).toBe('AULA_ANTIGA');
+    expect((await cabecalhoDe(oc))?.completude).toBe('completa');
+  });
+
+  it('gestor: aula de amanhã: AULA_FUTURA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 1, HORA);
+    // 23h da véspera da aula: é hoje, e a aula é amanhã.
+    relogio.instante = new Date(
+      noClube(await dataDe(oc), '00:00').getTime() - 60 * 60 * 1000,
+    );
+    expect(await decidirComoGestor(oc)).toBe('AULA_FUTURA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('gestor: aula de hoje às 10h, relógio às 8h: AULA_FUTURA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 0, HORA);
+    relogio.instante = noClube(await dataDe(oc), '08:00');
+    expect(await decidirComoGestor(oc)).toBe('AULA_FUTURA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('automática, NO instante do fim da janela pelo injetado; Node e banco ainda dentro: AULA_ANTIGA', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA);
+    expect(
+      await decidir(new Date(fechada.getTime() + 60 * 60 * 1000), oc),
+    ).toBe('AULA_ANTIGA');
+    expect((await cabecalhoDe(oc))?.completude).toBe('completa');
+  });
+
+  it('retroativa, 1 ms ANTES da meia-noite de data+8 pelo injetado; Node e banco já fora: aceita', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, -10, HORA);
+    const fim = noClube(maisDias(await dataDe(oc), 8), '00:00').getTime();
+    // O relógio real (o do banco) já passou do fim: a aula tem 10 dias.
+    expect(Date.now()).toBeGreaterThan(fim);
+    relogio.instante = new Date(fim - 1);
+    expect(await decidir(new Date(fim + 30 * MS_DIA), oc)).toBe('ok');
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
+  it('retroativa, NA meia-noite de data+8 pelo injetado; Node e banco ainda dentro: AULA_ANTIGA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, -1, HORA);
+    const fim = noClube(maisDias(await dataDe(oc), 8), '00:00');
+    expect(Date.now()).toBeLessThan(fim.getTime());
+    relogio.instante = fim;
+    expect(await decidir(new Date(), oc)).toBe('AULA_ANTIGA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('início da aula, 1 ms ANTES pelo injetado; Node e banco já depois: AULA_FUTURA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, -1, HORA);
+    const inicio = noClube(await dataDe(oc), HORA.inicio).getTime();
+    expect(Date.now()).toBeGreaterThan(inicio);
+    relogio.instante = new Date(inicio - 1);
+    expect(await decidir(new Date(inicio + 30 * MS_DIA), oc)).toBe(
+      'AULA_FUTURA',
+    );
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('início da aula, NO instante pelo injetado; Node e banco ainda antes: aceita', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 2, HORA);
+    const inicio = noClube(await dataDe(oc), HORA.inicio);
+    expect(Date.now()).toBeLessThan(inicio.getTime());
+    relogio.instante = inicio;
+    expect(await decidir(new Date(), oc)).toBe('ok');
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+});
+
 describe('D3 — `desfazerNaoHouveAte` no GET e no histórico', () => {
   it('automática: fechamento + 7 dias; depois de desfeito, nulo', async () => {
     const { oc, fechada } = await automaticaComFalta();
@@ -418,18 +697,276 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
     });
   });
 
-  it('o corpo de `travarEValidarOcorrencia` não tem outro relógio', () => {
-    const fonte = readFileSync(
-      join(__dirname, '..', '..', 'src', 'classes', 'presenca.service.ts'),
-      'utf8',
+  it('o corpo de `travarEValidarOcorrencia` é escrito numa gramática FECHADA (AST do TypeScript)', () => {
+    // O que o corpo PODE conter, e nada mais, pelo parser da linguagem. A 6ª
+    // rodada atravessou a lista de chamadas da 5ª com `agora['setTime']
+    // (globalThis['Date']['now']())`: o léxico artesanal não via colchete.
+    // Aqui, para chegar a um relógio o corpo precisaria de um NOME livre
+    // (`Date`, `globalThis`, `Reflect`, `eval`, `require`…), de um nome de
+    // PROPRIEDADE (`constructor`, `now`, `setTime`, `call`…), de um acesso por
+    // COLCHETE, de um TIPO DE NÓ (função, classe, `import()`, `delete`…) ou de
+    // um OPERADOR (atribuição) que não está nestas listas. Quem mudar uma
+    // lista tem de mostrar que a mudança não traz relógio.
+    const servico = join(SRC_CLASSES, 'presenca.service.ts');
+    const inv = inventarioDoCorpo(servico, 'travarEValidarOcorrencia');
+
+    // O que o corpo alcança pelo NOME: os parâmetros, dois construtores do
+    // Nest, a tabela de recusas e a decisão de tempo. Nenhum relógio.
+    expect(inv.livres).toEqual([
+      'NotFoundException',
+      'RECUSAS_DE_TEMPO',
+      'UnprocessableEntityException',
+      'companyId',
+      'decidirTempoDoPortao',
+      'ocupacaoId',
+      'professorIdScope',
+      'turmaIdDaRota',
+      'tx',
+    ]);
+    // O que o corpo alcança a partir de um objeto. Das 14, a única que leva a
+    // relógio é `relogio.agora` — a leitura única, e legítima.
+    expect(inv.propriedades).toEqual([
+      '$queryRaw',
+      'agora',
+      'data',
+      'dentroDaJanelaAutomatica',
+      'fechadaAutomaticamenteEm',
+      'horaInicio',
+      'id',
+      'origemInicial',
+      'origemTurmaId',
+      'professorId',
+      'recusa',
+      'relogio',
+      'statusPagamento',
+      'toLowerCase',
+    ]);
+    expect(inv.colchetes).toEqual([
+      'travadas[0]',
+      'linhas[0]',
+      'travadas[0]',
+      'RECUSAS_DE_TEMPO[tempo.recusa]',
+    ]);
+    // Sem atribuição: nada é trocado no lugar.
+    expect(inv.operadores).toEqual(['!==', '&&', '===', 'unário !', '||']);
+    // Os tipos de nó, pelo nome do enum do TypeScript (alguns saem pelo
+    // apelido: `FirstStatement` é `VariableStatement`, `FirstLiteralToken` é
+    // `NumericLiteral`, `LastTemplateToken` é `TemplateTail`). Sem função,
+    // arrow, classe, método de objeto, getter, `import()`, `delete`, `with`.
+    expect(inv.tiposDeNo).toEqual([
+      'AmpersandAmpersandToken',
+      'ArrayBindingPattern',
+      'AwaitExpression',
+      'BarBarToken',
+      'BinaryExpression',
+      'BindingElement',
+      'Block',
+      'CallExpression',
+      'ColonToken',
+      'ConditionalExpression',
+      'ElementAccessExpression',
+      'EqualsEqualsEqualsToken',
+      'ExclamationEqualsEqualsToken',
+      'FirstLiteralToken',
+      'FirstStatement',
+      'Identifier',
+      'IfStatement',
+      'LastTemplateToken',
+      'NewExpression',
+      'NullKeyword',
+      'ObjectLiteralExpression',
+      'PrefixUnaryExpression',
+      'PropertyAccessExpression',
+      'PropertyAssignment',
+      'QuestionToken',
+      'ReturnStatement',
+      'ShorthandPropertyAssignment',
+      'SpreadAssignment',
+      'StringLiteral',
+      'TaggedTemplateExpression',
+      'TemplateExpression',
+      'TemplateHead',
+      'TemplateMiddle',
+      'TemplateSpan',
+      'ThisKeyword',
+      'ThrowStatement',
+      'VariableDeclaration',
+      'VariableDeclarationList',
+    ]);
+    expect(inv.chamadas).toEqual([
+      'tx.$queryRaw`',
+      'new NotFoundException(',
+      'tx.$queryRaw`',
+      'new NotFoundException(',
+      'new NotFoundException(',
+      'turmaIdDaRota.toLowerCase(',
+      'new NotFoundException(',
+      'new UnprocessableEntityException(',
+      'tx.$queryRaw`',
+      'this.relogio.agora(',
+      'decidirTempoDoPortao(',
+      'new UnprocessableEntityException(',
+    ]);
+
+    // O SQL é o revisado, byte a byte (espaço normalizado). Nenhum dos três lê
+    // relógio; mudar um deles derruba o teste e pede nova revisão.
+    expect(inv.sql).toEqual([
+      "SELECT t.id FROM turmas t WHERE t.id = ( SELECT o.origem_turma_id FROM ocupacoes_quadra o WHERE o.id = $::uuid AND o.company_id = $::uuid AND o.origem_tipo = 'TURMA' ) FOR UPDATE",
+      'SELECT o.origem_turma_id AS "origemTurmaId", o.data AS "data", o.hora_inicio AS "horaInicio", o.status_pagamento AS "statusPagamento", t.professor_id AS "professorId" FROM ocupacoes_quadra o JOIN turmas t ON t.id = o.origem_turma_id WHERE o.id = $::uuid AND o.company_id = $::uuid AND o.origem_tipo = \'TURMA\'',
+      'SELECT c.origem AS "origem", c.origem_inicial AS "origemInicial", c.completude AS "completude", c.fechada_automaticamente_em AS "fechadaAutomaticamenteEm" FROM chamadas c WHERE c.ocupacao_id = $::uuid',
+    ]);
+
+    // A tabela de recusas, que o corpo lê, é só dado: objetos literais com
+    // texto e número, e as duas janelas no texto. Nenhuma chamada nem getter.
+    const recusas = inventarioDaConstante(servico, 'RECUSAS_DE_TEMPO');
+    expect(recusas.livres).toEqual([
+      'JANELA_DA_AUTOMATICA_DIAS',
+      'JANELA_RETROATIVA_DIAS',
+    ]);
+    expect(recusas.chamadas).toEqual([]);
+    expect(recusas.tiposDeNo).toEqual([
+      'FirstLiteralToken',
+      'Identifier',
+      'LastTemplateToken',
+      'ObjectLiteralExpression',
+      'PropertyAssignment',
+      'StringLiteral',
+      'TemplateExpression',
+      'TemplateHead',
+      'TemplateSpan',
+    ]);
+
+    // Os nomes da lista são os que se pensa: as exceções vêm do Nest, e a
+    // decisão de tempo vem do módulo provado — não de um homônimo local.
+    const fonte = readFileSync(servico, 'utf8');
+    expect(fonte).toMatch(
+      /import \{[^}]*\bNotFoundException\b[^}]*\bUnprocessableEntityException\b[^}]*\} from '@nestjs\/common'/,
     );
-    const inicio = fonte.indexOf('private async travarEValidarOcorrencia(');
-    const fim = fonte.indexOf('\n  }\n', inicio);
-    expect(inicio).toBeGreaterThan(0);
-    const corpo = fonte.slice(inicio, fim);
-    expect(corpo).toContain('this.relogio.agora(tx)');
-    expect(corpo).not.toContain('clock_timestamp');
-    expect(corpo).not.toContain('new Date(');
-    expect(corpo).not.toContain('this.hoje(');
+    expect(fonte).toMatch(
+      /import \{[^}]*\bdecidirTempoDoPortao\b[^}]*\} from '\.\/tempo-do-portao'/,
+    );
+    expect(
+      fonte.match(/\b(function|const|let|var|class)\s+decidirTempoDoPortao\b/g),
+    ).toBeNull();
+    expect(fonte).toMatch(/private readonly relogio: RelogioDaPresenca/);
+  });
+
+  it('a entrada da decisão de tempo vem de onde deve (o contrato de fluxo)', () => {
+    // A 7ª rodada ligou valores legítimos aos campos ERRADOS — o fechamento
+    // no lugar do `agora`, a hora no lugar da data — e a gramática ficou
+    // igual. Aqui, cada campo e a origem de cada variável, por extenso.
+    const { campos, origens } = entradaDaChamada(
+      join(SRC_CLASSES, 'presenca.service.ts'),
+      'travarEValidarOcorrencia',
+      'decidirTempoDoPortao',
+    );
+    expect(campos).toEqual({
+      agora: 'agora',
+      data: 'ocupacao.data',
+      horaInicio: 'ocupacao.horaInicio',
+      origemInicial: 'lido ? lido.origemInicial : null',
+      fechadaAutomaticamenteEm: 'lido ? lido.fechadaAutomaticamenteEm : null',
+    });
+    expect(origens).toMatchObject({
+      agora: 'await this.relogio.agora(tx)',
+      ocupacao: 'linhas[0]',
+      linhas: 'await tx.$queryRaw`…`',
+      '[lido]': 'await tx.$queryRaw`…`',
+    });
+  });
+
+  it('o portão, a tabela de recusas e a decisão de tempo SÃO os revisados (impressão digital)', () => {
+    // O que fecha "o corpo faz outra coisa" — de qualquer forma, com qualquer
+    // vocabulário — é conferir que ele é o revisado. A declaração é
+    // reimpressa pela AST, sem comentários (espaço e fim de linha do arquivo
+    // não contam), e o sha256 tem de ser este. QUEM MUDAR UM DESTES revisa de
+    // novo — relógio único, contrato de fluxo, ordem das recusas — e só
+    // então atualiza o hash; o texto reimpresso sai na falha, para a revisão.
+    const servico = join(SRC_CLASSES, 'presenca.service.ts');
+    const decisao = join(SRC_CLASSES, 'tempo-do-portao.ts');
+    // O que a decisão alcança fora do próprio arquivo, e o relógio único:
+    // uma mudança de lógica nos helpers de fuso passaria pelos casos de
+    // fronteira se caísse numa faixa sem caso.
+    const util = join(SRC_CLASSES, '..', 'courts', 'date-time.util.ts');
+    const relogioDoBanco = join(SRC_CLASSES, 'relogio-da-presenca.ts');
+    const revisados: [string, string, string][] = [
+      [
+        servico,
+        'travarEValidarOcorrencia',
+        '144448e07663db49ce83e78a71456cafe4be23262312cc8b89381235ccbd5fcf',
+      ],
+      [
+        servico,
+        'RECUSAS_DE_TEMPO',
+        '5b8bcbff60832f4c2c827e030a579c29a26c73a2c0843833bd3727929a145029',
+      ],
+      [
+        decisao,
+        'decidirTempoDoPortao',
+        'b04986bbbfd922372b8648f04380800aea62ff9d1bdb337de8f3ae841be9d025',
+      ],
+      [
+        decisao,
+        'JANELA_RETROATIVA_DIAS',
+        '2a64c066afd4e7e9d2112a39723a6be14ac366e1c48a6b5fcdd5289e3c3aa203',
+      ],
+      [
+        decisao,
+        'JANELA_DA_AUTOMATICA_DIAS',
+        '58c90abc9e8c655b91462e869ea802ccb70195cfb33d8c3f348d66750f2dae9d',
+      ],
+      [
+        decisao,
+        'MS_DIA',
+        '6858eab67f231b84364f720612484a56658a85d4bbc740c3124278571f4e6cf6',
+      ],
+      [
+        util,
+        'FUSO_DO_CLUBE',
+        'd6e5ef9d8b867e002a03ce0f5da8ddff16d41d37a868d33f33a1698bf33c70fc',
+      ],
+      [
+        util,
+        'hojeNoFusoDoClube',
+        '9f609aa7515bcce35daabedabd85a9e1920de7ab04e80d121dc773aaba8b9a1e',
+      ],
+      [
+        util,
+        'agoraNoFusoDoClube',
+        '6ebdefec174dd377e353e115608a524bea5629411683adf77502dcf5377ea6e6',
+      ],
+      [
+        util,
+        'aulaJaComecou',
+        'c6231651aec67132f62dd16248a181c5c80440ed07b83fd67189ff1a049c03ef',
+      ],
+      [
+        util,
+        'minutosDaHora',
+        '9ac887c7c5bdb9879597eff04d082dcedf3c8dd50912201a6bf351907d50d8f6',
+      ],
+      [
+        util,
+        'parseDateOnly',
+        '9bd81f52cf1fafbf5ca2657fe1adc9f77070234e23ce6a92e38e61ff92e76868',
+      ],
+      [
+        relogioDoBanco,
+        'agora',
+        '3c114e2499950745c68213d45839c4c759663a2e48bdcd14cfbbc850d313c83f',
+      ],
+    ];
+    for (const [arquivo, nome, esperado] of revisados) {
+      const { texto, sha256 } = impressaoDigital(arquivo, nome);
+      expect({ nome, sha256, texto: sha256 === esperado ? '' : texto }).toEqual(
+        {
+          nome,
+          sha256: esperado,
+          texto: '',
+        },
+      );
+    }
   });
 });
+
+const SRC_CLASSES = join(__dirname, '..', '..', 'src', 'classes');

@@ -422,14 +422,13 @@ async function apagarAula(
   tx: Tx,
   catalogo: Catalogo,
   aula: string,
-  alvo: ReadonlySet<string>,
   relatorio: RelatorioDaEmpresa,
 ): Promise<void> {
   await tx.$executeRawUnsafe('SAVEPOINT limpeza_aula');
   try {
     const fecho = await calcularFecho(tx, catalogo, [aula]);
     const camadas = camadasDeApagar(fecho);
-    const efeitos = await efeitosForaDoAlvo(tx, catalogo, fecho.linhas, alvo);
+    const efeitos = await efeitosForaDoAlvo(tx, catalogo, fecho.linhas, aula);
     const contagem: Record<string, number> = {};
     for (const camada of camadas) {
       for (const [tabela, chaves] of porTabela(camada)) {
@@ -480,12 +479,19 @@ async function apagarAula(
 /**
  * Linhas do fecho que pertencem a OUTRA aula — a reposição marcada numa aula
  * futura, a fila de uma aula futura (LIM-076g). Listadas com a data.
+ *
+ * **Compara com a aula que está sendo apagada, e não com o alvo inteiro**
+ * (achado A3 da validação independente da implementação). Comparar com o
+ * alvo escondia a linha que aponta para uma aula do alvo que o banco acabou
+ * MANTENDO — a reposição marcada numa legada protegida por
+ * `eventos_de_ocupacao`. Quem descarta o efeito que cai numa aula também
+ * apagada é `escreverEmpresa`, no fim, quando já se sabe quais foram.
  */
 async function efeitosForaDoAlvo(
   tx: Tx,
   catalogo: Catalogo,
   linhas: Fecho['linhas'],
-  alvo: ReadonlySet<string>,
+  aula: string,
 ): Promise<EfeitoForaDoAlvo[]> {
   const porTab = new Map<string, string[]>();
   for (const l of linhas.values()) {
@@ -508,9 +514,9 @@ async function efeitosForaDoAlvo(
         `SELECT ${exprDaChave('f', colunas)} AS chave, o.id::text AS aula, o.data::text AS data
            FROM ${ident(tabela)} f JOIN ${ident(TABELA_RAIZ)} o ON ${juncao}
           WHERE ${exprDaChave('f', colunas)} = ANY($1::text[])
-            AND NOT (o.id::text = ANY($2::text[]))`,
+            AND o.id::text <> $2`,
         chaves,
-        [...alvo],
+        aula,
       );
       for (const e of fora) {
         achados.set(`${tabela}:${e.chave}:${e.aula}`, { tabela, ...e });
@@ -567,11 +573,16 @@ async function escreverEmpresa(
     relatorio.empresa,
   );
   relatorio.d9 = await aplicarD9(tx, relatorio.empresa);
-  const conjunto = new Set(alvo);
   for (const aula of alvo) {
     escrever(`  empresa ${relatorio.empresa}, aula ${aula}`);
-    await apagarAula(tx, catalogo, aula, conjunto, relatorio);
+    await apagarAula(tx, catalogo, aula, relatorio);
   }
+  // Só agora se sabe quais aulas o banco deixou apagar: o efeito que cai numa
+  // delas não é "fora do alvo"; o que cai numa MANTIDA é, e fica listado.
+  const apagadas = new Set(relatorio.apagadas);
+  relatorio.foraDoAlvo = relatorio.foraDoAlvo.filter(
+    (e) => !apagadas.has(e.aula),
+  );
 }
 
 async function limpar(

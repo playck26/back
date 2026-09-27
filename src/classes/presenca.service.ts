@@ -29,10 +29,13 @@ import {
   hojeNoFusoDoClube,
   instanteNoFusoDoClube,
 } from '../courts/date-time.util';
+import { RelogioDaPresenca } from './relogio-da-presenca';
 import {
-  dentroDaJanelaAutomatica,
-  RelogioDaPresenca,
-} from './relogio-da-presenca';
+  decidirTempoDoPortao,
+  JANELA_DA_AUTOMATICA_DIAS,
+  JANELA_RETROATIVA_DIAS,
+  type RecusaDeTempo,
+} from './tempo-do-portao';
 import {
   gravarPresencasDoFechamento,
   participantesDaOcorrencia,
@@ -43,16 +46,31 @@ import {
   participantesDasCandidatas,
 } from '../presenca-automatica/corte-da-presenca';
 
-/** SPEC-014/INV-017: janela em que a chamada pode ser lançada. */
-export const JANELA_RETROATIVA_DIAS = 7;
+// As duas janelas moram com a decisão de tempo do portão (SPEC-076/D11), e
+// continuam exportadas daqui para quem já as importava.
+export { JANELA_DA_AUTOMATICA_DIAS, JANELA_RETROATIVA_DIAS };
 
-/**
- * SPEC-057/TASK-001/D5 — a janela de correção da chamada que **nasceu
- * automática**, contada do fechamento automático e não da data da aula.
- * O mesmo número da INV-017, mas outro relógio: retomada tardia fecha aula
- * antiga, e cada fechamento abre a sua própria janela (LIM-057l).
- */
-export const JANELA_DA_AUTOMATICA_DIAS = 7;
+/** O 422 de cada recusa de tempo do portão. */
+const RECUSAS_DE_TEMPO: Record<
+  RecusaDeTempo,
+  { statusCode: 422; code: string; message: string }
+> = {
+  AULA_FUTURA: {
+    statusCode: 422,
+    code: 'AULA_FUTURA',
+    message: 'Esta aula ainda não começou.',
+  },
+  AULA_ANTIGA_AUTOMATICA: {
+    statusCode: 422,
+    code: 'AULA_ANTIGA',
+    message: `A chamada fechada automaticamente pode ser corrigida em até ${JANELA_DA_AUTOMATICA_DIAS} dias após o fechamento.`,
+  },
+  AULA_ANTIGA_RETROATIVA: {
+    statusCode: 422,
+    code: 'AULA_ANTIGA',
+    message: `A chamada pode ser lançada em até ${JANELA_RETROATIVA_DIAS} dias após a aula.`,
+  },
+};
 
 /** SPEC-057/TASK-001/D1 — as origens que uma pessoa grava. */
 export type OrigemHumana = 'professor' | 'gestor';
@@ -409,69 +427,28 @@ export class PresencaService {
     `;
 
     // SPEC-076/D11 — **um relógio só**, lido uma vez, depois da raiz. Tudo
-    // o que o portão decide sobre tempo sai deste instante: a aula já
-    // começou, a janela retroativa e a da automática. Em produção é o
-    // relógio do banco; o db-spec injeta um controlado (AC-009 iii).
+    // o que o portão decide sobre tempo sai deste instante, e é decidido por
+    // `decidirTempoDoPortao`, função pura dele: a aula já começou, a janela
+    // retroativa e a da automática. Em produção é o relógio do banco; o
+    // db-spec injeta um controlado (AC-009 iii).
     const agora = await this.relogio.agora(tx);
-    const cabecalho: CabecalhoSobLock | undefined = lido && {
-      ...lido,
-      dentroDaJanelaAutomatica: lido.fechadaAutomaticamenteEm
-        ? dentroDaJanelaAutomatica(lido.fechadaAutomaticamenteEm, agora)
-        : null,
-    };
-
-    // INV-017. O limite futuro impede a chamada de virar previsão — o caso
-    // real é banal: o professor abre a grade da semana e toca na linha
-    // errada. O limite passado existe porque a turma de hoje deixa de ser um
-    // retrato confiável do que era há muito tempo (LIM-003).
-    const hoje = hojeNoFusoDoClube(agora).getTime();
-    const dia = ocupacao.data.getTime();
-    // SPEC-027 — **o portão passou a olhar a HORA, não só o dia.**
-    //
-    // Era `dia > hoje`, e por isso a aula das 18h de hoje aceitava chamada às
-    // 8h da manhã. **Isto é o portão de verdade, e a tela não substitui:**
-    // esconder o botão resolve o engano honesto; só o servidor resolve o
-    // pedido montado à mão.
-    if (!aulaJaComecou(ocupacao.data, ocupacao.horaInicio, agora)) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'AULA_FUTURA',
-        message: 'Esta aula ainda não começou.',
-      });
-    }
-    if (dia > hoje) {
-      // Rede de segurança: `aulaJaComecou` já cobre o caso, e manter a
-      // comparação por dia custa uma linha. Se um dia a função de hora
-      // regredir, esta ainda barra a aula de amanhã.
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'AULA_FUTURA',
-        message: 'Esta aula ainda não aconteceu.',
-      });
-    }
-    // SPEC-057/TASK-001/D5 — **a chamada que nasceu automática usa
-    // exclusivamente o relógio do fechamento**, inclusive depois de
-    // ratificada. A data da aula não entra: a retomada tardia fecha aula de
-    // semanas atrás, e o registro não pode nascer já incorrigível.
-    if (cabecalho?.origemInicial === 'automatica') {
-      if (!cabecalho.dentroDaJanelaAutomatica) {
-        throw new UnprocessableEntityException({
-          statusCode: 422,
-          code: 'AULA_ANTIGA',
-          message: `A chamada fechada automaticamente pode ser corrigida em até ${JANELA_DA_AUTOMATICA_DIAS} dias após o fechamento.`,
-        });
-      }
-      return { ...ocupacao, cabecalho, agora };
-    }
-    if (dia < hoje - JANELA_RETROATIVA_DIAS * 24 * 60 * 60 * 1000) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'AULA_ANTIGA',
-        message: `A chamada pode ser lançada em até ${JANELA_RETROATIVA_DIAS} dias após a aula.`,
-      });
+    const tempo = decidirTempoDoPortao({
+      agora,
+      data: ocupacao.data,
+      horaInicio: ocupacao.horaInicio,
+      origemInicial: lido ? lido.origemInicial : null,
+      fechadaAutomaticamenteEm: lido ? lido.fechadaAutomaticamenteEm : null,
+    });
+    const cabecalho: CabecalhoSobLock | null = lido
+      ? { ...lido, dentroDaJanelaAutomatica: tempo.dentroDaJanelaAutomatica }
+      : null;
+    // Esconder o botão resolve o engano honesto; só o servidor resolve o
+    // pedido montado à mão (SPEC-027).
+    if (tempo.recusa) {
+      throw new UnprocessableEntityException(RECUSAS_DE_TEMPO[tempo.recusa]);
     }
 
-    return { ...ocupacao, cabecalho: cabecalho ?? null, agora };
+    return { ...ocupacao, cabecalho, agora };
   }
 
   /**

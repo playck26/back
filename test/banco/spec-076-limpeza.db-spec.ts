@@ -493,6 +493,39 @@ describe('AC-023 — contar: o plano inteiro, e nenhuma linha muda', () => {
   });
 });
 
+describe('A3 da validação — o efeito que cai numa aula do alvo que o banco MANTÉM', () => {
+  it('a reposição que gasta a falta de uma aula apagada, marcada numa legada mantida, aparece fora do alvo', async () => {
+    // A fixture que a validação independente montou e a suíte não tinha: o
+    // relatório comparava com o ALVO, e a aula de destino estava no alvo —
+    // só que o banco a manteve (evento só-acréscimo). Foi o caso real de
+    // produção: duas reposições assim, que só uma leitura à parte mostrou.
+    const b1 = bases.get(E1) as Base;
+    const q1 = await aluno(b1);
+    const apagavel = await aula(b1, b1.turma, -10);
+    const faltaId = await falta(b1, apagavel, q1.alunoId);
+    const mantida = await aula(b1, b1.outraTurma, -10);
+    await eventoMovida(b1, mantida);
+    const reposicao = randomUUID();
+    await q(
+      `INSERT INTO reposicoes_de_aula (id,company_id,aluno_id,falta_id,ocupacao_id) VALUES ('${reposicao}','${E1}','${q1.alunoId}','${faltaId}','${mantida}')`,
+    );
+
+    const { codigo, r } = await contar();
+
+    expect(codigo).toBe(0);
+    const e1 = daEmpresa(r, E1);
+    expect(e1.apagadas).toContain(apagavel);
+    expect(e1.mantidas.map((m) => m.aula)).toEqual([mantida]);
+    expect(e1.foraDoAlvo).toEqual([
+      expect.objectContaining({
+        tabela: 'reposicoes_de_aula',
+        aula: mantida,
+        data: await dataDe(mantida),
+      }),
+    ]);
+  });
+});
+
 describe('AC-024 — aplicar: some o apagável, fica o protegido, e a segunda apaga zero', () => {
   it('apaga, mantém h inteira, não toca d/e/f, e a aula futura perde o visitante', async () => {
     const fx = await fixture023();
