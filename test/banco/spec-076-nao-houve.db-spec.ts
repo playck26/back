@@ -432,10 +432,84 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
     expect(inicio).toBeGreaterThan(0);
     // O recorte achou o fim do MÉTODO, e não o do arquivo.
     expect(fim).toBeGreaterThan(inicio);
-    const corpo = fonte.slice(inicio, fim);
-    expect(corpo).toContain('this.relogio.agora(tx)');
-    expect(corpo).not.toContain('clock_timestamp');
-    expect(corpo).not.toContain('new Date(');
-    expect(corpo).not.toContain('this.hoje(');
+    // Sem comentários: eles citam `dia > hoje` e o `clock_timestamp` antigo.
+    const corpo = semComentarios(fonte.slice(inicio, fim));
+
+    // Regra 3 — UMA leitura do relógio, e é a do provedor.
+    expect(corpo.match(/this\.relogio\.agora\(/g)).toHaveLength(1);
+
+    // Regra 1 — nenhuma OUTRA fonte de tempo. É uma classe, e não uma lista de
+    // grafias: a 2ª rodada da validação inseriu `Date.now()` e a versão
+    // anterior (que proibia `new Date(`, `this.hoje(` e `clock_timestamp`)
+    // continuou verde.
+    const fontesDeTempo: [string, RegExp][] = [
+      ['Date como chamada, construtor ou método', /\bDate\s*(\(|\.)/],
+      [
+        'performance.now / process.hrtime',
+        /\b(performance\s*\.\s*now|process\s*\.\s*hrtime)\b/,
+      ],
+      [
+        'relógio do SQL',
+        /\b(clock_timestamp|statement_timestamp|transaction_timestamp|now|timeofday)\s*\(|\bcurrent_(timestamp|date|time)\b|\blocal(timestamp|time)\b/i,
+      ],
+      ['o `hoje` antigo do serviço', /this\.hoje\s*\(/],
+    ];
+    for (const [nome, re] of fontesDeTempo) {
+      expect({ nome, achado: re.exec(corpo)?.[0] ?? null }).toEqual({
+        nome,
+        achado: null,
+      });
+    }
+
+    // Regra 2 — função cujo parâmetro de relógio tem padrão `new Date()` cai
+    // no relógio do Node quando chamada sem ele (`hojeNoFusoDoClube()`,
+    // `aulaJaComecou(data, hora)`). A lista vem do PRÓPRIO `date-time.util`,
+    // e não de uma cópia: toda chamada dessas no portão passa o `agora`.
+    const util = semComentarios(
+      readFileSync(
+        join(__dirname, '..', '..', 'src', 'courts', 'date-time.util.ts'),
+        'utf8',
+      ).replace(/\r\n/g, '\n'),
+    );
+    const comRelogioPadrao = [
+      ...util.matchAll(
+        /export function (\w+)\s*\(([^)]*?)\b\w+\s*:\s*Date\s*=\s*new Date\(\)/g,
+      ),
+    ].map((m) => m[1]);
+    expect(comRelogioPadrao).toEqual(
+      expect.arrayContaining(['hojeNoFusoDoClube', 'aulaJaComecou']),
+    );
+    for (const nome of comRelogioPadrao) {
+      for (const args of argumentosDasChamadas(corpo, nome)) {
+        expect({ nome, args, temAgora: /\bagora\b/.test(args) }).toEqual({
+          nome,
+          args,
+          temAgora: true,
+        });
+      }
+    }
   });
 });
+
+/** Tira comentários de bloco e de linha (o código do portão não tem URL). */
+function semComentarios(codigo: string): string {
+  return codigo.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
+/** Os argumentos de cada chamada `nome(...)`, com parênteses balanceados. */
+function argumentosDasChamadas(codigo: string, nome: string): string[] {
+  const saida: string[] = [];
+  const re = new RegExp(`\\b${nome}\\s*\\(`, 'g');
+  for (const m of codigo.matchAll(re)) {
+    let nivel = 1;
+    let i = (m.index ?? 0) + m[0].length;
+    const comeco = i;
+    while (i < codigo.length && nivel > 0) {
+      if (codigo[i] === '(') nivel += 1;
+      else if (codigo[i] === ')') nivel -= 1;
+      i += 1;
+    }
+    saida.push(codigo.slice(comeco, i - 1));
+  }
+  return saida;
+}
