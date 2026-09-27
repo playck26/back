@@ -23,6 +23,7 @@
  * O db-spec compara cada um com uma lista EXATA. Os tipos (anotações e
  * argumentos genéricos) ficam fora: não executam.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import * as ts from 'typescript';
 
@@ -41,7 +42,9 @@ const ordenado = (s: Set<string>) => [...s].sort();
 const lerFonte = (arquivo: string) =>
   ts.createSourceFile(
     arquivo,
-    readFileSync(arquivo, 'utf8'),
+    // O checkout do Windows é CRLF (`core.autocrlf`); o texto cru dos
+    // templates (o SQL) o carregaria para a impressão digital.
+    readFileSync(arquivo, 'utf8').replace(/\r\n/g, '\n'),
     ts.ScriptTarget.ES2022,
     true,
     ts.ScriptKind.TS,
@@ -89,6 +92,118 @@ export function inventarioDaConstante(
   achar(fonte);
   if (!alvo) throw new Error(`constante ${nome} não achada`);
   return inventario(fonte, alvo);
+}
+
+/** O nó de uma declaração do arquivo: método, função ou constante. */
+function declaracao(
+  fonte: ts.SourceFile,
+  nome: string,
+): ts.MethodDeclaration | ts.FunctionDeclaration | ts.VariableDeclaration {
+  let alvo:
+    | ts.MethodDeclaration
+    | ts.FunctionDeclaration
+    | ts.VariableDeclaration
+    | undefined;
+  const achar = (n: ts.Node) => {
+    if (
+      (ts.isMethodDeclaration(n) ||
+        ts.isFunctionDeclaration(n) ||
+        ts.isVariableDeclaration(n)) &&
+      n.name &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === nome
+    ) {
+      alvo = n;
+    }
+    ts.forEachChild(n, achar);
+  };
+  achar(fonte);
+  if (!alvo) throw new Error(`declaração ${nome} não achada`);
+  return alvo;
+}
+
+/**
+ * SPEC-076/AC-030, 7ª rodada — **a impressão digital do código revisado.**
+ *
+ * A gramática fecha o vocabulário; não fecha o FLUXO: a 7ª rodada ligou
+ * valores legítimos aos campos errados (o fechamento no lugar do `agora`, a
+ * hora no lugar da data) e a gramática ficou igual. O que fecha "o corpo faz
+ * outra coisa" é conferir que o corpo É o revisado: a declaração, reimpressa
+ * pela AST sem comentários (o espaço e o fim de linha do arquivo não
+ * contam), e o seu sha256. Qualquer mudança — trocar um campo, uma
+ * comparação, uma ordem — muda a impressão e derruba o teste, e quem a mudar
+ * revisa de novo.
+ */
+export function impressaoDigital(
+  arquivo: string,
+  nome: string,
+): { texto: string; sha256: string } {
+  const fonte = lerFonte(arquivo);
+  // O texto cru dos templates (o SQL) sai como está no arquivo: o `\r\n` do
+  // checkout do Windows vira `\n`, para a impressão não depender dele.
+  const texto = ts
+    .createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed })
+    .printNode(ts.EmitHint.Unspecified, declaracao(fonte, nome), fonte)
+    .replace(/\r\n/g, '\n');
+  return { texto, sha256: createHash('sha256').update(texto).digest('hex') };
+}
+
+/**
+ * De onde vem cada campo da entrada de `nomeDaChamada` no corpo de `metodo`:
+ * `{ campo: expressão }`, com a expressão reimpressa. E de onde vem cada
+ * variável que aparece nelas (`const x = …`), para o contrato ser lido de ponta
+ * a ponta.
+ */
+export function entradaDaChamada(
+  arquivo: string,
+  metodo: string,
+  nomeDaChamada: string,
+): { campos: Record<string, string>; origens: Record<string, string> } {
+  const fonte = lerFonte(arquivo);
+  const alvo = declaracao(fonte, metodo);
+  const imprimir = (n: ts.Node) =>
+    ts
+      .createPrinter({ removeComments: true })
+      .printNode(ts.EmitHint.Unspecified, n, fonte)
+      .replace(/\s+/g, ' ');
+  const campos: Record<string, string> = {};
+  const origens: Record<string, string> = {};
+  let chamadas = 0;
+  const visitar = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === nomeDaChamada
+    ) {
+      chamadas += 1;
+      const [arg] = n.arguments;
+      if (!arg || !ts.isObjectLiteralExpression(arg)) {
+        throw new Error(`${nomeDaChamada} sem objeto literal`);
+      }
+      for (const p of arg.properties) {
+        if (ts.isShorthandPropertyAssignment(p))
+          campos[p.name.text] = p.name.text;
+        else if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name)) {
+          campos[p.name.text] = imprimir(p.initializer);
+        } else throw new Error(`campo de forma inesperada: ${imprimir(p)}`);
+      }
+    }
+    if (ts.isVariableDeclaration(n) && n.initializer) {
+      const inicial = n.initializer;
+      // O SQL já é conferido byte a byte; aqui basta saber QUAL consulta.
+      const valor =
+        ts.isAwaitExpression(inicial) &&
+        ts.isTaggedTemplateExpression(inicial.expression)
+          ? `await ${imprimir(inicial.expression.tag)}\`…\``
+          : imprimir(inicial);
+      origens[imprimir(n.name)] = valor;
+    }
+    ts.forEachChild(n, visitar);
+  };
+  visitar(alvo);
+  if (chamadas !== 1)
+    throw new Error(`${nomeDaChamada} chamada ${chamadas} vezes`);
+  return { campos, origens };
 }
 
 function inventario(fonte: ts.SourceFile, corpo: ts.Node): Inventario {

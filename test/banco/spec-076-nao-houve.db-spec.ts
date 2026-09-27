@@ -12,7 +12,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { exigirBancoLocal } from './exigir-banco-local';
-import { inventarioDaConstante, inventarioDoCorpo } from './corpo-do-portao';
+import {
+  entradaDaChamada,
+  impressaoDigital,
+  inventarioDaConstante,
+  inventarioDoCorpo,
+} from './corpo-do-portao';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import {
@@ -530,6 +535,43 @@ describe('AC-030 — os outros relógios discordam, e o portão segue o injetado
     expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
   });
 
+  // -- os casos da 7ª rodada, pelo caminho do GESTOR ------------------------
+  // As três sabotagens da 7ª rodada só agiam quando havia `turmaIdDaRota`,
+  // o caminho do gestor; todos os casos acima eram do professor.
+
+  const decidirComoGestor = (oc: string): Promise<string> =>
+    codigoDe(
+      presenca().registrarNaoHouve(EMPRESA, oc, UGESTOR, false, TURMA_A),
+    );
+
+  it('gestor: automática fechada há 7 dias + 1 s pelo injetado: AULA_ANTIGA', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA + 1000);
+    expect(await decidirComoGestor(oc)).toBe('AULA_ANTIGA');
+    expect((await cabecalhoDe(oc))?.completude).toBe('completa');
+  });
+
+  it('gestor: aula de amanhã: AULA_FUTURA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 1, HORA);
+    // 23h da véspera da aula: é hoje, e a aula é amanhã.
+    relogio.instante = new Date(
+      noClube(await dataDe(oc), '00:00').getTime() - 60 * 60 * 1000,
+    );
+    expect(await decidirComoGestor(oc)).toBe('AULA_FUTURA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('gestor: aula de hoje às 10h, relógio às 8h: AULA_FUTURA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 0, HORA);
+    relogio.instante = noClube(await dataDe(oc), '08:00');
+    expect(await decidirComoGestor(oc)).toBe('AULA_FUTURA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
   it('automática, NO instante do fim da janela pelo injetado; Node e banco ainda dentro: AULA_ANTIGA', async () => {
     const { oc, fechada } = await automaticaComFalta();
     relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA);
@@ -807,6 +849,68 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
       fonte.match(/\b(function|const|let|var|class)\s+decidirTempoDoPortao\b/g),
     ).toBeNull();
     expect(fonte).toMatch(/private readonly relogio: RelogioDaPresenca/);
+  });
+
+  it('a entrada da decisão de tempo vem de onde deve (o contrato de fluxo)', () => {
+    // A 7ª rodada ligou valores legítimos aos campos ERRADOS — o fechamento
+    // no lugar do `agora`, a hora no lugar da data — e a gramática ficou
+    // igual. Aqui, cada campo e a origem de cada variável, por extenso.
+    const { campos, origens } = entradaDaChamada(
+      join(SRC_CLASSES, 'presenca.service.ts'),
+      'travarEValidarOcorrencia',
+      'decidirTempoDoPortao',
+    );
+    expect(campos).toEqual({
+      agora: 'agora',
+      data: 'ocupacao.data',
+      horaInicio: 'ocupacao.horaInicio',
+      origemInicial: 'lido ? lido.origemInicial : null',
+      fechadaAutomaticamenteEm: 'lido ? lido.fechadaAutomaticamenteEm : null',
+    });
+    expect(origens).toMatchObject({
+      agora: 'await this.relogio.agora(tx)',
+      ocupacao: 'linhas[0]',
+      linhas: 'await tx.$queryRaw`…`',
+      '[lido]': 'await tx.$queryRaw`…`',
+    });
+  });
+
+  it('o portão, a tabela de recusas e a decisão de tempo SÃO os revisados (impressão digital)', () => {
+    // O que fecha "o corpo faz outra coisa" — de qualquer forma, com qualquer
+    // vocabulário — é conferir que ele é o revisado. A declaração é
+    // reimpressa pela AST, sem comentários (espaço e fim de linha do arquivo
+    // não contam), e o sha256 tem de ser este. QUEM MUDAR UM DESTES revisa de
+    // novo — relógio único, contrato de fluxo, ordem das recusas — e só
+    // então atualiza o hash; o texto reimpresso sai na falha, para a revisão.
+    const servico = join(SRC_CLASSES, 'presenca.service.ts');
+    const decisao = join(SRC_CLASSES, 'tempo-do-portao.ts');
+    const revisados: [string, string, string][] = [
+      [
+        servico,
+        'travarEValidarOcorrencia',
+        '144448e07663db49ce83e78a71456cafe4be23262312cc8b89381235ccbd5fcf',
+      ],
+      [
+        servico,
+        'RECUSAS_DE_TEMPO',
+        '5b8bcbff60832f4c2c827e030a579c29a26c73a2c0843833bd3727929a145029',
+      ],
+      [
+        decisao,
+        'decidirTempoDoPortao',
+        'b04986bbbfd922372b8648f04380800aea62ff9d1bdb337de8f3ae841be9d025',
+      ],
+    ];
+    for (const [arquivo, nome, esperado] of revisados) {
+      const { texto, sha256 } = impressaoDigital(arquivo, nome);
+      expect({ nome, sha256, texto: sha256 === esperado ? '' : texto }).toEqual(
+        {
+          nome,
+          sha256: esperado,
+          texto: '',
+        },
+      );
+    }
   });
 });
 
