@@ -884,6 +884,11 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
     // então atualiza o hash; o texto reimpresso sai na falha, para a revisão.
     const servico = join(SRC_CLASSES, 'presenca.service.ts');
     const decisao = join(SRC_CLASSES, 'tempo-do-portao.ts');
+    // O que a decisão alcança fora do próprio arquivo, e o relógio único:
+    // uma mudança de lógica nos helpers de fuso passaria pelos casos de
+    // fronteira se caísse numa faixa sem caso.
+    const util = join(SRC_CLASSES, '..', 'courts', 'date-time.util.ts');
+    const relogioDoBanco = join(SRC_CLASSES, 'relogio-da-presenca.ts');
     const revisados: [string, string, string][] = [
       [
         servico,
@@ -899,6 +904,56 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
         decisao,
         'decidirTempoDoPortao',
         'b04986bbbfd922372b8648f04380800aea62ff9d1bdb337de8f3ae841be9d025',
+      ],
+      [
+        decisao,
+        'JANELA_RETROATIVA_DIAS',
+        '2a64c066afd4e7e9d2112a39723a6be14ac366e1c48a6b5fcdd5289e3c3aa203',
+      ],
+      [
+        decisao,
+        'JANELA_DA_AUTOMATICA_DIAS',
+        '58c90abc9e8c655b91462e869ea802ccb70195cfb33d8c3f348d66750f2dae9d',
+      ],
+      [
+        decisao,
+        'MS_DIA',
+        '6858eab67f231b84364f720612484a56658a85d4bbc740c3124278571f4e6cf6',
+      ],
+      [
+        util,
+        'FUSO_DO_CLUBE',
+        'd6e5ef9d8b867e002a03ce0f5da8ddff16d41d37a868d33f33a1698bf33c70fc',
+      ],
+      [
+        util,
+        'hojeNoFusoDoClube',
+        '9f609aa7515bcce35daabedabd85a9e1920de7ab04e80d121dc773aaba8b9a1e',
+      ],
+      [
+        util,
+        'agoraNoFusoDoClube',
+        '6ebdefec174dd377e353e115608a524bea5629411683adf77502dcf5377ea6e6',
+      ],
+      [
+        util,
+        'aulaJaComecou',
+        'c6231651aec67132f62dd16248a181c5c80440ed07b83fd67189ff1a049c03ef',
+      ],
+      [
+        util,
+        'minutosDaHora',
+        '9ac887c7c5bdb9879597eff04d082dcedf3c8dd50912201a6bf351907d50d8f6',
+      ],
+      [
+        util,
+        'parseDateOnly',
+        '9bd81f52cf1fafbf5ca2657fe1adc9f77070234e23ce6a92e38e61ff92e76868',
+      ],
+      [
+        relogioDoBanco,
+        'agora',
+        '3c114e2499950745c68213d45839c4c759663a2e48bdcd14cfbbc850d313c83f',
       ],
     ];
     for (const [arquivo, nome, esperado] of revisados) {
