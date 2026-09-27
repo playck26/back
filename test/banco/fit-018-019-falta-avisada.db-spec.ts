@@ -13,6 +13,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diaNoFuturo } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import { FaltaAvisadaService } from '../../src/classes/falta-avisada.service';
@@ -171,7 +172,7 @@ async function ocorrenciaAvulsa(): Promise<string> {
   const [r] = await semear.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra
       (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,aluno_id,status_pagamento,valor,updated_at)
-    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','2099-12-20','09:00','10:00','AVULSO','${ALUNO}','pendente_pagamento',100,now())
+    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','${diaNoFuturo(40)}','09:00','10:00','AVULSO','${ALUNO}','pendente_pagamento',100,now())
     RETURNING id`);
   return r.id;
 }

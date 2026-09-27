@@ -1,3 +1,5 @@
+import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
+
 // Mock de PrismaService compartilhado pelas suítes e2e (TEST-001,
 // TEST-002) — mesmo espírito dos mocks usados nos testes unitários
 // (ex. courts.service.spec.ts), mas abrangendo os modelos que a camada
@@ -428,7 +430,12 @@ export function buildPrismaMock(): PrismaMock {
       {
         id: 'oc-1',
         status_pagamento: 'pendente_pagamento',
-        data: new Date('2099-01-01T00:00:00.000Z'),
+        // SPEC-077/TASK-000 — a aula padrão é FUTURA relativa ao hoje do
+        // clube; era `2099-01-01`, que vira passado em 2099 e faz o prazo
+        // de cancelamento recusar o `POST`/`DELETE` da falta avisada.
+        data: new Date(
+          hojeNoFusoDoClube().getTime() + 30 * 24 * 60 * 60 * 1000,
+        ),
         hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
       },
     ];

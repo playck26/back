@@ -21,6 +21,7 @@
  */
 import { PrismaClient, Prisma } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diaNoFuturo } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 import { MatriculasService } from '../../src/matriculas/matriculas.service';
 import { StudentsService } from '../../src/people/students.service';
@@ -301,7 +302,7 @@ describe('SPEC-037/AC-011 — a matrícula vigente', () => {
     await q(
       matriculaSql({
         inicio: `'2020-01-01'`,
-        fim: `'2099-01-01'`,
+        fim: `'${diaNoFuturo(365)}'`,
         valor_centavos: 25000,
         valor_de_tabela_centavos: 30000,
       }),
@@ -318,7 +319,9 @@ describe('SPEC-037/AC-011 — a matrícula vigente', () => {
     await q(
       `INSERT INTO config_pagamento_empresa (id,company_id,link_pagamento_url,updated_at) VALUES (gen_random_uuid(),'${EMPRESA}','https://clube.example/pagar',now())`,
     );
-    await q(matriculaSql({ inicio: `'2020-01-01'`, fim: `'2099-01-01'` }));
+    await q(
+      matriculaSql({ inicio: `'2020-01-01'`, fim: `'${diaNoFuturo(365)}'` }),
+    );
 
     // Sem link próprio: herda.
     expect(
