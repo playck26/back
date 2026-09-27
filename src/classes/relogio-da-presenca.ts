@@ -27,17 +27,3 @@ export class RelogioDaPresenca {
     return linha.agora;
   }
 }
-
-/** SPEC-057/TASK-001/D5 — a janela da chamada que nasceu automática. */
-export const JANELA_DA_AUTOMATICA_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * SPEC-076/D11 — `fechadaEm + 7 dias > agora`, em TypeScript e com o `agora`
- * que o portão leu. Era calculado no SQL, com um relógio próprio.
- */
-export function dentroDaJanelaAutomatica(
-  fechadaEm: Date,
-  agora: Date,
-): boolean {
-  return fechadaEm.getTime() + JANELA_DA_AUTOMATICA_MS > agora.getTime();
-}

@@ -9,15 +9,10 @@
  * em TypeScript. O instante do FECHAMENTO continua sendo o do banco — é o
  * worker real que fecha.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { exigirBancoLocal } from './exigir-banco-local';
-import {
-  fechoDoPortao,
-  prismaVigiado,
-  vigiarRelogios,
-} from './relogios-do-portao';
+import { chamadasDoCorpo, corpoDoMetodo, sqlDoCorpo } from './corpo-do-portao';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import {
@@ -369,20 +364,19 @@ describe('AC-013 — o DELETE herda o portão', () => {
  * chamada transitiva, `Intl`, `Reflect.construct(Date)`, `SELECT now()` —, a
  * decisão muda e o caso cai.
  *
- * **4ª rodada — a fronteira e o vigia.** A validação pôs o relógio do Node em
- * `dentroDaJanelaAutomatica` só nos dois segundos finais da janela, e os quatro
- * cenários (todos longe da fronteira) continuaram verdes. Agora:
+ * **4ª rodada — a fronteira.** Cada janela do portão (a da automática, a
+ * retroativa e o início da aula) é testada **colada na fronteira** (1 ms de um
+ * lado, e o instante exato do outro), nas DUAS direções, com o relógio do Node
+ * E o do banco do lado oposto ao injetado — o do banco, movendo o fechamento
+ * para trás, porque ele não se deixa parar.
  *
- * - cada janela do portão (a da automática, a retroativa e o início da aula) é
- *   testada **colada na fronteira** (1 ms de um lado, e o instante exato do
- *   outro), nas DUAS direções, com o relógio do Node E o do banco do lado
- *   oposto ao injetado — o do banco, movendo o fechamento para trás, porque
- *   ele não se deixa parar;
- * - todo caso roda sob `vigiarRelogios`/`prismaVigiado`: QUALQUER leitura de
- *   outro relógio por código de `src/` dentro do portão é registrada, influa
- *   ou não na decisão — e a lista tem de sair vazia.
- *
- * O limite que sobra está no cabeçalho de `relogios-do-portao.ts`.
+ * **5ª rodada — a prova deixou de ser busca.** Um relógio por callback ou por
+ * dependência, numa faixa que nenhum caso tocava, passou pelo vigia desta
+ * suíte. O fechamento da classe agora é estrutural: a decisão de tempo é
+ * `decidirTempoDoPortao`, provada num realm sem relógio com cobertura total
+ * (`src/classes/tempo-do-portao.spec.ts`), e o corpo do portão só pode fazer
+ * as chamadas de uma lista fechada (o `describe` do fim deste arquivo). Estes
+ * casos continuam como prova de INTEGRAÇÃO: o `agora` que decide é o injetado.
  */
 describe('AC-030 — os outros relógios discordam, e o portão segue o injetado', () => {
   /** Roda `fn` com o relógio do Node parado em `instante`; os timers ficam reais. */
@@ -413,26 +407,11 @@ describe('AC-030 — os outros relógios discordam, e o portão segue o injetado
     }
   }
 
-  /**
-   * O portão decide com o Node em `nodeEm` e sob o vigia; a decisão é
-   * devolvida como código (`ok` ou o `code` do 422), e nenhuma outra leitura
-   * de relógio pode ter acontecido dentro dele.
-   */
-  async function decidir(nodeEm: Date, oc: string): Promise<string> {
-    const leituras: string[] = [];
-    const servico = new PresencaService(
-      prismaVigiado(app, leituras),
-      new CorteDaPresenca(app),
-      relogio,
+  /** O portão decide com o Node em `nodeEm`; devolve `ok` ou o `code` do 422. */
+  const decidir = (nodeEm: Date, oc: string): Promise<string> =>
+    comNodeEm(nodeEm, () =>
+      codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true)),
     );
-    const codigo = await comNodeEm(nodeEm, () =>
-      vigiarRelogios(leituras, () =>
-        codigoDe(servico.registrarNaoHouve(EMPRESA, oc, UPROF, true)),
-      ),
-    );
-    expect(leituras).toEqual([]);
-    return codigo;
-  }
 
   const HORA = { inicio: '10:00', fim: '10:50' };
   /** `aaaa-mm-dd` da aula, como o banco a guarda. */
@@ -664,135 +643,58 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
     });
   });
 
-  it('o corpo de `travarEValidarOcorrencia` não tem outro relógio', () => {
-    // Fim de linha normalizado: com `core.autocrlf=true` o checkout no
-    // Windows é CRLF, e o recorte por `'\n  }\n'` devolvia -1 — o `slice`
-    // pegava o resto do arquivo e achava o `clock_timestamp()` legítimo do
-    // refechamento (achado A2 da validação independente da implementação).
-    const fonte = readFileSync(
-      join(__dirname, '..', '..', 'src', 'classes', 'presenca.service.ts'),
-      'utf8',
-    ).replace(/\r\n/g, '\n');
-    const inicio = fonte.indexOf('private async travarEValidarOcorrencia(');
-    const fim = fonte.indexOf('\n  }\n', inicio);
-    expect(inicio).toBeGreaterThan(0);
-    // O recorte achou o fim do MÉTODO, e não o do arquivo.
-    expect(fim).toBeGreaterThan(inicio);
-    // Sem comentários: eles citam `dia > hoje` e o `clock_timestamp` antigo.
-    const corpo = semComentarios(fonte.slice(inicio, fim));
-
-    // Regra 3 — UMA leitura do relógio, e é a do provedor.
-    expect(corpo.match(/this\.relogio\.agora\(/g)).toHaveLength(1);
-
-    // Regra 1 — nenhuma OUTRA fonte de tempo. É uma classe, e não uma lista de
-    // grafias: a 2ª rodada da validação inseriu `Date.now()` e a versão
-    // anterior (que proibia `new Date(`, `this.hoje(` e `clock_timestamp`)
-    // continuou verde.
-    const fontesDeTempo: [string, RegExp][] = [
-      ['Date como chamada, construtor ou método', /\bDate\s*(\(|\.)/],
-      [
-        'performance.now / process.hrtime',
-        /\b(performance\s*\.\s*now|process\s*\.\s*hrtime)\b/,
-      ],
-      [
-        'relógio do SQL',
-        /\b(clock_timestamp|statement_timestamp|transaction_timestamp|now|timeofday)\s*\(|\bcurrent_(timestamp|date|time)\b|\blocal(timestamp|time)\b/i,
-      ],
-      ['o `hoje` antigo do serviço', /this\.hoje\s*\(/],
-    ];
-    for (const [nome, re] of fontesDeTempo) {
-      expect({ nome, achado: re.exec(corpo)?.[0] ?? null }).toEqual({
-        nome,
-        achado: null,
-      });
-    }
-
-    // Regra 2 — o FECHO do portão: toda função que ele alcança, em qualquer
-    // módulo local, transitivamente (alias, `* as`, `this.metodo`, função do
-    // mesmo módulo). Em cada uma: nenhum relógio no corpo, e toda chamada a
-    // função com relógio padrão passa o argumento. A 3ª rodada achou o alias e
-    // o parâmetro padrão; a 4ª achou o relógio DENTRO do corpo de um helper.
-    const fecho = fechoDoPortao(
-      join(SRC_CLASSES, 'presenca.service.ts'),
+  it('o corpo de `travarEValidarOcorrencia` só faz as chamadas de uma lista FECHADA', () => {
+    // Lista do que PODE, e não do que não pode: a 5ª rodada mostrou que a
+    // busca por relógio não termina (callback, dependência). Qualquer chamada
+    // nova no portão — de pacote, de callback, de ORM, de helper — muda esta
+    // lista e derruba o teste, qualquer que seja a forma; quem a mudar tem de
+    // mostrar que ela não traz relógio. A leitura do relógio é UMA
+    // (`this.relogio.agora`) e a decisão de tempo é `decidirTempoDoPortao`,
+    // provada num realm sem relógio (`tempo-do-portao.spec.ts`).
+    const servico = join(SRC_CLASSES, 'presenca.service.ts');
+    const { codigo, estrutura } = corpoDoMetodo(
+      servico,
       'travarEValidarOcorrencia',
     );
-    expect(fecho.violacoes).toEqual([]);
-    // Não é vacuidade: o fecho chegou aos helpers de tempo que o portão usa,
-    // atravessando módulos, e conferiu chamadas com relógio padrão.
-    expect(fecho.visitadas).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(
-          /relogio-da-presenca\.ts#dentroDaJanelaAutomatica$/,
-        ),
-        expect.stringMatching(/date-time\.util\.ts#hojeNoFusoDoClube$/),
-        expect.stringMatching(/date-time\.util\.ts#aulaJaComecou$/),
-        expect.stringMatching(/date-time\.util\.ts#agoraNoFusoDoClube$/),
-      ]),
-    );
-    expect(fecho.chamadasComPadrao).toBeGreaterThan(0);
-  });
+    expect(chamadasDoCorpo(estrutura)).toEqual([
+      'tx.$queryRaw`',
+      'new NotFoundException(',
+      'tx.$queryRaw`',
+      'new NotFoundException(',
+      'new NotFoundException(',
+      'turmaIdDaRota.toLowerCase(',
+      'new NotFoundException(',
+      'new UnprocessableEntityException(',
+      'tx.$queryRaw`',
+      'this.relogio.agora(',
+      'decidirTempoDoPortao(',
+      'new UnprocessableEntityException(',
+    ]);
+    // Nenhuma função é CRIADA no corpo: callback não tem onde nascer.
+    expect(/=>|\bfunction\b/.exec(estrutura)?.[0] ?? null).toBeNull();
 
-  it('o fecho acusa o que deve (o analisador não passa no vazio)', () => {
-    // Um módulo de mentira, com as quatro formas que as rodadas acharam: o
-    // relógio no corpo de um helper (4ª), o parâmetro padrão chamado sem o
-    // argumento por ALIAS (3ª), o `Reflect.construct` e o `Intl` sem instante.
-    const dir = mkdtempSync(join(tmpdir(), 'ac030-'));
-    try {
-      writeFileSync(
-        join(dir, 'h.ts'),
-        [
-          'export function janela(f: Date, agora: Date): boolean {',
-          '  const falta = f.getTime() - agora.getTime();',
-          '  if (falta > 0 && falta < 2000) return f.getTime() > new Date().getTime();',
-          '  return falta > 0;',
-          '}',
-          'export function comPadrao(x: number, agora: Date = new Date()): number {',
-          '  return x + agora.getTime();',
-          '}',
-          'export function construido(): number {',
-          '  return (Reflect.construct(Date, []) as Date).getTime();',
-          '}',
-          'export function texto(): string {',
-          "  return new Intl.DateTimeFormat('pt-BR').format();",
-          '}',
-          '',
-        ].join('\n'),
-      );
-      writeFileSync(
-        join(dir, 's.ts'),
-        [
-          "import { janela, comPadrao as cp } from './h';",
-          "import * as h from './h';",
-          'export class S {',
-          '  private async portao(agora: Date): Promise<{ ok: boolean }> {',
-          '    const a = janela(agora, agora);',
-          '    const b = cp(1);',
-          '    return { ok: a && b > 0 && h.construido() > 0 && h.texto() !== "" };',
-          '  }',
-          '}',
-          '',
-        ].join('\n'),
-      );
-      const { violacoes } = fechoDoPortao(join(dir, 's.ts'), 'portao');
-      expect(
-        violacoes.map((v) => `${v.onde.split('#')[1]}: ${v.regra}`).sort(),
-      ).toEqual(
-        [
-          'construido: Date como valor (alias)',
-          'janela: new Date() sem argumento',
-          'portao: comPadrao cai no relógio padrão (o argumento 2 falta)',
-          'texto: Intl …format() sem instante',
-        ].sort(),
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    // O SQL é o revisado, byte a byte (espaço normalizado). Nenhum dos três lê
+    // relógio; mudar um deles derruba o teste e pede nova revisão.
+    expect(sqlDoCorpo(codigo, estrutura)).toEqual([
+      "SELECT t.id FROM turmas t WHERE t.id = ( SELECT o.origem_turma_id FROM ocupacoes_quadra o WHERE o.id = $::uuid AND o.company_id = $::uuid AND o.origem_tipo = 'TURMA' ) FOR UPDATE",
+      'SELECT o.origem_turma_id AS "origemTurmaId", o.data AS "data", o.hora_inicio AS "horaInicio", o.status_pagamento AS "statusPagamento", t.professor_id AS "professorId" FROM ocupacoes_quadra o JOIN turmas t ON t.id = o.origem_turma_id WHERE o.id = $::uuid AND o.company_id = $::uuid AND o.origem_tipo = \'TURMA\'',
+      'SELECT c.origem AS "origem", c.origem_inicial AS "origemInicial", c.completude AS "completude", c.fechada_automaticamente_em AS "fechadaAutomaticamenteEm" FROM chamadas c WHERE c.ocupacao_id = $::uuid',
+    ]);
+
+    // Os nomes da lista são os que se pensa: as exceções vêm do Nest, e a
+    // decisão de tempo vem do módulo provado — não de um homônimo local.
+    const fonte = readFileSync(servico, 'utf8');
+    expect(fonte).toMatch(
+      /import \{[^}]*\bNotFoundException\b[^}]*\bUnprocessableEntityException\b[^}]*\} from '@nestjs\/common'/,
+    );
+    expect(fonte).toMatch(
+      /import \{[^}]*\bdecidirTempoDoPortao\b[^}]*\} from '\.\/tempo-do-portao'/,
+    );
+    expect(
+      fonte.match(/\b(function|const|let|var|class)\s+decidirTempoDoPortao\b/g),
+    ).toBeNull();
+    expect(fonte).toMatch(/private readonly relogio: RelogioDaPresenca/);
   });
 });
 
 const SRC_CLASSES = join(__dirname, '..', '..', 'src', 'classes');
-
-/** Tira comentários de bloco e de linha (o código do portão não tem URL). */
-function semComentarios(codigo: string): string {
-  return codigo.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
