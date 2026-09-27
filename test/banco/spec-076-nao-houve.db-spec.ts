@@ -9,7 +9,7 @@
  * em TypeScript. O instante do FECHAMENTO continua sendo o do banco — é o
  * worker real que fecha.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
@@ -350,6 +350,99 @@ describe('AC-013 — o DELETE herda o portão', () => {
   });
 });
 
+/**
+ * AC-030, a prova de COMPORTAMENTO — **os outros relógios discordam de
+ * propósito**, e a decisão do portão segue o injetado.
+ *
+ * A prova textual (abaixo) fecha o que dá para ler; a 3ª rodada da validação
+ * mostrou que ler não fecha a classe: um alias de import e um helper externo
+ * com relógio padrão passavam. Esta prova não lê código. Em cada cenário o
+ * relógio do Node é falsificado (Date, hrtime, performance) num instante que
+ * inverteria a decisão, e o do banco (o real) também discorda do injetado onde
+ * isso é possível. Se QUALQUER outro relógio influir — por alias, helper,
+ * chamada transitiva, `Intl`, `Reflect.construct(Date)`, `SELECT now()` —, a
+ * decisão muda e o caso cai.
+ *
+ * **Limite declarado:** uma leitura de outro relógio que NÃO influi na decisão
+ * (um `void Date.now()` num helper) não é vista aqui; no corpo do portão, a
+ * prova textual a pega.
+ */
+describe('AC-030 — os outros relógios discordam, e o portão segue o injetado', () => {
+  /** Roda `fn` com o relógio do Node parado em `instante`; os timers ficam reais. */
+  async function comNodeEm<T>(
+    instante: Date,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    jest.useFakeTimers({
+      now: instante,
+      doNotFake: [
+        'nextTick',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+        'queueMicrotask',
+      ],
+    });
+    try {
+      // A falsificação pegou: sem isto, o caso passaria sem ter discordado.
+      expect(Date.now()).toBe(instante.getTime());
+      expect(new Date().getTime()).toBe(instante.getTime());
+      return await fn();
+    } finally {
+      jest.useRealTimers();
+    }
+  }
+
+  it('automática DENTRO da janela pelo injetado, FORA pelo Node: aceita', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 60 * 60 * 1000);
+    await comNodeEm(new Date(fechada.getTime() + 30 * MS_DIA), () =>
+      presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true),
+    );
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+
+  it('automática FORA da janela pelo injetado, DENTRO pelo Node e pelo banco: AULA_ANTIGA', async () => {
+    const { oc, fechada } = await automaticaComFalta();
+    relogio.instante = new Date(fechada.getTime() + 7 * MS_DIA + 1000);
+    expect(
+      await comNodeEm(new Date(fechada.getTime() + 60 * 60 * 1000), () =>
+        codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true)),
+      ),
+    ).toBe('AULA_ANTIGA');
+    expect((await cabecalhoDe(oc))?.completude).toBe('completa');
+  });
+
+  it('retroativa VENCIDA pelo injetado, dentro pelo Node e pelo banco: AULA_ANTIGA', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, -1);
+    const real = new Date();
+    relogio.instante = new Date(real.getTime() + 8 * MS_DIA);
+    expect(
+      await comNodeEm(real, () =>
+        codigoDe(presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true)),
+      ),
+    ).toBe('AULA_ANTIGA');
+    expect(await cabecalhoDe(oc)).toBeNull();
+  });
+
+  it('aula JÁ COMEÇADA pelo injetado, futura pelo Node e pelo banco: aceita', async () => {
+    const a = await aluno('Ana');
+    await matricular(TURMA_A, a.alunoId);
+    const oc = await aula(TURMA_A, 2);
+    const real = new Date();
+    relogio.instante = new Date(real.getTime() + 3 * MS_DIA);
+    await comNodeEm(real, () =>
+      presenca().registrarNaoHouve(EMPRESA, oc, UPROF, true),
+    );
+    expect((await cabecalhoDe(oc))?.completude).toBe('nao_houve');
+  });
+});
+
 describe('D3 — `desfazerNaoHouveAte` no GET e no histórico', () => {
   it('automática: fechamento + 7 dias; depois de desfeito, nulo', async () => {
     const { oc, fechada } = await automaticaComFalta();
@@ -461,35 +554,117 @@ describe('AC-030 — a produção lê o relógio do BANCO, e o portão tem um re
       });
     }
 
-    // Regra 2 — função cujo parâmetro de relógio tem padrão `new Date()` cai
-    // no relógio do Node quando chamada sem ele (`hojeNoFusoDoClube()`,
-    // `aulaJaComecou(data, hora)`). A lista vem do PRÓPRIO `date-time.util`,
-    // e não de uma cópia: toda chamada dessas no portão passa o `agora`.
-    const util = semComentarios(
-      readFileSync(
-        join(__dirname, '..', '..', 'src', 'courts', 'date-time.util.ts'),
-        'utf8',
-      ).replace(/\r\n/g, '\n'),
-    );
-    const comRelogioPadrao = [
-      ...util.matchAll(
-        /export function (\w+)\s*\(([^)]*?)\b\w+\s*:\s*Date\s*=\s*new Date\(\)/g,
-      ),
-    ].map((m) => m[1]);
-    expect(comRelogioPadrao).toEqual(
+    // Regra 2 — função cujo parâmetro de relógio tem padrão (`new Date`,
+    // `Date.now`) cai no relógio do Node quando chamada sem ele. A 3ª rodada
+    // mostrou dois escapes da versão que só lia o `date-time.util` e só
+    // procurava o nome exportado: um ALIAS de import e um HELPER de outro
+    // módulo. Agora: todos os imports locais do serviço, com alias e
+    // namespace resolvidos, e todo módulo importado varrido.
+    const servico = semComentarios(fonte);
+    const locais = importsLocais(servico);
+    const comRelogioPadrao = new Set<string>();
+    for (const modulo of new Set(locais.map((l) => l.modulo))) {
+      for (const nome of funcoesComRelogioPadrao(modulo)) {
+        comRelogioPadrao.add(`${modulo}#${nome}`);
+      }
+    }
+    // Não é vacuidade: as conhecidas estão na varredura.
+    expect([...comRelogioPadrao].map((x) => x.split('#')[1])).toEqual(
       expect.arrayContaining(['hojeNoFusoDoClube', 'aulaJaComecou']),
     );
-    for (const nome of comRelogioPadrao) {
-      for (const args of argumentosDasChamadas(corpo, nome)) {
-        expect({ nome, args, temAgora: /\bagora\b/.test(args) }).toEqual({
-          nome,
+    let chamadasConferidas = 0;
+    for (const { local, original, modulo } of locais) {
+      if (!comRelogioPadrao.has(`${modulo}#${original}`)) continue;
+      for (const args of argumentosDasChamadas(corpo, local)) {
+        chamadasConferidas += 1;
+        expect({
+          local,
+          original,
+          args,
+          temAgora: /\bagora\b/.test(args),
+        }).toEqual({
+          local,
+          original,
           args,
           temAgora: true,
         });
       }
     }
+    // E o portão de fato chama alguma delas: a regra não passa no vazio.
+    expect(chamadasConferidas).toBeGreaterThan(0);
   });
 });
+
+const SRC_CLASSES = join(__dirname, '..', '..', 'src', 'classes');
+
+/**
+ * Os nomes que o serviço importa de módulos LOCAIS, com o nome original e o
+ * arquivo resolvido: `{ a as b }` vira local `b`, original `a`; `* as ns` vira
+ * local `ns.<fn>` para cada função do módulo.
+ */
+function importsLocais(
+  codigo: string,
+): { local: string; original: string; modulo: string }[] {
+  const saida: { local: string; original: string; modulo: string }[] = [];
+  const resolver = (rel: string) => {
+    const base = join(SRC_CLASSES, rel);
+    return existsSync(`${base}.ts`) ? `${base}.ts` : join(base, 'index.ts');
+  };
+  for (const m of codigo.matchAll(
+    /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*'(\.[^']+)'/g,
+  )) {
+    const modulo = resolver(m[2]);
+    for (const item of m[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      const [original, local] = item.replace(/^type\s+/, '').split(/\s+as\s+/);
+      saida.push({
+        local: (local ?? original).trim(),
+        original: original.trim(),
+        modulo,
+      });
+    }
+  }
+  for (const m of codigo.matchAll(
+    /import\s+\*\s+as\s+(\w+)\s+from\s*'(\.[^']+)'/g,
+  )) {
+    const modulo = resolver(m[2]);
+    for (const nome of funcoesComRelogioPadrao(modulo)) {
+      saida.push({ local: `${m[1]}.${nome}`, original: nome, modulo });
+    }
+  }
+  return saida;
+}
+
+/** As funções exportadas do módulo com algum parâmetro de relógio padrão. */
+function funcoesComRelogioPadrao(modulo: string): string[] {
+  if (!existsSync(modulo)) return [];
+  const codigo = semComentarios(
+    readFileSync(modulo, 'utf8').replace(/\r\n/g, '\n'),
+  );
+  const nomes: string[] = [];
+  const declaracoes = [
+    ...codigo.matchAll(
+      /export\s+(?:async\s+)?function\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g,
+    ),
+    ...codigo.matchAll(/export\s+const\s+(\w+)\s*=\s*(?:async\s*)?\(/g),
+  ];
+  for (const m of declaracoes) {
+    const inicio = (m.index ?? 0) + m[0].length;
+    let nivel = 1;
+    let k = inicio;
+    while (k < codigo.length && nivel > 0) {
+      if (codigo[k] === '(') nivel += 1;
+      else if (codigo[k] === ')') nivel -= 1;
+      k += 1;
+    }
+    const parametros = codigo.slice(inicio, k - 1);
+    if (/=\s*(new\s+Date\b|Date\s*\.\s*now\b)/.test(parametros))
+      nomes.push(m[1]);
+  }
+  return nomes;
+}
 
 /** Tira comentários de bloco e de linha (o código do portão não tem URL). */
 function semComentarios(codigo: string): string {
