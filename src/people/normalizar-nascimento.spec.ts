@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { normalizarNascimento } from './normalizar-nascimento';
+import { formatDateOnly, hojeNoFusoDoClube } from '../courts/date-time.util';
+
+/** SPEC-077/TASK-000 — "no futuro" relativo ao hoje do clube, nunca fixo: era
+ * `2099-01-01`, que vira passado em 2099 e faz o caso mudar de resposta. */
+const AMANHA = formatDateOnly(
+  new Date(hojeNoFusoDoClube().getTime() + 24 * 60 * 60 * 1000),
+);
 
 /**
  * SPEC-036/AC-004 — a data de nascimento, do corpo para o banco.
@@ -65,7 +72,7 @@ describe('SPEC-036 — normalizarNascimento', () => {
   });
 
   it('futuro e anterior a 1900 são recusados', () => {
-    expect(codigoDoErro(() => normalizarNascimento('2099-01-01'))).toBe(
+    expect(codigoDoErro(() => normalizarNascimento(AMANHA))).toBe(
       'DATA_NASCIMENTO_INVALIDA',
     );
     // O dedo escorregado: sem o piso, a idade na tela vira 1824 anos.

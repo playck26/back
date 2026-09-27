@@ -39,6 +39,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { sqlstateDoErro } from '../../src/courts/recusas-de-estoque';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { proximoDiaDaSemana } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -67,7 +68,8 @@ const courts = new CourtsService(
   new DisponibilidadeProfessorService(prisma),
 );
 
-const DATA = '2035-06-07';
+/** Uma quinta futura (SPEC-077/TASK-000: relativa; era `2035-06-07`). */
+const DATA = proximoDiaDaSemana(4);
 
 async function disparos(): Promise<number> {
   const [linha] = await db.$queryRawUnsafe<{ n: bigint }[]>(

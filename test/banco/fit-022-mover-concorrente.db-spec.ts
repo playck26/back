@@ -20,6 +20,10 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { CourtsService } from '../../src/courts/courts.service';
+import {
+  formatDateOnly,
+  hojeNoFusoDoClube,
+} from '../../src/courts/date-time.util';
 import { HorarioFuncionamentoService } from '../../src/courts/horario-funcionamento.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
@@ -40,7 +44,16 @@ const ADMIN = 'f0220000-0000-4000-8000-000000000005';
 const A = 'f0220000-0000-4000-8000-00000000000a';
 const B = 'f0220000-0000-4000-8000-00000000000b';
 const ESPORTE = 'f0220000-0000-4000-8000-000000000006';
-const DATA = '2026-10-05';
+/**
+ * SPEC-077/TASK-000 — **relativa ao hoje do clube, nunca fixa.** Era
+ * `'2026-10-05'`: o `moveBooking` recusa mover reserva que já começou
+ * (SPEC-034/D5, pelo relógio real), e a partir das 9h daquele dia os dois
+ * movimentos passariam a receber `409 PRAZO_DE_CANCELAMENTO` — o AC-019 e o
+ * AC-020b ficariam vermelhos sem nada ter mudado no código.
+ */
+const DATA = formatDateOnly(
+  new Date(hojeNoFusoDoClube().getTime() + 30 * 24 * 60 * 60 * 1000),
+);
 
 const dbA = new PrismaClient();
 const dbB = new PrismaClient();

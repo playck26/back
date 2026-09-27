@@ -5,6 +5,16 @@ import { buildUsuarioAtivo, loginAndGetTokens } from './utils/auth-helpers';
 import { createTestApp } from './utils/create-test-app';
 import { bodyOf } from './utils/http';
 import { buildPrismaMock, type PrismaMock } from './utils/prisma-mock';
+import {
+  formatDateOnly,
+  hojeNoFusoDoClube,
+} from '../src/courts/date-time.util';
+
+/** SPEC-077/TASK-000 — "no futuro" relativo ao hoje do clube, nunca fixo: era
+ * `2099-01-01`, que vira passado em 2099 e faz o caso mudar de resposta. */
+const AMANHA = formatDateOnly(
+  new Date(hojeNoFusoDoClube().getTime() + 24 * 60 * 60 * 1000),
+);
 
 /**
  * SPEC-036 — o cadastro completo na camada HTTP.
@@ -161,7 +171,7 @@ describe('Cadastro do aluno (e2e) — SPEC-036', () => {
     const res = await request(app.getHttpServer())
       .patch(ROTA_ME)
       .set('Authorization', `Bearer ${token}`)
-      .send({ dataNascimento: '2099-01-01' })
+      .send({ dataNascimento: AMANHA })
       .expect(422);
 
     expect(bodyOf<{ code: string }>(res).code).toBe('DATA_NASCIMENTO_INVALIDA');

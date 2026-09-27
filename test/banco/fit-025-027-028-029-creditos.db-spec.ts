@@ -29,6 +29,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diaNoFuturo, somarDias } from './datas-relativas';
 import { comAcao } from './acao-com-efeito';
 import { limparEmpresa } from './limpar-empresa';
 
@@ -160,10 +161,13 @@ async function creditar(centavos: number) {
   );
 }
 
+/** Todas as datas deste arquivo, relativas ao hoje do clube. */
+const BASE = diaNoFuturo(30);
 let dia = 0;
 function proximaData() {
   dia += 1;
-  return new Date(Date.UTC(2033, 0, dia)).toISOString().slice(0, 10);
+  // SPEC-077/TASK-000: relativa ao hoje do clube; era janeiro de 2033.
+  return somarDias(BASE, dia);
 }
 
 function pedido(data: string, hora = '10:00') {
@@ -197,12 +201,12 @@ beforeAll(async () => {
   // dos movimentos que varios casos inserem em SQL cru; nascer nua a fazia
   // commitar sozinha, e o `acao_exige_alvo` recusa isso.
   //
-  // O efeito e um evento sobre uma ocupacao SENTINELA, em 2039 — todas as
+  // O efeito e um evento sobre uma ocupacao SENTINELA, bem depois das outras — todas as
   // contagens deste arquivo sao escopadas por data ou por join com a ocupacao
   // do proprio caso, entao ela nao entra em nenhuma.
   await q(`INSERT INTO ocupacoes_quadra
              (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)
-           VALUES ('${OCUPACAO_SENTINELA}','${E}','${QUADRA}','2039-12-31','06:00','07:00','AVULSO',now(),'${ALUNO}',80)`);
+           VALUES ('${OCUPACAO_SENTINELA}','${E}','${QUADRA}','${somarDias(BASE, 700)}','06:00','07:00','AVULSO',now(),'${ALUNO}',80)`);
   await comAcao(
     semear,
     { id: ACAO, companyId: E, tipo: 'reserva_criada', autorId: UADMIN },
@@ -276,8 +280,8 @@ describe('FIT-027 — as duas camadas, e a sabotagem que prova a de baixo', () =
     // que a de baixo segura. Sem esta prova, "há duas camadas" seria
     // afirmação — e a segunda só age quando a primeira falha.
     await levarSaldoA(8000);
-    const ocA = await ocupacaoAvulsa('2033-06-01');
-    const ocB = await ocupacaoAvulsa('2033-06-02');
+    const ocA = await ocupacaoAvulsa(somarDias(BASE, 200));
+    const ocB = await ocupacaoAvulsa(somarDias(BASE, 201));
 
     const [rA, rB] = await Promise.allSettled([
       dbA.$executeRawUnsafe(consumoSql(ocA)),
@@ -313,7 +317,7 @@ describe('FIT-027 — as duas camadas, e a sabotagem que prova a de baixo', () =
      * linhas.
      */
     await levarSaldoA(30_000);
-    const oc = await ocupacaoAvulsa('2033-06-10');
+    const oc = await ocupacaoAvulsa(somarDias(BASE, 209));
     const consumo = await consumirEm(oc, 8000);
     const antes = await saldo();
 
@@ -366,7 +370,7 @@ describe('FIT-027 — as duas camadas, e a sabotagem que prova a de baixo', () =
 describe('FIT-028 — criar × cancelar concorrentes: nenhum aborta com 40P01', () => {
   it('a segunda transação ESPERA na carteira, e as duas terminam', async () => {
     await levarSaldoA(30_000);
-    const alvo = await ocupacaoAvulsa('2033-07-01');
+    const alvo = await ocupacaoAvulsa(somarDias(BASE, 230));
     const consumo = await consumirEm(alvo, 8000);
 
     // Barreira: a criação para logo DEPOIS de travar a carteira, e o
@@ -411,7 +415,13 @@ describe('FIT-028 — criar × cancelar concorrentes: nenhum aborta com 40P01', 
 
     try {
       const criacao = servicoEspiao
-        .createBooking(E, pedido('2033-07-02'), UADMIN, undefined, 'aluno')
+        .createBooking(
+          E,
+          pedido(somarDias(BASE, 231)),
+          UADMIN,
+          undefined,
+          'aluno',
+        )
         .then(
           () => 'criou',
           (e: unknown) => `erro:${String(codigoDe(e) ?? e)}`,
@@ -469,7 +479,7 @@ describe('FIT-029 — idempotência FINANCEIRA', () => {
     const chave = 'idem-fit-029';
     const dto = {
       quadraId: QUADRA,
-      data: '2033-08-01',
+      data: somarDias(BASE, 260),
       // **Slots NÃO contíguos, de propósito.** `agruparEmBlocos` funde
       // 10–11 com 11–12 num bloco único de duas horas (SPEC-011) — o que é
       // certo para o produto e faria este teste medir UMA ocupação onde ele
@@ -487,12 +497,12 @@ describe('FIT-029 — idempotência FINANCEIRA', () => {
 
     const ocupacoes = await contar(
       `SELECT count(*) AS n FROM ocupacoes_quadra
-        WHERE company_id='${E}' AND data='2033-08-01'`,
+        WHERE company_id='${E}' AND data='${somarDias(BASE, 260)}'`,
     );
     const consumos = await contar(
       `SELECT count(*) AS n FROM movimentos_de_credito m
         JOIN ocupacoes_quadra o ON o.id = m.ocupacao_id
-       WHERE m.company_id='${E}' AND m.tipo='consumo' AND o.data='2033-08-01'`,
+       WHERE m.company_id='${E}' AND m.tipo='consumo' AND o.data='${somarDias(BASE, 260)}'`,
     );
     expect(ocupacoes).toBe(2);
     expect(consumos).toBe(2);
@@ -506,7 +516,7 @@ describe('FIT-029 — idempotência FINANCEIRA', () => {
     const chave = 'idem-fit-029-concorrente';
     const dto = {
       quadraId: QUADRA,
-      data: '2033-08-05',
+      data: somarDias(BASE, 264),
       slots: [{ horaInicio: '10:00', horaFim: '11:00' }],
       alunoId: ALUNO,
     } as never;
@@ -527,7 +537,7 @@ describe('FIT-029 — idempotência FINANCEIRA', () => {
       await contar(
         `SELECT count(*) AS n FROM movimentos_de_credito m
           JOIN ocupacoes_quadra o ON o.id = m.ocupacao_id
-         WHERE m.company_id='${E}' AND m.tipo='consumo' AND o.data='2033-08-05'`,
+         WHERE m.company_id='${E}' AND m.tipo='consumo' AND o.data='${somarDias(BASE, 264)}'`,
       ),
     ).toBe(1);
     expect(await saldo()).toBe(antes - 8000);

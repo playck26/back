@@ -1,5 +1,12 @@
 import { ImportacaoDeAlunosService } from './importacao-de-alunos.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import { formatDateOnly, hojeNoFusoDoClube } from '../../courts/date-time.util';
+
+/** SPEC-077/TASK-000 — "no futuro" relativo ao hoje do clube, nunca fixo: era
+ * `2099-01-01`, que vira passado em 2099 e faz o caso mudar de resposta. */
+const AMANHA = formatDateOnly(
+  new Date(hojeNoFusoDoClube().getTime() + 24 * 60 * 60 * 1000),
+);
 
 /**
  * SPEC-038/REQ-002 — a validação linha a linha.
@@ -122,7 +129,7 @@ describe('SPEC-038 — a validação por linha', () => {
 
   it('data implausível: erro naquela linha, com a MESMA regra da SPEC-036 (AC-010)', async () => {
     const r = await conferir([
-      'Ana,ana@x.com,,2099-01-01,',
+      `Ana,ana@x.com,,${AMANHA},`,
       'Beto,beto@x.com,,2026-02-31,',
     ]);
     // `2026-02-31` casa o formato e não existe. Reimplementar a regra aqui

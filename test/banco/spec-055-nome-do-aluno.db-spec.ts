@@ -17,6 +17,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { proximoDiaDaSemana, somarDias } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -36,7 +37,8 @@ const QUADRA = 'e0550000-0000-4000-8000-000000000007';
 const TURMA = 'e0550000-0000-4000-8000-000000000008';
 const OCUPACAO_DA_TURMA = 'e0550000-0000-4000-8000-000000000009';
 
-const DATA = '2035-06-07';
+/** Uma quinta futura (SPEC-077/TASK-000: relativa; era `2035-06-07`). */
+const DATA = proximoDiaDaSemana(4);
 
 const prisma = db as unknown as PrismaService;
 const courts = new CourtsService(
@@ -316,7 +318,7 @@ describe('SPEC-059 — tipo, professor e quadra na listagem', () => {
        ON CONFLICT (id) DO NOTHING`,
     );
     // SPEC-040 — aula particular exige o professor DISPONÍVEL no dia da
-    // semana. `2035-06-07` é quinta (dia 4); sem esta linha o serviço recusa
+    // semana. A `DATA` é quinta (dia 4); sem esta linha o serviço recusa
     // com 422 FORA_DA_DISPONIBILIDADE, e foi o que aconteceu na primeira
     // tentativa desta fixture.
     await q(
@@ -400,7 +402,7 @@ describe('SPEC-059 — janela de datas em GET /bookings', () => {
       EMPRESA,
       {
         quadraId: QUADRA,
-        data: '2035-06-20',
+        data: somarDias(DATA, 13),
         slots: [{ horaInicio: '10:00', horaFim: '11:00' }],
         alunoId: ANA,
       },
@@ -422,7 +424,11 @@ describe('SPEC-059 — janela de datas em GET /bookings', () => {
     const noDia = await reservarPeloGestor(ANA, '10:00', '11:00');
 
     const ids = (
-      await listar({ data: DATA, de: '2035-01-01', ate: '2035-01-02' })
+      await listar({
+        data: DATA,
+        de: somarDias(DATA, -60),
+        ate: somarDias(DATA, -59),
+      })
     ).map((x) => x.id);
 
     expect(ids).toEqual([noDia.id]);

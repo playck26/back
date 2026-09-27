@@ -14,6 +14,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diaNoFuturo } from './datas-relativas';
 import { AgendaDoProfessorService } from '../../src/classes/agenda-do-professor.service';
 import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
@@ -717,9 +718,14 @@ describe('FIT-013 — as bordas do mês', () => {
  * estava errado: o professor não esqueceu nada, a aula não aconteceu.
  */
 describe('FIT-013 — SPEC-027: futura não é pendente', () => {
-  /** Bem no futuro, para não depender de quando a suíte roda. */
-  const DIA_FUTURO = '2099-06-15';
-  const MES_FUTURO = '2099-06';
+  /**
+   * Num mês futuro, relativo ao hoje do clube (SPEC-077/TASK-000). Era
+   * `'2099-06-15'`, "bem no futuro, para não depender de quando a suíte
+   * roda" — e dependia: em junho de 2099 a aula deixaria de ser futura.
+   * `+62` dias cai sempre num mês depois do atual.
+   */
+  const DIA_FUTURO = diaNoFuturo(62);
+  const MES_FUTURO = DIA_FUTURO.slice(0, 7);
 
   /**
    * **Prova COMPANHEIRA — ela não cai sozinha, e fica registrada como tal.**

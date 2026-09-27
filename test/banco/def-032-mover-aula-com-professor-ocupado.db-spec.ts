@@ -23,6 +23,7 @@ import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.se
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { proximoDiaDaSemana } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -51,8 +52,11 @@ const courts = new CourtsService(
   new DisponibilidadeProfessorService(prisma),
 );
 
-/** `2035-06-07` é quinta (4): a janela do professor é gravada nesse dia. */
-const DATA = '2035-06-07';
+/**
+ * Uma quinta futura (4): a janela do professor é gravada nesse dia.
+ * SPEC-077/TASK-000: relativa ao hoje do clube; era `2035-06-07`.
+ */
+const DATA = proximoDiaDaSemana(4);
 const DIA_SEMANA_DA_DATA = 4;
 
 async function semear() {

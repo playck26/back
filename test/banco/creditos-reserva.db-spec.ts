@@ -30,6 +30,7 @@ import { DisponibilidadeProfessorService } from '../../src/people/disponibilidad
 import type { StudentsService } from '../../src/people/students.service';
 import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diaNoFuturo, somarDias } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -111,8 +112,8 @@ let dia = 0;
 /** Uma data futura nova a cada reserva, para nenhuma esbarrar na EXCLUDE. */
 function proximaData() {
   dia += 1;
-  const d = new Date(Date.UTC(2031, 5, dia));
-  return d.toISOString().slice(0, 10);
+  // SPEC-077/TASK-000: relativa ao hoje do clube; era junho de 2031.
+  return somarDias(diaNoFuturo(30), dia);
 }
 
 async function reservar(
@@ -577,7 +578,7 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
     await expect(
       q(`INSERT INTO ocupacoes_quadra
            (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,valor)
-         VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','2031-12-01','10:00','11:00','TURMA',now(),80)`),
+         VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','${diaNoFuturo(400)}','10:00','11:00','TURMA',now(),80)`),
     ).rejects.toThrow(/ocupacoes_valor_por_origem|23514/);
   });
 });

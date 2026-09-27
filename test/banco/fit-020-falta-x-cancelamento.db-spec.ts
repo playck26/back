@@ -38,6 +38,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { diaNoFuturo } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import { FaltaAvisadaService } from '../../src/classes/falta-avisada.service';
@@ -131,7 +132,7 @@ async function semearFixture(): Promise<string> {
   const [oc] = await semear.$queryRawUnsafe<{ id: string }[]>(`
     INSERT INTO ocupacoes_quadra
       (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
-    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','2099-06-01','19:00','19:50','TURMA','${TURMA}','pendente_pagamento',now())
+    VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','${diaNoFuturo(30)}','19:00','19:50','TURMA','${TURMA}','pendente_pagamento',now())
     RETURNING id`);
 
   // A falta já existe: é ela que o `DELETE` disputa com o cancelamento.

@@ -29,6 +29,7 @@ import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.se
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { proximoDiaDaSemana, somarDias } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -64,11 +65,12 @@ const courts = new CourtsService(
 );
 
 /**
- * Uma quinta-feira futura. `2035-06-07` é quinta (dia 4), e o cenário grava a
- * disponibilidade nesse dia — data e dia da semana têm de casar, senão o teste
- * verde não diria nada sobre a janela.
+ * Uma quinta-feira futura (dia 4), e o cenário grava a disponibilidade nesse
+ * dia — data e dia da semana têm de casar, senão o teste verde não diria nada
+ * sobre a janela. SPEC-077/TASK-000: relativa ao hoje do clube; era
+ * `2035-06-07`, que vira passado e faz a reserva cair em `HORARIO_NO_PASSADO`.
  */
-const DATA = '2035-06-07';
+const DATA = proximoDiaDaSemana(4);
 const DIA_SEMANA_DA_DATA = 4;
 
 function reservar(campos: {
@@ -288,7 +290,7 @@ describe('SPEC-039/TASK-002 — os portões da aula particular', () => {
   });
 
   it('AC-004: dia SEM linha nenhuma recusa igual — ausência é "não atende"', async () => {
-    // `2035-06-08` é sexta, e o professor só tem linha na quinta. É o estado
+    // O dia seguinte à `DATA` é sexta, e o professor só tem linha na quinta. É o estado
     // inicial de todo professor já cadastrado (SPEC-040/D3), e o contrário
     // abriria agenda para quem não combinou nada.
     const r = await recusa(
@@ -296,7 +298,7 @@ describe('SPEC-039/TASK-002 — os portões da aula particular', () => {
         EMPRESA,
         {
           quadraId: QUADRA_1,
-          data: '2035-06-08',
+          data: somarDias(DATA, 1),
           slots: [{ horaInicio: '09:00', horaFim: '10:00' }],
           alunoId: ALUNO,
           professorId: PROF,
