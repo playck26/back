@@ -161,6 +161,57 @@ describe('Agenda (e2e) - TEST-012', () => {
   });
 
   /**
+   * SPEC-077/TASK-005 — **o #46 da 077: `/agenda/semana` não tinha teste
+   * HTTP.** A `EVD-034-001` apontava para este arquivo, e nenhum caso dele
+   * chamava a rota (conferido por `grep` em 2026-09-27).
+   */
+  describe('SPEC-077 — GET /agenda/semana (034 AC-002/003)', () => {
+    /**
+     * **`400`, e não o `422` que a 034 escreveu** — a mesma convenção do #32:
+     * falha de `class-validator` é `400` no projeto inteiro (SPEC-036), e o
+     * próprio `DataDoCalendarioConstraint` diz "a entrada errada é `400`".
+     */
+    it.each(['2026-02-30', 'banana', '2026-09-10T12:00:00Z'])(
+      'AC-002: inicio=%s ⇒ 400, sem consultar ocupações',
+      async (inicio) => {
+        const usuario = await buildUsuarioAtivo();
+        const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+        prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: false });
+        prisma.ocupacaoQuadra.findMany.mockClear();
+
+        const res = await request(app.getHttpServer())
+          .get(`/api/v1/agenda/semana?inicio=${encodeURIComponent(inicio)}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(400);
+
+        expect(JSON.stringify(bodyOf(res))).toContain('calendário');
+        expect(prisma.ocupacaoQuadra.findMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('AC-003: `/agenda/semana?inicio=2026-09-06` ⇒ 200 com os 7 dias — a rota casa ANTES de `:data`', async () => {
+      const usuario = await buildUsuarioAtivo();
+      const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+      prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: false });
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/agenda/semana?inicio=2026-09-06')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(bodyOf<{ data: string }[]>(res).map((d) => d.data)).toEqual([
+        '2026-09-06',
+        '2026-09-07',
+        '2026-09-08',
+        '2026-09-09',
+        '2026-09-10',
+        '2026-09-11',
+        '2026-09-12',
+      ]);
+    });
+  });
+
+  /**
    * SPEC-077/TASK-003 — **as provas por HTTP que a matriz da SPEC-034
    * prometia** (AC-005, AC-009 e AC-014 da 034; #20, #24 e #32 da 077).
    */

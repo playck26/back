@@ -476,3 +476,67 @@ describe('SPEC-077/AC-020 a AC-022 — cancelar ocorrência (034 AC-012 a 015, 0
     expect(depois.transicao_id).not.toBeNull();
   });
 });
+
+/**
+ * SPEC-077/TASK-005 — **o #46 da 077: a semana não tinha prova contra o banco.**
+ *
+ * A `EVD-034-001` apontava para `agenda.e2e-spec.ts`, e nenhum caso dele chama
+ * `/agenda/semana` (conferido por `grep` em 2026-09-27). O que existia era o
+ * unitário, com dublê: "uma chamada a `findMany`" e "o item da semana igual
+ * ao do dia". O AC-001 da 034 pede isso **contra Postgres real**, com reservas
+ * no 1º e no 7º dia.
+ *
+ * A contagem é pelo LOG de consultas de um client próprio, e não por espião no
+ * delegate: é o SQL que chegou ao banco, que é o que o NFR-001 limita.
+ */
+describe('SPEC-077/TASK-005 — a semana contra o banco (034 AC-001, NFR-001)', () => {
+  const contado = new PrismaClient({
+    log: [{ emit: 'event', level: 'query' }],
+  });
+  const sqls: string[] = [];
+  contado.$on('query', (e) => sqls.push(e.query));
+  const agendaContada = new AgendaService(
+    contado as unknown as PrismaService,
+    new HorarioFuncionamentoService(contado as unknown as PrismaService),
+  );
+
+  afterAll(async () => {
+    await contado.$disconnect();
+  });
+
+  it('7 dias na ordem, reservas no 1º e no 7º, cada dia igual ao `detalheDoDia`, e UMA consulta de ocupações', async () => {
+    const inicio = somarDias(DIA, 100);
+    const r1 = await reserva('10:00', '11:00', inicio);
+    const r7 = await reserva('15:00', '16:00', somarDias(inicio, 6));
+
+    sqls.length = 0;
+    const dias = await agendaContada.semanaDe(EMPRESA, inicio);
+    const daSemana = [...sqls];
+
+    expect(dias.map((d) => d.data)).toEqual(
+      [0, 1, 2, 3, 4, 5, 6].map((n) => somarDias(inicio, n)),
+    );
+    expect(dias.map((d) => d.itens.map((i) => i.id))).toEqual([
+      [r1],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [r7],
+    ]);
+    for (const n of [0, 6]) {
+      expect(dias[n].itens).toEqual(
+        await agendaContada.detalheDoDia(EMPRESA, dias[n].data),
+      );
+    }
+    // Sete chamadas a `detalheDoDia` dariam a mesma resposta — e sete
+    // consultas. É isto que as separa.
+    // A tabela PRINCIPAL da consulta (o `FROM`, seguido do `LEFT JOIN` das
+    // quadras que o Prisma monta) — não as que só a citam numa junção.
+    const deOcupacoes = daSemana.filter((s) =>
+      / FROM "public"\."ocupacoes_quadra" /.test(s),
+    );
+    expect(deOcupacoes).toHaveLength(1);
+  });
+});
