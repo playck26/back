@@ -298,19 +298,35 @@ describe('SPEC-077/AC-004 — avisar e retirar mudam SÓ a falta (031 INV-068, c
     expect(saldo).toBeGreaterThan(0);
   });
 
-  it('POST: só `faltas_avisadas` muda', async () => {
+  it('POST: só `faltas_avisadas` muda — e o aviso ao gestor (SPEC-078)', async () => {
     const aula = await ocorrencia(diaNoFuturo(10), '19:00');
     const antes = await fotografia();
     await faltas.avisar(EMPRESA, UALUNO, TURMA, aula);
-    expect(mudou(antes, await fotografia())).toEqual(['faltas_avisadas']);
+    // SPEC-078/I1 — desde 2026-09-28 avisar e retirar falta AVISAM O GESTOR:
+    // a linha nova em `notificacoes` é o aviso ("Um aluno avisou que vai
+    // faltar…"), e é a única tabela a mais. A INV-068 protege matrícula,
+    // presença e financeiro — `notificacoes` não é nenhum dos três —, e a
+    // fotografia continua pegando qualquer outra escrita.
+    expect(mudou(antes, await fotografia())).toEqual([
+      'faltas_avisadas',
+      'notificacoes',
+    ]);
   });
 
-  it('DELETE sem fila: só `faltas_avisadas` muda', async () => {
+  it('DELETE sem fila: só `faltas_avisadas` muda — e o aviso ao gestor (SPEC-078)', async () => {
     const aula = await ocorrencia(diaNoFuturo(10), '19:00');
     await faltas.avisar(EMPRESA, UALUNO, TURMA, aula);
     const antes = await fotografia();
     await faltas.retirar(EMPRESA, UALUNO, TURMA, aula);
-    expect(mudou(antes, await fotografia())).toEqual(['faltas_avisadas']);
+    // SPEC-078/I1 — desde 2026-09-28 avisar e retirar falta AVISAM O GESTOR:
+    // a linha nova em `notificacoes` é o aviso ("Um aluno avisou que vai
+    // faltar…"), e é a única tabela a mais. A INV-068 protege matrícula,
+    // presença e financeiro — `notificacoes` não é nenhum dos três —, e a
+    // fotografia continua pegando qualquer outra escrita.
+    expect(mudou(antes, await fotografia())).toEqual([
+      'faltas_avisadas',
+      'notificacoes',
+    ]);
   });
 
   it('DELETE com fila: `faltas_avisadas` e a `lista_de_espera` (SPEC-064), e mais nada', async () => {
@@ -327,9 +343,15 @@ describe('SPEC-077/AC-004 — avisar e retirar mudam SÓ a falta (031 INV-068, c
     );
     const antes = await fotografia();
     await faltas.retirar(EMPRESA, UALUNO, TURMA, aula);
+    // SPEC-078/I1 — desde 2026-09-28 avisar e retirar falta AVISAM O GESTOR:
+    // a linha nova em `notificacoes` é o aviso ("Um aluno avisou que vai
+    // faltar…"), e é a única tabela a mais. A INV-068 protege matrícula,
+    // presença e financeiro — `notificacoes` não é nenhum dos três —, e a
+    // fotografia continua pegando qualquer outra escrita.
     expect(mudou(antes, await fotografia())).toEqual([
       'faltas_avisadas',
       'lista_de_espera',
+      'notificacoes',
     ]);
   });
 });
