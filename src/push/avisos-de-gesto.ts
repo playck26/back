@@ -181,6 +181,23 @@ function quando(fatos: FatosDoGesto): string | null {
  * formato divergiriam no primeiro ajuste ("19h30" de um lado, "19:30" do
  * outro).
  */
+export function montarAvisoDoTitularDeReposicao(aula: {
+  readonly data: Date;
+  readonly horaInicio: Date;
+  readonly horaFim: Date;
+}): AvisoMontado {
+  // SPEC-078/REQ-002 — quem tinha REPOSIÇÃO numa aula que o clube desfez
+  // (cancelar a aula, encerrar a turma, mudar a grade ou reativá-la). Texto
+  // aprovado pelo Israel em preview (I10); o destino é a lista, porque a
+  // aula é de outra turma, e não da dele.
+  return {
+    titulo: 'Sua aula',
+    corpo: `Sua reposição de ${momentoDaAula(aula.data, aula.horaInicio)} foi cancelada`,
+    destinoUrl: '/minhas-aulas',
+    expiraEm: instanteNoFusoDoClube(aula.data, aula.horaFim),
+  };
+}
+
 export function momentoDaAula(data: Date, horaInicio: Date): string {
   const instante = instanteNoFusoDoClube(data, horaInicio);
   const dia = new Intl.DateTimeFormat('pt-BR', {

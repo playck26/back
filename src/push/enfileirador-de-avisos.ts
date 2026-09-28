@@ -1,8 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { TipoDeAcao } from '@prisma/client';
+import type { TitularDeReposicao } from '../courts/courts.service';
 import {
   montarAviso,
+  montarAvisoDoTitularDeReposicao,
   PUBLICO_POR_TIPO,
   TIPO_GESTO,
   type FatosDoGesto,
@@ -68,6 +70,8 @@ export class EnfileiradorDeAvisos {
    * do `UPDATE`. Sem ele o ramo `turma_e_professor_anterior` avisa só a turma.
    */
   private professorAnteriorId: string | null = null;
+  /** SPEC-078/REQ-002 — quem tinha reposição nas ocorrências canceladas. */
+  private titulares: readonly TitularDeReposicao[] = [];
   private despachado = false;
 
   constructor(
@@ -83,6 +87,15 @@ export class EnfileiradorDeAvisos {
    */
   anotarEfeito(efeito: EfeitoDoGesto): void {
     this.efeitos.push(efeito);
+  }
+
+  /**
+   * SPEC-078/D2 — quem tinha reposição numa ocorrência que este gesto
+   * cancelou. Lidos pelo `courts.service` **antes** de apagar as reposições
+   * (AC-011), e avisados aqui, **um aviso por ocorrência perdida**.
+   */
+  comTitularesDeReposicao(titulares: readonly TitularDeReposicao[]): void {
+    this.titulares = titulares;
   }
 
   /** A turma alvo. Necessária para todo gesto de público `turma`. */
@@ -132,7 +145,10 @@ export class EnfileiradorDeAvisos {
     }
 
     const destinatarios = await this.resolverDestinatarios();
-    if (destinatarios.length === 0) {
+    const titulares = this.titularesQueNaoSaoDaTurma(destinatarios);
+    // SPEC-078 — a turma pode estar vazia e a aula ainda ter quem perdeu a
+    // reposição: sair aqui calaria o titular.
+    if (destinatarios.length === 0 && titulares.length === 0) {
       return 0;
     }
 
@@ -149,6 +165,19 @@ export class EnfileiradorDeAvisos {
                     ${aviso.expiraEm})`,
       ];
     });
+    // SPEC-078/REQ-002 — um aviso por (titular, ocorrência), com `origem_id`
+    // DERIVADO de `(ação, ocorrência)`: o índice `gesto` é por
+    // `(origem_id, destinatario_id)`, e a mesma pessoa pode ter perdido duas
+    // aulas no mesmo gesto — com o `acao_id` puro, a segunda colidiria.
+    for (const t of titulares) {
+      const aviso = montarAvisoDoTitularDeReposicao(t);
+      linhas.push(
+        Prisma.sql`(${randomUUID()}::uuid, ${this.companyId}::uuid,
+                    ${t.usuarioId}::uuid, ${origemDaOcorrencia(acaoId, t.ocupacaoId)}::uuid,
+                    ${TIPO_GESTO}, ${aviso.titulo}, ${aviso.corpo},
+                    ${aviso.destinoUrl}, ${aviso.expiraEm})`,
+      );
+    }
     if (linhas.length === 0) {
       return 0;
     }
@@ -253,6 +282,33 @@ export class EnfileiradorDeAvisos {
    *
    * **Guarda o PRIMEIRO**, e por isso a ordem de quem chama é normativa.
    */
+  /**
+   * SPEC-078/AC-010 — **quem já recebe o aviso da turma não recebe o de
+   * reposição da mesma aula** (I11: um aviso só, o de matriculado). E o autor
+   * do gesto não recebe nenhum. As chaves de conflito dos dois avisos são
+   * diferentes, então quem une não é o `ON CONFLICT`: é este filtro.
+   */
+  private titularesQueNaoSaoDaTurma(
+    destinatarios: readonly Destinatario[],
+  ): TitularDeReposicao[] {
+    const jaAvisados = new Set(destinatarios.map((d) => d.usuarioId));
+    const vistos = new Set<string>();
+    const saida: TitularDeReposicao[] = [];
+    for (const t of this.titulares) {
+      const chave = `${t.usuarioId}:${t.ocupacaoId}`;
+      if (
+        jaAvisados.has(t.usuarioId) ||
+        t.usuarioId === this.autorId ||
+        vistos.has(chave)
+      ) {
+        continue;
+      }
+      vistos.add(chave);
+      saida.push(t);
+    }
+    return saida;
+  }
+
   private semRepetidos(lista: Destinatario[]): Destinatario[] {
     const vistos = new Set<string>();
     const destinatarios: Destinatario[] = [];
@@ -345,4 +401,33 @@ export class EnfileiradorDeAvisos {
         l.papel === 'professor' ? ('professor' as const) : ('aluno' as const),
     }));
   }
+}
+
+/**
+ * SPEC-078/D2 — **um uuid DETERMINÍSTICO de `(ação, ocorrência)`**, no
+ * algoritmo da versão 5 da RFC 4122 (SHA-1 sobre um namespace fixo e o nome).
+ *
+ * Por que derivado, e não sorteado: o mesmo gesto, repetido pela mesma
+ * transação (uma retentativa do `despachar`, um bug futuro), tem de cair na
+ * MESMA chave do índice `gesto` e ser absorvido pelo `ON CONFLICT`. E por que
+ * não o `acao_id` puro: a mesma pessoa pode ter perdido duas aulas no mesmo
+ * gesto (encerrar a turma cancela várias), e as duas colidiriam.
+ *
+ * Um v5 nunca é igual a um v4 sorteado (os bits de versão diferem), então não
+ * colide com o `acao_id` dos avisos da turma.
+ */
+const NAMESPACE_SPEC_078 = Buffer.from(
+  '7a1e0c5e8b3f4d2a9c6b0e1f2a3b4c5d',
+  'hex',
+);
+
+export function origemDaOcorrencia(acaoId: string, ocupacaoId: string): string {
+  const h = createHash('sha1')
+    .update(NAMESPACE_SPEC_078)
+    .update(`${acaoId}:${ocupacaoId}`, 'utf8')
+    .digest();
+  h[6] = (h[6] & 0x0f) | 0x50;
+  h[8] = (h[8] & 0x3f) | 0x80;
+  const x = h.subarray(0, 16).toString('hex');
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
 }
