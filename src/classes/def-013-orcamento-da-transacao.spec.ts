@@ -208,19 +208,15 @@ function buildTxContado(
       ]),
     ),
     $executeRaw: jest.fn(() => ida('$executeRaw(avisos)', 'Notificacao', 1)),
-    /**
-     * **DEF-036 — e ela CONTA no orçamento.** Cancelar as ocorrências apaga as
-     * reposições delas, para o crédito voltar de verdade e não só na tela.
-     *
-     * Um `deleteMany` sobre a lista inteira de ocorrências canceladas: uma ida
-     * fixa, que não cresce nem com os encontros nem com quantas reposições
-     * havia. É essa forma que o DEF-013 cobra — não o número.
+    /*
+     * **DEF-036 — a deleção das reposições CONTA no orçamento**, e desde a
+     * SPEC-078 ela é um `DELETE … RETURNING` cru (devolve quem tinha a
+     * reposição, para o aviso): passa pelo `$queryRaw` acima e é contada lá.
+     * Continua UMA ida fixa, que não cresce nem com os encontros nem com
+     * quantas reposições havia. O `reposicaoDeAula.deleteMany` que morava
+     * aqui saiu junto com a chamada: dublê de código que não roda mais
+     * descreveria um caminho que não existe.
      */
-    reposicaoDeAula: {
-      deleteMany: jest.fn(() =>
-        ida('reposicaoDeAula.deleteMany', 'ReposicaoDeAula', { count: 0 }),
-      ),
-    },
     turma: {
       create: jest.fn(() => ida('turma.create', 'Turma', turma)),
       update: jest.fn(() => ida('turma.update', 'Turma', turma)),
@@ -389,6 +385,9 @@ function buildClassesService(tx: Prisma.TransactionClient) {
 const DTO_BASE = {
   nome: 'Turma da manhã',
   quadraId: 'q1',
+  // SPEC-079 — toda turma tem nível. A conferência do nível é FORA da
+  // transação (`assertNivelDaEmpresa`), e não entra no orçamento.
+  nivelId: 'n1',
   capacidade: 10,
 };
 

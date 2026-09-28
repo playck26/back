@@ -19,6 +19,7 @@ import { calcularOcupacao, carregarConjuntos } from './ocupacao-da-ocorrencia';
 import { expiracaoDoCredito, situacaoDoCredito } from './credito-de-reposicao';
 import { formatDateOnly, formatTimeOnly } from '../courts/date-time.util';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
+import { AvisosDoGestoDoAluno } from '../push/aviso-do-gesto-do-aluno';
 import type {
   CreditoDeReposicaoResponseDto,
   OportunidadeDeReposicaoResponseDto,
@@ -614,6 +615,22 @@ export class ReposicaoService {
       MOTIVO.CREDITO_CONSUMIDO,
     );
 
+    // SPEC-078/REQ-001 — **aqui, e não na rota**: a confirmação da fila de
+    // espera também passa por este método, e o gestor recebe o mesmo aviso
+    // venha a reposição da tela ou da fila (I12). Depois do `create`: só
+    // avisa o que aconteceu.
+    await new AvisosDoGestoDoAluno(tx, companyId, usuarioId).despachar(
+      'reposicao_marcada',
+      {
+        turmaId: alvo.origemTurmaId,
+        aula: {
+          data: alvo.data,
+          horaInicio: alvo.horaInicio,
+          horaFim: alvo.horaFim,
+        },
+      },
+    );
+
     return {
       id: criada.id,
       faltaId: falta.id,
@@ -671,7 +688,9 @@ export class ReposicaoService {
       const reposicao = await tx.reposicaoDeAula.findFirst({
         where: { id, companyId, alunoId: aluno.id },
         include: {
-          ocupacao: { select: { data: true, horaInicio: true } },
+          ocupacao: {
+            select: { data: true, horaInicio: true, horaFim: true },
+          },
         },
       });
       if (!reposicao) throw new NotFoundException();
@@ -708,6 +727,20 @@ export class ReposicaoService {
       }
 
       await tx.reposicaoDeAula.delete({ where: { id: reposicao.id } });
+
+      // SPEC-078/REQ-001 — o `delete` acima levanta se não havia linha:
+      // chegar aqui é ter desmarcado.
+      await new AvisosDoGestoDoAluno(tx, companyId, usuarioId).despachar(
+        'reposicao_desmarcada',
+        {
+          turmaId: encontrada.ocupacao.origemTurmaId,
+          aula: {
+            data: reposicao.ocupacao.data,
+            horaInicio: reposicao.ocupacao.horaInicio,
+            horaFim: reposicao.ocupacao.horaFim,
+          },
+        },
+      );
     });
   }
 }

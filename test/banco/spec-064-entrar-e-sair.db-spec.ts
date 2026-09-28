@@ -22,6 +22,7 @@ import { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.se
 import { ReposicaoService } from '../../src/classes/reposicao.service';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -129,7 +130,9 @@ const matricular = (turmaId: string, alunoId: string) =>
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-064','spec-064-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-064','spec-064-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -142,10 +145,10 @@ async function montar(): Promise<void> {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora,status) VALUES ('${QUADRA}','${EMPRESA}','Quadra','${esporte.id}',80,'ativa')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_A}','${EMPRESA}','Turma A','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_A}','${EMPRESA}','Turma A','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_B}','${EMPRESA}','Turma B','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_B}','${EMPRESA}','Turma B','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 

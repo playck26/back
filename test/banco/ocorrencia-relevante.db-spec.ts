@@ -16,6 +16,7 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { ocorrenciaRelevante } from '../../src/classes/ocorrencia-relevante';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -35,7 +36,9 @@ const AGORA = new Date('2026-10-05T15:00:00.000Z');
 async function semear() {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','D15','spec-031-d15',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','D15','spec-031-d15',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
@@ -44,7 +47,7 @@ async function semear() {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Q1','${ESPORTE}',100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id) VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA}',20,${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 

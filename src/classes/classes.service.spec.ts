@@ -101,7 +101,8 @@ function buildMocks() {
       ]),
     },
     quadra: { findFirst: jest.fn() },
-    nivel: { findFirst: jest.fn() },
+    // SPEC-079 — toda turma tem nível, e o `create` o confere.
+    nivel: { findFirst: jest.fn().mockResolvedValue({ id: 'n1' }) },
     professor: { findFirst: jest.fn() },
     aluno: { findFirst: jest.fn() },
     turmaAluno: {
@@ -181,6 +182,7 @@ describe('ClassesService', () => {
   const dto = {
     nome: 'Turma A',
     quadraId: 'q1',
+    nivelId: 'n1',
     encontros: [{ diaSemana: 2, horaInicio: '14:00', horaFim: '15:00' }],
     capacidade: 4,
   };

@@ -34,6 +34,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -143,7 +144,9 @@ async function montar(): Promise<void> {
     [EMPRESA_B, 'B'],
   ] as const) {
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${emp}','SPEC-064 ${nome}','spec-064-${nome.toLowerCase()}-${emp}',now())`,
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${emp}','SPEC-064 ${nome}','spec-064-${nome.toLowerCase()}-${emp}',now())`,
+      ),
     );
     await q(
       `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${emp}','Tenis',0,now())`,
@@ -175,7 +178,7 @@ async function montar(): Promise<void> {
     [TURMA_B, QUADRA_B, EMPRESA_B],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${turma}','${emp}','T','${quadra}',4,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${turma}','${emp}','T','${quadra}',4,'ativa',${primeiroNivelSql(`'${emp}'`)})`,
     );
   }
   for (const [ocupacao, quadra, turma, emp] of [

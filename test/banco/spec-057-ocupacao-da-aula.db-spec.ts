@@ -30,6 +30,7 @@ import { ReposicaoService } from '../../src/classes/reposicao.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -123,7 +124,9 @@ async function candidato(): Promise<{ usuarioId: string; faltaId: string }> {
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-057 ocupacao','spec-057-oc-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-057 ocupacao','spec-057-oc-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -132,10 +135,10 @@ async function montar(): Promise<void> {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora,status) VALUES ('${QUADRA}','${EMPRESA}','Quadra',(SELECT id FROM esportes_de_quadra WHERE company_id='${EMPRESA}' LIMIT 1),80,'ativa')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_ORIGEM}','${EMPRESA}','Origem','${QUADRA}',50,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_ORIGEM}','${EMPRESA}','Origem','${QUADRA}',50,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_ALVO}','${EMPRESA}','Alvo','${QUADRA}',2,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_ALVO}','${EMPRESA}','Alvo','${QUADRA}',2,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)

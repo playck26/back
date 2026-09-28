@@ -41,6 +41,7 @@ import {
 } from '../../src/courts/date-time.util';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -110,7 +111,9 @@ async function recusa(p: Promise<unknown>): Promise<{ code?: string }> {
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-047h','spec-047h-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-047h','spec-047h-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${ADMIN}','admin.s047h@x.com','h','Admin','company_admin','${EMPRESA}',now())`,
@@ -142,8 +145,8 @@ async function montar(): Promise<void> {
     `INSERT INTO professores (id,company_id,nome,status) VALUES ('${OUTRO_PROF}','${EMPRESA}','Sem preco','ativo')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,professor_id)
-     VALUES ('${TURMA}','${EMPRESA}','T S047h','${QUADRA_A}',10,'${PROF}')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,professor_id,nivel_id)
+     VALUES ('${TURMA}','${EMPRESA}','T S047h','${QUADRA_A}',10,'${PROF}',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   // O clube abre 06–23 todo dia: o expediente não pode ser o que recorta, ou
   // os casos da janela do professor provariam outra coisa.
@@ -164,7 +167,9 @@ async function montar(): Promise<void> {
   );
   // A empresa vizinha, para o caso do `404`.
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${VIZINHA}','Vizinha S047h','viz-047h-${VIZINHA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${VIZINHA}','Vizinha S047h','viz-047h-${VIZINHA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO professores (id,company_id,nome,status,preco_aula) VALUES ('${PROF_VIZINHO}','${VIZINHA}','Prof vizinho','ativo',90)`,

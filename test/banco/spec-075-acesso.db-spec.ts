@@ -8,8 +8,15 @@
  * recorte das duas listas do aluno.
  *
  * O mundo da maior parte dos casos: uma empresa com **Iniciante (1),
- * Intermediário (2) e Avançado (3)**, uma turma de cada nível e uma sem nível.
- * O aluno de nível é Intermediário; o aluno sem nível conta como Iniciante.
+ * Intermediário (2) e Avançado (3)**, uma turma de cada nível e a turma de
+ * origem das faltas (de Iniciante). O aluno de nível é Intermediário; o aluno
+ * sem nível conta como Iniciante.
+ *
+ * **SPEC-079 (2026-09-28) — não há mais turma sem nível.** A regra "turma sem
+ * nível é de todos" (D2) foi revogada pela ADR-029: o banco recusa a turma sem
+ * nível, e a migração A deu nível a todas. O ramo continua no código,
+ * inalcançável (LIM-079a), e os casos que o exercitavam saíram — o que eles
+ * provavam sobre as turmas COM nível ficou.
  *
  * **Cada recusa é conferida pelo CÓDIGO e pelo efeito** (nada gravado): um
  * `422` que viesse de outra regra passaria por qualquer `rejects`.
@@ -49,8 +56,10 @@ const AVA = '07500000-0000-4000-8000-000000000023';
 const T_INI = '07500000-0000-4000-8000-000000000031';
 const T_INT = '07500000-0000-4000-8000-000000000032';
 const T_AVA = '07500000-0000-4000-8000-000000000033';
-const T_SEM = '07500000-0000-4000-8000-000000000034';
-const T_DA_EMPRESA_SEM = '07500000-0000-4000-8000-000000000035';
+/** De onde vêm as faltas dos créditos de reposição. Era a turma sem nível,
+ *  que aceitava qualquer um; o `matricular` daqui grava direto e não olha o
+ *  nível, então o nível dela não pesa em nada. */
+const T_ORIGEM = '07500000-0000-4000-8000-000000000034';
 
 const db = new PrismaClient();
 const p = db as unknown as PrismaService;
@@ -144,8 +153,8 @@ let faltaSeq = 0;
 /** Um crédito de reposição: a falta avisada numa aula (passada) da turma do
  *  aluno — o molde de `spec-064-confirmar`. */
 async function credito(alunoId: string): Promise<string> {
-  await matricular(T_SEM, alunoId);
-  const perdida = await ocorrencia(T_SEM, emDias(-2), '08:00');
+  await matricular(T_ORIGEM, alunoId);
+  const perdida = await ocorrencia(T_ORIGEM, emDias(-2), '08:00');
   faltaSeq += 1;
   const id = `07500000-0000-4000-8000-4000000000${String(faltaSeq).padStart(2, '0')}`;
   await q(
@@ -210,15 +219,12 @@ async function montar(): Promise<void> {
     [T_INI, INI, 'Turma Iniciante'],
     [T_INT, INT, 'Turma Intermediário'],
     [T_AVA, AVA, 'Turma Avançado'],
-    [T_SEM, null, 'Turma sem nível'],
+    [T_ORIGEM, INI, 'Turma de origem'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}',4,'ativa',${nivel ? `'${nivel}'` : 'NULL'})`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}',4,'ativa','${nivel}')`,
     );
   }
-  await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${T_DA_EMPRESA_SEM}','${EMPRESA_SEM}','T','${QUADRA_SEM}',4,'ativa')`,
-  );
 }
 
 beforeEach(async () => {
@@ -316,13 +322,12 @@ describe('AC-001 a AC-003 — o nível efetivo', () => {
     });
   });
 
-  it('AC-003 — empresa SEM nível: efetivo nenhum, e a turma aceita o aluno (regra inerte)', async () => {
-    const a = await aluno(null, EMPRESA_SEM);
+  // SPEC-079: a metade "e a turma aceita o aluno" saiu — empresa sem nível
+  // não pode mais ter turma (NOT NULL), e nenhuma empresa fica sem nível
+  // (migração A; e o último nível não se apaga, REQ-007 da 079).
+  it('AC-003 — empresa SEM nível: efetivo nenhum', async () => {
+    await aluno(null, EMPRESA_SEM);
     expect(await nivelEfetivoDoAluno(p, EMPRESA_SEM, null)).toBeNull();
-    const r = await desfecho(
-      matricula().entrar(EMPRESA_SEM, a.usuarioId, T_DA_EMPRESA_SEM),
-    );
-    expect(r.code).toBe('OK');
   });
 });
 
@@ -331,13 +336,10 @@ describe('AC-001 a AC-003 — o nível efetivo', () => {
 // ==========================================================================
 
 describe('AC-004 — entrar numa turma', () => {
-  it('do nível dele → entra; sem nível → entra', async () => {
+  it('do nível dele → entra', async () => {
     const a = await aluno(INT);
     expect(
       (await desfecho(matricula().entrar(EMPRESA, a.usuarioId, T_INT))).code,
-    ).toBe('OK');
-    expect(
-      (await desfecho(matricula().entrar(EMPRESA, a.usuarioId, T_SEM))).code,
     ).toBe('OK');
     expect(await matriculas(a.alunoId, T_INT)).toBe(1);
   });
@@ -495,19 +497,19 @@ describe('AC-008 — a confirmação da fila HERDA a regra, e encerra a linha', 
 // ==========================================================================
 
 describe('AC-009 — GET /me/classes/disponiveis, recortada pelo servidor', () => {
-  it('aluno COM nível: o nível dele e as sem nível — e a de outro nível em que JÁ está', async () => {
+  it('aluno COM nível: o nível dele — e a de outro nível em que JÁ está', async () => {
     const a = await aluno(INT);
     await matricular(T_AVA, a.alunoId);
     const lista = await matricula().disponiveis(EMPRESA, a.usuarioId);
     const ids = lista.map((t) => t.id).sort();
-    expect(ids).toEqual([T_INT, T_AVA, T_SEM].sort());
+    expect(ids).toEqual([T_INT, T_AVA].sort());
     expect(lista.find((t) => t.id === T_AVA)?.jaEstouNela).toBe(true);
   });
 
-  it('aluno SEM nível: as do primeiro nível e as sem nível', async () => {
+  it('aluno SEM nível: as do primeiro nível', async () => {
     const a = await aluno(null);
     const lista = await matricula().disponiveis(EMPRESA, a.usuarioId);
-    expect(lista.map((t) => t.id).sort()).toEqual([T_INI, T_SEM].sort());
+    expect(lista.map((t) => t.id).sort()).toEqual([T_INI, T_ORIGEM].sort());
   });
 });
 
@@ -517,7 +519,6 @@ describe('AC-010 — GET /me/reposicoes/oportunidades, recortada NO BANCO', () =
     const oIni = await ocorrencia(T_INI, emDias(3), '09:00');
     const oInt = await ocorrencia(T_INT, emDias(3), '11:00');
     const oAva = await ocorrencia(T_AVA, emDias(3), '13:00');
-    const oSem = await ocorrencia(T_SEM, emDias(3), '15:00');
     for (const incluirSemVaga of [false, true]) {
       const lista = await reposicao().oportunidades(
         EMPRESA,
@@ -526,7 +527,6 @@ describe('AC-010 — GET /me/reposicoes/oportunidades, recortada NO BANCO', () =
       );
       const ids = lista.map((o) => o.ocupacaoId);
       expect(ids).toContain(oInt);
-      expect(ids).toContain(oSem);
       expect(ids).not.toContain(oAva);
       expect(ids).not.toContain(oIni);
     }
@@ -581,14 +581,10 @@ describe('AC-011 e AC-020 — o gestor também é recusado', () => {
     );
   });
 
-  it('do nível dele, ou turma sem nível → aloca', async () => {
+  it('do nível dele → aloca', async () => {
     const a = await aluno(INT);
     expect(
       (await desfecho(classes().allocateStudent(EMPRESA, T_INT, a.alunoId)))
-        .code,
-    ).toBe('OK');
-    expect(
-      (await desfecho(classes().allocateStudent(EMPRESA, T_SEM, a.alunoId)))
         .code,
     ).toBe('OK');
   });
@@ -637,7 +633,7 @@ describe('AC-021 — a recusa imediatamente anterior vence a de nível', () => {
       `UPDATE empresas SET limite_turmas_por_aluno = 1 WHERE id = '${EMPRESA}'`,
     );
     const a = await aluno(INT);
-    await matricular(T_SEM, a.alunoId);
+    await matricular(T_ORIGEM, a.alunoId);
     const r = await desfecho(matricula().entrar(EMPRESA, a.usuarioId, T_AVA));
     expect(r.code).toBe('LIMITE_DE_TURMAS');
   });

@@ -20,6 +20,7 @@ import type { StudentsService } from '../../src/people/students.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 exigirBancoLocal();
@@ -58,7 +59,9 @@ const AMANHA = emDias(2);
 async function montar(): Promise<void> {
   const q = (sql: string) => db.$executeRawUnsafe(sql);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-044','spec-044-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-044','spec-044-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -67,7 +70,7 @@ async function montar(): Promise<void> {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Quadra 044',(SELECT id FROM esportes_de_quadra WHERE company_id='${EMPRESA}' LIMIT 1),80)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma 044','${QUADRA}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma 044','${QUADRA}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${USUARIO}','spec044@teste.local','x','Aluno 044','aluno','${EMPRESA}',now())`,

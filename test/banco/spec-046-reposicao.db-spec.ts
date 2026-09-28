@@ -25,6 +25,7 @@ import { ReposicaoService } from '../../src/classes/reposicao.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -109,7 +110,9 @@ const matricular = (turmaId: string, alunoId: string) =>
 
 async function montar(capacidadeB = 10): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-046','spec-046-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-046','spec-046-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${ADMIN}','admin.s046@x.com','h','Admin','company_admin','${EMPRESA}',now())`,
@@ -121,10 +124,10 @@ async function montar(capacidadeB = 10): Promise<void> {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora,status) VALUES ('${QUADRA}','${EMPRESA}','Quadra','${(await db.esporteDeQuadra.findFirstOrThrow({ where: { companyId: EMPRESA }, select: { id: true } })).id}',80,'ativa')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_A}','${EMPRESA}','Turma A','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_A}','${EMPRESA}','Turma A','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_B}','${EMPRESA}','Turma B','${QUADRA}',${capacidadeB},'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_B}','${EMPRESA}','Turma B','${QUADRA}',${capacidadeB},'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 

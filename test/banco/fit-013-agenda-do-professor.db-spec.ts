@@ -25,6 +25,7 @@ import {
   redefinirConfigDePresenca,
 } from './config-de-presenca';
 import { comValvula } from './valvula-de-presenca';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -82,7 +83,9 @@ async function empresaCom(
   slug: string,
 ): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresaId}','FIT-013 ${slug}','fit-013-${slug}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresaId}','FIT-013 ${slug}','fit-013-${slug}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${empresaId}','Tenis',0,now())`,
@@ -151,7 +154,7 @@ async function montar(): Promise<void> {
     [TURMA_C, PROF_C, OUTRA_EMPRESA, OUTRA_QUADRA, 'Turma do C'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${turma}','${emp}','${nome}','${quadra}','${prof}',10,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${turma}','${emp}','${nome}','${quadra}','${prof}',10,'ativa',${primeiroNivelSql(`'${emp}'`)})`,
     );
     // SPEC-076/D5 — um aluno por turma: sem participante, a aula pós-corte
     // sem cabeçalho é `sem_participantes`, e não `pendente`.

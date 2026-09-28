@@ -31,6 +31,7 @@ import {
   garantirLoginsDeTeste,
   redefinirConfigDePresenca,
 } from './config-de-presenca';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -119,7 +120,9 @@ beforeEach(async () => {
   await redefinirConfigDePresenca(db);
   ocSeq = 0;
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-057 presenca','spec-057-pres-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-057 presenca','spec-057-pres-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${PROFESSOR_USUARIO}','prof.s057p@x.com','h','Prof','professor','${EMPRESA}',now()), ('${ALUNO_USUARIO}','aluno.s057p@x.com','h','Aluno','aluno','${EMPRESA}',now())`,
@@ -134,7 +137,7 @@ beforeEach(async () => {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora,status) VALUES ('${QUADRA}','${EMPRESA}','Quadra',(SELECT id FROM esportes_de_quadra WHERE company_id='${EMPRESA}' LIMIT 1),80,'ativa')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 });
 

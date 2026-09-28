@@ -25,6 +25,7 @@ import {
   TIPO_AVALIACAO_BAIXA,
 } from '../../src/classes/aviso-de-nota-baixa';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(600_000);
 exigirBancoLocal();
@@ -92,7 +93,9 @@ async function ocupacao(): Promise<string> {
 async function montar(): Promise<void> {
   const hash = await bcrypt.hash('senha-do-teste', 10);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-068','spec-068-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-068','spec-068-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -115,7 +118,7 @@ async function montar(): Promise<void> {
     `INSERT INTO professores (id,company_id,nome) VALUES ('${PROF}','${EMPRESA}','Professor')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma Sentinela','${QUADRA}','${PROF}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma Sentinela','${QUADRA}','${PROF}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO turma_alunos (id,turma_id,aluno_id,created_at) VALUES (gen_random_uuid(),'${TURMA}','${ALUNO}',now())`,

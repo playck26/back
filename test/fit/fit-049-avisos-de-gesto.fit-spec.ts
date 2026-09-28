@@ -50,6 +50,11 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
+import {
+  comNivelDaFixture,
+  nivelDaFixture,
+  primeiroNivelSql,
+} from '../banco/nivel-da-fixture';
 
 jest.setTimeout(600_000);
 exigirBancoLocal();
@@ -159,7 +164,9 @@ const paraQuem = (lista: Aviso[]) => lista.map((a) => a.destinatarioId).sort();
 async function montar(): Promise<void> {
   const hash = await bcrypt.hash(SENHA, 10);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-063','spec-063-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-063','spec-063-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -198,7 +205,7 @@ async function montar(): Promise<void> {
     );
   }
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma da Ana','${QUADRA}','${PROF}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma da Ana','${QUADRA}','${PROF}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at) VALUES (gen_random_uuid(),'${TURMA}',${diaDaSemana(FUTURO)},'19:00','20:00',now())`,
@@ -306,6 +313,7 @@ describe('SPEC-063 — os gestos de turma', () => {
       {
         nome: 'Turma Nova',
         quadraId: QUADRA,
+        nivelId: await nivelDaFixture(db, EMPRESA),
         professorId: PROF,
         capacidade: 10,
         encontros: [
@@ -587,7 +595,7 @@ describe('SPEC-063 — os gestos de aula', () => {
    */
   it('LIM-063e: professor sem conta não gera linha, e o gesto passa', async () => {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA_SEM_CONTA}','${EMPRESA}','Sem Conta','${QUADRA}','${PROF_SEM_CONTA}',10,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA_SEM_CONTA}','${EMPRESA}','Sem Conta','${QUADRA}','${PROF_SEM_CONTA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
     await classes().update(
       EMPRESA,

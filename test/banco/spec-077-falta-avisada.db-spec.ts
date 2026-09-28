@@ -22,6 +22,7 @@ import { PresencaService } from '../../src/classes/presenca.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { lerCatalogo } from '../../src/presenca-automatica/cli/fecho-de-linhas';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -66,7 +67,9 @@ async function ocorrencia(
 async function montar(): Promise<void> {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,contrato_versao_vigente,updated_at) VALUES ('${EMPRESA}','SPEC-077/031','spec-077-031',1,now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,contrato_versao_vigente,updated_at) VALUES ('${EMPRESA}','SPEC-077/031','spec-077-031',1,now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
@@ -91,7 +94,7 @@ async function montar(): Promise<void> {
     [OUTRA_TURMA, 'Outra 077'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${t}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${t}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
   await q(
@@ -298,19 +301,35 @@ describe('SPEC-077/AC-004 — avisar e retirar mudam SÓ a falta (031 INV-068, c
     expect(saldo).toBeGreaterThan(0);
   });
 
-  it('POST: só `faltas_avisadas` muda', async () => {
+  it('POST: só `faltas_avisadas` muda — e o aviso ao gestor (SPEC-078)', async () => {
     const aula = await ocorrencia(diaNoFuturo(10), '19:00');
     const antes = await fotografia();
     await faltas.avisar(EMPRESA, UALUNO, TURMA, aula);
-    expect(mudou(antes, await fotografia())).toEqual(['faltas_avisadas']);
+    // SPEC-078/I1 — desde 2026-09-28 avisar e retirar falta AVISAM O GESTOR:
+    // a linha nova em `notificacoes` é o aviso ("Um aluno avisou que vai
+    // faltar…"), e é a única tabela a mais. A INV-068 protege matrícula,
+    // presença e financeiro — `notificacoes` não é nenhum dos três —, e a
+    // fotografia continua pegando qualquer outra escrita.
+    expect(mudou(antes, await fotografia())).toEqual([
+      'faltas_avisadas',
+      'notificacoes',
+    ]);
   });
 
-  it('DELETE sem fila: só `faltas_avisadas` muda', async () => {
+  it('DELETE sem fila: só `faltas_avisadas` muda — e o aviso ao gestor (SPEC-078)', async () => {
     const aula = await ocorrencia(diaNoFuturo(10), '19:00');
     await faltas.avisar(EMPRESA, UALUNO, TURMA, aula);
     const antes = await fotografia();
     await faltas.retirar(EMPRESA, UALUNO, TURMA, aula);
-    expect(mudou(antes, await fotografia())).toEqual(['faltas_avisadas']);
+    // SPEC-078/I1 — desde 2026-09-28 avisar e retirar falta AVISAM O GESTOR:
+    // a linha nova em `notificacoes` é o aviso ("Um aluno avisou que vai
+    // faltar…"), e é a única tabela a mais. A INV-068 protege matrícula,
+    // presença e financeiro — `notificacoes` não é nenhum dos três —, e a
+    // fotografia continua pegando qualquer outra escrita.
+    expect(mudou(antes, await fotografia())).toEqual([
+      'faltas_avisadas',
+      'notificacoes',
+    ]);
   });
 
   it('DELETE com fila: `faltas_avisadas` e a `lista_de_espera` (SPEC-064), e mais nada', async () => {
@@ -327,9 +346,15 @@ describe('SPEC-077/AC-004 — avisar e retirar mudam SÓ a falta (031 INV-068, c
     );
     const antes = await fotografia();
     await faltas.retirar(EMPRESA, UALUNO, TURMA, aula);
+    // SPEC-078/I1 — desde 2026-09-28 avisar e retirar falta AVISAM O GESTOR:
+    // a linha nova em `notificacoes` é o aviso ("Um aluno avisou que vai
+    // faltar…"), e é a única tabela a mais. A INV-068 protege matrícula,
+    // presença e financeiro — `notificacoes` não é nenhum dos três —, e a
+    // fotografia continua pegando qualquer outra escrita.
     expect(mudou(antes, await fotografia())).toEqual([
       'faltas_avisadas',
       'lista_de_espera',
+      'notificacoes',
     ]);
   });
 });

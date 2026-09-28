@@ -15,6 +15,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -62,8 +63,8 @@ function ocupar(
 
 async function empresa(id: string, sufixo: string) {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at)
-     VALUES ('${id}','Clube ${sufixo}','clube-039-${sufixo}',now())`,
+    comNivelDaFixture(`INSERT INTO empresas (id,nome,slug,updated_at)
+     VALUES ('${id}','Clube ${sufixo}','clube-039-${sufixo}',now())`),
   );
 }
 
@@ -115,8 +116,8 @@ beforeAll(async () => {
   await q(
     // `dia_semana`, `hora_inicio` e `hora_fim` SAIRAM de `turmas` na SPEC-019
     // -- a recorrencia virou `encontros`. E nao ha `updated_at`.
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade)
-     VALUES ('${TURMA}','${EMPRESA_A}','T1','${QUADRA_1}',10)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id)
+     VALUES ('${TURMA}','${EMPRESA_A}','T1','${QUADRA_1}',10,${primeiroNivelSql(`'${EMPRESA_A}'`)})`,
   );
 });
 

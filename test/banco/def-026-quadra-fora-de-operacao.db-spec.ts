@@ -49,6 +49,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
+import { nivelDaFixture } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -196,6 +197,9 @@ describe('DEF-026 — quadra fora de operação não é vendida', () => {
         {
           nome: 'Turma DEF-026',
           quadraId: QUADRA,
+          // SPEC-079 — o nível é obrigatório, e o serviço o confere ANTES da
+          // quadra: um id falso mudaria a recusa de causa.
+          nivelId: await nivelDaFixture(db, EMPRESA),
           capacidade: 10,
           encontros: [{ diaSemana: 3, horaInicio: '10:00', horaFim: '11:00' }],
         },

@@ -6,6 +6,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import type { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.service';
 import type { ReposicaoService } from '../../src/classes/reposicao.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 /**
  * SPEC-064/TASK-005 — **a rota de leitura da fila, que não existia.**
@@ -95,7 +96,9 @@ async function naFila(opcoes: {
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA_ID}','SPEC-064','spec-064-leitura',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA_ID}','SPEC-064','spec-064-leitura',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA_ID}','Tenis',0,now())`,
@@ -113,7 +116,7 @@ async function montar(): Promise<void> {
     `INSERT INTO professores (id,company_id,nome) VALUES ('${PROFESSOR}','${EMPRESA_ID}','Professor')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA_ID}','Turma das Quintas','${QUADRA}','${PROFESSOR}',6,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA_ID}','Turma das Quintas','${QUADRA}','${PROFESSOR}',6,'ativa',${primeiroNivelSql(`'${EMPRESA_ID}'`)})`,
   );
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)

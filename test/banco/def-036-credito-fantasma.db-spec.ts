@@ -51,6 +51,7 @@ import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.se
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -105,7 +106,9 @@ const FALTA = 'd0360000-0000-4000-8000-400000000001';
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','DEF-036','def-036-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','DEF-036','def-036-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -122,7 +125,7 @@ async function montar(): Promise<void> {
   );
   for (const t of [TURMA_ORIGEM, TURMA_ALVO]) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${t}','${EMPRESA}','T','${QUADRA}',10,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${t}','${EMPRESA}','T','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
   await q(

@@ -23,6 +23,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -108,7 +109,9 @@ async function montar(): Promise<void> {
     [EMPRESA_B, 'B'],
   ] as const) {
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${emp}','DEF-024 ${nome}','def024-${nome.toLowerCase()}-${emp}',now())`,
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${emp}','DEF-024 ${nome}','def024-${nome.toLowerCase()}-${emp}',now())`,
+      ),
     );
     await q(
       `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${emp}','Tenis',0,now())`,
@@ -150,7 +153,7 @@ async function montar(): Promise<void> {
   // Turma, ocorrência de TURMA e chamada, todas da empresa A: é o cenário
   // mínimo em que a única coisa errada do `INSERT` de presença é o aluno.
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_A}','${EMPRESA_A}','T','${QUADRA_A}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_A}','${EMPRESA_A}','T','${QUADRA_A}',20,'ativa',${primeiroNivelSql(`'${EMPRESA_A}'`)})`,
   );
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at) VALUES ('${OCUPACAO_TURMA_A}','${EMPRESA_A}','${QUADRA_A}',CURRENT_DATE + 1,'11:00','12:00','TURMA','${TURMA_A}','pendente_pagamento',now())`,

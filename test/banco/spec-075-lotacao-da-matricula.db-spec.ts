@@ -47,6 +47,7 @@ import { aulasQueAMatriculaLotaria } from '../../src/classes/ocupacao-da-ocorren
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import { StudentsService } from '../../src/people/students.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -171,7 +172,9 @@ const matriculados = () =>
 
 async function montar(capacidade: number): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Lotacao','s075-lotacao-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Lotacao','s075-lotacao-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -181,10 +184,10 @@ async function montar(capacidade: number): Promise<void> {
      SELECT '${QUADRA}','${EMPRESA}','Quadra',id,80,'ativa' FROM esportes_de_quadra WHERE company_id='${EMPRESA}' LIMIT 1`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${ORIGEM}','${EMPRESA}','Origem','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${ORIGEM}','${EMPRESA}','Origem','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${ALVO_TURMA}','${EMPRESA}','Alvo','${QUADRA}',${capacidade},'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${ALVO_TURMA}','${EMPRESA}','Alvo','${QUADRA}',${capacidade},'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await aula(ALVO_TURMA, emDias(6), '20:00', '21:00', SABADO);
 }
@@ -476,7 +479,7 @@ describe('quem oferece a vaga segue a mesma regra', () => {
     await montar(1);
     const TURMA_B = '07510000-0000-4000-8000-00000000000c';
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_B}','${EMPRESA}','B','${QUADRA}',1,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_B}','${EMPRESA}','B','${QUADRA}',1,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
     await aula(TURMA_B, emDias(7), '20:00', '21:00');
     const bLotada = await aula(TURMA_B, emDias(14), '20:00', '21:00');

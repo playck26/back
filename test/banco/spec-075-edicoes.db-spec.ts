@@ -221,24 +221,11 @@ describe('AC-023 — o nível da turma', () => {
     expect(await nivelDaTurma(T_AVA)).toBe(AVA);
   });
 
-  it('TIRAR o nível da turma → passa (turma sem nível é de todos)', async () => {
-    const a = await aluno('Carla', AVA);
-    await matricular(T_AVA, a);
-    expect((await desfecho(mudarTurma(T_AVA, null))).code).toBe('OK');
-    expect(await nivelDaTurma(T_AVA)).toBeNull();
-  });
-
-  it('o ATALHO: tirar o nível → alocar um Intermediário → pôr Avançado de volta — a volta é recusada', async () => {
-    const a = await aluno('Carla', AVA);
-    await matricular(T_AVA, a);
-    const d = await aluno('Davi', INT);
-    expect((await desfecho(mudarTurma(T_AVA, null))).code).toBe('OK');
-    expect(
-      (await desfecho(turmas().allocateStudent(EMPRESA, T_AVA, d))).code,
-    ).toBe('OK');
-    expect((await desfecho(mudarTurma(T_AVA, AVA))).code).toBe(RECUSA);
-    expect(await nivelDaTurma(T_AVA)).toBeNull();
-  });
+  // SPEC-079 (2026-09-28) — saíram "TIRAR o nível da turma → passa" e "o
+  // ATALHO: tirar o nível → alocar → pôr de volta". Toda turma tem nível
+  // (ADR-029): a API recusa `nivelId: null` com `400` (079/AC-004) e o banco,
+  // desde a migração B, com `23502` (079/AC-001). O gesto que os dois casos
+  // exercitavam não existe mais, e o atalho que o segundo fechava também não.
 });
 
 // ==========================================================================

@@ -44,6 +44,7 @@ import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import { FaltaAvisadaService } from '../../src/classes/falta-avisada.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 
@@ -103,7 +104,9 @@ const faltas = new FaltaAvisadaService(
 async function semearFixture(): Promise<string> {
   await limparEmpresa(semear, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-020','fit-020',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-020','fit-020',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
@@ -123,7 +126,7 @@ async function semearFixture(): Promise<string> {
     `INSERT INTO alunos (id,company_id,usuario_id,status,vinculo) VALUES ('${ALUNO}','${EMPRESA}','${UALUNO}','ativo','aprovado')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','T','${QUADRA}','${PROF}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','T','${QUADRA}','${PROF}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO turma_alunos (id,turma_id,aluno_id) VALUES (gen_random_uuid(),'${TURMA}','${ALUNO}')`,

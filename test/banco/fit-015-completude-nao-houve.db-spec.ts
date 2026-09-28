@@ -24,6 +24,7 @@ import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { diasAtrasNoClube } from './hoje-no-clube-sql';
 import { comValvula } from './valvula-de-presenca';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -131,7 +132,9 @@ async function criarOcupacao(ocId: string, n: number) {
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-015','fit-015',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-015','fit-015',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -146,7 +149,7 @@ beforeAll(async () => {
     `INSERT INTO professores (id,company_id,nome,usuario_id,created_at) VALUES ('${PROF}','${EMPRESA}','Prof','${UPROF}',now())`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma','${QUADRA}','${PROF}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma','${QUADRA}','${PROF}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   for (let n = 1; n <= 6; n += 1) {
     await criarOcupacao(ocupacaoId(n), n);

@@ -1568,7 +1568,7 @@ export class CourtsService {
     turmaId: string,
     aPartirDe: Date,
     registrador: RegistradorDeAcao,
-  ): Promise<void> {
+  ): Promise<TitularDeReposicao[]> {
     const transicaoId = novaTransicao();
     // `updateManyAndReturn` e nao `updateMany`: a trigger
     // `ocupacao_cancelada_exige_evento` e `FOR EACH ROW` e exige um evento
@@ -1609,9 +1609,16 @@ export class CourtsService {
     // apagava a mesma linha por gesto do aluno. A alternativa -- o saldo parar
     // de devolver o credito -- seria punir a pessoa pelo gesto do CLUBE.
     // ====================================================================
-    await tx.reposicaoDeAula.deleteMany({
-      where: { companyId, ocupacaoId: { in: canceladas.map((l) => l.id) } },
-    });
+    // SPEC-078/D2 — **quem tinha reposição sai da própria deleção**
+    // (`DELETE … RETURNING`): nenhuma janela entre saber e apagar (AC-011), e
+    // nenhuma ida a mais ao banco dentro desta transação — o orçamento do
+    // DEF-013 conta idas, e uma leitura separada custava uma. Quem avisa é o
+    // chamador, pelo enfileirador do gesto.
+    const titulares = await apagarReposicoesDevolvendoTitulares(
+      tx,
+      companyId,
+      canceladas.map((l) => l.id),
+    );
 
     // SPEC-064/D6 — quem esperava por estas aulas perde o alvo. **Na mesma
     // transação**: uma transação própria deixaria a janela em que a aula já
@@ -1634,6 +1641,7 @@ export class CourtsService {
       fila.chamados,
       MOTIVO.AULA_CANCELADA,
     );
+    return titulares;
   }
 
   /**
@@ -1653,7 +1661,7 @@ export class CourtsService {
     companyId: string,
     ocupacaoId: string,
     registrador: RegistradorDeAcao,
-  ): Promise<void> {
+  ): Promise<TitularDeReposicao[]> {
     const transicaoId = novaTransicao();
     await tx.ocupacaoQuadra.update({
       where: { id: ocupacaoId },
@@ -1666,9 +1674,11 @@ export class CourtsService {
 
     // DEF-036 — mesma razão do cancelamento em massa acima: o crédito volta
     // de verdade, não só na tela.
-    await tx.reposicaoDeAula.deleteMany({
-      where: { companyId, ocupacaoId },
-    });
+    // SPEC-078/D2 — quem tinha reposição sai da própria deleção, como no
+    // cancelamento em massa acima.
+    const titulares = await apagarReposicoesDevolvendoTitulares(tx, companyId, [
+      ocupacaoId,
+    ]);
 
     // SPEC-064/D6 + AC-008 — mesma razão do cancelamento em massa acima.
     const fila = await encerrarFila(
@@ -1683,6 +1693,7 @@ export class CourtsService {
       fila.chamados,
       MOTIVO.AULA_CANCELADA,
     );
+    return titulares;
   }
 
   /**
@@ -1965,10 +1976,13 @@ export class CourtsService {
             // SPEC-063/D5 — o aviso ao gestor expira no FIM do bloco. Vem na
             // linha que já está travada: não custa ida nova.
             hora_fim: Date;
+            // SPEC-078 — aula particular (reserva com professor) muda a
+            // palavra do aviso ao aluno.
+            professor_id: string | null;
           }[]
         >`
         SELECT id, company_id, aluno_id, origem_tipo, status_pagamento,
-               data, hora_inicio, hora_fim
+               data, hora_inicio, hora_fim, professor_id
           FROM ocupacoes_quadra
          WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
          FOR UPDATE
@@ -2118,6 +2132,8 @@ export class CourtsService {
           autorId,
           'reserva_cancelada',
         );
+        // SPEC-078/AC-012, AC-013 — e o dono da reserva, se não foi ele.
+        avisos.comAlunoDaReserva(bruta.aluno_id, !!bruta.professor_id);
         avisos.anotarEfeito({
           data: ocupacao.data,
           horaInicio: ocupacao.horaInicio,
@@ -2428,6 +2444,9 @@ export class CourtsService {
         // Um `if` no chamador seria a mesma decisão escrita duas vezes, e a
         // segunda envelheceria.
         const avisos = new EnfileiradorDeAvisos(tx, companyId, autorId, gesto);
+        // SPEC-078/AC-012 — o segundo caminho que cancela avisa o aluno igual.
+        // (No `pago`, o público é `ninguem` e isto não tem efeito.)
+        avisos.comAlunoDaReserva(ocupacao.alunoId, !!ocupacao.professorId);
         const linha = await tx.ocupacaoQuadra.update({
           where: { id },
           data: { statusPagamento: status, transicaoId },
@@ -2608,10 +2627,13 @@ export class CourtsService {
               hora_fim: Date;
               origem_tipo: 'AVULSO' | 'TURMA';
               status_pagamento: string;
+              // SPEC-078/D3 — o dono da reserva, para o aviso de que ela mudou.
+              aluno_id: string | null;
+              professor_id: string | null;
             }[]
           >`
             SELECT id, quadra_id, data, hora_inicio, hora_fim,
-                   origem_tipo, status_pagamento
+                   origem_tipo, status_pagamento, aluno_id, professor_id
               FROM ocupacoes_quadra
              WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
              FOR UPDATE
@@ -2733,6 +2755,8 @@ export class CourtsService {
             autorId,
             'reserva_movida',
           );
+          // SPEC-078/AC-015 — e o dono da reserva (I8).
+          avisos.comAlunoDaReserva(atual.aluno_id, !!atual.professor_id);
           const movida = await tx.ocupacaoQuadra.update({
             where: { id },
             // `alunoId`, `valor` e `statusPagamento` ficam de fora **de
@@ -3182,6 +3206,54 @@ export class CourtsService {
     }
     return nomes;
   }
+}
+
+/**
+ * SPEC-078/REQ-002 — **quem tinha reposição numa ocorrência que o clube
+ * cancela.** Não está em `turma_alunos` (a reposição é de outra turma), e a
+ * linha da reposição é apagada na mesma transação (DEF-036): por isso quem
+ * tinha a reposição sai do próprio `DELETE`, e o resultado sobe para quem
+ * avisa.
+ */
+export interface TitularDeReposicao {
+  readonly usuarioId: string;
+  readonly ocupacaoId: string;
+  readonly data: Date;
+  readonly horaInicio: Date;
+  readonly horaFim: Date;
+}
+
+async function apagarReposicoesDevolvendoTitulares(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  ocupacaoIds: string[],
+): Promise<TitularDeReposicao[]> {
+  if (ocupacaoIds.length === 0) {
+    return [];
+  }
+  const linhas = await tx.$queryRaw<
+    {
+      usuario_id: string;
+      ocupacao_id: string;
+      data: Date;
+      hora_inicio: Date;
+      hora_fim: Date;
+    }[]
+  >`
+    DELETE FROM reposicoes_de_aula r
+     USING alunos a, ocupacoes_quadra o
+     WHERE r.company_id = ${companyId}::uuid
+       AND r.ocupacao_id = ANY(${ocupacaoIds}::uuid[])
+       AND a.id = r.aluno_id
+       AND o.id = r.ocupacao_id
+    RETURNING a.usuario_id, o.id AS ocupacao_id, o.data, o.hora_inicio, o.hora_fim`;
+  return linhas.map((l) => ({
+    usuarioId: l.usuario_id,
+    ocupacaoId: l.ocupacao_id,
+    data: l.data,
+    horaInicio: l.hora_inicio,
+    horaFim: l.hora_fim,
+  }));
 }
 
 /**

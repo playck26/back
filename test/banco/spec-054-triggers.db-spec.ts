@@ -23,6 +23,7 @@ import { PrismaClient } from '@prisma/client';
 import { sqlstateDoErro } from '../../src/courts/recusas-de-estoque';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -52,7 +53,9 @@ async function semear() {
   await limparEmpresa(db, EMPRESA);
   const q = (sql: string) => db.$executeRawUnsafe(sql);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube 054 triggers','clube-054-triggers',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube 054 triggers','clube-054-triggers',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
@@ -77,8 +80,8 @@ async function semear() {
     );
   }
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade)
-     VALUES ('${TURMA}','${EMPRESA}','T1','${Q1}',10)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id)
+     VALUES ('${TURMA}','${EMPRESA}','T1','${Q1}',10,${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO tipos_de_adicional (id,company_id,nome) VALUES ('${TIPO}','${EMPRESA}','Raquetes')`,

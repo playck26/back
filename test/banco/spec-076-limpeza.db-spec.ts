@@ -36,6 +36,7 @@ import { ConfigOperacaoService } from '../../src/company-settings/config-operaca
 import { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.service';
 import { ReposicaoService } from '../../src/classes/reposicao.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(600_000);
 exigirBancoLocal();
@@ -81,7 +82,9 @@ async function montarBase(empresa: string): Promise<Base> {
   };
   const prof = randomUUID();
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresa}','SPEC-076 ${empresa.slice(-4)}','spec-076-${empresa}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresa}','SPEC-076 ${empresa.slice(-4)}','spec-076-${empresa}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${empresa}','Tenis',0,now())`,
@@ -100,7 +103,7 @@ async function montarBase(empresa: string): Promise<Base> {
   );
   for (const t of [b.turma, b.outraTurma]) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${t}','${empresa}','T ${t.slice(0, 4)}','${b.quadra}','${prof}',20,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${t}','${empresa}','T ${t.slice(0, 4)}','${b.quadra}','${prof}',20,'ativa',${primeiroNivelSql(`'${empresa}'`)})`,
     );
   }
   bases.set(empresa, b);

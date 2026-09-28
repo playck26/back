@@ -161,8 +161,10 @@ describe('SPEC-075/TASK-001 — o nível, como o banco o garante', () => {
     await q(convite(NIVEL_A));
   });
 
-  it('AC-014 — nível nulo NÃO é conferido (MATCH SIMPLE): aluno, turma e convite sem nível passam', async () => {
-    await q(turma(null));
+  // SPEC-079 — a turma saiu deste caso: toda turma tem nível, e desde a
+  // migração B o banco recusa a nula com `23502` (079/AC-001). Aluno e
+  // convite continuam podendo não ter.
+  it('AC-014 — nível nulo NÃO é conferido (MATCH SIMPLE): aluno e convite sem nível passam', async () => {
     await q(convite(null));
     const [linha] = await ler<{ n: bigint }>(
       `SELECT count(*) AS n FROM alunos WHERE id = '${ALUNO_A}' AND nivel_id IS NULL`,
@@ -175,6 +177,10 @@ describe('SPEC-075/TASK-001 — o nível, como o banco o garante', () => {
   // ========================================================================
 
   it('AC-015 — nível usado por TURMA: o serviço recusa com 422 e mensagem', async () => {
+    // SPEC-079/REQ-007 — com UM nível só, a recusa seria a do último (ela vem
+    // antes); o segundo nível é o que deixa esta recusa ser a que está em
+    // julgamento.
+    await q(nivel(novoId(), EMPRESA_A, 'Avançado', 3));
     await q(turma(NIVEL_A));
 
     const erro = await niveis.remove(EMPRESA_A, NIVEL_A).then(
@@ -199,14 +205,21 @@ describe('SPEC-075/TASK-001 — o nível, como o banco o garante', () => {
     );
   });
 
-  it('AC-015 — nível usado por ALUNO: o serviço recusa com 422', async () => {
+  it('AC-015 — nível usado por ALUNO: o serviço recusa com 422 e mensagem', async () => {
+    // SPEC-079/REQ-007 — o segundo nível, pelo mesmo motivo do caso da turma.
+    // E a mensagem é conferida: só o tipo da exceção passaria também pela
+    // recusa do último nível, que é outra.
+    await q(nivel(novoId(), EMPRESA_A, 'Avançado', 3));
     await q(
       `UPDATE alunos SET nivel_id = '${NIVEL_A}' WHERE id = '${ALUNO_A}'`,
     );
 
-    await expect(niveis.remove(EMPRESA_A, NIVEL_A)).rejects.toBeInstanceOf(
-      UnprocessableEntityException,
+    const erro = await niveis.remove(EMPRESA_A, NIVEL_A).then(
+      () => null,
+      (e: unknown) => e,
     );
+    expect(erro).toBeInstanceOf(UnprocessableEntityException);
+    expect((erro as Error).message).toContain('em uso por aluno');
   });
 
   it('AC-015 — nível usado por ALUNO: o banco recusa sozinho → 23001 pela alunos_nivel_fkey', async () => {

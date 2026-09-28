@@ -54,6 +54,7 @@ const SEGREDO = 'segredo-de-teste-classes';
 const EMPRESA = '11111111-1111-4111-8111-111000190001';
 const QUADRA = '22222222-2222-4222-8222-222000190002';
 const TURMA = '33333333-3333-4333-8333-333000190003';
+const NIVEL = '44444444-4444-4444-8444-444000190004';
 
 const ENCONTRO_VALIDO = {
   diaSemana: 2,
@@ -166,6 +167,8 @@ describe('turmas (e2e) — SPEC-019', () => {
   const CORPO_BASE = {
     nome: 'Turma A',
     quadraId: QUADRA,
+    // SPEC-079 — toda turma tem nível, e o corpo sem ele é recusado (AC-003).
+    nivelId: NIVEL,
     capacidade: 6,
   };
 
@@ -266,6 +269,67 @@ describe('turmas (e2e) — SPEC-019', () => {
       });
 
       expect(res.status).toBe(400);
+    });
+  });
+
+  /**
+   * SPEC-079/AC-003, AC-004, AC-012 — **toda turma tem nível, e a API é a
+   * primeira a dizer.** O pipe recusa antes do serviço: o `400` não depende
+   * do banco, e por isso vale no M2, com a coluna ainda anulável — é o que
+   * garante que a aba antiga do Admin, a que ainda manda "Sem nível", recebe
+   * `400` e nunca `500` quando o `NOT NULL` chegar (AC-012).
+   */
+  describe('SPEC-079 — o nível da turma é obrigatório', () => {
+    const patch = (corpo: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .patch(`/api/v1/classes/${TURMA}`)
+        .set('Authorization', `Bearer ${token('company_admin')}`)
+        .send(corpo);
+
+    it('AC-003/AC-012 — POST sem `nivelId` → 400, e o serviço nem é chamado', async () => {
+      const semNivel: Record<string, unknown> = {
+        ...CORPO_BASE,
+        encontros: [ENCONTRO_VALIDO],
+      };
+      delete semNivel.nivelId;
+
+      const res = await criar(semNivel).expect(400);
+
+      expect(JSON.stringify(res.body)).toContain('nivelId');
+      expect(classesMock.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-003 — POST com `nivelId: null` → 400', async () => {
+      await criar({
+        ...CORPO_BASE,
+        nivelId: null,
+        encontros: [ENCONTRO_VALIDO],
+      }).expect(400);
+      expect(classesMock.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-004 — PATCH com `nivelId: null` → 400, e a turma não muda', async () => {
+      const res = await patch({ nivelId: null }).expect(400);
+
+      expect(JSON.stringify(res.body)).toContain('nivelId');
+      expect(classesMock.update).not.toHaveBeenCalled();
+    });
+
+    it('AC-004 — PATCH sem `nivelId` não mexe no nível: o serviço recebe `undefined`', async () => {
+      await patch({ nome: 'Novo nome' }).expect(200);
+
+      const dto = (classesMock.update.mock.calls[0] as unknown[])[2] as {
+        nivelId?: unknown;
+      };
+      expect(dto.nivelId).toBeUndefined();
+    });
+
+    it('AC-004 — PATCH com outro nível chega ao serviço (a regra da D12 da SPEC-075 é dele)', async () => {
+      await patch({ nivelId: NIVEL }).expect(200);
+
+      expect((classesMock.update.mock.calls[0] as unknown[])[2]).toMatchObject({
+        nivelId: NIVEL,
+      });
     });
   });
 

@@ -719,13 +719,17 @@ export class ClassesService {
         const avisos = new EnfileiradorDeAvisos(tx, companyId, autorId, gesto);
         avisos.comTurma(id);
 
-        await this.courtsService.cancelFutureClassOccupancies(
+        // SPEC-078/REQ-002 — quem tinha reposição nas ocorrências canceladas
+        // (encerrar, mudar a grade ou reativar a turma: os três passam
+        // aqui) é avisado pela ocorrência que perdeu.
+        const titulares = await this.courtsService.cancelFutureClassOccupancies(
           tx,
           companyId,
           id,
           hojeUTC,
           registrador,
         );
+        avisos.comTitularesDeReposicao(titulares);
 
         /**
          * SPEC-035/D3 — **reativar REGENERA; não descancela as linhas
@@ -1642,7 +1646,7 @@ export class ClassesService {
         'aula_cancelada',
         motivo,
       );
-      await this.courtsService.cancelOneClassOccurrence(
+      const titulares = await this.courtsService.cancelOneClassOccurrence(
         tx,
         companyId,
         ocupacao.id,
@@ -1662,6 +1666,8 @@ export class ClassesService {
         horaInicio: ocupacao.horaInicio,
         horaFim: ocupacao.horaFim,
       });
+      // SPEC-078/REQ-002 — e quem tinha reposição nesta aula (AC-008).
+      avisos.comTitularesDeReposicao(titulares);
       await avisos.despachar(registrador.idDaAcao);
     });
   }

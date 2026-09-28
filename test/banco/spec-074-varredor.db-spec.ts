@@ -39,6 +39,11 @@ import {
   parseTimeOnly,
 } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import {
+  comNivelDaFixture,
+  nivelDaFixture,
+  primeiroNivelSql,
+} from './nivel-da-fixture';
 
 jest.setTimeout(240_000);
 exigirBancoLocal();
@@ -190,7 +195,9 @@ const avisosDe = (origemId: string) =>
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-074 varredor','spec-074-v-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-074 varredor','spec-074-v-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -207,7 +214,7 @@ async function montar(): Promise<void> {
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${GESTOR}','g074@x.com','h','G','company_admin','${EMPRESA}',now())`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','T','${QUADRA}',4,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','T','${QUADRA}',4,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 
@@ -337,6 +344,7 @@ describe('SPEC-074/TASK-003 — o varredor', () => {
       {
         nome: 'Meia hora depois',
         quadraId: QUADRA,
+        nivelId: await nivelDaFixture(db, EMPRESA),
         capacidade: 4,
         encontros: [
           {

@@ -65,8 +65,12 @@ export class LevelsService {
     );
   }
 
-  async findOne(companyId: string, id: string): Promise<NivelResponseDto> {
-    const nivel = await this.prisma.nivel.findFirst({
+  async findOne(
+    companyId: string,
+    id: string,
+    db: Pick<Prisma.TransactionClient, 'nivel'> = this.prisma,
+  ): Promise<NivelResponseDto> {
+    const nivel = await db.nivel.findFirst({
       where: { id, companyId },
     });
     if (!nivel) {
@@ -131,10 +135,45 @@ export class LevelsService {
     });
   }
 
+  /**
+   * SPEC-079/REQ-007 (decisões I4 e I5 do Israel) — **o clube nunca fica sem
+   * nível**: toda turma tem nível, e um clube sem nenhum não conseguiria criar
+   * turma. Apagar o último é recusado, com o texto aprovado.
+   *
+   * **Contar e apagar sob a trava de nível da empresa** (a da D13 da
+   * SPEC-075), como primeira instrução: sem ela, dois gestores apagando os
+   * dois últimos contariam 2 cada um, e os dois apagariam (AC-017).
+   *
+   * A recusa do último vem ANTES das de uso: se o último está em uso por
+   * turma, "mude o nível dessas turmas" não tem saída — não há outro nível —,
+   * e "crie outro antes" tem.
+   */
   async remove(companyId: string, id: string): Promise<void> {
-    await this.findOne(companyId, id);
+    await this.prisma.$transaction(async (tx) => {
+      await travarNivelDaEmpresa(tx, companyId);
+      await this.findOne(companyId, id, tx);
 
-    const emUsoPorAluno = await this.prisma.aluno.count({
+      const doClube = await tx.nivel.count({ where: { companyId } });
+      if (doClube <= 1) {
+        throw new UnprocessableEntityException({
+          statusCode: 422,
+          code: 'ULTIMO_NIVEL_DO_CLUBE',
+          message:
+            'O clube precisa de pelo menos um nível. Crie outro antes de apagar este.',
+        });
+      }
+
+      await this.recusarSeEmUso(tx, companyId, id);
+      await tx.nivel.delete({ where: { id } });
+    });
+  }
+
+  private async recusarSeEmUso(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    id: string,
+  ): Promise<void> {
+    const emUsoPorAluno = await tx.aluno.count({
       where: { nivelId: id },
     });
     if (emUsoPorAluno > 0) {
@@ -148,7 +187,7 @@ export class LevelsService {
     // deixava a turma sem nível, e turma sem nível é de todos. Agora a FK é
     // `RESTRICT` e o banco recusa; esta conferência existe para a MENSAGEM —
     // o banco é a garantia, o serviço é a explicação.
-    const emUsoPorTurma = await this.prisma.turma.count({
+    const emUsoPorTurma = await tx.turma.count({
       where: { nivelId: id, companyId },
     });
     if (emUsoPorTurma > 0) {
@@ -157,7 +196,5 @@ export class LevelsService {
           'dessas turmas antes (SPEC-075).',
       );
     }
-
-    await this.prisma.nivel.delete({ where: { id } });
   }
 }

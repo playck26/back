@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 /**
  * SPEC-069/TASK-005 — **ação sem alvo deixa de ser possível.**
@@ -51,7 +52,9 @@ const OCUPACAO = 'f0691000-0000-4000-8000-000000000008';
 async function semear() {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-069 trigger','spec-069-trigger',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-069 trigger','spec-069-trigger',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES
@@ -68,7 +71,7 @@ async function semear() {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Q1','${ESPORTE}',100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id) VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA}',20,${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO ocupacoes_quadra

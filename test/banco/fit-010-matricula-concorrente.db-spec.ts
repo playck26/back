@@ -21,6 +21,7 @@ import { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.se
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -58,7 +59,9 @@ async function montarCenario(capacidade: number) {
   const q = (sql: string) => semear.$executeRawUnsafe(sql);
 
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-010 ${EMPRESA}','fit-010-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-010 ${EMPRESA}','fit-010-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -67,7 +70,7 @@ async function montarCenario(capacidade: number) {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Q FIT-010',(SELECT id FROM esportes_de_quadra WHERE company_id='${EMPRESA}' AND nome='Tenis'),100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma da ultima vaga','${QUADRA}',${capacidade},'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma da ultima vaga','${QUADRA}',${capacidade},'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 
   for (const [usuarioId, alunoId, n] of [
@@ -179,7 +182,7 @@ describe('SPEC-023 — o que só o banco garante', () => {
 
     const OUTRA = 'f0100000-0000-4000-8000-000000000004';
     await semear.$executeRawUnsafe(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${OUTRA}','${EMPRESA}','Segunda turma','${QUADRA}',5,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${OUTRA}','${EMPRESA}','Segunda turma','${QUADRA}',5,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
 
     await servicoA.entrar(EMPRESA, U1, TURMA);
