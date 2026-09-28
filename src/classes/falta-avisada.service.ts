@@ -10,6 +10,7 @@ import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
+import { AvisosDoGestoDoAluno } from '../push/aviso-do-gesto-do-aluno';
 
 /**
  * SPEC-031/REQ-006 — **o aluno avisa que vai faltar, sem sair da turma.**
@@ -71,7 +72,11 @@ export class FaltaAvisadaService {
     usuarioId: string,
     turmaId: string,
     ocupacaoId: string,
-    escrever: (tx: Prisma.TransactionClient, alunoId: string) => Promise<T>,
+    escrever: (
+      tx: Prisma.TransactionClient,
+      alunoId: string,
+      aula: { data: Date; horaInicio: Date; horaFim: Date },
+    ) => Promise<T>,
   ): Promise<T> {
     const agora = new Date();
 
@@ -108,9 +113,10 @@ export class FaltaAvisadaService {
           status_pagamento: string;
           data: Date;
           hora_inicio: Date;
+          hora_fim: Date;
         }[]
       >`
-        SELECT id, status_pagamento, data, hora_inicio
+        SELECT id, status_pagamento, data, hora_inicio, hora_fim
           FROM ocupacoes_quadra
          WHERE id              = ${ocupacaoId}::uuid
            AND company_id      = ${companyId}::uuid
@@ -159,7 +165,13 @@ export class FaltaAvisadaService {
         });
       }
 
-      return escrever(tx, aluno.id);
+      // SPEC-078 — a aula vai junto: o aviso ao gestor diz o dia e a hora, e
+      // expira no fim dela.
+      return escrever(tx, aluno.id, {
+        data: ocorrencia.data,
+        horaInicio: ocorrencia.hora_inicio,
+        horaFim: ocorrencia.hora_fim,
+      });
     });
   }
 
@@ -187,11 +199,19 @@ export class FaltaAvisadaService {
       usuarioId,
       turmaId,
       ocupacaoId,
-      async (tx, alunoId) => {
-        await tx.faltaAvisada.createMany({
+      async (tx, alunoId, aula) => {
+        const escrita = await tx.faltaAvisada.createMany({
           data: [{ companyId, ocupacaoId, alunoId }],
           skipDuplicates: true,
         });
+        // SPEC-078/AC-002 — avisar de novo o que já estava avisado não
+        // escreve (`skipDuplicates`), e o que não aconteceu não avisa.
+        if (escrita.count > 0) {
+          await new AvisosDoGestoDoAluno(tx, companyId, usuarioId).despachar(
+            'falta_avisada',
+            { turmaId, aula },
+          );
+        }
       },
     );
   }
@@ -214,7 +234,7 @@ export class FaltaAvisadaService {
       usuarioId,
       turmaId,
       ocupacaoId,
-      async (tx, alunoId) => {
+      async (tx, alunoId, aula) => {
         // ====================================================================
         // SPEC-064/INV-064g — **ENCERRAR A FILA VEM ANTES DE APAGAR A FALTA.**
         //
@@ -248,9 +268,16 @@ export class FaltaAvisadaService {
           );
         }
 
-        await tx.faltaAvisada.deleteMany({
+        const retirada = await tx.faltaAvisada.deleteMany({
           where: { companyId, ocupacaoId, alunoId },
         });
+        // SPEC-078/AC-002 — retirar sem aviso não apaga nada, e não avisa.
+        if (retirada.count > 0) {
+          await new AvisosDoGestoDoAluno(tx, companyId, usuarioId).despachar(
+            'falta_retirada',
+            { turmaId, aula },
+          );
+        }
       },
     );
   }

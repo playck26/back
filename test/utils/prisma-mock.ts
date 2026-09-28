@@ -426,6 +426,13 @@ export function buildPrismaMock(): PrismaMock {
     if (sql.includes('FROM alunos')) {
       return [{ id: 'aluno-1' }];
     }
+    // SPEC-078 — os gestores que recebem o aviso da ação do aluno. UMA linha,
+    // e não `[]`: com a lista vazia o `INSERT` do aviso nunca rodaria, e o
+    // e2e ficaria verde sobre um caminho não exercido (a mesma lição do
+    // `FROM usuarios` do `courts.service.spec.ts`).
+    if (sql.includes('FROM usuarios')) {
+      return [{ usuario_id: 'u-gestor' }];
+    }
     return [
       {
         id: 'oc-1',
@@ -437,6 +444,8 @@ export function buildPrismaMock(): PrismaMock {
           hojeNoFusoDoClube().getTime() + 30 * 24 * 60 * 60 * 1000,
         ),
         hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
+        // SPEC-078 — o aviso ao gestor expira no fim da aula.
+        hora_fim: new Date('1970-01-01T20:00:00.000Z'),
       },
     ];
   });

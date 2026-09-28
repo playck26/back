@@ -11,6 +11,7 @@ import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { ocorrenciaRelevante } from './ocorrencia-relevante';
+import { AvisosDoGestoDoAluno } from '../push/aviso-do-gesto-do-aluno';
 import {
   aulaQueAMatriculaLotaria,
   aulasQueAMatriculaLotaria,
@@ -348,7 +349,20 @@ export class MatriculaDoAlunoService {
       });
     }
 
-    return tx.turmaAluno.create({ data: { turmaId, alunoId: aluno.id } });
+    const matricula = await tx.turmaAluno.create({
+      data: { turmaId, alunoId: aluno.id },
+    });
+
+    // SPEC-078/REQ-001 — **aqui, e não na rota**: a confirmação da fila de
+    // turma também passa por este método (I12). Depois do `create`: a saída
+    // idempotente lá em cima (já matriculado) não chega aqui, e não avisa.
+    // O autor é o próprio aluno, que nunca é gestor — por isso `null`.
+    await new AvisosDoGestoDoAluno(tx, companyId, null).despachar(
+      'entrou_na_turma',
+      { turmaId, aula: null },
+    );
+
+    return matricula;
   }
 
   /**
@@ -471,6 +485,13 @@ export class MatriculaDoAlunoService {
         companyId,
         { turmaEAluno: { turmaId, alunoId: aluno.id } },
         MOTIVO.SAIU_DA_TURMA,
+      );
+
+      // SPEC-078/REQ-001 — sem matrícula, o `NotFoundException` lá em cima
+      // já saiu: chegar aqui é ter saído.
+      await new AvisosDoGestoDoAluno(tx, companyId, usuarioId).despachar(
+        'saiu_da_turma',
+        { turmaId, aula: null },
       );
     });
   }

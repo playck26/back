@@ -172,7 +172,17 @@ function quando(fatos: FatosDoGesto): string | null {
   if (!fatos.data || !fatos.horaInicio) {
     return null;
   }
-  const instante = instanteNoFusoDoClube(fatos.data, fatos.horaInicio);
+  return momentoDaAula(fatos.data, fatos.horaInicio);
+}
+
+/**
+ * SPEC-078 — **a mesma regra de "quinta (19h)", exportada**, para os avisos
+ * das ações do aluno não escreverem uma segunda cópia dela. Duas cópias do
+ * formato divergiriam no primeiro ajuste ("19h30" de um lado, "19:30" do
+ * outro).
+ */
+export function momentoDaAula(data: Date, horaInicio: Date): string {
+  const instante = instanteNoFusoDoClube(data, horaInicio);
   const dia = new Intl.DateTimeFormat('pt-BR', {
     timeZone: FUSO_DO_CLUBE,
     weekday: 'long',
