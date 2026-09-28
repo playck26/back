@@ -174,20 +174,14 @@ jobs:
           SPACES_CDN_URL: ${{ secrets.SPACES_CDN_URL }}
           SPACES_KEY: ${{ secrets.SPACES_KEY }}
           SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
-        run: |
-          if [ -z "$SPACES_KEY" ]; then
-            # SPEC-043/REQ-007: sem os secrets, o job só pode ficar verde em
-            # PR de FORK (que nunca os recebe). Em push para `main` ou em PR do
-            # próprio repositório, secret ausente é configuração quebrada — e
-            # um gate que fica verde sem rodar foi a causa raiz da SPEC-043.
-            if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
-              echo "::error title=FIT-006 não rodou::Os secrets SPACES_* não estão configurados neste repositório. Sem eles as 13 provas contra o bucket real não têm gate — configure os secrets; este job não fica verde sem rodar."
-              exit 1
-            fi
-            echo "::warning title=FIT-006 não rodou::PR de fork não recebe os secrets SPACES_*; as provas contra o bucket real rodam no merge."
-            exit 0
-          fi
-          pnpm run test:bucket
+          # SPEC-077/TASK-006 — a guarda saiu daqui para um script, para ter
+          # teste (`test/guarda-fit-006.e2e-spec.ts`, as quatro combinações).
+          # O contexto do GitHub entra por ambiente, e não interpolado no
+          # script: assim o teste pode montar cada combinação.
+          EVENTO: ${{ github.event_name }}
+          REPO_DA_PR: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/guarda-fit-006.sh pnpm run test:bucket
 
   # SPEC-043 — o gate de concorrência como CHECK DE PR, em toda PR, sem
   # detector de paths. Antes ele morava num passo condicional de um workflow
