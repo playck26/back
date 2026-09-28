@@ -84,11 +84,23 @@ describe('SPEC-075/AC-029 — nenhum escritor protegido fora da lista', () => {
     });
   });
 
-  it('escritores de NÍVEL: só MOD-003 (src/people) — a empresa e o seed delegam (D7)', () => {
+  /**
+   * **SPEC-079/D2 — as migrações de passagem entram PELO NOME.** Elas escrevem
+   * nível (os três padrão nas empresas sem nível) e o nível da turma, no boot
+   * da instância nova com a antiga atendendo — por isso tomam a trava da
+   * empresa, como os outros da lista (a espera é provada no AC-018 da 079).
+   *
+   * O padrão ganhou o `UPDATE turmas SET nivel_id` por SQL: sem ele, a
+   * atribuição do primeiro nível passaria por esta varredura sem ser vista. Não
+   * é exceção por pasta: uma migração nova que escreva nível continua
+   * reprovando.
+   */
+  it('escritores de NÍVEL: só MOD-003 (src/people) e as migrações da 079 — a empresa e o seed delegam (D7)', () => {
     const achados = ocorrencias(
-      /\bnivel\.(create|createMany|upsert|update|updateMany)\b|(INSERT\s+INTO|UPDATE)\s+"?niveis"?\b/i,
+      /\bnivel\.(create|createMany|upsert|update|updateMany)\b|(INSERT\s+INTO|UPDATE)\s+"?niveis"?\b|UPDATE\s+"?turmas"?\s+SET\s+"?nivel_id"?\b/i,
     );
     expect(Object.fromEntries(achados)).toEqual({
+      'prisma/migrations/20260928180000_spec079_niveis_e_primeiro_nivel/migration.sql': 2,
       'src/people/levels.service.ts': 2,
       'src/people/nivel-efetivo.ts': 1,
     });
