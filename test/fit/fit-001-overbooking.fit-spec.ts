@@ -50,6 +50,7 @@ import {
   turmasComNome,
   type Sessao,
 } from './cenario';
+import { nivelDaFixture } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(600_000);
 exigirBancoLocal();
@@ -58,6 +59,8 @@ const db = new PrismaClient();
 let appA: INestApplication<App>;
 let appB: INestApplication<App>;
 let admin: Sessao;
+/** SPEC-079 — `POST /classes` exige o nível; o do cenário (`montarCenario`). */
+let nivelId: string;
 let aluno1: Sessao;
 
 const ITERACOES_A = 20;
@@ -91,6 +94,7 @@ function post(
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await montarCenario(db);
+  nivelId = await nivelDaFixture(db, EMPRESA);
   [appA, appB] = await Promise.all([subirAppReal(), subirAppReal()]);
   admin = await login(appA, ADMIN_EMAIL);
   aluno1 = await login(appB, ALUNO1_EMAIL);
@@ -201,12 +205,14 @@ describe('FIT-001 (c) — duas turmas com `encontros[]` e conflito em um dia só
         post(appA, '/api/v1/classes', admin.accessToken, {
           nome: nome1,
           quadraId: QUADRA_TURMAS,
+          nivelId,
           encontros: [encontro(1), encontro(2)],
           capacidade: 4,
         }),
         post(appB, '/api/v1/classes', admin.accessToken, {
           nome: nome2,
           quadraId: QUADRA_TURMAS,
+          nivelId,
           encontros: [encontro(2), encontro(3)],
           capacidade: 4,
         }),
@@ -359,6 +365,7 @@ describe('FIT-001 (e) — editar o horário da turma × reservar uma ocorrência
       const criada = await post(appA, '/api/v1/classes', admin.accessToken, {
         nome: `FIT-043 E ${i + 1}`,
         quadraId: QUADRA_TURMAS,
+        nivelId,
         encontros: [
           { diaSemana: 5, horaInicio: hora(h), horaFim: hora(h + 1) },
         ],

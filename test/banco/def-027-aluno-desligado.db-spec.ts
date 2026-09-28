@@ -58,6 +58,7 @@ import { CreditosService } from '../../src/creditos/creditos.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -121,7 +122,9 @@ function matriculas(): MatriculasService {
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,contrato_versao_vigente,updated_at) VALUES ('${EMPRESA}','DEF-027','def-027-${EMPRESA}',1,now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,contrato_versao_vigente,updated_at) VALUES ('${EMPRESA}','DEF-027','def-027-${EMPRESA}',1,now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${ADMIN}','admin.def027@x.com','h','Admin','company_admin','${EMPRESA}',now())`,
@@ -151,7 +154,7 @@ async function montar(): Promise<void> {
     `INSERT INTO professores (id,company_id,nome,status) VALUES ('${PROFESSOR}','${EMPRESA}','Prof DEF-027','ativo')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma DEF-027','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma DEF-027','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 

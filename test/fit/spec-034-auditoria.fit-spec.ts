@@ -30,6 +30,7 @@ import {
   montarCenario,
   type Sessao,
 } from './cenario';
+import { primeiroNivelSql } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -89,8 +90,8 @@ beforeAll(async () => {
     `INSERT INTO professores (id,company_id,nome,usuario_id) VALUES ('${PROF}','${C.EMPRESA}','Prof','${UPROF}')`,
   );
   await db.$executeRawUnsafe(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade)
-     VALUES ('${TURMA}','${C.EMPRESA}','Turma SPEC-077','${C.QUADRA_TURMAS}','${PROF}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,nivel_id)
+     VALUES ('${TURMA}','${C.EMPRESA}','Turma SPEC-077','${C.QUADRA_TURMAS}','${PROF}',20,${primeiroNivelSql(`'${C.EMPRESA}'`)})`,
   );
   app = await subirAppReal();
   gestor = await login(app, C.ADMIN_EMAIL);

@@ -41,6 +41,7 @@ import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { comAcao } from './acao-com-efeito';
 import { limparEmpresa, TABELAS_DA_EMPRESA } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -98,7 +99,9 @@ async function semearEmpresa(
   slug: string,
 ) {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresa}','SPEC-069 ${slug}','${slug}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresa}','SPEC-069 ${slug}','${slug}',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
@@ -111,13 +114,13 @@ async function semearEmpresa(
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${quadra}','${empresa}','Q1','${esporte}',100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${turma}','${empresa}','T1','${quadra}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id) VALUES ('${turma}','${empresa}','T1','${quadra}',20,${primeiroNivelSql(`'${empresa}'`)})`,
   );
   // A SEGUNDA turma, que carrega o historico semeado. A do cenario precisa
   // ficar vazia: a AC-010 exige `200 []` em TURMA_A, e a AC-008 exige o mesmo
   // em TURMA_B pela empresa dela.
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${turma2}','${empresa}','T2','${quadra}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id) VALUES ('${turma2}','${empresa}','T2','${quadra}',20,${primeiroNivelSql(`'${empresa}'`)})`,
   );
 
   // **A acao nasce COM efeito, e nao nua.** Ate a SPEC-069 ela podia nascer

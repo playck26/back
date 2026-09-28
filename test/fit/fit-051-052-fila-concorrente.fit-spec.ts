@@ -34,6 +34,7 @@ import { exigirBancoLocal } from '../banco/exigir-banco-local';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(300_000);
 exigirBancoLocal();
@@ -169,7 +170,9 @@ async function naFila(opcoes: {
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-051','fit-051-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-051','fit-051-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -184,7 +187,7 @@ async function montar(): Promise<void> {
   // Capacidade alta: o que está em julgamento aqui é lock, não capacidade.
   for (const t of [TURMA_ORIGEM, TURMA_ALVO]) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${t}','${EMPRESA}','T','${QUADRA}',40,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${t}','${EMPRESA}','T','${QUADRA}',40,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
 }
@@ -219,7 +222,7 @@ describe('FIT-051 — duas réplicas varrendo o MESMO alvo', () => {
     for (let i = 0; i < 10; i += 1) {
       const turma = `f0510000-0000-4000-8000-6000000000${String(i).padStart(2, '0')}`;
       await q(
-        `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${turma}','${EMPRESA}','R${i}','${QUADRA}',40,'ativa')`,
+        `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${turma}','${EMPRESA}','R${i}','${QUADRA}',40,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
       );
       const a = await aluno(`R${i}a`);
       const b = await aluno(`R${i}b`);

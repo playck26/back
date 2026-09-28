@@ -41,6 +41,7 @@ import { exigirBancoLocal } from '../banco/exigir-banco-local';
 import { limparEmpresa } from '../banco/limpar-empresa';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(300_000);
 exigirBancoLocal();
@@ -124,7 +125,7 @@ async function turma(): Promise<string> {
   turmaSeq += 1;
   const id = `f0530000-0000-4000-8000-500000000${String(turmaSeq).padStart(3, '0')}`;
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${id}','${EMPRESA}','T${turmaSeq}','${QUADRA}',40,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${id}','${EMPRESA}','T${turmaSeq}','${QUADRA}',40,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   return id;
 }
@@ -170,7 +171,9 @@ const motivoDe = async (id: string) =>
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-053','fit-053-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-053','fit-053-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -186,7 +189,7 @@ beforeAll(async () => {
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${ADMIN}','admin.fit053@x.com','h','Gestor','company_admin','${EMPRESA}',now())`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_ORIGEM}','${EMPRESA}','Origem','${QUADRA}',40,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_ORIGEM}','${EMPRESA}','Origem','${QUADRA}',40,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 });
 afterAll(async () => {

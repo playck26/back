@@ -16,6 +16,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 exigirBancoLocal();
@@ -60,8 +61,8 @@ async function turma(
   professorId = PROF_A,
 ) {
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status)
-     VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${professorId}',10,'${status}')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id)
+     VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${professorId}',10,'${status}',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 
@@ -80,7 +81,9 @@ async function aula(
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube SPEC-056','clube-spec-056',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube SPEC-056','clube-spec-056',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,

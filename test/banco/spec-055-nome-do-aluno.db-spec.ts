@@ -19,6 +19,7 @@ import { comAcao } from './acao-com-efeito';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { proximoDiaDaSemana, somarDias } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -60,7 +61,9 @@ type Reserva = {
 async function semear() {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube SPEC-055','clube-spec-055',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube SPEC-055','clube-spec-055',now())`,
+    ),
   );
   for (const [id, email, nome, role] of [
     [UADMIN, 'spec055-admin@t.local', 'Gestora', 'company_admin'],
@@ -90,7 +93,7 @@ async function semear() {
     );
   }
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA}',10)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id) VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA}',10,${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 }
 

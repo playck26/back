@@ -23,6 +23,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { nivelDaFixture } from './nivel-da-fixture';
 
 jest.setTimeout(60_000);
 
@@ -46,6 +47,8 @@ async function limpar(): Promise<void> {
   await prisma.turma.deleteMany({ where: { companyId: EMPRESA } });
   await prisma.quadra.deleteMany({ where: { companyId: EMPRESA } });
   await prisma.esporteDeQuadra.deleteMany({ where: { companyId: EMPRESA } });
+  // SPEC-079 — o nível da turma, depois dela (FK `RESTRICT` das duas).
+  await prisma.nivel.deleteMany({ where: { companyId: EMPRESA } });
   await prisma.empresa.deleteMany({ where: { id: EMPRESA } });
 }
 
@@ -65,12 +68,15 @@ async function semear(): Promise<void> {
       precoHora: 100,
     },
   });
+  // SPEC-079 — toda turma tem nível, e a empresa criada aqui nasce sem nenhum.
+  const nivelId = await nivelDaFixture(prisma, EMPRESA);
   await prisma.turma.create({
     data: {
       id: TURMA,
       companyId: EMPRESA,
       nome: 'T',
       quadraId: QUADRA,
+      nivelId,
       // SPEC-019/TASK-003 — as três colunas antigas saíram. A turma nasce
       // aqui **sem encontro nenhum**, de propósito: cada teste cria os que
       // precisa, e "turma sem encontro" é exatamente o estado que a INV-051

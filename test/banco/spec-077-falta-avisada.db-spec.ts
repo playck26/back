@@ -22,6 +22,7 @@ import { PresencaService } from '../../src/classes/presenca.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { lerCatalogo } from '../../src/presenca-automatica/cli/fecho-de-linhas';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -66,7 +67,9 @@ async function ocorrencia(
 async function montar(): Promise<void> {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,contrato_versao_vigente,updated_at) VALUES ('${EMPRESA}','SPEC-077/031','spec-077-031',1,now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,contrato_versao_vigente,updated_at) VALUES ('${EMPRESA}','SPEC-077/031','spec-077-031',1,now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
@@ -91,7 +94,7 @@ async function montar(): Promise<void> {
     [OUTRA_TURMA, 'Outra 077'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${t}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${t}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
   await q(

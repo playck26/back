@@ -19,6 +19,7 @@ import { PresencaService } from '../../src/classes/presenca.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { limparEmpresa } from './limpar-empresa';
 import { comValvula } from './valvula-de-presenca';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -106,7 +107,9 @@ beforeAll(async () => {
   // em 2026-08-24 isso rodou contra produção e apagou os dados.
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT','fit',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT','fit',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${UPROF}','prof@fit.local','x','Prof','professor','${EMPRESA}',now())`,
@@ -127,7 +130,7 @@ beforeAll(async () => {
     [OUTRA_TURMA, 'Outra Turma'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20)`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,nivel_id) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
     await q(
       `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at) VALUES (gen_random_uuid(),'${id}',1,TIME '08:00',TIME '09:00',now())`,

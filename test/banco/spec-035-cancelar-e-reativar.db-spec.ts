@@ -42,6 +42,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { DisponibilidadeProfessorService } from '../../src/people/disponibilidade-professor.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -120,7 +121,9 @@ async function montar(
   } = {},
 ) {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-035','spec-035-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-035','spec-035-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -138,7 +141,7 @@ async function montar(
     `INSERT INTO alunos (id,usuario_id,company_id,vinculo) VALUES ('${ALUNO}','${ALUNO_U}','${EMPRESA}','aprovado')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma 035','${QUADRA}',20,'${opcoes.statusDaTurma ?? 'ativa'}')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma 035','${QUADRA}',20,'${opcoes.statusDaTurma ?? 'ativa'}',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at) VALUES (gen_random_uuid(),'${TURMA}',${diaDaSemana(FUTURO)},'09:00','10:00',now())`,
@@ -456,7 +459,7 @@ describe('SPEC-035/REQ-003 — reativar UMA ocorrência', () => {
     await montar();
     const outraTurma = 'c0350000-0000-4000-8000-0000000000aa';
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${outraTurma}','${EMPRESA}','Outra','${QUADRA}',10,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${outraTurma}','${EMPRESA}','Outra','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
     const id = await cancelarAFutura();
 

@@ -20,6 +20,7 @@ import { FaltaAvisadaService } from '../../src/classes/falta-avisada.service';
 import { PresencaService } from '../../src/classes/presenca.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 
@@ -131,7 +132,9 @@ async function moverOcorrencia(id: string, n: number): Promise<void> {
 async function semearFixture() {
   await limparEmpresa(semear, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-018','fit-018',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-018','fit-018',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES ('${ESPORTE}','${EMPRESA}','Tenis',0,now())`,
@@ -158,7 +161,7 @@ async function semearFixture() {
     [OUTRA_TURMA, 'Outra'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${id}','${EMPRESA}','${nome}','${QUADRA}','${PROF}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
   // Só o ALUNO é matriculado; o `AFORA` existe para provar o AC-016.
@@ -283,7 +286,9 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
     const aula = await ocorrenciaEmMinutos(240);
     const outraEmpresa = 'f0180000-0000-4000-8000-0000000000bb';
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${outraEmpresa}','Outra','outra-f018',now())`,
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${outraEmpresa}','Outra','outra-f018',now())`,
+      ),
     );
 
     // A ocupação é da EMPRESA; a falta se diz de `outraEmpresa`.
@@ -294,6 +299,8 @@ describe('FIT-018/FIT-019 — a falta avisada (SPEC-031/REQ-006)', () => {
       ),
     ).rejects.toThrow(/23503/);
 
+    // SPEC-079 — a empresa de fixtura nasce com nível (FK `RESTRICT`).
+    await q(`DELETE FROM niveis WHERE company_id = '${outraEmpresa}'`);
     await q(`DELETE FROM empresas WHERE id = '${outraEmpresa}'`);
   });
 

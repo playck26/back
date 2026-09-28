@@ -19,6 +19,7 @@ import { ConfigOperacaoService } from '../../src/company-settings/config-operaca
 import { momentoDaAula } from '../../src/push/avisos-de-gesto';
 import { instanteNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -148,7 +149,9 @@ beforeEach(async () => {
     [OUTRA, 'spec-078-outra'],
   ]) {
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${e}','SPEC-078 ${slug}','${slug}',now())`,
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${e}','SPEC-078 ${slug}','${slug}',now())`,
+      ),
     );
   }
   await q(`INSERT INTO usuarios (id,email,senha_hash,nome,role,status,company_id,updated_at) VALUES
@@ -174,9 +177,9 @@ beforeEach(async () => {
   await q(
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora,status) VALUES ('${QUADRA}','${EMPRESA}','${NOMES.quadra}','${esporte.id}',80,'ativa')`,
   );
-  await q(`INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES
-    ('${TURMA_A}','${EMPRESA}','${NOMES.turmaA}','${QUADRA}','${PROF}',10,'ativa'),
-    ('${TURMA_B}','${EMPRESA}','${NOMES.turmaB}','${QUADRA}','${PROF}',10,'ativa')`);
+  await q(`INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES
+    ('${TURMA_A}','${EMPRESA}','${NOMES.turmaA}','${QUADRA}','${PROF}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)}),
+    ('${TURMA_B}','${EMPRESA}','${NOMES.turmaB}','${QUADRA}','${PROF}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`);
   await q(
     `INSERT INTO turma_alunos (id,turma_id,aluno_id,created_at) VALUES (gen_random_uuid(),'${TURMA_A}','${ALUNO}',now())`,
   );

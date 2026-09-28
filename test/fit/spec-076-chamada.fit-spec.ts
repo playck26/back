@@ -27,6 +27,7 @@ import {
   type Sessao,
 } from './cenario';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
+import { primeiroNivelSql } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(600_000);
 exigirBancoLocal();
@@ -90,7 +91,7 @@ beforeAll(async () => {
     [OUTRA_TURMA, 'Outra SPEC-076'],
   ] as const) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${id}','${C.EMPRESA}','${nome}','${C.QUADRA_TURMAS}','${PROF}',10,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${id}','${C.EMPRESA}','${nome}','${C.QUADRA_TURMAS}','${PROF}',10,'ativa',${primeiroNivelSql(`'${C.EMPRESA}'`)})`,
     );
   }
   await q(

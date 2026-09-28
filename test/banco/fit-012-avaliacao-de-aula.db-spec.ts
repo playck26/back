@@ -19,6 +19,7 @@ import { AvaliacaoDeAulaService } from '../../src/classes/avaliacao-de-aula.serv
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -65,7 +66,9 @@ async function montar(quantosAlunos: number, matricular = true) {
   const q = (sql: string) => db.$executeRawUnsafe(sql);
 
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-012','fit-012-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-012','fit-012-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -74,7 +77,7 @@ async function montar(quantosAlunos: number, matricular = true) {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUADRA}','${EMPRESA}','Q FIT-012',(SELECT id FROM esportes_de_quadra WHERE company_id='${EMPRESA}' AND nome='Tenis'),100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA}','${EMPRESA}','Turma FIT-012','${QUADRA}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma FIT-012','${QUADRA}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 
   for (const [id, offset] of [
@@ -300,7 +303,9 @@ describe('FIT-012 — o isolamento entre empresas é do BANCO', () => {
     const q = (sql: string) => db.$executeRawUnsafe(sql);
 
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${OUTRA_EMPRESA}','FIT-012 Outra','fit-012-outra',now())`,
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${OUTRA_EMPRESA}','FIT-012 Outra','fit-012-outra',now())`,
+      ),
     );
     await q(
       `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${OUTRA_EMPRESA}','Tenis',0,now())`,

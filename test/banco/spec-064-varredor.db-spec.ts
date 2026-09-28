@@ -23,6 +23,7 @@ import { ConfigOperacaoService } from '../../src/company-settings/config-operaca
 import { TIPO_LISTA_ESPERA } from '../../src/fila-de-espera/aviso-do-chamado';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -134,7 +135,9 @@ const linha = (id: string) =>
 
 async function montar(capacidade = 2): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-064 varredor','spec-064-v-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-064 varredor','spec-064-v-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -148,7 +151,7 @@ async function montar(capacidade = 2): Promise<void> {
   );
   for (const t of [TURMA, TURMA_ALVO]) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${t}','${EMPRESA}','T','${QUADRA}',${capacidade},'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${t}','${EMPRESA}','T','${QUADRA}',${capacidade},'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
 }

@@ -15,6 +15,7 @@ import {
   urlDaConexaoDeTeste,
 } from './config-de-presenca';
 import { comValvula } from './valvula-de-presenca';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 export const EMPRESA = '05720000-0000-4000-8000-000000000001';
 export const QUADRA = '05720000-0000-4000-8000-000000000002';
@@ -65,7 +66,9 @@ function proximo(prefixo: string): string {
 
 export async function montarEmpresa(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-057 presenca','spec-057-pa-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-057 presenca','spec-057-pa-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,
@@ -94,7 +97,7 @@ export async function montarEmpresa(): Promise<void> {
     [TURMA_ORIGEM, 'Origem', PROF],
   ]) {
     await q(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${t}','${EMPRESA}','${nome}','${QUADRA}','${prof}',20,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${t}','${EMPRESA}','${nome}','${QUADRA}','${prof}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
     );
   }
 }

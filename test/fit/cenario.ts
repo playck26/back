@@ -21,6 +21,7 @@ import type { INestApplication } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { comNivelDaFixture } from '../banco/nivel-da-fixture';
 
 export interface ClienteDeFit {
   $executeRawUnsafe(sql: string, ...valores: unknown[]): Promise<number>;
@@ -104,7 +105,9 @@ export async function montarCenario(
   const q = (sql: string) => db.$executeRawUnsafe(sql);
 
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-043 ${EMPRESA}','fit-043-${EMPRESA}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-043 ${EMPRESA}','fit-043-${EMPRESA}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${EMPRESA}','Tenis',0,now())`,

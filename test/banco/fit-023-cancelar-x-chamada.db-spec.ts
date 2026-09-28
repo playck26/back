@@ -49,6 +49,7 @@ import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { CreditosService } from '../../src/creditos/creditos.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(300_000);
 
@@ -199,7 +200,9 @@ async function esperarAte(
 async function semearBase() {
   await limparEmpresa(semear, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-023','fit-023',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','FIT-023','fit-023',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES
@@ -225,7 +228,7 @@ async function semearBase() {
        ('${QUADRA2}','${EMPRESA}','Q2','${ESPORTE}',100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade) VALUES ('${TURMA}','${EMPRESA}','Turma FIT-023','${QUADRA}','${PROF}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,nivel_id) VALUES ('${TURMA}','${EMPRESA}','Turma FIT-023','${QUADRA}','${PROF}',20,${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO turma_alunos (id,turma_id,aluno_id) VALUES (gen_random_uuid(),'${TURMA}','${ALUNO}')`,

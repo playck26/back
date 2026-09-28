@@ -26,6 +26,7 @@ import type { StudentsService } from '../../src/people/students.service';
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import { CreditosService } from '../../src/creditos/creditos.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -198,7 +199,9 @@ const noClube = (data: string, hora: string) =>
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-077 034','spec-077-034',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-077 034','spec-077-034',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES
@@ -232,9 +235,9 @@ beforeAll(async () => {
     );
   }
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade) VALUES
-       ('${TURMA_A}','${EMPRESA}','Turma A','${Q1}','${PROF}',20),
-       ('${TURMA_B}','${EMPRESA}','Turma B','${Q1}','${PROF}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,nivel_id) VALUES
+       ('${TURMA_A}','${EMPRESA}','Turma A','${Q1}','${PROF}',20,${primeiroNivelSql(`'${EMPRESA}'`)}),
+       ('${TURMA_B}','${EMPRESA}','Turma B','${Q1}','${PROF}',20,${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 });
 

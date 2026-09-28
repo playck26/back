@@ -31,6 +31,7 @@ import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { proximoDiaDaSemana, somarDias } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -143,7 +144,9 @@ async function semear() {
     [EMPRESA_B, 'gate-b'],
   ] as const) {
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${id}','Clube 039 ${slug}','clube-039-${slug}',now())`,
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${id}','Clube 039 ${slug}','clube-039-${slug}',now())`,
+      ),
     );
   }
   await q(
@@ -182,8 +185,8 @@ async function semear() {
     );
   }
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,professor_id)
-     VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA_1}',10,'${PROF}')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,professor_id,nivel_id)
+     VALUES ('${TURMA}','${EMPRESA}','T1','${QUADRA_1}',10,'${PROF}',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   // O clube abre cedo e fecha tarde: o expediente da quadra não pode ser o que
   // recusa, senão o teste da janela do PROFESSOR provaria outra coisa.

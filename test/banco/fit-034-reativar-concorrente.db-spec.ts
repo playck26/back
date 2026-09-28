@@ -40,6 +40,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 
@@ -125,7 +126,9 @@ function desfecho(promessa: Promise<unknown>): Promise<{
 beforeAll(async () => {
   await limparEmpresa(semear, EMPRESA);
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube FIT-034','clube-fit-034',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube FIT-034','clube-fit-034',now())`,
+    ),
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
@@ -155,8 +158,8 @@ beforeAll(async () => {
     );
   }
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status)
-     VALUES ('${TURMA}','${EMPRESA}','Turma FIT-034','${QUADRA}',20,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id)
+     VALUES ('${TURMA}','${EMPRESA}','Turma FIT-034','${QUADRA}',20,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
   await q(
     `INSERT INTO turma_encontros (id,turma_id,dia_semana,hora_inicio,hora_fim,created_at)

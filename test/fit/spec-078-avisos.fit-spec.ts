@@ -25,6 +25,7 @@ import {
   type IdsDoCenario,
   type Sessao,
 } from './cenario';
+import { primeiroNivelSql } from '../banco/nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -127,8 +128,8 @@ beforeAll(async () => {
     [T2, 'Turma 2'],
     [T3, 'Turma 3'],
   ]) {
-    await q(`INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status)
-             VALUES ('${t}','${C.EMPRESA}','${nome}','${C.QUADRA_TURMAS}',10,'ativa')`);
+    await q(`INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id)
+             VALUES ('${t}','${C.EMPRESA}','${nome}','${C.QUADRA_TURMAS}',10,'ativa',${primeiroNivelSql(`'${C.EMPRESA}'`)})`);
   }
   for (const a of [C.ALUNO1, C.ALUNO2]) {
     await q(

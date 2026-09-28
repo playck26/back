@@ -31,6 +31,7 @@ import {
   WorkerDeExclusao,
 } from '../../src/storage/worker-de-exclusao.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -591,9 +592,9 @@ describe('WorkerDeExclusao contra Postgres real', () => {
       const quadra = 'e2e2e2e2-2222-4222-8222-e2e2e2e2e2e2';
       const turma = 'e3e3e3e3-3333-4333-8333-e3e3e3e3e3e3';
       await A.$executeRawUnsafe(
-        `INSERT INTO empresas (id,nome,slug,updated_at)
+        comNivelDaFixture(`INSERT INTO empresas (id,nome,slug,updated_at)
          VALUES ($1::uuid,'Deadlock','deadlock-fit',now())
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (id) DO NOTHING`),
         empresa,
       );
       await A.$executeRawUnsafe(
@@ -619,8 +620,8 @@ describe('WorkerDeExclusao contra Postgres real', () => {
       // sem encontro é o estado que a INV-051 proíbe, e a migration de
       // contract **aborta** se achar uma.
       await A.$executeRawUnsafe(
-        `INSERT INTO turmas (id,company_id,quadra_id,nome,capacidade)
-         VALUES ($1::uuid,$2::uuid,$3::uuid,'T',10)
+        `INSERT INTO turmas (id,company_id,quadra_id,nome,capacidade,nivel_id)
+         VALUES ($1::uuid,$2::uuid,$3::uuid,'T',10,${primeiroNivelSql(`$2::uuid`)})
          ON CONFLICT (id) DO NOTHING`,
         turma,
         empresa,
@@ -668,6 +669,11 @@ describe('WorkerDeExclusao contra Postgres real', () => {
       // bloqueia o `DELETE FROM empresas` de qualquer limpeza escrita à mão.
       await A.$executeRawUnsafe(
         `DELETE FROM esportes_de_quadra WHERE company_id = $1::uuid`,
+        empresa,
+      );
+      // SPEC-079 — e o nível da fixtura, pelo mesmo motivo (FK `RESTRICT`).
+      await A.$executeRawUnsafe(
+        `DELETE FROM niveis WHERE company_id = $1::uuid`,
         empresa,
       );
       await A.$executeRawUnsafe(

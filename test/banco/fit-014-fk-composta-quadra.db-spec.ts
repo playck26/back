@@ -22,6 +22,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
+import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
 
 jest.setTimeout(120_000);
 
@@ -66,7 +67,9 @@ async function recusaPelaFK(sql: string, constraint: string): Promise<void> {
 
 async function empresaCom(empresaId: string, quadraId: string, slug: string) {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresaId}','FIT-014 ${slug}','fit-014-${slug}',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${empresaId}','FIT-014 ${slug}','fit-014-${slug}',now())`,
+    ),
   );
   await q(
     `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${empresaId}','Tenis',0,now())`,
@@ -118,7 +121,7 @@ describe('FIT-014 — ocupacoes_quadra', () => {
 describe('FIT-014 — turmas', () => {
   it('RECUSA turma da empresa A numa quadra da empresa B', async () => {
     await recusaPelaFK(
-      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES (gen_random_uuid(),'${EMPRESA_A}','Turma torta','${QUADRA_B}','${PROF_A}',10,'ativa')`,
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES (gen_random_uuid(),'${EMPRESA_A}','Turma torta','${QUADRA_B}','${PROF_A}',10,'ativa',${primeiroNivelSql(`'${EMPRESA_A}'`)})`,
       'turmas_quadra_fkey',
     );
   });
@@ -126,7 +129,7 @@ describe('FIT-014 — turmas', () => {
   it('e ACEITA na quadra da própria empresa', async () => {
     await expect(
       q(
-        `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status) VALUES ('${TURMA_A}','${EMPRESA_A}','Turma certa','${QUADRA_A}','${PROF_A}',10,'ativa')`,
+        `INSERT INTO turmas (id,company_id,nome,quadra_id,professor_id,capacidade,status,nivel_id) VALUES ('${TURMA_A}','${EMPRESA_A}','Turma certa','${QUADRA_A}','${PROF_A}',10,'ativa',${primeiroNivelSql(`'${EMPRESA_A}'`)})`,
       ),
     ).resolves.toBeDefined();
   });

@@ -64,8 +64,14 @@ function nos(plano, saida = []) {
 }
 
 async function semear() {
+  // SPEC-079 — toda turma tem nivel, entao a empresa nasce com um. Por SQL
+  // aqui, e nao pelo `test/banco/nivel-da-fixture.ts`: este arquivo roda em
+  // `node` puro, que nao carrega `.ts`.
   await q(
     `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${E}','AC-013','ac-013-explain',now())`,
+  );
+  await q(
+    `INSERT INTO niveis (id,company_id,nome,ordem) VALUES (gen_random_uuid(),'${E}','Nível da fixtura',0)`,
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES
@@ -82,7 +88,7 @@ async function semear() {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora) VALUES ('${QUA}','${E}','Q1','${ESP}',100)`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade) VALUES ('${TUR}','${E}','T1','${QUA}',20)`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,nivel_id) VALUES ('${TUR}','${E}','T1','${QUA}',20,(SELECT id FROM niveis WHERE company_id = '${E}' LIMIT 1))`,
   );
   await q(
     `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)

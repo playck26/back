@@ -23,6 +23,11 @@ import type { DisponibilidadeProfessorService } from '../../src/people/disponibi
 import type { ImagemDaQuadraService } from '../../src/courts/imagem-da-quadra.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StudentsService } from '../../src/people/students.service';
+import {
+  comNivelDaFixture,
+  nivelDaFixture,
+  primeiroNivelSql,
+} from './nivel-da-fixture';
 
 jest.setTimeout(180_000);
 exigirBancoLocal();
@@ -84,6 +89,7 @@ async function criarTurmaA(): Promise<{
     {
       nome: 'Turma A',
       quadraId: QUADRA,
+      nivelId: await nivelDaFixture(db, EMPRESA),
       professorId: PROF,
       capacidade: 10,
       encontros: [{ diaSemana, horaInicio: '19:00', horaFim: '20:00' }],
@@ -150,7 +156,9 @@ beforeEach(async () => {
   await limparEmpresa(db, EMPRESA);
   seq = 100;
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-078 reposicao','spec-078-reposicao',now())`,
+    comNivelDaFixture(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-078 reposicao','spec-078-reposicao',now())`,
+    ),
   );
   await q(`INSERT INTO usuarios (id,email,senha_hash,nome,role,status,company_id,updated_at) VALUES
     ('${GESTOR}','gestor@s078r.test','h','Gestor','company_admin','ativo','${EMPRESA}',now()),
@@ -181,7 +189,7 @@ beforeEach(async () => {
     `INSERT INTO quadras (id,company_id,nome,esporte_id,preco_hora,status) VALUES ('${QUADRA}','${EMPRESA}','Q','${esporte.id}',80,'ativa')`,
   );
   await q(
-    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status) VALUES ('${TURMA_B}','${EMPRESA}','Turma B','${QUADRA}',10,'ativa')`,
+    `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ('${TURMA_B}','${EMPRESA}','Turma B','${QUADRA}',10,'ativa',${primeiroNivelSql(`'${EMPRESA}'`)})`,
   );
 });
 
