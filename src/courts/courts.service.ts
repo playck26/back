@@ -1976,10 +1976,13 @@ export class CourtsService {
             // SPEC-063/D5 — o aviso ao gestor expira no FIM do bloco. Vem na
             // linha que já está travada: não custa ida nova.
             hora_fim: Date;
+            // SPEC-078 — aula particular (reserva com professor) muda a
+            // palavra do aviso ao aluno.
+            professor_id: string | null;
           }[]
         >`
         SELECT id, company_id, aluno_id, origem_tipo, status_pagamento,
-               data, hora_inicio, hora_fim
+               data, hora_inicio, hora_fim, professor_id
           FROM ocupacoes_quadra
          WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
          FOR UPDATE
@@ -2129,6 +2132,8 @@ export class CourtsService {
           autorId,
           'reserva_cancelada',
         );
+        // SPEC-078/AC-012, AC-013 — e o dono da reserva, se não foi ele.
+        avisos.comAlunoDaReserva(bruta.aluno_id, !!bruta.professor_id);
         avisos.anotarEfeito({
           data: ocupacao.data,
           horaInicio: ocupacao.horaInicio,
@@ -2439,6 +2444,9 @@ export class CourtsService {
         // Um `if` no chamador seria a mesma decisão escrita duas vezes, e a
         // segunda envelheceria.
         const avisos = new EnfileiradorDeAvisos(tx, companyId, autorId, gesto);
+        // SPEC-078/AC-012 — o segundo caminho que cancela avisa o aluno igual.
+        // (No `pago`, o público é `ninguem` e isto não tem efeito.)
+        avisos.comAlunoDaReserva(ocupacao.alunoId, !!ocupacao.professorId);
         const linha = await tx.ocupacaoQuadra.update({
           where: { id },
           data: { statusPagamento: status, transicaoId },
@@ -2619,10 +2627,13 @@ export class CourtsService {
               hora_fim: Date;
               origem_tipo: 'AVULSO' | 'TURMA';
               status_pagamento: string;
+              // SPEC-078/D3 — o dono da reserva, para o aviso de que ela mudou.
+              aluno_id: string | null;
+              professor_id: string | null;
             }[]
           >`
             SELECT id, quadra_id, data, hora_inicio, hora_fim,
-                   origem_tipo, status_pagamento
+                   origem_tipo, status_pagamento, aluno_id, professor_id
               FROM ocupacoes_quadra
              WHERE id = ${id}::uuid AND company_id = ${companyId}::uuid
              FOR UPDATE
@@ -2744,6 +2755,8 @@ export class CourtsService {
             autorId,
             'reserva_movida',
           );
+          // SPEC-078/AC-015 — e o dono da reserva (I8).
+          avisos.comAlunoDaReserva(atual.aluno_id, !!atual.professor_id);
           const movida = await tx.ocupacaoQuadra.update({
             where: { id },
             // `alunoId`, `valor` e `statusPagamento` ficam de fora **de

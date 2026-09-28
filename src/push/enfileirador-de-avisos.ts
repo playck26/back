@@ -72,6 +72,9 @@ export class EnfileiradorDeAvisos {
   private professorAnteriorId: string | null = null;
   /** SPEC-078/REQ-002 — quem tinha reposição nas ocorrências canceladas. */
   private titulares: readonly TitularDeReposicao[] = [];
+  /** SPEC-078/D3 — o dono da reserva, e se ela é aula particular. */
+  private alunoDaReservaId: string | null = null;
+  private aulaParticular = false;
   private despachado = false;
 
   constructor(
@@ -96,6 +99,16 @@ export class EnfileiradorDeAvisos {
    */
   comTitularesDeReposicao(titulares: readonly TitularDeReposicao[]): void {
     this.titulares = titulares;
+  }
+
+  /**
+   * SPEC-078/D3 — o aluno da reserva que o gesto desfez. Vem da linha
+   * TRAVADA (`FOR UPDATE`) de quem chama. `null` = reserva sem aluno, e aí
+   * só os gestores recebem.
+   */
+  comAlunoDaReserva(alunoId: string | null, aulaParticular: boolean): void {
+    this.alunoDaReservaId = alunoId;
+    this.aulaParticular = aulaParticular;
   }
 
   /** A turma alvo. Necessária para todo gesto de público `turma`. */
@@ -217,6 +230,7 @@ export class EnfileiradorDeAvisos {
       data: unico?.data ?? null,
       horaInicio: unico?.horaInicio ?? null,
       horaFim: unico?.horaFim ?? null,
+      aulaParticular: this.aulaParticular,
     };
   }
 
@@ -230,14 +244,18 @@ export class EnfileiradorDeAvisos {
   private async resolverDestinatarios(): Promise<Destinatario[]> {
     const publico = PUBLICO_POR_TIPO[this.tipo];
 
+    if (publico === 'gestores_e_aluno') {
+      // SPEC-078/D3 — os gestores primeiro: se um gestor fosse também o aluno
+      // da reserva (não acontece hoje), fica o aviso de gestor, como no
+      // desempate do `semRepetidos`.
+      return this.semRepetidos([
+        ...(await this.gestores()),
+        ...(await this.alunoDaReserva()),
+      ]);
+    }
+
     if (publico === 'gestores') {
-      const linhas = await this.tx.$queryRaw<{ usuario_id: string }[]>`
-        SELECT id AS usuario_id FROM usuarios
-         WHERE company_id = ${this.companyId}::uuid
-           AND role = 'company_admin'
-           AND status = 'ativo'
-           AND id IS DISTINCT FROM ${this.autorId}::uuid`;
-      return linhas.map((l) => ({ usuarioId: l.usuario_id, papel: 'gestor' }));
+      return this.gestores();
     }
 
     if (publico === 'aluno_removido') {
@@ -329,6 +347,35 @@ export class EnfileiradorDeAvisos {
    * tem destinatário possível. **E ela tem carga desde a D9** — ver o
    * comentário dentro de `daTurma()`.
    */
+  private async gestores(): Promise<Destinatario[]> {
+    const linhas = await this.tx.$queryRaw<{ usuario_id: string }[]>`
+      SELECT id AS usuario_id FROM usuarios
+       WHERE company_id = ${this.companyId}::uuid
+         AND role = 'company_admin'
+         AND status = 'ativo'
+         AND id IS DISTINCT FROM ${this.autorId}::uuid`;
+    return linhas.map((l) => ({ usuarioId: l.usuario_id, papel: 'gestor' }));
+  }
+
+  /**
+   * SPEC-078/AC-013 — o autor sai no SQL: quem cancela a própria reserva
+   * não recebe o aviso do próprio ato. Sem aluno, ninguém.
+   */
+  private async alunoDaReserva(): Promise<Destinatario[]> {
+    if (!this.alunoDaReservaId) {
+      return [];
+    }
+    const linhas = await this.tx.$queryRaw<{ usuario_id: string }[]>`
+      SELECT usuario_id FROM alunos
+       WHERE id = ${this.alunoDaReservaId}::uuid
+         AND company_id = ${this.companyId}::uuid
+         AND usuario_id IS DISTINCT FROM ${this.autorId}::uuid`;
+    return linhas.map((l) => ({
+      usuarioId: l.usuario_id,
+      papel: 'aluno_da_reserva' as const,
+    }));
+  }
+
   private async professorAnterior(): Promise<Destinatario[]> {
     if (!this.professorAnteriorId) {
       return [];

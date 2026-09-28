@@ -61,6 +61,12 @@ export type PublicoDoGesto =
   | 'turma'
   | 'aluno_removido'
   | 'turma_e_professor_anterior'
+  /**
+   * SPEC-078/D3 — os gestores **e** o aluno dono da reserva que o gestor
+   * cancelou ou moveu (I2, I8). Composto, no molde do
+   * `turma_e_professor_anterior`: um gesto, dois conjuntos de destinatários.
+   */
+  | 'gestores_e_aluno'
   | 'ninguem';
 
 /**
@@ -79,7 +85,13 @@ export type PapelDoDestinatario =
    * pertence a ela, e mandá-lo para lá seria mandá-lo para um 403. É a mesma
    * decisão que o `turma_aluno_removido` tomou para o aluno removido.
    */
-  | 'professor_anterior';
+  | 'professor_anterior'
+  /**
+   * SPEC-078/D3 — o dono da reserva que o GESTOR desfez. Papel próprio porque
+   * o texto é outro ("Sua reserva… foi cancelada pelo clube"), e não o
+   * resumo que o gestor recebe.
+   */
+  | 'aluno_da_reserva';
 
 /** O que o serviço de domínio sabe e o texto precisa. */
 export interface FatosDoGesto {
@@ -93,6 +105,11 @@ export interface FatosDoGesto {
   readonly horaInicio: Date | null;
   /** `hora_fim` da ocorrência — entra no **prazo** (D5). */
   readonly horaFim: Date | null;
+  /**
+   * SPEC-078 — a reserva é uma **aula particular** (reserva avulsa com
+   * professor, SPEC-039)? Muda só a palavra no aviso ao aluno.
+   */
+  readonly aulaParticular?: boolean;
 }
 
 export interface AvisoMontado {
@@ -112,8 +129,8 @@ export interface AvisoMontado {
  */
 export const PUBLICO_POR_TIPO: Record<TipoDeAcao, PublicoDoGesto> = {
   reserva_criada: 'gestores',
-  reserva_cancelada: 'gestores',
-  reserva_movida: 'gestores',
+  reserva_cancelada: 'gestores_e_aluno',
+  reserva_movida: 'gestores_e_aluno',
   aula_cancelada: 'turma',
   aula_reativada: 'turma',
   turma_horario_editado: 'turma',
@@ -274,10 +291,25 @@ function corpoDoGesto(
         fatos.quantidade === 1 ? 'horário' : 'horários'
       }`;
     case 'reserva_cancelada':
+      if (papel === 'aluno_da_reserva') {
+        // SPEC-078/I10 — "pelo clube": não é nome, e é o que distingue do
+        // cancelamento que ele mesmo fez (esse, o autor não recebe).
+        const oque = fatos.aulaParticular ? 'aula particular' : 'reserva';
+        return momento
+          ? `Sua ${oque} de ${momento} foi cancelada pelo clube`
+          : `Sua ${oque} foi cancelada pelo clube`;
+      }
       return momento
         ? `Uma reserva de ${momento} foi cancelada`
         : 'Uma reserva foi cancelada';
     case 'reserva_movida':
+      if (papel === 'aluno_da_reserva') {
+        // SPEC-078/I8, I10 — o instante é o do DESTINO: é onde a reserva está.
+        const oque = fatos.aulaParticular ? 'aula particular' : 'reserva';
+        return momento
+          ? `Sua ${oque} mudou para ${momento}`
+          : `Sua ${oque} mudou de horário`;
+      }
       return 'Uma reserva mudou de horário';
     case 'aula_cancelada':
       return momento
