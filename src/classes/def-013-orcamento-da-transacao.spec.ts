@@ -385,6 +385,9 @@ function buildClassesService(tx: Prisma.TransactionClient) {
 const DTO_BASE = {
   nome: 'Turma da manhã',
   quadraId: 'q1',
+  // SPEC-079 — toda turma tem nível. A conferência do nível é FORA da
+  // transação (`assertNivelDaEmpresa`), e não entra no orçamento.
+  nivelId: 'n1',
   capacidade: 10,
 };
 

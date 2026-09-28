@@ -8,6 +8,7 @@ import {
   IsPositive,
   IsString,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { EncontroDto } from './encontro.dto';
@@ -20,8 +21,14 @@ export class UpdateClassDto {
   @MinLength(1)
   nome?: string;
 
+  /**
+   * SPEC-079/REQ-002 — ausente, não mexe no nível; presente, tem de ser um
+   * nível. **`null` é recusado (`400`)**: toda turma tem nível. Por isso
+   * `ValidateIf` e não `IsOptional`, que pula a validação também do `null` —
+   * e era por ele que a edição tirava o nível da turma.
+   */
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_objeto, valor) => valor !== undefined)
   @UuidNoCorpo()
   nivelId?: string;
 

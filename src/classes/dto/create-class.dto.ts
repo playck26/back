@@ -18,10 +18,15 @@ export class CreateClassDto {
   @MinLength(1)
   nome!: string;
 
+  /**
+   * SPEC-079/REQ-002 — **toda turma tem nível**: sem ele, `400` (como o
+   * `quadraId`). O `@ApiPropertyOptional` fica até o M3 de propósito: o
+   * contrato OpenAPI muda junto com o `NOT NULL` (TASK-005), e o CI recusa
+   * `openapi.json` diferente do gerado.
+   */
   @ApiPropertyOptional()
-  @IsOptional()
   @UuidNoCorpo()
-  nivelId?: string;
+  nivelId!: string;
 
   @ApiPropertyOptional()
   @IsOptional()

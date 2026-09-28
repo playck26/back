@@ -15,6 +15,9 @@ function buildPrismaMock() {
       findFirst: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      // SPEC-079/REQ-007 — o `remove` conta os níveis do clube. Padrão: dois,
+      // e apagar um é permitido; o caso do último sobrescreve.
+      count: jest.fn().mockResolvedValue(2),
     },
     aluno: {
       count: jest.fn(),
@@ -103,6 +106,28 @@ describe('LevelsService', () => {
       );
       expect(prisma.turma.count).toHaveBeenCalledWith({
         where: { nivelId: 'n1', companyId: 'c1' },
+      });
+      expect(prisma.nivel.delete).not.toHaveBeenCalled();
+    });
+
+    it('SPEC-079/AC-015 — o último nível do clube: 422 ULTIMO_NIVEL_DO_CLUBE, e nada é apagado', async () => {
+      (prisma.nivel.findFirst as jest.Mock).mockResolvedValue({ id: 'n1' });
+      (prisma.nivel.count as jest.Mock).mockResolvedValue(1);
+
+      const erro = await service.remove('c1', 'n1').then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect(erro).toBeInstanceOf(UnprocessableEntityException);
+      expect((erro as UnprocessableEntityException).getResponse()).toEqual({
+        statusCode: 422,
+        code: 'ULTIMO_NIVEL_DO_CLUBE',
+        message:
+          'O clube precisa de pelo menos um nível. Crie outro antes de apagar este.',
+      });
+      expect(prisma.nivel.count).toHaveBeenCalledWith({
+        where: { companyId: 'c1' },
       });
       expect(prisma.nivel.delete).not.toHaveBeenCalled();
     });
