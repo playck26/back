@@ -10,12 +10,25 @@
  * nenhuma delas — os unitários provam a **sequência das chamadas**, este prova
  * o **resultado**.
  *
- * ## Os cinco ramos do AC-007c, e por que os cinco estão aqui
+ * ## Os cinco ramos do AC-007c, e onde cada um está
  *
  * Eram três na v1 desta spec, e condensá-los foi o DEF-VC033-R2-01: a linha
  * "gestor, aluno sem saldo" ficou escrita de um jeito que contradizia o
  * AC-007. **O papel é que decide**, e um teste por ramo é o que impede a
  * condensação de voltar.
+ *
+ * **Este cabeçalho dizia "os cinco estão aqui", e até 2026-09-27 eram três.**
+ * O gestor com saldo era montado (no caso da SPEC-048/AC-010) e só a
+ * devolução era aferida; o `valor = 0` não tinha caso nenhum. A SPEC-077
+ * (TASK-002) é quem completou:
+ *
+ * | ramo | caso |
+ * |---|---|
+ * | aluno com saldo ⇒ `pago`, 1 consumo | "AC-006 + AC-007c" |
+ * | aluno sem saldo ⇒ `422`, não nasce | "AC-007" |
+ * | gestor, aluno sem saldo ⇒ `pendente_pagamento`, 0 movimento | "PA-04" |
+ * | gestor, aluno com saldo ⇒ `pago`, 1 consumo | "SPEC-077/AC-008" |
+ * | `valor = 0` ⇒ `pago`, 0 movimento | "SPEC-077/AC-009" |
  */
 import { PrismaClient } from '@prisma/client';
 import { UnprocessableEntityException } from '@nestjs/common';
@@ -580,5 +593,313 @@ describe('SPEC-033/TASK-005 — reservar debita, cancelar devolve', () => {
            (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,valor)
          VALUES (gen_random_uuid(),'${EMPRESA}','${QUADRA}','${diaNoFuturo(400)}','10:00','11:00','TURMA',now(),80)`),
     ).rejects.toThrow(/ocupacoes_valor_por_origem|23514/);
+  });
+});
+
+/**
+ * SPEC-077/TASK-002 — **o que a matriz da 033 prometia e nenhum teste
+ * afirmava.** Roda depois dos casos acima e não depende do saldo que eles
+ * deixam: cada caso lê o seu "antes".
+ *
+ * `ALUNO2` nunca recebe crédito — é o aluno de saldo zero dos casos que
+ * precisam dele (a quadra grátis e as reservas sem consumo do gancho).
+ */
+describe('SPEC-077/TASK-002 — as lacunas da 033', () => {
+  const UALUNO2 = 'd0330000-0000-4000-8000-000000000007';
+  const ALUNO2 = 'd0330000-0000-4000-8000-000000000008';
+  const QUADRA_GRATIS = 'd0330000-0000-4000-8000-000000000009';
+  const outra = new PrismaClient();
+
+  const saldoDe = async (aluno: string) => {
+    const [l] = await db.$queryRawUnsafe<{ saldo_creditos: number }[]>(
+      `SELECT saldo_creditos FROM alunos WHERE id = '${aluno}'`,
+    );
+    return l.saldo_creditos;
+  };
+
+  /** Tudo o que um gesto que "não escreve" não pode ter mudado. */
+  const fotografia = async (id: string) => {
+    const [linha] = await db.$queryRawUnsafe<
+      {
+        status_pagamento: string;
+        aluno_id: string | null;
+        transicao_id: string | null;
+      }[]
+    >(
+      `SELECT status_pagamento, aluno_id, transicao_id FROM ocupacoes_quadra WHERE id = '${id}'`,
+    );
+    const eventos = await db.$queryRawUnsafe<{ tipo: string }[]>(
+      `SELECT tipo::text FROM eventos_de_ocupacao WHERE ocupacao_id = '${id}' ORDER BY criado_em, tipo`,
+    );
+    const [{ acoes }] = await db.$queryRawUnsafe<{ acoes: number }[]>(
+      `SELECT count(*)::int AS acoes FROM acoes_administrativas WHERE company_id = '${EMPRESA}'`,
+    );
+    const [{ movs }] = await db.$queryRawUnsafe<{ movs: number }[]>(
+      `SELECT count(*)::int AS movs FROM movimentos_de_credito WHERE company_id = '${EMPRESA}'`,
+    );
+    return {
+      linha,
+      eventos,
+      acoes,
+      movs,
+      daReserva: await movimentos(id),
+      saldo: await saldoDe(ALUNO),
+      saldo2: await saldoDe(ALUNO2),
+    };
+  };
+
+  const reservarNo = async (
+    papel: 'aluno' | 'company_admin',
+    aluno: string,
+    faixa: {
+      data?: string;
+      horaInicio?: string;
+      horaFim?: string;
+      quadra?: string;
+    } = {},
+  ) => {
+    const resposta = (await courts.createBooking(
+      EMPRESA,
+      {
+        quadraId: faixa.quadra ?? QUADRA,
+        data: faixa.data ?? proximaData(),
+        slots: [
+          {
+            horaInicio: faixa.horaInicio ?? '10:00',
+            horaFim: faixa.horaFim ?? '11:00',
+          },
+        ],
+        alunoId: aluno,
+      },
+      UADMIN,
+      undefined,
+      papel,
+    )) as { reservas: { id: string; statusPagamento: string }[] };
+    return resposta.reservas[0];
+  };
+
+  beforeAll(async () => {
+    await q(`INSERT INTO usuarios (id,email,senha_hash,nome,role,updated_at,company_id)
+             VALUES ('${UALUNO2}','aluno2@d033.test','x','Aluno 2','aluno',now(),'${EMPRESA}')`);
+    await q(
+      `INSERT INTO alunos (id,usuario_id,company_id) VALUES ('${ALUNO2}','${UALUNO2}','${EMPRESA}')`,
+    );
+    await q(`INSERT INTO quadras (id,company_id,nome,preco_hora,esporte_id)
+             VALUES ('${QUADRA_GRATIS}','${EMPRESA}','Q gratis',0,'${ESPORTE}')`);
+  });
+
+  afterAll(async () => {
+    await outra.$disconnect();
+  });
+
+  it('AC-008 (#8 + #10): o GESTOR reservando para aluno COM saldo ⇒ nasce `pago` com UM consumo; e `PATCH pago` sobre ela não muda nada', async () => {
+    await creditar(10_000);
+    const antes = await saldo();
+
+    const reserva = await reservarNo('company_admin', ALUNO);
+
+    // O ramo que o caso da SPEC-048/AC-010 montava e não aferia.
+    expect(reserva.statusPagamento).toBe('pago');
+    expect(await statusDa(reserva.id)).toBe('pago');
+    expect(await movimentos(reserva.id)).toEqual([
+      { tipo: 'consumo', valor_centavos: 8_000 },
+    ]);
+    expect(await saldo()).toBe(antes - 8_000);
+
+    // #10 — a quitada pela carteira NÃO oferece nova cobrança: marcar `pago`
+    // de novo é a saída idempotente, sem ação, sem evento, sem movimento.
+    const foto = await fotografia(reserva.id);
+    const resposta = await courts.updatePaymentStatus(
+      EMPRESA,
+      reserva.id,
+      'pago',
+      UADMIN,
+    );
+    expect(resposta.creditoDevolvidoCentavos).toBeNull();
+    expect(await fotografia(reserva.id)).toEqual(foto);
+  });
+
+  it('AC-009 (#9): `valor = 0` ⇒ `pago` e NENHUM movimento — mesmo para aluno de saldo zero', async () => {
+    expect(await saldoDe(ALUNO2)).toBe(0);
+    const [{ movs: antes }] = await db.$queryRawUnsafe<{ movs: number }[]>(
+      `SELECT count(*)::int AS movs FROM movimentos_de_credito WHERE company_id = '${EMPRESA}'`,
+    );
+
+    // PAPEL aluno: o de saldo zero seria recusado com `422` numa quadra paga
+    // (AC-007). Numa grátis não há o que cobrar — e o ledger recusa movimento
+    // de zero (`valor_centavos > 0`), então tentar emitir daria erro.
+    const reserva = await reservarNo('aluno', ALUNO2, {
+      quadra: QUADRA_GRATIS,
+    });
+
+    expect(reserva.statusPagamento).toBe('pago');
+    expect(await statusDa(reserva.id)).toBe('pago');
+    expect(await movimentos(reserva.id)).toEqual([]);
+    const [{ movs: depois }] = await db.$queryRawUnsafe<{ movs: number }[]>(
+      `SELECT count(*)::int AS movs FROM movimentos_de_credito WHERE company_id = '${EMPRESA}'`,
+    );
+    expect(depois).toBe(antes);
+    expect(await saldoDe(ALUNO2)).toBe(0);
+  });
+
+  let passado = 0;
+  /** Um dia que JÁ PASSOU, novo a cada reserva — sem relógio falso. */
+  const diaPassado = () => diaNoFuturo(-10 - ++passado);
+
+  it.each([
+    [
+      'cancelBooking',
+      (id: string) =>
+        courts.cancelBooking(EMPRESA, id, UADMIN, 'company_admin'),
+    ],
+    [
+      'PATCH payment-status cancelado',
+      (id: string) =>
+        courts.updatePaymentStatus(EMPRESA, id, 'cancelado', UADMIN),
+    ],
+  ])(
+    'AC-010 (#12): o GESTOR cancelando reserva já iniciada, com consumo, pelo %s ⇒ 409 e nenhum movimento nasce',
+    async (_caminho, cancelar) => {
+      await creditar(10_000);
+      // O gestor pode lançar no passado (SPEC-042/D-I5, a assimetria); o
+      // aluno tem saldo, então a reserva nasce paga e COM consumo.
+      const reserva = await reservarNo('company_admin', ALUNO, {
+        data: diaPassado(),
+      });
+      expect(await movimentos(reserva.id)).toEqual([
+        { tipo: 'consumo', valor_centavos: 8_000 },
+      ]);
+      const foto = await fotografia(reserva.id);
+
+      await expect(cancelar(reserva.id)).rejects.toMatchObject({
+        response: { code: 'PRAZO_DE_CANCELAMENTO' },
+      });
+
+      // `movimentos` = [o consumo]: a devolução NÃO nasceu. Saldo, status,
+      // eventos e ações iguais.
+      expect(await fotografia(reserva.id)).toEqual(foto);
+    },
+  );
+
+  /**
+   * AC-012 (#14) — **o gancho da INV-095.**
+   *
+   * A espiada que descobre o `aluno_id` é SEM trava, fora da transação. Um
+   * gancho sequencial reproduz a intercalação sem corrida: o serviço usa um
+   * `prisma` embrulhado cujo `ocupacaoQuadra.findFirst` — a espiada, que é a
+   * primeira leitura dos dois caminhos — devolve o que leu e, ANTES de
+   * devolver, deixa OUTRA conexão trocar o `aluno_id` e commitar. A
+   * transação então trava a carteira do aluno velho e encontra o novo.
+   *
+   * A reserva é SEM consumo de propósito: com consumo, a FK de quatro colunas
+   * (`movimentos_ocupacao_avulsa_fkey`) recusaria a troca, e o gancho não
+   * chegaria a existir.
+   */
+  const courtsComGancho = (gancho: () => Promise<unknown>) => {
+    const estado = { disparou: false };
+    type Funcao = (...a: unknown[]) => Promise<unknown>;
+    const espiao = new Proxy(db, {
+      get(alvo, prop): unknown {
+        const v: unknown = Reflect.get(alvo, prop, alvo);
+        if (prop === 'ocupacaoQuadra') {
+          return new Proxy(v as object, {
+            get(d, p): unknown {
+              const f: unknown = Reflect.get(d, p, d);
+              if (typeof f !== 'function') return f;
+              const chamar = f as Funcao;
+              if (p === 'findFirst' && !estado.disparou) {
+                return async (...args: unknown[]): Promise<unknown> => {
+                  const lido: unknown = await chamar.apply(d, args);
+                  estado.disparou = true;
+                  await gancho();
+                  return lido;
+                };
+              }
+              return chamar.bind(d);
+            },
+          });
+        }
+        return typeof v === 'function' ? (v as Funcao).bind(alvo) : v;
+      },
+    });
+    const servico = new CourtsService(
+      espiao as unknown as PrismaService,
+      { exigirAlunoOperante: () => undefined } as unknown as StudentsService,
+      new HorarioFuncionamentoService(db as unknown as PrismaService),
+      {} as unknown as ImagemDaQuadraService,
+      new ConfigOperacaoService(db as unknown as PrismaService),
+      creditos,
+      {
+        carregarSemana: jest.fn(),
+      } as unknown as DisponibilidadeProfessorService,
+    );
+    return { servico, estado };
+  };
+
+  it.each([
+    [
+      'cancelBooking',
+      (s: CourtsService, id: string) =>
+        s.cancelBooking(EMPRESA, id, UADMIN, 'company_admin'),
+    ],
+    [
+      'PATCH payment-status cancelado',
+      (s: CourtsService, id: string) =>
+        s.updatePaymentStatus(EMPRESA, id, 'cancelado', UADMIN),
+    ],
+  ])(
+    'AC-012 (#14): a reserva troca de aluno entre a espiada e a trava ⇒ 409 RESERVA_MUDOU_DE_ALUNO pelo %s, sem escrita',
+    async (_caminho, cancelar) => {
+      // Reserva do GESTOR para o aluno de saldo zero: nasce pendente e SEM
+      // consumo (PA-04) — a única que admite trocar de aluno.
+      const reserva = await reservarNo('company_admin', ALUNO2);
+      expect(await movimentos(reserva.id)).toEqual([]);
+
+      const { servico, estado } = courtsComGancho(() =>
+        outra.$executeRawUnsafe(
+          `UPDATE ocupacoes_quadra SET aluno_id = '${ALUNO}' WHERE id = '${reserva.id}'`,
+        ),
+      );
+      // A fotografia é do estado DEPOIS da troca: o que o gesto recusado não
+      // pode mudar é o resto.
+      await outra.$executeRawUnsafe(
+        `UPDATE ocupacoes_quadra SET aluno_id = '${ALUNO}' WHERE id = '${reserva.id}'`,
+      );
+      const foto = await fotografia(reserva.id);
+      await outra.$executeRawUnsafe(
+        `UPDATE ocupacoes_quadra SET aluno_id = '${ALUNO2}' WHERE id = '${reserva.id}'`,
+      );
+
+      await expect(cancelar(servico, reserva.id)).rejects.toMatchObject({
+        response: { code: 'RESERVA_MUDOU_DE_ALUNO' },
+      });
+      // Sem isto o teste passaria sem o gancho ter rodado.
+      expect(estado.disparou).toBe(true);
+      expect(await fotografia(reserva.id)).toEqual(foto);
+      expect(foto.linha.status_pagamento).toBe('pendente_pagamento');
+      expect(foto.linha.aluno_id).toBe(ALUNO);
+    },
+  );
+
+  it('AC-014 (#17): 20 min a R$ 80/h PELO SERVIÇO ⇒ consumo de 2667 centavos, igual a `valor × 100` lido do banco', async () => {
+    await creditar(10_000);
+    const reserva = await reservarNo('aluno', ALUNO, {
+      horaInicio: '10:00',
+      horaFim: '10:20',
+    });
+
+    const [linha] = await db.$queryRawUnsafe<
+      { valor: string; centavos_do_banco: number }[]
+    >(
+      `SELECT valor::text AS valor, (valor * 100)::int AS centavos_do_banco
+         FROM ocupacoes_quadra WHERE id = '${reserva.id}'`,
+    );
+    expect(linha.valor).toBe('26.67');
+    expect(await movimentos(reserva.id)).toEqual([
+      { tipo: 'consumo', valor_centavos: linha.centavos_do_banco },
+    ]);
+    // O número, e não só a igualdade: `2666` é o que a conta de memória
+    // truncada daria, e o FIT-031 mostra por quê.
+    expect(linha.centavos_do_banco).toBe(2667);
   });
 });
