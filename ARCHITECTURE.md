@@ -1,6 +1,20 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-26** (era 2026-09-25).
+**Fonte: análise direta do código.** Data: **2026-09-28** (era 2026-09-26).
+
+**Números conferidos por comando em 2026-09-28, na branch do Back A da SPEC-079
+(`spec079/back-a`, empilhada sobre a `spec078/avisos`):** **57 migrations, 43
+tabelas, 25 triggers** não-internas, **120 caminhos / 166 operações** no
+`openapi.json` — os mesmos comandos, num banco com as 57 aplicadas.
+
+*Mudou: **+2 migrations**, e nada mais na contagem. A da SPEC-078
+(`20260928120000_spec078_gesto_do_aluno`) é um índice parcial e um CHECK em
+`notificacoes`; a migração A da SPEC-079
+(`20260928180000_spec079_niveis_e_primeiro_nivel`) é só **dados**, sob a trava
+de nível da empresa. Nenhuma rota nova: a SPEC-079 muda o que `POST`/`PATCH
+/classes` **aceitam** e o que `DELETE /levels/{id}` **recusa**, e o contrato
+OpenAPI só muda no M3, junto com o `NOT NULL`. A seção "O nível decide o acesso"
+diz o que mudou.*
 
 **Números conferidos por comando em 2026-09-26, na branch da SPEC-076
 (`spec076/chamada`):** **55 migrations, 43 tabelas, 25 triggers** não-internas,
@@ -963,7 +977,17 @@ o seed o importa por caminho relativo.
   empresa** (menor `ordem`, depois `created_at`, depois `id`). Resolvido na hora,
   nunca gravado. **Toda regra futura que dependa do nível lê o efetivo**, nunca
   `alunos.nivel_id` direto (ADR-026).
-- **A regra** (D2): nível **exato**; turma sem nível é de todos.
+- **A regra** (D2): nível **exato**. ~~Turma sem nível é de todos~~ — **toda
+  turma tem nível** desde a SPEC-079 (ADR-029): `POST /classes` exige
+  `nivelId`, `PATCH` recusa `null` (`400`, no pipe), e a migração A deu o
+  primeiro nível a toda turma sem nível; o `NOT NULL` chega no M3. O ramo
+  "turma sem nível" continua no código, inalcançável (LIM-079a).
+- **O clube nunca fica sem nível** (SPEC-079/REQ-007): `LevelsService.remove`
+  conta e apaga **sob a trava de nível da empresa**, e recusa o último com `422
+  ULTIMO_NIVEL_DO_CLUBE` — antes das recusas de uso, porque "mude o nível dessas
+  turmas" não tem saída sem outro nível. As migrações da 079 também tomam a trava
+  (a chave reproduzida em SQL, provada igual à do TypeScript) e entram **pelo
+  nome** na varredura de escritores de nível.
 - **Cinco gestos recusam** com `422 NIVEL_INCOMPATIVEL` e texto de quem lê
   (aluno ou gestor): `entrar`, `marcar` reposição, entrar na fila de turma e de
   aula, e **`allocateStudent` — o gestor também** (decisão 5). A recusa é a
