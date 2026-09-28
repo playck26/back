@@ -21,6 +21,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { comAcao } from './acao-com-efeito';
+import { diaNoFuturo } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -557,5 +558,178 @@ describe('FIT-031 — a conversão para centavos', () => {
     expect(linha.centavos_do_banco).toBe(2667);
     // A conta de memória, que é a armadilha:
     expect(Math.trunc(80 * (20 / 60) * 100)).toBe(2666);
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * SPEC-077/AC-011 — **as quatro FKs do ledger, cada uma com UMA perna errada.**
+ *
+ * INV-073 (autor `RESTRICT`), INV-076 (nada cruza empresa: aluno e ocupação) e
+ * INV-086 (a ação existe e é da mesma empresa). A matriz da 033 as marcava
+ * `LACUNA`: o ensaio só tinha aplicado o DDL.
+ *
+ * **Uma perna por vez**, e o NOME da constraint na recusa: um `INSERT` com duas
+ * coisas erradas é recusado pela primeira FK que o Postgres checar, e o teste
+ * ficaria verde sem nunca ter exercido a outra. E cada uma tem a sabotagem no
+ * próprio teste — `DROP CONSTRAINT` numa transação que volta —, que é o que
+ * prova que a recusa vem DELA, e não de outra regra no caminho.
+ */
+describe('SPEC-077/AC-011 — as FKs do ledger recusam, pelo nome (033 INV-073/076/086)', () => {
+  const E2 = 'e0770330-0000-4000-8000-000000000001';
+  const UADMIN2 = 'e0770330-0000-4000-8000-000000000002';
+  const UALUNO2 = 'e0770330-0000-4000-8000-000000000003';
+  const ALUNO2 = 'e0770330-0000-4000-8000-000000000004';
+  const ESPORTE2 = 'e0770330-0000-4000-8000-000000000005';
+  const QUADRA2 = 'e0770330-0000-4000-8000-000000000006';
+  const OC_E2 = 'e0770330-0000-4000-8000-000000000007';
+  const ACAO_E2 = 'e0770330-0000-4000-8000-000000000008';
+  /** Um usuário da empresa E que só é autor de UM movimento. */
+  const UAUTOR = 'e0770330-0000-4000-8000-000000000009';
+  const INEXISTENTE = 'e0770330-0000-4000-8000-0000000000ff';
+
+  /**
+   * A recusa, e só ela: o SQLSTATE e o nome da constraint na mensagem.
+   *
+   * `23503` para o `INSERT` com a perna errada; **`23001` para apagar o
+   * autor** — é o código de `RESTRICT`, que o Postgres distingue do `NO
+   * ACTION` (esse daria `23503`). Medido, não suposto: a primeira versão deste
+   * teste esperava `23503` nos quatro, e o autor respondeu `23001`.
+   */
+  const recusa = async (fn: () => Promise<unknown>, sqlstate = '23503') => {
+    const erro = await fn().then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(erro).toBeInstanceOf(Error);
+    expect((erro as Error).message).toContain(`Code: \`${sqlstate}\``);
+    return (erro as Error).message;
+  };
+
+  /** A sabotagem: sem a constraint, o mesmo gesto PASSA — e tudo volta. */
+  const semAConstraint = async (nome: string, gesto: string) => {
+    const r = await db
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `ALTER TABLE movimentos_de_credito DROP CONSTRAINT ${nome}`,
+        );
+        await tx.$executeRawUnsafe(gesto);
+        throw new Error('VOLTA_DE_PROPOSITO');
+      })
+      .catch((e: Error) => e.message);
+    expect(r).toBe('VOLTA_DE_PROPOSITO');
+    const [{ n }] = await db.$queryRawUnsafe<{ n: number }[]>(
+      `SELECT count(*)::int AS n FROM pg_constraint WHERE conname = '${nome}'`,
+    );
+    expect(n).toBe(1);
+  };
+
+  const insercao = (campos: Record<string, string | number | null>) => {
+    const chaves = Object.keys(campos);
+    const valores = chaves
+      .map((k) => (campos[k] === null ? 'NULL' : `'${String(campos[k])}'`))
+      .join(',');
+    return `INSERT INTO movimentos_de_credito (${chaves.join(',')}) VALUES (${valores})`;
+  };
+
+  /** Uma `entrada` CERTA da empresa E — cada caso troca uma perna só. */
+  const entrada = (troca: Record<string, string | number | null>) => ({
+    id: proximo(),
+    company_id: E,
+    aluno_id: ALUNO,
+    tipo: 'entrada',
+    valor_centavos: 100,
+    motivo: 'SPEC-077/AC-011',
+    autor_id: UADMIN,
+    acao_id: ACAO,
+    ...troca,
+  });
+
+  beforeAll(async () => {
+    await limparEmpresa(db, E2);
+    await q(`INSERT INTO empresas (id,nome,updated_at,slug)
+             VALUES ('${E2}','FIT 033 outra',now(),'fit-033-outra')`);
+    await q(`INSERT INTO usuarios (id,email,senha_hash,nome,role,updated_at,company_id)
+             VALUES ('${UADMIN2}','admin@fit033b.test','x','Admin 2','company_admin',now(),'${E2}')`);
+    await q(`INSERT INTO usuarios (id,email,senha_hash,nome,role,updated_at,company_id)
+             VALUES ('${UALUNO2}','aluno@fit033b.test','x','Aluno 2','aluno',now(),'${E2}')`);
+    await q(
+      `INSERT INTO alunos (id,usuario_id,company_id) VALUES ('${ALUNO2}','${UALUNO2}','${E2}')`,
+    );
+    await q(`INSERT INTO esportes_de_quadra (id,company_id,nome,ordem)
+             VALUES ('${ESPORTE2}','${E2}','Tenis',1)`);
+    await q(`INSERT INTO quadras (id,company_id,nome,preco_hora,esporte_id)
+             VALUES ('${QUADRA2}','${E2}','Q1',80,'${ESPORTE2}')`);
+    await q(`INSERT INTO ocupacoes_quadra
+               (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)
+             VALUES ('${OC_E2}','${E2}','${QUADRA2}','${diaNoFuturo(30)}','10:00','11:00','AVULSO',now(),'${ALUNO2}',80)`);
+    await comAcao(
+      db,
+      { id: ACAO_E2, companyId: E2, tipo: 'reserva_criada', autorId: UADMIN2 },
+      (tx, acaoId) =>
+        tx.$executeRawUnsafe(
+          `INSERT INTO eventos_de_ocupacao (id,company_id,acao_id,ocupacao_id,tipo,transicao_id)
+           VALUES (gen_random_uuid(),'${E2}','${acaoId}','${OC_E2}','criada',gen_random_uuid())`,
+        ),
+    );
+    // Saldo para o consumo do caso da ocupação: sem ele, o `CHECK` do saldo
+    // poderia recusar ANTES da FK, e o teste afirmaria a regra errada.
+    await movimento(entrada({ valor_centavos: 50_000 }));
+    // O autor que só tem este movimento.
+    await q(`INSERT INTO usuarios (id,email,senha_hash,nome,role,updated_at,company_id)
+             VALUES ('${UAUTOR}','autor@fit033.test','x','Autor','company_admin',now(),'${E}')`);
+    await movimento(entrada({ autor_id: UAUTOR }));
+  });
+
+  afterAll(async () => {
+    await limparEmpresa(db, E2);
+  });
+
+  it('INV-073: apagar o autor que só tem movimento é recusado (FK `RESTRICT`)', async () => {
+    const msg = await recusa(
+      () => q(`DELETE FROM usuarios WHERE id = '${UAUTOR}'`),
+      '23001',
+    );
+    expect(msg).toContain('movimentos_de_credito_autor_id_fkey');
+    await semAConstraint(
+      'movimentos_de_credito_autor_id_fkey',
+      `DELETE FROM usuarios WHERE id = '${UAUTOR}'`,
+    );
+  });
+
+  it('INV-076: movimento com ALUNO de outra empresa — `movimentos_aluno_fkey`', async () => {
+    const gesto = insercao(entrada({ aluno_id: ALUNO2 }));
+    const msg = await recusa(() => q(gesto));
+    expect(msg).toContain('movimentos_aluno_fkey');
+    await semAConstraint('movimentos_aluno_fkey', gesto);
+  });
+
+  it('INV-076: consumo com OCUPAÇÃO de outra empresa — `movimentos_ocupacao_avulsa_fkey`', async () => {
+    const gesto = insercao({
+      ...entrada({}),
+      tipo: 'consumo',
+      motivo: null,
+      ocupacao_id: OC_E2,
+    });
+    const msg = await recusa(() => q(gesto));
+    expect(msg).toContain('movimentos_ocupacao_avulsa_fkey');
+    await semAConstraint('movimentos_ocupacao_avulsa_fkey', gesto);
+  });
+
+  it.each([
+    ['inexistente', INEXISTENTE],
+    ['de OUTRA empresa', ACAO_E2],
+  ])(
+    'INV-086: movimento com ação %s — `movimentos_acao_fkey`',
+    async (_c, acao) => {
+      const gesto = insercao(entrada({ acao_id: acao }));
+      const msg = await recusa(() => q(gesto));
+      expect(msg).toContain('movimentos_acao_fkey');
+      await semAConstraint('movimentos_acao_fkey', gesto);
+    },
+  );
+
+  it('e a entrada CERTA passa — sem esta linha, "recusa" poderia ser o fixture quebrado', async () => {
+    await expect(q(insercao(entrada({})))).resolves.toBe(1);
   });
 });

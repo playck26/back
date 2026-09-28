@@ -1528,6 +1528,18 @@ describe('CourtsService', () => {
   });
 
   describe('cancelBooking', () => {
+    /**
+     * SPEC-077/TASK-008 — **os dois casos com `2099-01-01` dependiam do relógio
+     * real**: o `cancelBooking` lê `new Date()`, e a partir das 10h daquele dia
+     * o gestor recebe `409 PRAZO_DE_CANCELAMENTO` e os dois ficam vermelhos. A
+     * sonda de 2099 não os pegou porque um teste anterior do arquivo chama
+     * `jest.useRealTimers()`, que desligava a sonda para o resto do arquivo.
+     * Os dois agora fixam o próprio relógio, e este `afterEach` o devolve.
+     */
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     it('lança 404 cross-tenant', async () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
@@ -1556,6 +1568,7 @@ describe('CourtsService', () => {
 
     // SPEC-032/AC-002 + INV-064
     it('grava UMA acao e UM evento, com a MESMA transicao do update', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
@@ -1591,6 +1604,7 @@ describe('CourtsService', () => {
     });
 
     it('marca status_pagamento como cancelado (AC-003)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
@@ -1794,6 +1808,102 @@ describe('CourtsService', () => {
         ).resolves.toEqual({ creditoDevolvidoCentavos: null });
         expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  /**
+   * SPEC-077/AC-013 — **INV-087 da SPEC-033: o instante da autorização é lido
+   * UMA vez, antes da espera pela trava.**
+   *
+   * A frase da 033 dizia *"autorização e devolução recebem o mesmo `agora`"*,
+   * e a devolução **não recebe relógio nenhum** (`devolverCarteira` não tem
+   * parâmetro de tempo): metade da frase não tinha objeto de teste. O que
+   * existe para provar é a outra metade — quem pediu às 16:59:59 e esperou a
+   * trava da carteira até 17:00:02 é julgado pelo instante em que PEDIU.
+   *
+   * O gestor, e não o aluno, de propósito: o corte do gestor é o INÍCIO
+   * (`minutos <= 0`), e a reserva das 17h é o caso em que três segundos mudam
+   * o veredito. Com o aluno e prazo de 2h numa aula das 19h, 16:59 e 17:00
+   * dariam o mesmo resultado (a fronteira aceita) e o teste não distinguiria.
+   */
+  describe('INV-087 — o instante é lido antes da trava (SPEC-077/AC-013)', () => {
+    // 2026-09-15 no fuso do clube (UTC-3).
+    const PEDIU = new Date('2026-09-15T19:59:59.000Z'); // 16:59:59
+    const TRAVOU = new Date('2026-09-15T20:00:02.000Z'); // 17:00:02
+
+    let criarMovimento: jest.Mock;
+
+    beforeEach(() => {
+      (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        alunoId: 'a1',
+        origemTipo: 'AVULSO',
+        statusPagamento: 'pago',
+        data: new Date('2026-09-15T00:00:00.000Z'),
+        horaInicio: new Date('1970-01-01T17:00:00.000Z'),
+      });
+      (prisma.ocupacaoQuadra.update as jest.Mock).mockResolvedValue({});
+      criarMovimento = jest.fn().mockResolvedValue({ id: 'devolucao-1' });
+      (
+        prisma as unknown as { movimentoDeCredito: unknown }
+      ).movimentoDeCredito = { create: criarMovimento };
+      const lerRaw = (
+        prisma.$queryRaw as unknown as jest.Mock
+      ).getMockImplementation() as (...a: unknown[]) => Promise<unknown>;
+      (prisma.$queryRaw as unknown as jest.Mock).mockImplementation(
+        async (strings: TemplateStringsArray, ...valores: unknown[]) => {
+          const sql = strings.join('');
+          if (sql.includes('FROM alunos')) {
+            // A espera pela trava da carteira: o relógio anda três segundos.
+            jest.setSystemTime(TRAVOU);
+            return [{ saldo_creditos: 0 }];
+          }
+          if (sql.includes('movimentos_de_credito')) {
+            return [{ id: 'consumo-1', aluno_id: 'a1', valor_centavos: 8_000 }];
+          }
+          return lerRaw(strings, ...valores);
+        },
+      );
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('o gestor pede às 16:59:59, a trava libera às 17:00:02: a reserva das 17h é cancelada E devolvida', async () => {
+      jest.useFakeTimers().setSystemTime(PEDIU);
+
+      await expect(
+        service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
+      ).resolves.toEqual({ creditoDevolvidoCentavos: 8_000 });
+
+      // O relógio andou DE FATO durante a trava — sem esta linha, o caso
+      // passaria igual com um relógio parado, e não distinguiria nada.
+      expect(Date.now()).toBe(TRAVOU.getTime());
+      expect(prisma.ocupacaoQuadra.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { statusPagamento: 'cancelado', transicaoId: expect.any(String) },
+      });
+      expect(criarMovimento).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            tipo: 'devolucao',
+            valorCentavos: 8_000,
+            movimentoOrigemId: 'consumo-1',
+          }),
+        }),
+      );
+    });
+
+    it('controle: quem PEDE às 17:00:02 é recusado — o corte está onde o caso acima supõe', async () => {
+      jest.useFakeTimers().setSystemTime(TRAVOU);
+
+      await expect(
+        service.cancelBooking('c1', 'o1', 'autor-1', 'company_admin'),
+      ).rejects.toMatchObject({ response: { code: 'PRAZO_DE_CANCELAMENTO' } });
+      expect(prisma.ocupacaoQuadra.update).not.toHaveBeenCalled();
+      expect(criarMovimento).not.toHaveBeenCalled();
     });
   });
 
