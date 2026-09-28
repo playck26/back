@@ -128,7 +128,7 @@ async function avisosDe(usuarioId: string) {
   >(
     `SELECT titulo, corpo, destino_url, expira_em FROM notificacoes
       WHERE company_id = '${EMPRESA}' AND tipo = 'gesto' AND destinatario_id = '${usuarioId}'
-      ORDER BY corpo`,
+      ORDER BY corpo, expira_em`,
   );
 }
 
@@ -228,8 +228,14 @@ describe('SPEC-078/REQ-002 — reposição em aula que o clube desfaz', () => {
     await classes.update(EMPRESA, turmaId, { status: 'inativa' }, GESTOR);
 
     expect(await avisosDe(U_R)).toEqual(
-      [avisoDeReposicao(o1), avisoDeReposicao(o2)].sort((a, b) =>
-        a.corpo.localeCompare(b.corpo),
+      // O corpo sozinho EMPATA: as duas ocorrências perdidas caem no mesmo dia
+      // da semana e hora, duas semanas separadas, e dizem a mesma frase. Sem o
+      // desempate pelo `expira_em` (aqui e no `ORDER BY`), a ordem era a do
+      // banco — e o caso passava ou caía conforme ela (medido em 2026-09-28).
+      [avisoDeReposicao(o1), avisoDeReposicao(o2)].sort(
+        (a, b) =>
+          a.corpo.localeCompare(b.corpo) ||
+          (a.expira_em?.getTime() ?? 0) - (b.expira_em?.getTime() ?? 0),
       ),
     );
     // Matriculado: só o aviso da turma, nenhum de reposição (I11).
