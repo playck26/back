@@ -21,6 +21,7 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { comAcao } from './acao-com-efeito';
+import { diaNoFuturo } from './datas-relativas';
 import { limparEmpresa } from './limpar-empresa';
 
 jest.setTimeout(120_000);
@@ -661,7 +662,7 @@ describe('SPEC-077/AC-011 — as FKs do ledger recusam, pelo nome (033 INV-073/0
              VALUES ('${QUADRA2}','${E2}','Q1',80,'${ESPORTE2}')`);
     await q(`INSERT INTO ocupacoes_quadra
                (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,updated_at,aluno_id,valor)
-             VALUES ('${OC_E2}','${E2}','${QUADRA2}','2032-01-01','10:00','11:00','AVULSO',now(),'${ALUNO2}',80)`);
+             VALUES ('${OC_E2}','${E2}','${QUADRA2}','${diaNoFuturo(30)}','10:00','11:00','AVULSO',now(),'${ALUNO2}',80)`);
     await comAcao(
       db,
       { id: ACAO_E2, companyId: E2, tipo: 'reserva_criada', autorId: UADMIN2 },

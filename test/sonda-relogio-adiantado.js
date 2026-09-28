@@ -25,17 +25,29 @@
  * Limites: o relógio do BANCO (`now()`) não se adianta; e um teste que, depois
  * da data vencer, continua VERDE pelo motivo errado não aparece aqui — a sonda
  * vê mudança de resultado, não perda de poder de distinguir.
+ *
+ * **Reinstalada antes de CADA teste (SPEC-077/TASK-008).** A primeira versão
+ * instalava uma vez, no carregamento do arquivo — e todo `jest.useRealTimers()`
+ * de um `afterEach` a desligava para o resto do arquivo. A medição da TASK-000
+ * passou por cima de dois casos do `courts.service.spec.ts` que caem em 2099
+ * exatamente assim; a revisão arquivo a arquivo é que os achou. O `beforeEach`
+ * de um arquivo de setup roda ANTES dos do próprio teste, então quem fixa o
+ * próprio relógio continua fixando por cima.
  */
-jest.useFakeTimers({
-  now: new Date(process.env.SONDA_RELOGIO ?? '2099-09-01T15:00:00.000Z'),
-  doNotFake: [
-    'nextTick',
-    'setImmediate',
-    'clearImmediate',
-    'setInterval',
-    'clearInterval',
-    'setTimeout',
-    'clearTimeout',
-    'queueMicrotask',
-  ],
-});
+function instalar() {
+  jest.useFakeTimers({
+    now: new Date(process.env.SONDA_RELOGIO ?? '2099-09-01T15:00:00.000Z'),
+    doNotFake: [
+      'nextTick',
+      'setImmediate',
+      'clearImmediate',
+      'setInterval',
+      'clearInterval',
+      'setTimeout',
+      'clearTimeout',
+      'queueMicrotask',
+    ],
+  });
+}
+instalar();
+beforeEach(instalar);

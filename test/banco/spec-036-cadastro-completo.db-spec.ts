@@ -87,7 +87,12 @@ describe('SPEC-036/INV-109 — data de nascimento plausível', () => {
   it('futuro é recusado, nomeando `alunos_nascimento_plausivel`', async () => {
     expect(
       await recusadoPor(
-        `UPDATE alunos SET data_nascimento='2099-01-01' WHERE id='${ALUNO}'`,
+        // SPEC-077/TASK-008 — era `'2099-01-01'`, e o CHECK compara com
+        // `CURRENT_DATE`: a partir de 2099 o futuro passaria e o caso cairia.
+        // `CURRENT_DATE + 1` usa o MESMO relógio que o CHECK lê, na mesma
+        // instrução — e não o do Node, que no fuso do clube pode estar um dia
+        // atrás do `CURRENT_DATE` da sessão (UTC).
+        `UPDATE alunos SET data_nascimento = CURRENT_DATE + 1 WHERE id='${ALUNO}'`,
       ),
     ).toBe('alunos_nascimento_plausivel');
   });

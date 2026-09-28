@@ -28,6 +28,7 @@
  * é o desfecho **ilegítimo**: duas ocupações vivas no mesmo slot.
  */
 import { PrismaClient } from '@prisma/client';
+import { proximoDiaDaSemana } from './datas-relativas';
 import { ClassesService } from '../../src/classes/classes.service';
 import { CourtsService } from '../../src/courts/courts.service';
 import { CreditosService } from '../../src/creditos/creditos.service';
@@ -92,7 +93,12 @@ const q = (sql: string) => semear.$executeRawUnsafe(sql);
  * abriria.
  */
 function dataDaIteracao(i: number): string {
-  const base = Date.UTC(2035, 5, 7); // 2035-06-07 é quinta
+  // SPEC-077/TASK-008 — era `Date.UTC(2035, 5, 7)`. O `reativarOcorrencia`
+  // recusa aula já começada pelo relógio REAL, e a criação do gestor não: a
+  // partir de 2035-06-07 o teste continuaria verde, com um vencedor só e
+  // nenhuma corrida — sem provar mais que a EXCLUDE recusa o descancelamento.
+  // Quinta-feira, porque a `turma_encontros` é gravada com `dia_semana = 4`.
+  const base = Date.parse(`${proximoDiaDaSemana(4)}T00:00:00.000Z`);
   return new Date(base + i * 7 * 86_400_000).toISOString().slice(0, 10);
 }
 

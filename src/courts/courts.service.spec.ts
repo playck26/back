@@ -1528,6 +1528,18 @@ describe('CourtsService', () => {
   });
 
   describe('cancelBooking', () => {
+    /**
+     * SPEC-077/TASK-008 — **os dois casos com `2099-01-01` dependiam do relógio
+     * real**: o `cancelBooking` lê `new Date()`, e a partir das 10h daquele dia
+     * o gestor recebe `409 PRAZO_DE_CANCELAMENTO` e os dois ficam vermelhos. A
+     * sonda de 2099 não os pegou porque um teste anterior do arquivo chama
+     * `jest.useRealTimers()`, que desligava a sonda para o resto do arquivo.
+     * Os dois agora fixam o próprio relógio, e este `afterEach` o devolve.
+     */
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     it('lança 404 cross-tenant', async () => {
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue(null);
 
@@ -1556,6 +1568,7 @@ describe('CourtsService', () => {
 
     // SPEC-032/AC-002 + INV-064
     it('grava UMA acao e UM evento, com a MESMA transicao do update', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
@@ -1591,6 +1604,7 @@ describe('CourtsService', () => {
     });
 
     it('marca status_pagamento como cancelado (AC-003)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
       (prisma.ocupacaoQuadra.findFirst as jest.Mock).mockResolvedValue({
         id: 'o1',
         companyId: 'c1',
