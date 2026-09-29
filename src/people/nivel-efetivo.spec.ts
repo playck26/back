@@ -37,29 +37,30 @@ describe('filtroDeTurmaPorNivel — o MESMO predicado, escrito para o `where`', 
    * A única segunda forma da regra. Esta prova a amarra à primeira: para cada
    * combinação, "a turma passa no `where`" é igual a `podeEntrarPorNivel`.
    * O `where` é avaliado aqui por um intérprete mínimo do que o filtro emite
-   * (`{}` ou `{ OR: [{ nivelId }] }`) — se o filtro mudar de forma, o
-   * intérprete lança, e a prova avisa em vez de passar calada.
+   * (`{}` ou `{ nivelId }`) — se o filtro mudar de forma, o intérprete lança,
+   * e a prova avisa em vez de passar calada.
+   *
+   * SPEC-079: a forma era `{ OR: [{ nivelId: null }, { nivelId }] }`, e a
+   * turma sem nível saiu da tabela — toda turma tem nível (ADR-029).
    */
-  function passa(where: Record<string, unknown>, nivelId: string | null) {
+  function passa(where: Record<string, unknown>, nivelId: string) {
     const chaves = Object.keys(where);
     if (chaves.length === 0) return true;
-    if (chaves.length !== 1 || chaves[0] !== 'OR') {
+    if (chaves.length !== 1 || chaves[0] !== 'nivelId') {
       throw new Error('forma nova de filtro: ' + JSON.stringify(where));
     }
-    return (where.OR as { nivelId: string | null }[]).some(
-      (c) => c.nivelId === nivelId,
-    );
+    return where.nivelId === nivelId;
   }
 
-  const turmas = [null, 'n-ini', 'n-ava'];
+  const turmas = ['n-ini', 'n-ava'];
   const efetivos = [null, INI, AVA];
   for (const efetivo of efetivos) {
     for (const nivelDaTurma of turmas) {
-      it(`efetivo=${efetivo?.id ?? 'nenhum'} turma=${nivelDaTurma ?? 'sem nível'}`, () => {
-        // Empresa sem nível não tem turma com nível (FK composta da D9): o
-        // caso "efetivo nenhum, turma com nível" não existe no banco, e o
+      it(`efetivo=${efetivo?.id ?? 'nenhum'} turma=${nivelDaTurma}`, () => {
+        // Empresa sem nível não tem turma (FK composta da D9, e o `NOT NULL`
+        // da SPEC-079): o caso "efetivo nenhum" não existe no banco, e o
         // filtro não corta nada ali — por isso fica de fora da comparação.
-        if (efetivo === null && nivelDaTurma !== null) return;
+        if (efetivo === null) return;
         expect(passa(filtroDeTurmaPorNivel(efetivo), nivelDaTurma)).toBe(
           podeEntrarPorNivel(nivelDaTurma, efetivo),
         );

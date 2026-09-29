@@ -60,7 +60,11 @@ export function filtroDeTurmaPorNivel(
   nivelEfetivo: { id: string } | null,
 ): Prisma.TurmaWhereInput {
   if (nivelEfetivo === null) return {};
-  return { OR: [{ nivelId: null }, { nivelId: nivelEfetivo.id }] };
+  // SPEC-079 (ADR-029) — saiu o `{ nivelId: null }` do `OR`: toda turma tem
+  // nível, o banco garante (`NOT NULL`), e o tipo do Prisma não aceita mais o
+  // nulo. O ramo "turma sem nível" do `podeEntrarPorNivel` continua, só que
+  // inalcançável (LIM-079a).
+  return { nivelId: nivelEfetivo.id };
 }
 
 /**
@@ -249,7 +253,8 @@ export async function paresIncompativeis(
 ): Promise<ParDeMatricula[]> {
   const primeiro = await primeiroNivel(db, companyId);
   const where: Prisma.TurmaAlunoWhereInput = {
-    turma: { companyId, nivelId: { not: null } },
+    // SPEC-079 — o `nivelId: { not: null }` saiu: toda turma tem nível.
+    turma: { companyId },
   };
   if ('alunoId' in afetados) where.alunoId = afetados.alunoId;
   if ('turmaId' in afetados) where.turmaId = afetados.turmaId;

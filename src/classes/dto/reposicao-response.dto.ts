@@ -129,11 +129,11 @@ export class OportunidadeDeReposicaoResponseDto {
    * todo mundo (INV-141). **Filtrar é exibição:** não consome, não expira e
    * não bloqueia o crédito (D16).
    */
-  @ApiProperty({ type: String, format: 'uuid', nullable: true })
-  nivelId!: string | null;
+  @ApiProperty({ type: String, format: 'uuid' })
+  nivelId!: string;
 
-  @ApiProperty({ type: String, example: 'Iniciante', nullable: true })
-  nivelNome!: string | null;
+  @ApiProperty({ type: String, example: 'Iniciante' })
+  nivelNome!: string;
 
   @ApiProperty({ example: 'Quadra 2' })
   quadraNome!: string;

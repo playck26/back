@@ -101,6 +101,7 @@ describe('SPEC-075/AC-029 — nenhum escritor protegido fora da lista', () => {
     );
     expect(Object.fromEntries(achados)).toEqual({
       'prisma/migrations/20260928180000_spec079_niveis_e_primeiro_nivel/migration.sql': 2,
+      'prisma/migrations/20260929120000_spec079_turma_nivel_not_null/migration.sql': 1,
       'src/people/levels.service.ts': 2,
       'src/people/nivel-efetivo.ts': 1,
     });

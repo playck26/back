@@ -168,7 +168,7 @@ export class MatriculaDoAlunoService {
         podeEntrar: motivo === null && !jaEstouNela,
         motivo,
         nivelId: turma.nivelId,
-        nivelNome: turma.nivel ? turma.nivel.nome : null,
+        nivelNome: turma.nivel.nome,
         encontros: turma.encontros.map((encontro) => ({
           diaSemana: encontro.diaSemana,
           horaInicio: encontro.horaInicio.toISOString().slice(11, 16),

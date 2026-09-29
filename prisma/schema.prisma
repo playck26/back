@@ -604,7 +604,8 @@ model Turma {
   id          String      @id @default(uuid()) @db.Uuid
   companyId   String      @map("company_id") @db.Uuid
   nome        String
-  nivelId     String?     @map("nivel_id") @db.Uuid
+  /// SPEC-079 (ADR-029) — toda turma tem nivel; o banco garante (`NOT NULL`).
+  nivelId     String      @map("nivel_id") @db.Uuid
   professorId String?     @map("professor_id") @db.Uuid
   quadraId    String      @map("quadra_id") @db.Uuid
   /// SPEC-019/TASK-003 — `dia_semana`, `hora_inicio` e `hora_fim` SAIRAM
@@ -617,17 +618,17 @@ model Turma {
   status      TurmaStatus @default(ativa)
   createdAt   DateTime    @default(now()) @map("created_at")
 
-  empresa   Empresa          @relation(fields: [companyId], references: [id])
+  empresa      Empresa          @relation(fields: [companyId], references: [id])
   /// SPEC-075/D9 — FK composta, e `RESTRICT`: com o nivel decidindo acesso,
   /// o `SET NULL` de antes abriria a turma restrita a todos ao apagar o nivel.
-  nivel     Nivel?           @relation(fields: [companyId, nivelId], references: [companyId, id], onDelete: Restrict, map: "turmas_nivel_fkey")
-  professor Professor?       @relation(fields: [professorId], references: [id])
+  nivel        Nivel            @relation(fields: [companyId, nivelId], references: [companyId, id], onDelete: Restrict, map: "turmas_nivel_fkey")
+  professor    Professor?       @relation(fields: [professorId], references: [id])
   /// DEF-022 — FK composta, mesmo motivo de `ocupacoes_quadra.quadra`: turma
   /// da empresa A não pode ser marcada numa quadra da empresa B.
-  quadra    Quadra           @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "turmas_quadra_fkey")
-  alunos    TurmaAluno[]
-  ocupacoes OcupacaoQuadra[]
-  encontros TurmaEncontro[]
+  quadra       Quadra           @relation(fields: [companyId, quadraId], references: [companyId, id], onDelete: Restrict, map: "turmas_quadra_fkey")
+  alunos       TurmaAluno[]
+  ocupacoes    OcupacaoQuadra[]
+  encontros    TurmaEncontro[]
   /// SPEC-064 — a fila de espera por VAGA DE MATRICULA nesta turma.
   filaDeEspera ListaDeEspera[]
 
@@ -1511,7 +1512,7 @@ model FaltaAvisada {
   /// UMA linha.
   /// SPEC-046 — no maximo UMA (INV-118). O `?` do lado da reposicao e o que
   /// torna o credito derivado possivel: falta sem reposicao E o credito.
-  reposicao ReposicaoDeAula?
+  reposicao    ReposicaoDeAula?
   /// SPEC-064/INV-064e — as linhas da fila que gastam ESTE credito.
   filaDeEspera ListaDeEspera[]
 
@@ -1868,25 +1869,25 @@ enum EstadoDaNotificacao {
 ///   4. a ORDEM de encerrar a fila antes de apagar a falta (TASK-004), que
 ///      nenhuma constraint consegue impor.
 model ListaDeEspera {
-  id          String                @id @db.Uuid
-  companyId   String                @map("company_id") @db.Uuid
-  alunoId     String                @map("aluno_id") @db.Uuid
+  id          String               @id @db.Uuid
+  companyId   String               @map("company_id") @db.Uuid
+  alunoId     String               @map("aluno_id") @db.Uuid
   /// Fila de TURMA. Exclusivo com `ocupacaoId` (`fila_um_alvo_chk`).
-  turmaId     String?               @map("turma_id") @db.Uuid
+  turmaId     String?              @map("turma_id") @db.Uuid
   /// Fila de AULA. Exclusivo com `turmaId`.
-  ocupacaoId  String?               @map("ocupacao_id") @db.Uuid
+  ocupacaoId  String?              @map("ocupacao_id") @db.Uuid
   /// O credito que da direito a fila de AULA. Vira `NULL` quando a falta e
   /// apagada, e e por isso que `fila_credito_chk` so exige credito nos dois
   /// estados ativos.
-  faltaId     String?               @map("falta_id") @db.Uuid
-  estado      EstadoDaFilaDeEspera  @default(aguardando)
-  criadaEm    DateTime              @default(now()) @map("criada_em") @db.Timestamptz(6)
-  chamadoEm   DateTime?             @map("chamado_em") @db.Timestamptz(6)
+  faltaId     String?              @map("falta_id") @db.Uuid
+  estado      EstadoDaFilaDeEspera @default(aguardando)
+  criadaEm    DateTime             @default(now()) @map("criada_em") @db.Timestamptz(6)
+  chamadoEm   DateTime?            @map("chamado_em") @db.Timestamptz(6)
   /// D4 — nunca passa de 2h antes da aula (AC-004). Prazo impossivel encerra
   /// sem chamar, em vez de chamar para uma vez que ja nasceu vencida.
-  chamadoAte  DateTime?             @map("chamado_ate") @db.Timestamptz(6)
-  concluidaEm DateTime?             @map("concluida_em") @db.Timestamptz(6)
-  motivoFim   String?               @map("motivo_fim")
+  chamadoAte  DateTime?            @map("chamado_ate") @db.Timestamptz(6)
+  concluidaEm DateTime?            @map("concluida_em") @db.Timestamptz(6)
+  motivoFim   String?              @map("motivo_fim")
 
   aluno    Aluno           @relation(fields: [companyId, alunoId], references: [companyId, id], onDelete: Restrict, map: "fila_aluno_fkey")
   turma    Turma?          @relation(fields: [companyId, turmaId], references: [companyId, id], onDelete: Restrict, map: "fila_turma_fkey")

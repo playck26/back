@@ -367,6 +367,11 @@ describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
    * e `turmas.nivel_id`) são anuláveis, e o nulo é o estado normal — a
    * maioria dos alunos em produção não foi classificada. Mandar `''` ou
    * omitir o campo faria a tela confundir "sem nível" com "não sei".
+   *
+   * *(SPEC-079, 2026-09-28: a metade da TURMA saiu. Toda turma tem nível —
+   * `turmas.nivel_id` é `NOT NULL` (ADR-029) e o contrato diz isso (AC-013 da
+   * 079). O caso "turma SEM nível vem com os dois campos nulos" saiu com ela;
+   * o nulo do ALUNO continua.)*
    */
   function prismaCom(turmas: unknown[]) {
     return {
@@ -418,29 +423,6 @@ describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
     expect(turma.nivelNome).toBe('Iniciante');
   });
 
-  it('AC-024: turma SEM nível vem com os dois campos nulos', async () => {
-    const prisma = prismaCom([
-      {
-        id: TURMA,
-        nome: 'Sem nivelamento',
-        status: 'ativa',
-        capacidade: 8,
-        encontros: [],
-        _count: { alunos: 0 },
-        nivelId: null,
-        nivel: null,
-      },
-    ]);
-
-    const [turma] = await new MatriculaDoAlunoService(
-      prisma,
-      new ConfigOperacaoService(prisma),
-    ).disponiveis(EMPRESA, USUARIO);
-
-    expect(turma.nivelId).toBeNull();
-    expect(turma.nivelNome).toBeNull();
-  });
-
   it('o `select` pede o nível — sem isso o mapa devolveria `undefined`', async () => {
     const prisma = prismaCom([]);
 
@@ -478,13 +460,19 @@ describe('disponíveis', () => {
             capacidade: 2,
             encontros: [],
             _count: { alunos: 2 },
-            nivelId: null,
+            // SPEC-079 — toda turma tem nível; o do aluno sem nível (o
+            // primeiro) é o dela, e a regra de nível não pesa no caso.
+            nivelId: 'nivel-1',
+            nivel: { nome: 'Iniciante' },
           },
         ]),
       },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
-      // SPEC-075 — empresa sem nível: a regra fica inerte.
-      nivel: { findFirst: jest.fn().mockResolvedValue(null) },
+      nivel: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'nivel-1', nome: 'Iniciante' }),
+      },
     } as unknown as PrismaService;
 
     const [turma] = await new MatriculaDoAlunoService(
@@ -523,13 +511,18 @@ describe('disponíveis', () => {
             capacidade: 8,
             encontros: [],
             _count: { alunos: 1 },
-            nivelId: null,
+            // SPEC-079 — toda turma tem nível (ver o caso acima).
+            nivelId: 'nivel-1',
+            nivel: { nome: 'Iniciante' },
           },
         ]),
       },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
-      // SPEC-075 — empresa sem nível: a regra fica inerte.
-      nivel: { findFirst: jest.fn().mockResolvedValue(null) },
+      nivel: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'nivel-1', nome: 'Iniciante' }),
+      },
     } as unknown as PrismaService;
 
     const [turma] = await new MatriculaDoAlunoService(
