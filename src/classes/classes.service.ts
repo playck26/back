@@ -1295,7 +1295,8 @@ export class ClassesService {
     id: string;
     companyId: string;
     nome: string;
-    nivelId: string | null;
+    // SPEC-079 — toda turma tem nível (`NOT NULL`).
+    nivelId: string;
     professorId: string | null;
     quadraId: string;
     capacidade: number;
@@ -1397,7 +1398,7 @@ export class ClassesService {
       // SPEC-019 — os três campos soltos saíram; o professor vê os N dias.
       encontros: paraEncontrosDaResposta(turma.encontros),
       quadraNome: turma.quadra.nome,
-      nivelNome: turma.nivel?.nome ?? null,
+      nivelNome: turma.nivel.nome,
       capacidade: turma.capacidade,
       totalAlunos: turma._count.alunos,
       status: turma.status,
@@ -1476,7 +1477,7 @@ export class ClassesService {
       capacidade: turma.capacidade,
       encontros: paraEncontrosDaResposta(turma.encontros),
       quadraNome: turma.quadra.nome,
-      nivelNome: turma.nivel ? turma.nivel.nome : null,
+      nivelNome: turma.nivel.nome,
       professorNome: turma.professor ? turma.professor.nome : null,
       // O `id` do colega é lido para decidir `souEu` e **não sai na
       // resposta**: a tela precisa marcar a própria linha, não endereçar
@@ -1530,7 +1531,7 @@ export class ClassesService {
       // professor, exatamente o DEF-012.
       encontros: paraEncontrosDaResposta(turma.encontros),
       quadraNome: turma.quadra.nome,
-      nivelNome: turma.nivel?.nome ?? null,
+      nivelNome: turma.nivel.nome,
       capacidade: turma.capacidade,
       // AC-008 — nome e nivel, e so. Telefone, e-mail e qualquer coisa de
       // pagamento ficam de fora: o professor precisa saber quem esta na

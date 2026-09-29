@@ -316,8 +316,11 @@ export class ReposicaoService {
             ocupacaoId: o.id,
             turmaId: o.origemTurmaId as string,
             turmaNome: o.origemTurma?.nome ?? '',
-            nivelId: o.origemTurma?.nivelId ?? null,
-            nivelNome: o.origemTurma?.nivel ? o.origemTurma.nivel.nome : null,
+            // SPEC-079 — a turma tem nível sempre; o `?? ''` é o do
+            // `turmaNome` acima: a `origemTurma` é opcional pelo TIPO da
+            // ocupação, e aqui só chega ocorrência de turma.
+            nivelId: o.origemTurma?.nivelId ?? '',
+            nivelNome: o.origemTurma?.nivel.nome ?? '',
             quadraNome: o.quadra.nome,
             data: formatDateOnly(o.data),
             horaInicio: formatTimeOnly(o.horaInicio),

@@ -57,8 +57,8 @@ export class TurmaResponseDto {
   @ApiProperty({ type: String, example: 'Turma Iniciante' })
   nome!: string;
 
-  @ApiProperty({ type: String, format: 'uuid', nullable: true })
-  nivelId!: string | null;
+  @ApiProperty({ type: String, format: 'uuid' })
+  nivelId!: string;
 
   @ApiProperty({ type: String, format: 'uuid', nullable: true })
   professorId!: string | null;
@@ -156,8 +156,8 @@ export class TurmaDoProfessorResponseDto {
   @ApiProperty({ type: String })
   quadraNome!: string;
 
-  @ApiProperty({ type: String, nullable: true })
-  nivelNome!: string | null;
+  @ApiProperty({ type: String })
+  nivelNome!: string;
 
   @ApiProperty({ type: Number })
   capacidade!: number;
@@ -211,8 +211,8 @@ export class TurmaDoProfessorDetalheResponseDto {
   @ApiProperty({ type: String })
   quadraNome!: string;
 
-  @ApiProperty({ type: String, nullable: true })
-  nivelNome!: string | null;
+  @ApiProperty({ type: String })
+  nivelNome!: string;
 
   @ApiProperty({ type: Number })
   capacidade!: number;
@@ -287,8 +287,8 @@ export class TurmaDoAlunoDetalheResponseDto {
   @ApiProperty({ type: String })
   quadraNome!: string;
 
-  @ApiProperty({ type: String, nullable: true })
-  nivelNome!: string | null;
+  @ApiProperty({ type: String })
+  nivelNome!: string;
 
   /** `null` quando a turma não tem professor atribuído. */
   @ApiProperty({ type: String, nullable: true })

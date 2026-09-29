@@ -10935,8 +10935,7 @@
           },
           "nivelId": {
             "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "format": "uuid"
           },
           "professorId": {
             "type": "string",
@@ -11050,7 +11049,8 @@
             "type": "string"
           },
           "nivelId": {
-            "type": "string"
+            "type": "string",
+            "format": "uuid"
           },
           "professorId": {
             "type": "string"
@@ -11070,6 +11070,7 @@
         },
         "required": [
           "nome",
+          "nivelId",
           "quadraId",
           "encontros",
           "capacidade"
@@ -11092,8 +11093,7 @@
           },
           "nivelId": {
             "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "format": "uuid"
           },
           "professorId": {
             "type": "string",
@@ -11176,8 +11176,7 @@
           },
           "nivelId": {
             "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "format": "uuid"
           },
           "professorId": {
             "type": "string",
@@ -11532,13 +11531,11 @@
           },
           "nivelId": {
             "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "format": "uuid"
           },
           "nivelNome": {
             "type": "string",
-            "example": "Iniciante",
-            "nullable": true
+            "example": "Iniciante"
           },
           "encontros": {
             "type": "array",
@@ -11783,8 +11780,7 @@
             "type": "string"
           },
           "nivelNome": {
-            "type": "string",
-            "nullable": true
+            "type": "string"
           },
           "professorNome": {
             "type": "string",
@@ -11899,8 +11895,7 @@
             "type": "string"
           },
           "nivelNome": {
-            "type": "string",
-            "nullable": true
+            "type": "string"
           },
           "capacidade": {
             "type": "number"
@@ -11968,8 +11963,7 @@
             "type": "string"
           },
           "nivelNome": {
-            "type": "string",
-            "nullable": true
+            "type": "string"
           },
           "capacidade": {
             "type": "number"
@@ -12506,13 +12500,11 @@
           },
           "nivelId": {
             "type": "string",
-            "format": "uuid",
-            "nullable": true
+            "format": "uuid"
           },
           "nivelNome": {
             "type": "string",
-            "example": "Iniciante",
-            "nullable": true
+            "example": "Iniciante"
           },
           "quadraNome": {
             "type": "string",

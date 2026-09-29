@@ -2,6 +2,15 @@
 
 **Fonte: análise direta do código.** Data: **2026-09-28** (era 2026-09-26).
 
+**Números conferidos por comando em 2026-09-28, na branch do Back B da SPEC-079
+(`spec079/back-b`):** **58 migrations, 43 tabelas, 25 triggers** não-internas,
+**120 caminhos / 166 operações** no `openapi.json`.
+
+*Mudou: **+1 migration** (`20260929120000_spec079_turma_nivel_not_null`: repete
+a atribuição do primeiro nível, sob a trava, e faz o `SET NOT NULL`), e o
+`openapi.json` sem caminho novo — oito schemas de turma deixam de dizer que o
+nível pode ser nulo, e `CreateClassDto.nivelId` vira obrigatório (AC-013).*
+
 **Números conferidos por comando em 2026-09-28, na branch do Back A da SPEC-079
 (`spec079/back-a`, empilhada sobre a `spec078/avisos`):** **57 migrations, 43
 tabelas, 25 triggers** não-internas, **120 caminhos / 166 operações** no
@@ -980,8 +989,11 @@ o seed o importa por caminho relativo.
 - **A regra** (D2): nível **exato**. ~~Turma sem nível é de todos~~ — **toda
   turma tem nível** desde a SPEC-079 (ADR-029): `POST /classes` exige
   `nivelId`, `PATCH` recusa `null` (`400`, no pipe), e a migração A deu o
-  primeiro nível a toda turma sem nível; o `NOT NULL` chega no M3. O ramo
-  "turma sem nível" continua no código, inalcançável (LIM-079a).
+  primeiro nível a toda turma sem nível; **o banco garante desde o M3**
+  (`turmas.nivel_id NOT NULL`). O ramo "turma sem nível" do
+  `podeEntrarPorNivel` continua no código, inalcançável (LIM-079a); o do
+  `filtroDeTurmaPorNivel` saiu, porque o tipo do Prisma deixou de aceitar o
+  nulo.
 - **O clube nunca fica sem nível** (SPEC-079/REQ-007): `LevelsService.remove`
   conta e apaga **sob a trava de nível da empresa**, e recusa o último com `422
   ULTIMO_NIVEL_DO_CLUBE` — antes das recusas de uso, porque "mude o nível dessas

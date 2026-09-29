@@ -20,11 +20,10 @@ export class CreateClassDto {
 
   /**
    * SPEC-079/REQ-002 — **toda turma tem nível**: sem ele, `400` (como o
-   * `quadraId`). O `@ApiPropertyOptional` fica até o M3 de propósito: o
-   * contrato OpenAPI muda junto com o `NOT NULL` (TASK-005), e o CI recusa
-   * `openapi.json` diferente do gerado.
+   * `quadraId`). O contrato passou a dizê-lo no M3 (AC-013), junto com o
+   * `NOT NULL` do banco.
    */
-  @ApiPropertyOptional()
+  @ApiProperty({ format: 'uuid' })
   @UuidNoCorpo()
   nivelId!: string;
 
