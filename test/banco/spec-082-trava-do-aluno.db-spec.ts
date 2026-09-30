@@ -147,18 +147,38 @@ describe('SPEC-082/AC-013 — o limite de turmas não fura', () => {
     expect(await turmasDoAluno(db, a.alunoId)).toBe(1);
   });
 
+  /**
+   * Cinco alunos, cada um com dois `entrar` simultâneos (turma A e turma B),
+   * as dez requisições juntas e cada uma na SUA conexão, já aberta: sem o
+   * aquecimento, a primeira terminava antes de a segunda conectar, e a prova
+   * passava com a trava do aluno arrancada (achado ao executar a sabotagem).
+   */
   it('(c) dois entrar simultâneos do mesmo aluno em duas turmas → exatamente 1 × 200 e 1 × 409 LIMITE_DE_TURMAS', async () => {
-    const { c, turmaA, turmaB, a } = await cenario();
-    // Duas conexões independentes: com uma só, serializariam por acidente.
-    const [r1, r2] = await Promise.all([
-      resposta(rotas(cliente(BASE)).entrar(c, a, turmaA)),
-      resposta(rotas(cliente(BASE)).entrar(c, a, turmaB)),
-    ]);
-    const statuses = [r1.status, r2.status].sort();
-    expect(statuses).toEqual([200, 409]);
-    expect([r1, r2].find((r) => r.status === 409)).toMatchObject({
-      code: 'LIMITE_DE_TURMAS',
-    });
-    expect(await turmasDoAluno(db, a.alunoId)).toBe(1);
+    const { c, turmaA, turmaB, a: primeiro } = await cenario();
+    const alunos = [primeiro];
+    for (let i = 0; i < 4; i++) alunos.push(await criarAluno(db, c));
+    const pares = await Promise.all(
+      alunos.map(async (a) => {
+        const [c1, c2] = [cliente(BASE), cliente(BASE)];
+        await Promise.all([c1.$queryRaw`SELECT 1`, c2.$queryRaw`SELECT 1`]);
+        return { a, r1: rotas(c1), r2: rotas(c2) };
+      }),
+    );
+    const resultados = await Promise.all(
+      pares.map(async ({ a, r1, r2 }) => ({
+        a,
+        rs: await Promise.all([
+          resposta(r1.entrar(c, a, turmaA)),
+          resposta(r2.entrar(c, a, turmaB)),
+        ]),
+      })),
+    );
+    for (const { a, rs } of resultados) {
+      expect(rs.map((r) => r.status).sort()).toEqual([200, 409]);
+      expect(rs.find((r) => r.status === 409)).toMatchObject({
+        code: 'LIMITE_DE_TURMAS',
+      });
+      expect(await turmasDoAluno(db, a.alunoId)).toBe(1);
+    }
   });
 });

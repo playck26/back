@@ -189,13 +189,17 @@ describe('SPEC-082/AC-002 — cada escritor continua exclusivo', () => {
     },
   );
 
-  it('o seed (como processo): espera a compartilhada e só conclui depois de solta', async () => {
-    await limparQa();
-    const qa = '08200000-0000-4000-8000-0000000000aa';
-    await db.$executeRawUnsafe(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${qa}','PlayCK QA (demo)','${QA_SLUG}',now())`,
-    );
-    const app = 'spec082-escritor-seed';
+  /**
+   * **O seed são DOIS escritores** (`prisma/seed.ts`: a transação dos níveis
+   * e a das matrículas), e cada um tem a sua prova. Ver o seed esperando não
+   * basta: um seed cuja transação dos níveis tomasse a compartilhada ainda
+   * esperaria depois, na das matrículas — e passaria (achado ao executar a
+   * sabotagem). Por isso cada caso confere, NO INSTANTE em que vê a espera,
+   * que a escrita daquela transação ainda não aconteceu.
+   */
+  it('o seed (como processo), a transação dos NÍVEIS: espera a compartilhada antes de criar nível, e só conclui depois de solta', async () => {
+    const qa = await qaPreCriada([]);
+    const app = 'spec082-escritor-seed-niveis';
     const soltar = await segurar(db, travaDoClube(qa, 'compartilhada'));
     let terminou = false;
     let seed: Promise<{ codigo: number | null; saida: string }> =
@@ -206,6 +210,7 @@ describe('SPEC-082/AC-002 — cada escritor continua exclusivo', () => {
         return r;
       });
       await vistoEsperando(db, app, 'advisory', 180_000);
+      expect(await db.nivel.count({ where: { companyId: qa } })).toBe(0);
       await dormir(500);
       expect(terminou).toBe(false);
     } finally {
@@ -215,9 +220,54 @@ describe('SPEC-082/AC-002 — cada escritor continua exclusivo', () => {
     expect(r.codigo).toBe(0);
     expect(await db.nivel.count({ where: { companyId: qa } })).toBe(3);
   });
+
+  it('o seed (como processo), a transação das MATRÍCULAS: espera a compartilhada antes de matricular, e só conclui depois de solta', async () => {
+    // Com o Iniciante já lá, o seed não escreve nível (AC-030 da SPEC-075):
+    // a única trava que ele toma é a das matrículas.
+    const qa = await qaPreCriada(['Iniciante']);
+    const app = 'spec082-escritor-seed-matriculas';
+    const soltar = await segurar(db, travaDoClube(qa, 'compartilhada'));
+    let terminou = false;
+    let seed: Promise<{ codigo: number | null; saida: string }> =
+      Promise.resolve({ codigo: null, saida: '' });
+    try {
+      seed = rodarSeed(urlDoCaminho(app)).then((r) => {
+        terminou = true;
+        return r;
+      });
+      await vistoEsperando(db, app, 'advisory', 180_000);
+      expect(
+        await db.turmaAluno.count({ where: { turma: { companyId: qa } } }),
+      ).toBe(0);
+      await dormir(500);
+      expect(terminou).toBe(false);
+    } finally {
+      await soltar();
+    }
+    const r = await seed;
+    expect(r.codigo).toBe(0);
+    expect(
+      await db.turmaAluno.count({ where: { turma: { companyId: qa } } }),
+    ).toBeGreaterThan(0);
+  });
 });
 
 const QA_SLUG = 'playck-qa-demo';
+const QA = '08200000-0000-4000-8000-0000000000aa';
+
+/** A empresa de QA por SQL, com o slug do seed (ele a reaproveita). */
+async function qaPreCriada(niveis: string[]): Promise<string> {
+  await limparQa();
+  await db.$executeRawUnsafe(
+    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${QA}','PlayCK QA (demo)','${QA_SLUG}',now())`,
+  );
+  for (const [i, nome] of niveis.entries()) {
+    await db.$executeRawUnsafe(
+      `INSERT INTO niveis (id,company_id,nome,ordem) VALUES (gen_random_uuid(),'${QA}','${nome}',${i + 1})`,
+    );
+  }
+  return QA;
+}
 
 async function limparQa(): Promise<void> {
   const r = await db.empresa.findFirst({
