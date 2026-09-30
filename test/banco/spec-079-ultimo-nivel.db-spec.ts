@@ -141,7 +141,7 @@ describe('SPEC-079/AC-017 — sob concorrência, os dois últimos', () => {
     let pidDono = 0;
     const dono = db.$transaction(
       async (tx) => {
-        await travarNivelDaEmpresa(tx, EMPRESA);
+        await travarNivelDaEmpresa(tx, EMPRESA, 'escrita');
         pidDono = (
           await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`
         )[0].pid;

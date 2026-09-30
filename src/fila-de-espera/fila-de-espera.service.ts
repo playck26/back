@@ -13,6 +13,12 @@ import { ReposicaoService } from '../classes/reposicao.service';
 import { situacaoDoCredito } from '../classes/credito-de-reposicao';
 import { recusaPorNivel, travarNivelDaEmpresa } from '../people/nivel-efetivo';
 import {
+  CTE_DO_PRAZO,
+  DEPOIS_DO_PRAZO,
+  TIMEOUT_DA_MATRICULA_MS,
+} from '../common/lock/prazo-de-espera';
+import { naEtapa } from '../common/erros/erro-transitorio';
+import {
   formatDateOnly,
   formatTimeOnly,
   hojeNoFusoDoClube,
@@ -433,132 +439,161 @@ export class FilaDeEsperaService {
     });
     if (!linha) throw new NotFoundException();
 
-    return this.prisma.$transaction(async (tx) => {
-      const fila = linha.ocupacaoId ? 'aula' : 'turma';
+    const fila = linha.ocupacaoId ? 'aula' : 'turma';
+    return this.prisma.$transaction(
+      async (tx) => {
+        // SPEC-075/D13 — na fila de TURMA a confirmação vira matrícula, e toma a
+        // trava de nível da empresa como PRIMEIRA instrução, antes do `FOR
+        // UPDATE` da turma (nível 0 da ordem de locks). Na fila de AULA ela vira
+        // reposição, que não é par da D12 — e não precisa.
+        // SPEC-082/D1-D2 — é a instrução inicial do leitor: prazo absoluto,
+        // trava do clube COMPARTILHADA e trava do aluno exclusiva.
+        if (fila === 'turma') {
+          await naEtapa(
+            'travas',
+            travarNivelDaEmpresa(tx, companyId, { leituraDoAluno: aluno.id }),
+          );
+        }
 
-      // SPEC-075/D13 — na fila de TURMA a confirmação vira matrícula, e toma a
-      // trava de nível da empresa como PRIMEIRA instrução, antes do `FOR
-      // UPDATE` da turma (nível 0 da ordem de locks). Na fila de AULA ela vira
-      // reposição, que não é par da D12 — e não precisa.
-      if (fila === 'turma') await travarNivelDaEmpresa(tx, companyId);
+        // Sem lock: so para descobrir QUAL turma travar primeiro.
+        const ocupacao = linha.ocupacaoId
+          ? await tx.ocupacaoQuadra.findFirst({
+              where: { id: linha.ocupacaoId, companyId },
+              select: { id: true, origemTurmaId: true },
+            })
+          : null;
+        const turmaId = linha.turmaId ?? ocupacao?.origemTurmaId;
+        if (!turmaId) throw new NotFoundException();
 
-      // Sem lock: so para descobrir QUAL turma travar primeiro.
-      const ocupacao = linha.ocupacaoId
-        ? await tx.ocupacaoQuadra.findFirst({
-            where: { id: linha.ocupacaoId, companyId },
-            select: { id: true, origemTurmaId: true },
-          })
-        : null;
-      const turmaId = linha.turmaId ?? ocupacao?.origemTurmaId;
-      if (!turmaId) throw new NotFoundException();
-
-      // ---- 1. TURMA
-      await tx.$queryRaw`
+        // ---- 1. TURMA (SPEC-082/D2b: o prazo recalculado dentro da instrução)
+        await naEtapa(
+          'turma',
+          tx.$queryRaw`
+        WITH ${CTE_DO_PRAZO}
         SELECT id FROM turmas
          WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
-         FOR UPDATE`;
+           AND ${DEPOIS_DO_PRAZO}
+         FOR UPDATE`,
+        );
 
-      // ---- 2. ALUNO, so na fila de aula (ela cria reposicao)
-      if (fila === 'aula') {
-        await tx.$queryRaw`
+        // ---- 2. ALUNO, so na fila de aula (ela cria reposicao)
+        if (fila === 'aula') {
+          await tx.$queryRaw`
           SELECT id FROM alunos
            WHERE company_id = ${companyId}::uuid
              AND usuario_id = ${usuarioId}::uuid
            FOR KEY SHARE`;
-      }
+        }
 
-      // ---- 3. OCUPACAO, so na fila de aula
-      if (ocupacao) {
-        await tx.$queryRaw`
+        // ---- 3. OCUPACAO, so na fila de aula
+        if (ocupacao) {
+          await tx.$queryRaw`
           SELECT id FROM ocupacoes_quadra
            WHERE id = ${ocupacao.id}::uuid AND company_id = ${companyId}::uuid
            FOR UPDATE`;
-      }
+        }
 
-      // ---- 4. A LINHA, por ultimo
-      const travadas = await tx.$queryRaw<
-        { estado: string; vencida: boolean }[]
-      >`
+        // ---- 4. A LINHA, por ultimo
+        // SPEC-082/D2b e I8 — o prazo dentro da instrução; a etapa `fila` dá a
+        // mensagem da I6.
+        const travadas = await naEtapa(
+          'fila',
+          tx.$queryRaw<{ estado: string; vencida: boolean }[]>`
+        WITH ${CTE_DO_PRAZO}
         SELECT estado::text AS estado,
                (chamado_ate IS NULL OR chamado_ate < now()) AS vencida
           FROM lista_de_espera
-         WHERE id = ${linha.id}::uuid
-         FOR UPDATE`;
-      const travada = travadas[0];
-      if (!travada) throw new NotFoundException();
-
-      if (travada.estado !== 'chamado') {
-        // Nao encerra: a linha ja esta no estado que esta, e sobrescrever o
-        // motivo apagaria por que ela terminou.
-        return {
-          ok: false as const,
-          code: 'NAO_E_SUA_VEZ',
-          message: 'Esta vez nao esta mais aberta.',
-        };
-      }
-
-      // **A tela nao depende do varredor para isto** (D8): a confirmacao
-      // confere o prazo por conta propria, entao um varredor desligado nao
-      // deixa ninguem confirmar uma vez vencida.
-      if (travada.vencida) {
-        return this.encerrar(
-          tx,
-          linha.id,
-          'prazo vencido',
-          'VEZ_EXPIRADA',
-          'O prazo desta vez venceu.',
+         WHERE id = ${linha.id}::uuid AND ${DEPOIS_DO_PRAZO}
+         FOR UPDATE`,
         );
-      }
+        const travada = travadas[0];
+        if (!travada) throw new NotFoundException();
 
-      try {
-        let reposicaoId: string | null = null;
-        if (fila === 'aula') {
-          const criada = await this.reposicoes.marcarNaTransacao(
+        if (travada.estado !== 'chamado') {
+          // Nao encerra: a linha ja esta no estado que esta, e sobrescrever o
+          // motivo apagaria por que ela terminou.
+          return {
+            ok: false as const,
+            code: 'NAO_E_SUA_VEZ',
+            message: 'Esta vez nao esta mais aberta.',
+          };
+        }
+
+        // **A tela nao depende do varredor para isto** (D8): a confirmacao
+        // confere o prazo por conta propria, entao um varredor desligado nao
+        // deixa ninguem confirmar uma vez vencida.
+        if (travada.vencida) {
+          return this.encerrar(
             tx,
-            companyId,
-            usuarioId,
-            linha.faltaId as string,
-            (ocupacao as { id: string }).id,
-          );
-          reposicaoId = criada.id;
-        } else {
-          await this.matriculas.entrarNaTransacao(
-            tx,
-            companyId,
-            aluno,
-            turmaId,
+            linha.id,
+            'prazo vencido',
+            'VEZ_EXPIRADA',
+            'O prazo desta vez venceu.',
           );
         }
 
-        // AC-007 - **os dois comitam juntos.** Separa-los deixaria alguem com
-        // reposicao marcada e fila ainda `chamado`, ou o contrario.
-        await tx.$executeRaw`
+        try {
+          let reposicaoId: string | null = null;
+          if (fila === 'aula') {
+            const criada = await this.reposicoes.marcarNaTransacao(
+              tx,
+              companyId,
+              usuarioId,
+              linha.faltaId as string,
+              (ocupacao as { id: string }).id,
+            );
+            reposicaoId = criada.id;
+          } else {
+            await this.matriculas.entrarNaTransacao(
+              tx,
+              companyId,
+              aluno,
+              turmaId,
+            );
+          }
+
+          // AC-007 - **os dois comitam juntos.** Separa-los deixaria alguem com
+          // reposicao marcada e fila ainda `chamado`, ou o contrario.
+          // SPEC-082/D2b — a linha já é desta transação; o `WITH` do prazo vai
+          // junto para o gate do AC-017 ser uniforme.
+          await naEtapa(
+            'fila',
+            tx.$executeRaw`
+          WITH ${CTE_DO_PRAZO}
           UPDATE lista_de_espera
              SET estado = 'atendida', concluida_em = now(),
                  motivo_fim = 'confirmou'
-           WHERE id = ${linha.id}::uuid`;
+           WHERE id = ${linha.id}::uuid AND ${DEPOIS_DO_PRAZO}`,
+          );
 
-        return { ok: true as const, fila, reposicaoId };
-      } catch (erro) {
-        // **Recusa de dominio vira resultado; erro de banco sobe.**
-        //
-        // A diferenca importa: as recusas dos dois servicos sao lancadas
-        // depois de LEITURAS bem-sucedidas, entao a transacao continua
-        // utilizavel e o encerramento pode comitar. Um erro do banco (um
-        // `23505` na INV-118, por exemplo) **aborta** a transacao - ai nao ha
-        // o que comitar, e deixar a linha em `chamado` e o certo: a pessoa
-        // tenta de novo, ou o varredor expira.
-        if (!(erro instanceof HttpException)) throw erro;
-        const corpo = erro.getResponse() as { code?: string; message?: string };
-        return this.encerrar(
-          tx,
-          linha.id,
-          corpo.code ?? 'recusada',
-          corpo.code ?? 'CONFIRMACAO_RECUSADA',
-          corpo.message ?? 'Nao foi possivel confirmar esta vez.',
-        );
-      }
-    });
+          return { ok: true as const, fila, reposicaoId };
+        } catch (erro) {
+          // **Recusa de dominio vira resultado; erro de banco sobe.**
+          //
+          // A diferenca importa: as recusas dos dois servicos sao lancadas
+          // depois de LEITURAS bem-sucedidas, entao a transacao continua
+          // utilizavel e o encerramento pode comitar. Um erro do banco (um
+          // `23505` na INV-118, por exemplo) **aborta** a transacao - ai nao ha
+          // o que comitar, e deixar a linha em `chamado` e o certo: a pessoa
+          // tenta de novo, ou o varredor expira.
+          if (!(erro instanceof HttpException)) throw erro;
+          const corpo = erro.getResponse() as {
+            code?: string;
+            message?: string;
+          };
+          return this.encerrar(
+            tx,
+            linha.id,
+            corpo.code ?? 'recusada',
+            corpo.code ?? 'CONFIRMACAO_RECUSADA',
+            corpo.message ?? 'Nao foi possivel confirmar esta vez.',
+          );
+        }
+      },
+      // SPEC-082/D3 — o tempo-limite declarado vale para a fila de TURMA (o
+      // leitor); a de aula segue com o padrão de sempre.
+      fila === 'turma' ? { timeout: TIMEOUT_DA_MATRICULA_MS } : undefined,
+    );
   }
 
   /** Encerra a linha **e devolve a recusa** - nunca lanca. */
@@ -569,10 +604,16 @@ export class FilaDeEsperaService {
     code: string,
     message: string,
   ): Promise<ResultadoDaConfirmacao> {
-    await tx.$executeRaw`
+    // SPEC-082/D2b — o `WITH` do prazo vai junto (o gate do AC-017 passa
+    // por este ramo, o da recusa).
+    await naEtapa(
+      'fila',
+      tx.$executeRaw`
+      WITH ${CTE_DO_PRAZO}
       UPDATE lista_de_espera
          SET estado = 'encerrada', concluida_em = now(), motivo_fim = ${motivo}
-       WHERE id = ${id}::uuid`;
+       WHERE id = ${id}::uuid AND ${DEPOIS_DO_PRAZO}`,
+    );
     return { ok: false as const, code, message };
   }
 

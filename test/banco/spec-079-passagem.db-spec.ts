@@ -419,7 +419,7 @@ describe('SPEC-079/AC-018 — as migrações tomam a trava de nível da empresa'
 
     const dono = db.$transaction(
       async (tx) => {
-        await travarNivelDaEmpresa(tx, empresa);
+        await travarNivelDaEmpresa(tx, empresa, 'escrita');
         pidDono = (
           await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`
         )[0].pid;

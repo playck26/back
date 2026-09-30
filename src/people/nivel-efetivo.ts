@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { ChaveDeLock } from '../common/lock/chave-de-lock';
+import { instrucaoInicialDaMatricula } from '../common/lock/prazo-de-espera';
 
 /**
  * SPEC-075 — **o nível decide o acesso, e a regra mora aqui, num lugar só.**
@@ -421,13 +422,41 @@ export async function conferirEdicaoDeNivel<T>(
  *
  * Os oito caminhos que a tomam estão na tabela da D13 da spec; a AC-029
  * (`escritores-de-matricula.spec.ts`) falha com um escritor novo fora dela.
+ *
+ * ## SPEC-082/D1 — leitor e escritor
+ *
+ * Quem **edita** nível (turma, aluno, catálogo de níveis, seed) toma a trava em
+ * modo **exclusivo**, como sempre. Quem só **lê** o nível para matricular
+ * (`entrar`, `allocateStudent`, `confirmar` de fila de turma) toma em modo
+ * **compartilhado**: duas matrículas do mesmo clube em turmas diferentes deixam
+ * de esperar uma pela outra, e a edição de nível continua excluindo as duas.
+ *
+ * O leitor toma, **na mesma instrução**, uma segunda trava, **exclusiva e por
+ * aluno** (`matricula-do-aluno:<alunoId>`): era a trava exclusiva do clube que
+ * punha em fila, sem dizer, duas matrículas do mesmo aluno — e o limite de
+ * turmas (SPEC-023) conta com isso. Ordem fixa: clube, depois aluno, depois
+ * qualquer lock de linha.
+ *
+ * O `modo` é **obrigatório** e sem padrão: ninguém herda o modo errado por
+ * omissão. A instrução do leitor grava também o prazo absoluto da matrícula
+ * (`prazo-de-espera.ts`, D2).
  */
+export type ModoDaTrava = 'escrita' | { leituraDoAluno: string };
+
 export async function travarNivelDaEmpresa(
-  db: Pick<Prisma.TransactionClient, '$executeRaw'>,
+  db: Pick<Prisma.TransactionClient, '$executeRaw' | '$queryRaw'>,
   companyId: string,
+  modo: ModoDaTrava,
 ): Promise<void> {
   const chave = ChaveDeLock.deTexto(`nivel-da-empresa:${companyId}`);
-  // `$executeRaw`, e não `$queryRaw`: a função devolve `void`, que o Prisma
-  // não desserializa (medido na 4ª rodada, com `pg_sleep`).
-  await db.$executeRaw`SELECT pg_advisory_xact_lock(${chave}::bigint)`;
+  if (modo === 'escrita') {
+    // `$executeRaw`, e não `$queryRaw`: a função devolve `void`, que o Prisma
+    // não desserializa (medido na 4ª rodada, com `pg_sleep`).
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(${chave}::bigint)`;
+    return;
+  }
+  const chaveDoAluno = ChaveDeLock.deTexto(
+    `matricula-do-aluno:${modo.leituraDoAluno}`,
+  );
+  await db.$queryRaw(instrucaoInicialDaMatricula(chave, chaveDoAluno));
 }

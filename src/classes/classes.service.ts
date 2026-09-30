@@ -26,6 +26,14 @@ import {
   recusaPorNivel,
   travarNivelDaEmpresa,
 } from '../people/nivel-efetivo';
+import {
+  CTE_DO_PRAZO,
+  DEPOIS_DO_PRAZO,
+  TIMEOUT_DA_MATRICULA_MS,
+} from '../common/lock/prazo-de-espera';
+import { naEtapa } from '../common/erros/erro-transitorio';
+import { inserirMatriculaComPrazo } from './matricula-com-prazo';
+import { cheiaAntesDaFila } from './cheia-antes-da-fila';
 import { CourtsService } from '../courts/courts.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { EnfileiradorDeAvisos } from '../push/enfileirador-de-avisos';
@@ -148,6 +156,17 @@ function paraAulaDoAluno(ocupacao: {
     horaFim: formatTimeOnly(ocupacao.horaFim),
   };
 }
+
+/**
+ * A recusa de capacidade do gestor, a mesma dentro e fora da transação.
+ * SPEC-082/AC-009: ganha o `code` `TURMA_CHEIA` (o texto continua o de antes),
+ * para a leitura de fora e a de dentro serem a mesma resposta.
+ */
+const MENSAGEM_DE_CAPACIDADE_EXCEDIDA = {
+  statusCode: 409,
+  code: 'TURMA_CHEIA',
+  message: 'Capacidade da turma excedida (INV-003, AC-002)',
+};
 
 @Injectable()
 export class ClassesService {
@@ -565,7 +584,8 @@ export class ClassesService {
       // SPEC-075/D13 — quando o corpo traz `nivelId`, a trava de nível da
       // empresa é a PRIMEIRA instrução, antes do `FOR UPDATE` da turma logo
       // abaixo. Sem `nivelId` a edição não mexe em nível, e não trava.
-      if (dto.nivelId !== undefined) await travarNivelDaEmpresa(tx, companyId);
+      if (dto.nivelId !== undefined)
+        await travarNivelDaEmpresa(tx, companyId, 'escrita');
 
       // SPEC-068/D6 — **o professor anterior sai da linha TRAVADA**, e só
       // quando o `PATCH` traz `professorId`.
@@ -818,92 +838,115 @@ export class ClassesService {
   }
 
   async allocateStudent(companyId: string, turmaId: string, alunoId: string) {
-    return this.prisma.$transaction(async (tx) => {
-      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução, antes
-      // do `FOR UPDATE` da turma: esta alocação e uma edição de nível da mesma
-      // empresa nunca correm juntas.
-      await travarNivelDaEmpresa(tx, companyId);
+    // SPEC-082/D5 — turma já cheia é recusada ANTES da fila da trava, sem
+    // trava nenhuma, e só quando a transação daria a mesma resposta (a mesma
+    // recusa de capacidade de sempre, sem `code`: o contrato não muda).
+    if (
+      await cheiaAntesDaFila(this.prisma, companyId, turmaId, alunoId, 'gestor')
+    ) {
+      throw new ConflictException(MENSAGEM_DE_CAPACIDADE_EXCEDIDA);
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        // SPEC-075/D13 + SPEC-082/D1-D2 — a instrução inicial, PRIMEIRA da
+        // transação: prazo absoluto, trava do clube em modo COMPARTILHADO
+        // (leitor) e trava do aluno em modo exclusivo. Esta alocação e uma
+        // edição de nível da mesma empresa nunca correm juntas; duas alocações
+        // de alunos diferentes, sim.
+        await naEtapa(
+          'travas',
+          travarNivelDaEmpresa(tx, companyId, { leituraDoAluno: alunoId }),
+        );
 
-      // REQ-004/INV-003 (DATA_MODEL.md): SELECT ... FOR UPDATE na linha da
-      // turma serializa checagens de capacidade concorrentes — não
-      // expressável no query builder do Prisma, raw query necessária.
-      const turmaRows = await tx.$queryRaw<
-        { id: string; capacidade: number; nivel_id: string | null }[]
-      >`
+        // REQ-004/INV-003 (DATA_MODEL.md): SELECT ... FOR UPDATE na linha da
+        // turma serializa checagens de capacidade concorrentes — não
+        // expressável no query builder do Prisma, raw query necessária.
+        // SPEC-082/D2b — com o prazo recalculado dentro da instrução.
+        const turmaRows = await naEtapa(
+          'turma',
+          tx.$queryRaw<
+            { id: string; capacidade: number; nivel_id: string | null }[]
+          >`
+        WITH ${CTE_DO_PRAZO}
         SELECT id, capacidade, nivel_id::text AS nivel_id FROM turmas
         WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+          AND ${DEPOIS_DO_PRAZO}
         FOR UPDATE
-      `;
-      const turma = turmaRows[0];
-      if (!turma) {
-        throw new NotFoundException();
-      }
-
-      const aluno = await tx.aluno.findFirst({
-        where: { id: alunoId, companyId },
-      });
-      if (!aluno) {
-        throw new NotFoundException('Aluno não encontrado');
-      }
-      // SPEC-009/INV-010 — dentro da transação, com a turma já travada por
-      // FOR UPDATE: checar vínculo antes de abrir a transação deixaria
-      // janela entre a checagem e a escrita.
-      //
-      // **DEF-027:** passou a olhar `status` junto. Alocar um aluno desligado
-      // não era erro de banco — ele entrava na turma e reaparecia na chamada
-      // com `alunoAtivo: false`, que a `frequencia.service` já calcula. A
-      // LEITURA sabia; a escrita não.
-      this.studentsService.garantirAlunoOperante(aluno);
-
-      const jaAlocado = await tx.turmaAluno.findFirst({
-        where: { turmaId, alunoId },
-      });
-      if (jaAlocado) {
-        return jaAlocado;
-      }
-
-      // SPEC-075/D5 (decisão 5 do Israel) — **o gestor também é recusado.**
-      // Sem parâmetro, flag ou papel que contorne: o caminho que sobra é mudar
-      // o nível do aluno, e a mensagem o diz (D4, o texto do gestor). Depois do
-      // `jaAlocado` (a alocação que já existe continua, D6) e antes da
-      // capacidade — a mesma posição dos gestos do aluno (D3).
-      const recusa = await recusaPorNivel(
-        tx,
-        companyId,
-        turma.nivel_id,
-        aluno.nivelId,
-        'gestor',
-      );
-      if (recusa) throw new UnprocessableEntityException(recusa);
-
-      const alocados = await tx.turmaAluno.count({ where: { turmaId } });
-      if (alocados >= turma.capacidade) {
-        throw new ConflictException(
-          'Capacidade da turma excedida (INV-003, AC-002)',
+      `,
         );
-      }
+        const turma = turmaRows[0];
+        if (!turma) {
+          throw new NotFoundException();
+        }
 
-      // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
-      // (decisão do Israel, 2026-09-26). Antes, marcar a reposição na última
-      // vaga de um dia e DEPOIS alocar deixava aquele dia acima da capacidade
-      // — o FIT-035 só passava por sorte de ordem.
-      const lotaria = await aulaQueAMatriculaLotaria(
-        tx,
-        companyId,
-        turma,
-        alunoId,
-        new Date(),
-      );
-      if (lotaria) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'AULA_LOTADA',
-          message: `A aula de ${diaEMes(lotaria.data)} desta turma já está lotada, contando as reposições marcadas. Alocar agora deixaria esse dia acima da capacidade.`,
+        const aluno = await tx.aluno.findFirst({
+          where: { id: alunoId, companyId },
         });
-      }
+        if (!aluno) {
+          throw new NotFoundException('Aluno não encontrado');
+        }
+        // SPEC-009/INV-010 — dentro da transação, com a turma já travada por
+        // FOR UPDATE: checar vínculo antes de abrir a transação deixaria
+        // janela entre a checagem e a escrita.
+        //
+        // **DEF-027:** passou a olhar `status` junto. Alocar um aluno desligado
+        // não era erro de banco — ele entrava na turma e reaparecia na chamada
+        // com `alunoAtivo: false`, que a `frequencia.service` já calcula. A
+        // LEITURA sabia; a escrita não.
+        this.studentsService.garantirAlunoOperante(aluno);
 
-      return tx.turmaAluno.create({ data: { turmaId, alunoId } });
-    });
+        const jaAlocado = await tx.turmaAluno.findFirst({
+          where: { turmaId, alunoId },
+        });
+        if (jaAlocado) {
+          return jaAlocado;
+        }
+
+        // SPEC-075/D5 (decisão 5 do Israel) — **o gestor também é recusado.**
+        // Sem parâmetro, flag ou papel que contorne: o caminho que sobra é mudar
+        // o nível do aluno, e a mensagem o diz (D4, o texto do gestor). Depois do
+        // `jaAlocado` (a alocação que já existe continua, D6) e antes da
+        // capacidade — a mesma posição dos gestos do aluno (D3).
+        const recusa = await recusaPorNivel(
+          tx,
+          companyId,
+          turma.nivel_id,
+          aluno.nivelId,
+          'gestor',
+        );
+        if (recusa) throw new UnprocessableEntityException(recusa);
+
+        const alocados = await tx.turmaAluno.count({ where: { turmaId } });
+        if (alocados >= turma.capacidade) {
+          throw new ConflictException(MENSAGEM_DE_CAPACIDADE_EXCEDIDA);
+        }
+
+        // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
+        // (decisão do Israel, 2026-09-26). Antes, marcar a reposição na última
+        // vaga de um dia e DEPOIS alocar deixava aquele dia acima da capacidade
+        // — o FIT-035 só passava por sorte de ordem.
+        const lotaria = await aulaQueAMatriculaLotaria(
+          tx,
+          companyId,
+          turma,
+          alunoId,
+          new Date(),
+        );
+        if (lotaria) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'AULA_LOTADA',
+            message: `A aula de ${diaEMes(lotaria.data)} desta turma já está lotada, contando as reposições marcadas. Alocar agora deixaria esse dia acima da capacidade.`,
+          });
+        }
+
+        // SPEC-082/D2b e AC-018 — SQL cru com o prazo dentro e o aluno travado
+        // em `FOR KEY SHARE` antes de gravar; o retorno tem os nomes do `create`.
+        return inserirMatriculaComPrazo(tx, turmaId, alunoId);
+      },
+      // SPEC-082/D3 — o tempo-limite declarado, amarrado aos tetos (AC-014).
+      { timeout: TIMEOUT_DA_MATRICULA_MS },
+    );
   }
 
   /**

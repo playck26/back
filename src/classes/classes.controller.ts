@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiServiceUnavailableResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -24,6 +25,8 @@ import {
   ApiUnprocessableEntityResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { ErroTransitorioResponseDto } from '../common/erros/erro-transitorio-response.dto';
+import { comTraducaoDaMatricula } from '../common/erros/erro-transitorio';
 import {
   TurmaDetalheResponseDto,
   TurmaPaginadaResponseDto,
@@ -363,7 +366,12 @@ export class ClassesController {
   @ApiCreatedResponse({ type: MatriculaEmTurmaResponseDto })
   @ApiConflictResponse({
     description:
-      'Turma sem vaga de matrícula (capacidade), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia.',
+      'Turma sem vaga de matrícula (capacidade), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia. `MATRICULA_EM_ANDAMENTO` (SPEC-082): a alocação esperou a vez por mais de 2 s; nada foi gravado.',
+  })
+  @ApiServiceUnavailableResponse({
+    type: ErroTransitorioResponseDto,
+    description:
+      'SPEC-082 — o tempo-limite da matrícula estourou ou o servidor está sem conexão livre (`SERVIDOR_OCUPADO`). Nada foi gravado.',
   })
   @ApiUnprocessableEntityResponse({
     description:
@@ -374,10 +382,13 @@ export class ClassesController {
     @Param('id', UuidCanonicoPipe) id: string,
     @Param('alunoId', UuidCanonicoPipe) alunoId: string,
   ) {
-    return this.classesService.allocateStudent(
-      user.companyId as string,
-      id,
-      alunoId,
+    // SPEC-082/D4 — tradução na borda HTTP.
+    return comTraducaoDaMatricula(() =>
+      this.classesService.allocateStudent(
+        user.companyId as string,
+        id,
+        alunoId,
+      ),
     );
   }
 
