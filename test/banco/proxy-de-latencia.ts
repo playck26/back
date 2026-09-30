@@ -13,6 +13,13 @@ import net from 'node:net';
 export interface ProxyDeLatencia {
   porta: number;
   definirAtraso(ms: number): void;
+  /**
+   * SPEC-082 v8 (IMP-082-02) — as **voltas sequenciais**: quantas vezes o
+   * cliente voltou a falar depois de o banco responder, somadas em todas as
+   * conexões. É a grandeza que o atraso multiplica — e não o número de
+   * comandos, porque o Prisma manda algumas leituras juntas.
+   */
+  voltas(): number;
   fechar(): Promise<void>;
 }
 
@@ -20,9 +27,14 @@ export async function abrirProxy(
   portaDestino: number,
 ): Promise<ProxyDeLatencia> {
   let atraso = 0;
+  let voltas = 0;
   const sockets = new Set<net.Socket>();
 
-  function atrasar(origem: net.Socket, destino: net.Socket) {
+  function atrasar(
+    origem: net.Socket,
+    destino: net.Socket,
+    aoReceber: () => void,
+  ) {
     const fila: { pedaco: Buffer; quando: number }[] = [];
     let liberando = false;
     const liberar = () => {
@@ -43,6 +55,7 @@ export async function abrirProxy(
       );
     };
     origem.on('data', (pedaco: Buffer) => {
+      aoReceber();
       fila.push({ pedaco, quando: Date.now() + atraso });
       if (!liberando) liberar();
     });
@@ -54,8 +67,15 @@ export async function abrirProxy(
     const banco = net.connect(portaDestino, '127.0.0.1');
     sockets.add(cliente);
     sockets.add(banco);
-    atrasar(cliente, banco);
-    atrasar(banco, cliente);
+    // Uma volta começa quando o cliente fala depois de o banco ter falado.
+    let ultimo: 'cliente' | 'banco' = 'banco';
+    atrasar(cliente, banco, () => {
+      if (ultimo === 'banco') voltas += 1;
+      ultimo = 'cliente';
+    });
+    atrasar(banco, cliente, () => {
+      ultimo = 'banco';
+    });
     cliente.on('close', () => banco.destroy());
     banco.on('close', () => cliente.destroy());
   });
@@ -67,6 +87,7 @@ export async function abrirProxy(
     definirAtraso: (ms) => {
       atraso = ms;
     },
+    voltas: () => voltas,
     fechar: () =>
       new Promise<void>((r) => {
         for (const s of sockets) s.destroy();
