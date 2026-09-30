@@ -161,6 +161,15 @@ export function clienteContado(
             ? 10
             : 3,
       findMany: () => [],
+      // Nenhum caminho leitor grava pela API de modelo (AC-017). Responder
+      // aqui é o que deixa o gate ficar vermelho PELO MOTIVO CERTO no dia em
+      // que um `tx.turmaAluno.create` voltar: o ramo roda até o fim e a
+      // escrita de modelo aparece na lista — em vez de o dublê lançar.
+      create: (args) => ({
+        id: 'matricula-de-modelo',
+        ...(args as { data: object }).data,
+        createdAt: new Date(),
+      }),
     },
     faltaAvisada: { findMany: () => [] },
     reposicaoDeAula: { findMany: () => [] },

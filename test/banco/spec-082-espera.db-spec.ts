@@ -20,6 +20,7 @@ import {
   criarAluno,
   criarTurma,
   desconectarTodos,
+  dormir,
   inicioDaTransacao,
   limparClube,
   linhaChamada,
@@ -224,6 +225,11 @@ describe('SPEC-082/AC-019 — lock de tabela termina com código, pelo valor her
           t.$executeRawUnsafe(`LOCK TABLE ${tabela} IN ACCESS EXCLUSIVE MODE`),
         );
         await soltarAluno();
+        // Teto de segurança: uma espera sem valor herdado (a sabotagem 2)
+        // ficaria presa na tabela para sempre. Passado o tempo-limite da
+        // transação com folga, o teste solta a tabela e olha o que veio.
+        await Promise.race([pedido, dormir(10_000)]);
+        if (soltarTabela) await soltarTabela();
         res = await pedido;
       } finally {
         await soltarAluno();
