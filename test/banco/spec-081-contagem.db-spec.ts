@@ -223,8 +223,6 @@ describe('SPEC-081 AC-014/AC-015 — presença contada por ocorrência', () => {
       B.TURMA,
       30,
     );
-    expect(r.data.map((o) => [o.ocupacaoId, o.marcados])).toEqual([
-      [B.V, 3],
-    ]);
+    expect(r.data.map((o) => [o.ocupacaoId, o.marcados])).toEqual([[B.V, 3]]);
   });
 });
