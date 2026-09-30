@@ -217,3 +217,28 @@ describe('SPEC-082/AC-017 — nenhuma escrita pela API de modelo (estrutural)', 
     expect(achadas).toEqual(['turmaAluno.create']);
   });
 });
+
+/**
+ * SPEC-082/AC-015(a), v8 (achado IMP-082-01) — **a dependência por linha do
+ * aviso é defesa, afirmada por contrato do SQL.** A prova de banco derruba o
+ * cálculo ÚNICO do `lock_timeout`; tirar só o `WHERE d.id IS NOT NULL` não a
+ * derruba (nessa forma de instrução o Postgres continua avaliando por linha —
+ * a validação da implementação mediu 23 e 11 ms). Por isso o texto é
+ * conferido aqui: o recálculo mora num `LATERAL` que depende da linha do
+ * `unnest`, e o `FOR KEY SHARE` de cada gestor depende do recálculo.
+ */
+describe('SPEC-082/AC-015(a) — contrato do SQL do aviso: recálculo por linha', () => {
+  it('o INSERT do aviso recalcula o lock_timeout num LATERAL que depende de cada linha, antes do FOR KEY SHARE dela', async () => {
+    const cliente = clienteContado(RAMO_MAIS_CARO);
+    await cliente.entrar();
+    const aviso = cliente.idas.find(
+      (i) => i.sql && /INSERT\s+INTO\s+notificacoes/.test(i.sql),
+    );
+    expect(aviso?.sql).toBeDefined();
+    const sql = (aviso?.sql ?? '').replace(/\s+/g, ' ');
+    expect(sql).toMatch(
+      /unnest\(\?::uuid\[\]\) WITH ORDINALITY AS d\(id, ord\), LATERAL \(SELECT set_config\('lock_timeout', [\s\S]*?\) AS cfg WHERE d\.id IS NOT NULL\) r, LATERAL \(SELECT us\.id FROM usuarios us WHERE [\s\S]*?AND r\.cfg IS NOT NULL FOR KEY SHARE\) u/,
+    );
+    expect(sql).toContain(MARCADOR_DO_PRAZO);
+  });
+});
