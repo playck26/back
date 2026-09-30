@@ -21,6 +21,14 @@ function diaAtras(dias: number): Date {
 }
 
 /**
+ * SPEC-081/D4 — a contagem de presenças saiu do `select` e virou um
+ * `$queryRaw` à parte. As fixturas continuam dizendo quantas presenças cada
+ * ocorrência tem; `ocorrencia()` registra o número aqui, e o `$queryRaw` do
+ * dublê responde a partir dele.
+ */
+const presencasDasFixturas = new Map<string, number>();
+
+/**
  * A ocorrência como o Prisma devolve: `chamadas` é LISTA (a FK é composta),
  * e `_count.presencas` é o que separa "lançada" de "só tem cabeçalho".
  */
@@ -40,6 +48,7 @@ function ocorrencia(
   const completude =
     opts.completude === undefined ? 'completa' : opts.completude;
   const presencas = opts.presencas ?? (completude ? 1 : 0);
+  presencasDasFixturas.set(id, presencas);
   return {
     id,
     data: diaAtras(dias),
@@ -71,6 +80,13 @@ function buildMocks() {
     aluno: { findFirst: jest.fn() },
     presenca: { findMany: jest.fn().mockResolvedValue([]) },
     ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
+    $queryRaw: jest.fn(() =>
+      Promise.resolve(
+        [...presencasDasFixturas]
+          .filter(([, n]) => n > 0)
+          .map(([ocupacaoId, n]) => ({ ocupacaoId, n: BigInt(n) })),
+      ),
+    ),
   };
   return {
     prisma: prisma as unknown as PrismaService,
@@ -90,6 +106,7 @@ describe('FrequenciaService (SPEC-015)', () => {
   let service: FrequenciaService;
 
   beforeEach(() => {
+    presencasDasFixturas.clear();
     const b = buildMocks();
     prisma = b.prisma;
     service = b.service;
@@ -604,5 +621,74 @@ describe('FrequenciaService (SPEC-015)', () => {
         r.alunos[1].faltasSeguidas,
       );
     });
+  });
+});
+
+/**
+ * SPEC-081/AC-015 — **contrato do SQL da contagem, dito como tal.** Tirar a
+ * ligação `o.id = p.ocupacao_id` do `JOIN`, ou o filtro por clube, não muda
+ * o que o serviço consome (ele lê o mapa pelas chaves do recorte). É prova de
+ * forma: o isolamento real é a PK global de `ocupacoes_quadra`, e a prova
+ * comportamental da chave por ocorrência está no teste de banco.
+ */
+describe('SPEC-081 AC-015 — a contagem de presenças, pelo contrato do SQL', () => {
+  const chamadasDaContagem = (prisma: { $queryRaw: jest.Mock }) =>
+    prisma.$queryRaw.mock.calls.map(
+      ([q]) => q as { sql: string; values: unknown[] },
+    );
+
+  it.each([
+    ['daTurma', (s: FrequenciaService) => s.daTurma('c1', 't1', 30)],
+    ['doAluno', (s: FrequenciaService) => s.doAluno('c1', 'a1', 30)],
+    ['evasao', (s: FrequenciaService) => s.evasao('c1', 30)],
+  ] as const)(
+    '%s: liga a ocorrência à presença e o clube do token',
+    async (_r, chamar) => {
+      const { prisma, service } = buildMocks();
+      const p = prisma as unknown as {
+        turma: { findFirst: jest.Mock };
+        aluno: { findFirst: jest.Mock };
+        $queryRaw: jest.Mock;
+      };
+      p.turma.findFirst.mockResolvedValue({
+        id: 't1',
+        nome: 'Turma 01',
+        alunos: [],
+        ocupacoes: [],
+      });
+      p.aluno.findFirst.mockResolvedValue({
+        id: 'a1',
+        status: 'ativo',
+        vinculo: 'aprovado',
+        usuario: { nome: 'Ana' },
+        turmaAlunos: [],
+      });
+
+      await chamar(service);
+
+      const [contagem] = chamadasDaContagem(p);
+      expect(contagem.sql).toContain('o.id = p.ocupacao_id');
+      expect(contagem.sql).toMatch(/GROUP BY p\.ocupacao_id/);
+      expect(contagem.values).toContain('c1');
+      expect(contagem.sql).not.toMatch(/\bIN\s*\(/i);
+    },
+  );
+
+  it('daTurma: o recorte inclui a turma', async () => {
+    const { prisma, service } = buildMocks();
+    const p = prisma as unknown as {
+      turma: { findFirst: jest.Mock };
+      $queryRaw: jest.Mock;
+    };
+    p.turma.findFirst.mockResolvedValue({
+      id: 't1',
+      nome: 'Turma 01',
+      alunos: [],
+      ocupacoes: [],
+    });
+    await service.daTurma('c1', 't1', 30);
+    const [contagem] = chamadasDaContagem(p);
+    expect(contagem.sql).toContain('o.origem_turma_id');
+    expect(contagem.values).toContain('t1');
   });
 });

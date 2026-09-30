@@ -4,7 +4,7 @@ import {
   FrequenciaDaTurmaResponseDto,
   FrequenciaDoAlunoResponseDto,
 } from './dto/frequencia-response.dto';
-import type { CompletudeChamada } from '@prisma/client';
+import { Prisma, type CompletudeChamada } from '@prisma/client';
 import { hojeNoFusoDoClube } from '../courts/date-time.util';
 import {
   chamadaJaRegistrada,
@@ -15,6 +15,7 @@ import {
   participantesDasCandidatas,
 } from '../presenca-automatica/corte-da-presenca';
 import { PrismaService } from '../prisma/prisma.service';
+import { AvisoDeReferencia } from './aviso-de-referencia';
 
 /**
  * SPEC-015 — os três relatórios de frequência (TASK-001, 002 e 003).
@@ -32,8 +33,16 @@ import { PrismaService } from '../prisma/prisma.service';
  *
  * **AC-015 — no máximo 2 queries por agregação, e nenhuma por aluno.** É o
  * que dita a forma de tudo aqui: uma query traz as ocorrências (com o
- * cabeçalho e a contagem de presenças), outra traz as presenças. O resto é
- * feito em memória, sobre volume que a janela de 90 dias limita.
+ * cabeçalho), outra traz as presenças. O resto é feito em memória, sobre
+ * volume que a janela de 90 dias limita.
+ *
+ * **SPEC-081/D4 — a contagem de presenças por ocorrência saiu do `select`.**
+ * O `_count` do Prisma virava `LEFT JOIN (SELECT … FROM presencas GROUP BY
+ * …)` sobre a tabela INTEIRA, de todos os clubes (96 ms a quente com 291 mil
+ * presenças, Seq Scan). Agora é uma consulta própria, pelo mesmo recorte das
+ * ocorrências, feito no banco — e ela sai EM PARALELO com a primeira, então
+ * não soma uma ida à latência. Não depende de aluno: continua valendo o
+ * "nenhuma por aluno".
  */
 
 export const JANELA_PADRAO_DIAS = 30;
@@ -109,14 +118,24 @@ export interface Cobertura {
   origens: OrigensDaCobertura;
 }
 
-/** O que `normaliza` precisa saber além da linha: o corte e `|M ∪ V|`. */
+/**
+ * O que `normaliza` precisa saber além da linha: o corte, `|M ∪ V|` e
+ * (SPEC-081/D4) quantas presenças cada ocorrência tem.
+ */
 interface ContextoDaPresenca {
   corte: Date | null;
   participantes: Map<string, number>;
+  presencas: Map<string, number>;
 }
+
+/** `YYYY-MM-DD` do dia, na convenção de `hojeNoFusoDoClube` (UTC-truncado). */
+const dia = (d: Date) => d.toISOString().slice(0, 10);
 
 @Injectable()
 export class FrequenciaService {
+  /** SPEC-081/AC-017 — trocável em teste, para o limiar injetado baixo. */
+  aviso = new AvisoDeReferencia();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly corteDaPresenca: CorteDaPresenca = new CorteDaPresenca(
@@ -131,6 +150,7 @@ export class FrequenciaService {
    * independentemente do número de alunos.
    */
   private async contexto(
+    presencas: Map<string, number>,
     companyId: string,
     ocupacoes: {
       id: string;
@@ -157,7 +177,43 @@ export class FrequenciaService {
         horaFim: o.horaFim,
       })),
     );
-    return { corte, participantes };
+    return { corte, participantes, presencas };
+  }
+
+  /**
+   * SPEC-081/D4 — **presenças por ocorrência, contadas no banco pelo recorte
+   * das ocorrências.** Nenhuma lista montada pela aplicação: o `WHERE` é o
+   * mesmo da consulta das ocorrências (clube, `TURMA`, janela e, no
+   * relatório da turma, a turma). O custo é proporcional às presenças DO
+   * CLUBE na janela, não da plataforma.
+   *
+   * A chave do mapa é o `id` da OCORRÊNCIA (AC-015): contar por turma daria a
+   * uma aula sem chamada as presenças da vizinha. A ligação `o.id =
+   * p.ocupacao_id` e o `company_id` são defesa — o isolamento real é a PK
+   * global de `ocupacoes_quadra` —, afirmados por contrato do SQL no teste.
+   */
+  private async presencasPorOcorrencia(
+    companyId: string,
+    desde: Date,
+    hoje: Date,
+    turmaId?: string,
+  ): Promise<Map<string, number>> {
+    const daTurma = turmaId
+      ? Prisma.sql`AND o.origem_turma_id = ${turmaId}::uuid`
+      : Prisma.empty;
+    const linhas = await this.prisma.$queryRaw<
+      { ocupacaoId: string; n: bigint }[]
+    >(Prisma.sql`
+      SELECT p.ocupacao_id AS "ocupacaoId", count(*) AS n
+        FROM presencas p
+        JOIN ocupacoes_quadra o
+          ON o.id = p.ocupacao_id AND o.origem_tipo = p.origem_tipo
+       WHERE o.company_id = ${companyId}::uuid
+         AND o.origem_tipo = 'TURMA'
+         ${daTurma}
+         AND o.data BETWEEN ${dia(desde)}::date AND ${dia(hoje)}::date
+       GROUP BY p.ocupacao_id`);
+    return new Map(linhas.map((l) => [l.ocupacaoId, Number(l.n)]));
   }
 
   /**
@@ -193,7 +249,8 @@ export class FrequenciaService {
     chamadas: {
       select: { completude: true, origem: true, origemInicial: true },
     },
-    _count: { select: { presencas: true } },
+    // SPEC-081/D4 — o `_count` de presenças saiu daqui: ver
+    // `presencasPorOcorrencia`.
     // SPEC-030 — as duas entraram para o resolvedor poder ser chamado com o
     // contrato inteiro. Este relatório não usa os estados de relógio
     // (`futura`/`em_andamento`/`pendente`), mas passar campo pela metade
@@ -212,7 +269,6 @@ export class FrequenciaService {
         origem: string;
         origemInicial: string;
       }[];
-      _count: { presencas: number };
       horaInicio: Date;
       horaFim: Date;
     },
@@ -237,7 +293,7 @@ export class FrequenciaService {
       data: o.data,
       cancelada: o.statusPagamento === 'cancelado',
       temChamada: chamadaJaRegistrada(estadoDoCabecalho),
-      temPresenca: o._count.presencas > 0,
+      temPresenca: (ctx.presencas.get(o.id) ?? 0) > 0,
       completa: estadoDoCabecalho === 'feita',
       desconhecida: estadoDoCabecalho === 'legada',
       naoHouve: estadoDoCabecalho === 'nao_houve',
@@ -455,46 +511,55 @@ export class FrequenciaService {
     const { hoje, desde } = this.janela(dias);
 
     // Query 1: a turma (que é o escopo de empresa, AC-009), as ocorrências
-    // da janela com cabeçalho e contagem de presenças, e a matrícula de
-    // hoje — com nome, status e vínculo, para que o aluno sem registro
-    // nenhum (AC-003) não exija uma terceira query.
-    const turma = await this.prisma.turma.findFirst({
-      where: { id: turmaId, companyId },
-      select: {
-        id: true,
-        nome: true,
-        alunos: {
-          select: {
-            alunoId: true,
-            aluno: {
-              select: {
-                status: true,
-                vinculo: true,
-                usuario: { select: { nome: true } },
+    // da janela com cabeçalho, e a matrícula de hoje — com nome, status e
+    // vínculo, para que o aluno sem registro nenhum (AC-003) não exija uma
+    // terceira query.
+    //
+    // SPEC-081/D4 — a contagem sai junto, em paralelo (`Promise.all`, para
+    // uma falha de qualquer das duas não virar rejeição solta). Se a turma
+    // não for do clube, o resultado é descartado sem ser lido.
+    const [turma, presencasDaJanela] = await Promise.all([
+      this.prisma.turma.findFirst({
+        where: { id: turmaId, companyId },
+        select: {
+          id: true,
+          nome: true,
+          alunos: {
+            select: {
+              alunoId: true,
+              aluno: {
+                select: {
+                  status: true,
+                  vinculo: true,
+                  usuario: { select: { nome: true } },
+                },
               },
             },
           },
-        },
-        ocupacoes: {
-          where: { data: { gte: desde, lte: hoje }, origemTipo: 'TURMA' },
-          select: {
-            ...FrequenciaService.SELECT_OCORRENCIA,
-            // DEF-035 — quem veio REPOR não "saiu da turma": nunca esteve
-            // nela. Vem aninhado na query que já busca as ocorrências, e não
-            // numa terceira consulta, para a AC-015 continuar valendo.
-            reposicoes: { select: { alunoId: true } },
+          ocupacoes: {
+            where: { data: { gte: desde, lte: hoje }, origemTipo: 'TURMA' },
+            select: {
+              ...FrequenciaService.SELECT_OCORRENCIA,
+              // DEF-035 — quem veio REPOR não "saiu da turma": nunca esteve
+              // nela. Vem aninhado na query que já busca as ocorrências, e não
+              // numa terceira consulta, para a AC-015 continuar valendo.
+              reposicoes: { select: { alunoId: true } },
+            },
+            orderBy: { data: 'desc' },
           },
-          orderBy: { data: 'desc' },
         },
-      },
-    });
+      }),
+      this.presencasPorOcorrencia(companyId, desde, hoje, turmaId),
+    ]);
     // AC-009 — turma de outra empresa é 404, não 403: 403 confirmaria que
     // ela existe.
     if (!turma) {
       throw new NotFoundException();
     }
+    this.aviso.verificar('daTurma', turma.ocupacoes.length, companyId);
 
     const ctx = await this.contexto(
+      presencasDaJanela,
       companyId,
       turma.ocupacoes.map((o) => ({ ...o, origemTurmaId: turma.id })),
     );
@@ -610,18 +675,25 @@ export class FrequenciaService {
     const { hoje, desde } = this.janela(dias);
 
     // Query 1: o aluno (escopo de empresa, AC-009) e as turmas de hoje.
-    const aluno = await this.prisma.aluno.findFirst({
-      where: { id: alunoId, companyId },
-      select: {
-        id: true,
-        status: true,
-        vinculo: true,
-        usuario: { select: { nome: true } },
-        turmaAlunos: {
-          select: { turma: { select: { id: true, nome: true } } },
+    //
+    // SPEC-081/D4 — em paralelo, a contagem pelo recorte do clube na janela:
+    // superconjunto das ocorrências deste aluno; o mapa só é lido pelas
+    // chaves que ele tem.
+    const [aluno, presencasDaJanela] = await Promise.all([
+      this.prisma.aluno.findFirst({
+        where: { id: alunoId, companyId },
+        select: {
+          id: true,
+          status: true,
+          vinculo: true,
+          usuario: { select: { nome: true } },
+          turmaAlunos: {
+            select: { turma: { select: { id: true, nome: true } } },
+          },
         },
-      },
-    });
+      }),
+      this.presencasPorOcorrencia(companyId, desde, hoje),
+    ]);
     if (!aluno) {
       throw new NotFoundException();
     }
@@ -657,7 +729,8 @@ export class FrequenciaService {
       },
       orderBy: { data: 'desc' },
     });
-    const ctx = await this.contexto(companyId, ocupacoes);
+    this.aviso.verificar('doAluno', ocupacoes.length, companyId);
+    const ctx = await this.contexto(presencasDaJanela, companyId, ocupacoes);
 
     const porTurma = new Map<
       string,
@@ -781,19 +854,24 @@ export class FrequenciaService {
   async evasao(companyId: string, dias: number): Promise<EvasaoResponseDto> {
     const { hoje, desde } = this.janela(dias);
 
-    // Query 1: todas as ocorrências de turma da empresa na janela.
-    const ocupacoes = await this.prisma.ocupacaoQuadra.findMany({
-      where: {
-        companyId,
-        origemTipo: 'TURMA',
-        data: { gte: desde, lte: hoje },
-      },
-      select: {
-        ...FrequenciaService.SELECT_OCORRENCIA,
-        origemTurma: { select: { nome: true } },
-      },
-    });
-    const ctx = await this.contexto(companyId, ocupacoes);
+    // Query 1: todas as ocorrências de turma da empresa na janela; em
+    // paralelo (SPEC-081/D4), a contagem de presenças pelo mesmo recorte.
+    const [ocupacoes, presencasDaJanela] = await Promise.all([
+      this.prisma.ocupacaoQuadra.findMany({
+        where: {
+          companyId,
+          origemTipo: 'TURMA',
+          data: { gte: desde, lte: hoje },
+        },
+        select: {
+          ...FrequenciaService.SELECT_OCORRENCIA,
+          origemTurma: { select: { nome: true } },
+        },
+      }),
+      this.presencasPorOcorrencia(companyId, desde, hoje),
+    ]);
+    this.aviso.verificar('evasao', ocupacoes.length, companyId);
+    const ctx = await this.contexto(presencasDaJanela, companyId, ocupacoes);
 
     const porTurma = new Map<
       string,
