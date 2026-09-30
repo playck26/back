@@ -840,7 +840,7 @@ export class ClassesService {
   async allocateStudent(companyId: string, turmaId: string, alunoId: string) {
     // SPEC-082/D5 — turma já cheia é recusada ANTES da fila da trava, sem
     // trava nenhuma, e só quando a transação daria a mesma resposta (a mesma
-    // recusa de capacidade de sempre, sem `code`: o contrato não muda).
+    // recusa de capacidade de dentro, com o `code` `TURMA_CHEIA` do AC-009).
     if (
       await cheiaAntesDaFila(this.prisma, companyId, turmaId, alunoId, 'gestor')
     ) {
