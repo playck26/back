@@ -25,13 +25,12 @@ const CADASTRO_NAO_CONCLUIDO =
  * SPEC-009/REQ-002 — convite de uso único.
  *
  * O token vive só no link que o admin encaminha. No banco fica `sha256` do
- * token, **determinístico** — e é essa a diferença que importa em relação
- * a `refresh_tokens`, que usa bcrypt: lá a linha é encontrada por `jti` e
- * o hash só é comparado depois; aqui o token **é** a chave de busca da
- * claim atômica, e bcrypt (com salt por hash) tornaria `WHERE token_hash =
- * ?` impossível. Com 256 bits de entropia, sha256 sem salt não é
- * força-bruta-vel, e vazamento do banco continua não permitindo aceitar
- * convite. (Achado NOVO-001 da 2ª validação cruzada.)
+ * token, **determinístico**, e aqui o token **é** a chave de busca da claim
+ * atômica — bcrypt (com salt por hash) tornaria `WHERE token_hash = ?`
+ * impossível. (`refresh_tokens` também guarda SHA-256 desde a SPEC-081, mas
+ * acha a linha pelo `jti`; o bcrypt de lá só confere linha legada, até 7 dias.)
+ * Com 256 bits de entropia, sha256 sem salt não é força-bruta-vel, e
+ * vazamento do banco continua não permitindo aceitar convite. (Achado NOVO-001 da 2ª validação cruzada.)
  */
 @Injectable()
 export class InvitesService {

@@ -25,17 +25,21 @@
  *  R6  houver diff em qualquer arquivo de `test/utils/` alcançado pelos
  *      imports (resolvidos pelo TypeScript) dos 30 e2e e do teste do guard,
  *      fora das exceções `portao-no-duble.ts` e `prisma-mock.ts`.
- *  R7  em `jwt-auth.guard.spec.ts`, linha alterada fora da allowlist (linhas
- *      com `findUnique`, `$queryRaw`, `mockResolvedValue`, `mockReturnValue`,
- *      `jest.fn`, ou a asserção de mecanismo da antiga linha 71).
+ *  R7  em `jwt-auth.guard.spec.ts`, a árvore diferir da base em algo além
+ *      da mesma forma exata (SPEC-081 v8, DESVIO-1): um `import {
+ *      comPortaoDoUsuario } from '../../../test/utils/portao-no-duble'` e, em
+ *      CADA um dos quatro montadores do dublê (`buildPrisma`, `prismaInativo`,
+ *      `prismaEmpresaInativa`, `prisma`), o corpo virando UMA chamada
+ *      `comPortaoDoUsuario(<objeto literal>)` cujo argumento é, por AST, igual
+ *      ao corpo do montador na base; e a asserção de mecanismo da antiga
+ *      linha 71 (a última do caso "libera rota marcada…"), que pode mudar mas
+ *      tem de continuar sendo um `expect(…)`.
  *
- *      `--r7=forma` troca a R7 pela PROPOSTA de emenda (não aprovada na
- *      v7 da spec): a mesma forma exata da R4/R5 — um `import {
- *      comPortaoDoUsuario }` e UMA chamada `comPortaoDoUsuario({…})` como
- *      corpo de cada um dos quatro montadores do dublê. O padrão é a R7 da
- *      norma aprovada (`--r7=linhas`).
+ *      A allowlist por palavra da v7 foi retirada: não cabia na edição
+ *      necessária (73 linhas reindentadas) e deixava passar trocar um valor do
+ *      dublê numa linha com `mockResolvedValue` (sabotagem A12).
  *
- * Uso: node scripts/conferir-diff-do-portao.mjs [--base <ref>] [--r7=linhas|forma]
+ * Uso: node scripts/conferir-diff-do-portao.mjs [--base <ref>]
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -45,7 +49,6 @@ import ts from 'typescript';
 const RAIZ = process.cwd();
 const argBase = process.argv.indexOf('--base');
 const BASE = argBase > 0 ? process.argv[argBase + 1] : 'main';
-const R7_FORMA = process.argv.includes('--r7=forma');
 const MONTADORES_DO_GUARD = [
   'buildPrisma',
   'prismaInativo',
@@ -72,14 +75,10 @@ const CODIGOS = [
   'SENHA_TEMPORARIA',
   'ACEITE_PENDENTE',
 ];
-const ALLOWLIST_GUARD = [
-  'findUnique',
-  '$queryRaw',
-  'mockResolvedValue',
-  'mockReturnValue',
-  'jest.fn',
-];
-const LINHA_71 = 'expect(prisma.usuario.findUnique).toHaveBeenCalled();';
+// O caso da antiga linha 71: a última instrução dele é a asserção de
+// mecanismo, a única do arquivo que a R7 deixa mudar (e só por outro expect).
+const CASO_DA_LINHA_71 =
+  "'libera rota marcada com @PermiteSenhaTemporaria, mas ainda consulta o banco (INV-013)'";
 
 const git = (...args) =>
   execFileSync('git', args, {
@@ -273,16 +272,45 @@ function normalizarForma(arquivo, texto, modulo, lugarValido, esperadas = 1, arg
   return { texto: t };
 }
 
-function compararForma(arquivo, modulo, lugarValido, esperadas = 1, argumentoDeObjeto = false) {
+function compararForma(
+  arquivo,
+  modulo,
+  lugarValido,
+  esperadas = 1,
+  argumentoDeObjeto = false,
+  neutralizar = (texto) => ({ texto }),
+) {
   const base = naBase(arquivo);
   const head = naArvore(arquivo);
   if (base === null || head === null) return [`${arquivo}: ausente na base ou na árvore`];
   if (base === head) return [`${arquivo}: sem a chamada do helper (arquivo idêntico à base)`];
   const r = normalizarForma(arquivo, head, modulo, lugarValido, esperadas, argumentoDeObjeto);
   if (r.motivos) return r.motivos.map((m) => `${arquivo}: ${m}`);
-  const a = imprimir(parse(arquivo, base));
-  const b = imprimir(parse(arquivo, r.texto));
+  const nb = neutralizar(base);
+  const nh = neutralizar(r.texto);
+  const motivos = [nb.motivo, nh.motivo].filter(Boolean);
+  if (motivos.length) return motivos.map((m) => `${arquivo}: ${m}`);
+  const a = imprimir(parse(arquivo, nb.texto));
+  const b = imprimir(parse(arquivo, nh.texto));
   return a === b ? [] : [`${arquivo}: a árvore difere da base além da forma admitida`];
+}
+
+/**
+ * R7 — troca a asserção de mecanismo da antiga linha 71 por `expect(0);` nos
+ * dois lados, para ela poder mudar. Ela tem de EXISTIR como última instrução
+ * do caso e ser um `expect(…)`: apagá-la não é trocar o mecanismo.
+ */
+function neutralizarLinha71(texto) {
+  const sf = parse(GUARD_SPEC, texto);
+  const caso = casos(sf).find((c) => c.no.arguments[0]?.getText(sf) === CASO_DA_LINHA_71);
+  const fn = caso?.no.arguments[1];
+  const corpo = fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) ? fn.body : null;
+  const ultima = corpo && ts.isBlock(corpo) ? corpo.statements.at(-1) : null;
+  if (!ultima || !ts.isExpressionStatement(ultima) || !ultima.getText(sf).startsWith('expect('))
+    return { motivo: 'a asserção de mecanismo da antiga linha 71 não é mais um expect(…) no fim do caso' };
+  return {
+    texto: texto.slice(0, ultima.getStart(sf)) + 'expect(0);' + texto.slice(ultima.getEnd()),
+  };
 }
 
 const noUseValueDoPrisma = (ch) => {
@@ -313,7 +341,7 @@ const noReturnDoBuildPrismaMock = (ch) => {
   );
 };
 
-/** R7 (proposta): corpo de arrow atribuída a um dos quatro montadores; devolve o nome. */
+/** R7: corpo de arrow atribuída a um dos quatro montadores; devolve o nome. */
 const noCorpoDeMontador = (ch) => {
   const arrow = ch.parent;
   if (!arrow || !ts.isArrowFunction(arrow) || arrow.body !== ch) return false;
@@ -542,25 +570,15 @@ for (const arq of utils) {
 console.log(`R6: auxiliares de test/utils alcançados: ${utils.join(', ')}`);
 
 // R7
-if (R7_FORMA) {
-  console.log('R7: regra PROPOSTA (--r7=forma), não a da norma aprovada');
-  for (const m of compararForma(
-    GUARD_SPEC,
-    '../../../test/utils/portao-no-duble',
-    noCorpoDeMontador,
-    MONTADORES_DO_GUARD.length,
-    true,
-  ))
-    falhar('R7', m);
-} else {
-  const fora = linhasAlteradas(GUARD_SPEC).filter((l) => {
-    const corpo = l.slice(1).trim();
-    if (corpo === '') return false;
-    if (l.startsWith('-') && corpo === LINHA_71) return false;
-    return !ALLOWLIST_GUARD.some((k) => corpo.includes(k));
-  });
-  for (const l of fora) falhar('R7', `${GUARD_SPEC}: linha fora da allowlist: ${l}`);
-}
+for (const m of compararForma(
+  GUARD_SPEC,
+  '../../../test/utils/portao-no-duble',
+  noCorpoDeMontador,
+  MONTADORES_DO_GUARD.length,
+  true,
+  neutralizarLinha71,
+))
+  falhar('R7', m);
 
 console.log(
   `base=${BASE}; arquivos e2e: ${E2E.length} (${compartilhados.length} compartilhados + ${PROPRIOS.length} próprios); casos na base: ${totalDeCasos} (${casosDoGuard} no teste do guard)`,
