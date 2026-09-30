@@ -187,6 +187,12 @@ export class FrequenciaService {
    * relatório da turma, a turma). O custo é proporcional às presenças DO
    * CLUBE na janela, não da plataforma.
    *
+   * **`p.company_id` também, e não por isolamento.** Sem ele, com os 11 clubes
+   * da medição, o planejador escolhia `Seq Scan` em `presencas` (a tabela da
+   * plataforma inteira) e um hash join: 80 ms no clube da avaliação. Com ele,
+   * a leitura vai pelo índice `presencas_company_id_ocupacao_id_idx` e cai
+   * para ~10 ms (AC-016, medido no `CLI_AUDIT.md`).
+   *
    * A chave do mapa é o `id` da OCORRÊNCIA (AC-015): contar por turma daria a
    * uma aula sem chamada as presenças da vizinha. A ligação `o.id =
    * p.ocupacao_id` e o `company_id` são defesa — o isolamento real é a PK
@@ -209,6 +215,7 @@ export class FrequenciaService {
         JOIN ocupacoes_quadra o
           ON o.id = p.ocupacao_id AND o.origem_tipo = p.origem_tipo
        WHERE o.company_id = ${companyId}::uuid
+         AND p.company_id = ${companyId}::uuid
          AND o.origem_tipo = 'TURMA'
          ${daTurma}
          AND o.data BETWEEN ${dia(desde)}::date AND ${dia(hoje)}::date

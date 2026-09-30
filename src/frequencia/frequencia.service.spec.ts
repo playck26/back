@@ -668,6 +668,8 @@ describe('SPEC-081 AC-015 — a contagem de presenças, pelo contrato do SQL', (
 
       const [contagem] = chamadasDaContagem(p);
       expect(contagem.sql).toContain('o.id = p.ocupacao_id');
+      expect(contagem.sql).toContain('o.company_id = ');
+      expect(contagem.sql).toContain('p.company_id = ');
       expect(contagem.sql).toMatch(/GROUP BY p\.ocupacao_id/);
       expect(contagem.values).toContain('c1');
       expect(contagem.sql).not.toMatch(/\bIN\s*\(/i);
