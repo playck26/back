@@ -335,6 +335,37 @@ export async function segurar(
   };
 }
 
+/**
+ * Como `segurar`, e devolve também o `pid` da conexão que segura — para o
+ * teste afirmar em `pg_locks` QUEM a matrícula está esperando (AC-015(a), v9).
+ */
+export async function segurarComPid(
+  db: PrismaClient,
+  passos: (t: Prisma.TransactionClient) => Promise<unknown>,
+): Promise<{ soltar: () => Promise<void>; pid: number }> {
+  let pid = 0;
+  const soltar = await segurar(db, async (t) => {
+    const r = await t.$queryRaw<
+      { pid: number }[]
+    >`SELECT pg_backend_pid() AS pid`;
+    pid = r[0].pid;
+    await passos(t);
+  });
+  return { soltar, pid };
+}
+
+/** Os `pid`s que bloqueiam a conexão do caminho que está esperando lock. */
+export async function bloqueadoresDe(
+  db: PrismaClient,
+  app: string,
+): Promise<number[]> {
+  const r = await db.$queryRawUnsafe<{ b: number[] | null }[]>(
+    `SELECT pg_blocking_pids(pid) AS b FROM pg_stat_activity
+      WHERE application_name = '${app}' AND wait_event_type = 'Lock'`,
+  );
+  return r.flatMap((l) => l.b ?? []);
+}
+
 export const travaDoClube =
   (companyId: string, modo: 'compartilhada' | 'exclusiva') =>
   (t: Prisma.TransactionClient) =>

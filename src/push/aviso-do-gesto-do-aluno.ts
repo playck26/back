@@ -146,7 +146,8 @@ export class AvisosDoGestoDoAluno {
        WHERE company_id = ${this.companyId}::uuid
          AND role = 'company_admin'
          AND status = 'ativo'
-         AND id IS DISTINCT FROM ${this.autorUsuarioId}::uuid`;
+         AND id IS DISTINCT FROM ${this.autorUsuarioId}::uuid
+       ORDER BY id`;
     if (gestores.length === 0) {
       return 0;
     }
@@ -159,6 +160,10 @@ export class AvisosDoGestoDoAluno {
                     ${aviso.corpo}::text, ${aviso.destinoUrl}::text,
                     ${aviso.expiraEm}::timestamptz)`,
     );
+    // SPEC-082/AC-015(a), v9 (achado 082-V8-01) — a ordem das aquisições é
+    // FIXA: os gestores vêm por `id`, e o `unnest … WITH ORDINALITY` segue a
+    // ordem deste array. Com ordem livre, a prova não saberia qual espera vem
+    // primeiro.
     const destinatarios = gestores.map((g) => g.usuario_id);
     // SPEC-082/D2b (achado 082-V4-01) — cada linha grava uma FK para
     // `usuarios`, e cada checagem é uma AQUISIÇÃO: um `lock_timeout` único para

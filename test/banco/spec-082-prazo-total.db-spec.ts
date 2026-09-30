@@ -42,6 +42,9 @@ import {
   resposta,
   rotas,
   segurar,
+  segurarComPid,
+  bloqueadoresDe,
+  vistoEsperando,
   travaDoAluno,
   travaDoClube,
   urlDoCaminho,
@@ -165,9 +168,13 @@ describe('SPEC-082/AC-015 — o prazo é da matrícula inteira, por aquisição'
     clube = await montarClube(db, { gestores: 2 });
     const turma = await criarTurma(db, clube);
     const a = await criarAluno(db, clube);
-    const [gA, gB] = clube.gestores;
-    const soltarB = await segurar(db, linhaEmForUpdate('usuarios', gB));
-    const soltarA = await segurar(db, linhaEmForUpdate('usuarios', gA));
+    // v9 (achado 082-V8-01): A é o gestor de MENOR id — o aviso trava na
+    // ordem do `id`, então é por A que a matrícula espera primeiro.
+    const [gA, gB] = [...clube.gestores].sort();
+    const B = await segurarComPid(db, linhaEmForUpdate('usuarios', gB));
+    const A = await segurarComPid(db, linhaEmForUpdate('usuarios', gA));
+    const soltarA = A.soltar;
+    const soltarB = B.soltar;
     let m: { r: Resposta; depoisDoPrazoMs: number } = {
       r: { status: 0 },
       depoisDoPrazoMs: Number.NaN,
@@ -179,6 +186,15 @@ describe('SPEC-082/AC-015 — o prazo é da matrícula inteira, por aquisição'
         turma,
         'spec082-ac015a',
         async (inicio) => {
+          // Precondição, ANTES de soltar A: a matrícula espera a transação
+          // que segura A (e não a de B). Senão, a prova não é esta.
+          await vistoEsperando(db, 'spec082-ac015a', undefined, 1_400);
+          const bloqueadores = await bloqueadoresDe(db, 'spec082-ac015a');
+          if (!bloqueadores.includes(A.pid) || bloqueadores.includes(B.pid)) {
+            throw new Error(
+              `PRECONDICAO: a matrícula devia esperar a transação de A (pid ${A.pid}); espera ${JSON.stringify(bloqueadores)} (B = ${B.pid})`,
+            );
+          }
           await ateOInstante(db, inicio + 1_500);
           await soltarA();
         },
@@ -347,25 +363,25 @@ describe('SPEC-082/AC-015 — o prazo é da matrícula inteira, por aquisição'
  * de LENTIDÃO sem lock — latência. O proxy fica entre o serviço e o Postgres,
  * sem disputa nenhuma.
  *
- * **Calibração pelas voltas sequenciais (v8, achado IMP-082-02).** O atraso do
- * proxy multiplica as VOLTAS pela rede, e não os comandos: o teto de 17 idas do
- * AC-011 conta comandos, e o Prisma manda algumas leituras juntas (as três do
- * `Promise.all` de `carregarConjuntos`). O teste conta as voltas da transação
- * no próprio proxy, numa execução sem atraso, e calcula o atraso por sentido
- * para cada alvo: `(alvo − duração sem atraso) / (2 × VOLTAS)`.
+ * **Calibração pelas voltas sequenciais (v8/v9, achados IMP-082-02 e
+ * 082-V8-03).** O atraso do proxy multiplica as VOLTAS pela rede, e não os
+ * comandos: o teto de 17 idas do AC-011 conta comandos, e o Prisma manda
+ * algumas leituras juntas (as três do `Promise.all` de `carregarConjuntos`).
+ * O teste conta as voltas da transação no próprio proxy, numa execução sem
+ * atraso, e calcula o atraso por sentido para cada alvo. Folga:
  *
- * **Falha por calibração, e não por resultado,** se a duração medida no atraso
- * escolhido não ficar do lado certo do limite com pelo menos 1 s de folga. A
- * duração do caso (b) é medida numa execução de calibração em que o teste —
- * e só ele — dá à transação um limite folgado (o `P2028` cortaria a medida em
- * 8 s); a execução que prova o resultado usa as opções do serviço, intactas.
+ * - (a) a duração **medida** da transação fica em ≤ 7,0 s;
+ * - (b) a duração **projetada** (`VOLTAS × volta calibrada`, a volta medida
+ *   por um `SELECT 1` no mesmo atraso) fica em ≥ 9,0 s; e a **observada**
+ *   termina entre 8,0 e 8,5 s — é o tempo-limite que a encerra.
+ *
+ * Fora disso o teste falha **por calibração**, e não por resultado. A duração
+ * é contada desde a chamada do `$transaction` até ele devolver.
  *
  * A conexão é UMA (`connection_limit=1`) e é aquecida sem latência por um
  * `entrar` anterior, para as instruções já estarem preparadas.
  */
 describe('SPEC-082/AC-020 — o tempo-limite de 8 s é o que vale, e vira 503', () => {
-  const LIMITE_MS = 8_000;
-  const FOLGA_MINIMA_MS = 1_000;
   const CASO_A_MS = 6_500; // 1,5 s abaixo do limite
   const CASO_B_MS = 9_500; // 1,5 s acima do limite
 
@@ -376,14 +392,10 @@ describe('SPEC-082/AC-020 — o tempo-limite de 8 s é o que vale, e vira 503', 
     proxy = null;
   });
 
-  /**
-   * O cliente com a duração e as voltas de cada transação registradas. Com
-   * `semLimite`, a transação corre com limite folgado — só para MEDIR.
-   */
+  /** O cliente com a duração e as voltas de cada transação registradas. */
   function clienteCronometrado(url: string, p: ProxyDeLatencia) {
     const c = cliente(url);
-    const medidas: { ms: number; voltas: number }[] = [];
-    const controle = { semLimite: false };
+    const medidas: { ms: number; voltas: number; msDoCallback: number }[] = [];
     const original = c.$transaction.bind(c) as (
       cb: (t: unknown) => Promise<unknown>,
       opcoes?: object,
@@ -392,20 +404,24 @@ describe('SPEC-082/AC-020 — o tempo-limite de 8 s é o que vale, e vira 503', 
       cb: (t: unknown) => Promise<unknown>,
       opcoes?: object,
     ) => {
+      // Desde a CHAMADA: o tempo-limite do Prisma conta o `BEGIN` também
+      // (medido: a 384 ms por sentido, o P2028 chega 8.695 ms depois da
+      // chamada e 7.912 ms depois do começo do callback).
+      const chamada = Date.now();
+      const voltas0 = p.voltas();
       let inicio = 0;
-      let voltas0 = 0;
-      return original(
-        async (t) => {
-          inicio = Date.now();
-          voltas0 = p.voltas();
-          return cb(t);
-        },
-        controle.semLimite ? { ...opcoes, timeout: 60_000 } : opcoes,
-      ).finally(() =>
-        medidas.push({ ms: Date.now() - inicio, voltas: p.voltas() - voltas0 }),
+      return original(async (t) => {
+        inicio = Date.now();
+        return cb(t);
+      }, opcoes).finally(() =>
+        medidas.push({
+          ms: Date.now() - chamada,
+          voltas: p.voltas() - voltas0,
+          msDoCallback: Date.now() - inicio,
+        }),
       );
     };
-    return { c, medidas, controle };
+    return { c, medidas };
   }
 
   async function correr(alvoMs: number) {
@@ -417,7 +433,7 @@ describe('SPEC-082/AC-020 — o tempo-limite de 8 s é o que vale, e vira 503', 
     const url = new URL(urlDoCaminho(`spec082-ac020-${alvoMs}`));
     url.port = String(p.porta);
     url.searchParams.set('connection_limit', '1');
-    const { c, medidas, controle } = clienteCronometrado(url.toString(), p);
+    const { c, medidas } = clienteCronometrado(url.toString(), p);
     const r = rotas(c);
     const c1 = clube;
     const entrarNova = async () =>
@@ -426,56 +442,66 @@ describe('SPEC-082/AC-020 — o tempo-limite de 8 s é o que vale, e vira 503', 
       );
 
     expect(await entrarNova()).toMatchObject({ status: 200 }); // aquece
-    // As voltas, sem atraso.
+    // As voltas e a duração, sem atraso.
     expect(await entrarNova()).toMatchObject({ status: 200 });
     const { ms: semAtraso, voltas } = medidas[medidas.length - 1];
     const atraso = Math.round((alvoMs - semAtraso) / (2 * voltas));
 
-    // A duração no atraso escolhido, medida sem o corte do limite.
-    controle.semLimite = true;
+    // A volta calibrada: um `SELECT 1` na mesma conexão, no atraso escolhido.
     p.definirAtraso(atraso);
-    expect(await entrarNova()).toMatchObject({ status: 200 });
-    controle.semLimite = false;
-    const duracao = medidas[medidas.length - 1].ms;
-    console.log(
-      `AC-020 alvo=${alvoMs}ms: VOLTAS=${voltas} SEM_ATRASO_MS=${semAtraso} ATRASO_POR_SENTIDO_MS=${atraso} DURACAO_MEDIDA_MS=${duracao}`,
-    );
-    const ladoCerto =
-      alvoMs < LIMITE_MS
-        ? duracao <= LIMITE_MS - FOLGA_MINIMA_MS
-        : duracao >= LIMITE_MS + FOLGA_MINIMA_MS;
-    if (!ladoCerto) {
-      throw new Error(
-        `CALIBRACAO: alvo ${alvoMs} ms, duração medida ${duracao} ms — fora do lado certo do limite de ${LIMITE_MS} ms com ${FOLGA_MINIMA_MS} ms de folga`,
-      );
+    const amostras: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const t0 = Date.now();
+      await c.$queryRaw`SELECT 1`;
+      amostras.push(Date.now() - t0);
     }
+    const volta = amostras.sort((x, y) => x - y)[1];
+    const projetada = voltas * volta;
 
     // A prova: as opções do serviço, intactas.
     const turma = await criarTurma(db, c1);
     const a = await criarAluno(db, c1);
     const res = await resposta(r.entrar(c1, a, turma));
     p.definirAtraso(0);
+    const prova = medidas[medidas.length - 1];
     console.log(
-      `AC-020 alvo=${alvoMs}ms: TRANSACAO_DA_PROVA_MS=${medidas[medidas.length - 1].ms} status=${res.status} code=${res.code ?? ''}`,
+      `AC-020 alvo=${alvoMs}ms: VOLTAS=${voltas} SEM_ATRASO_MS=${semAtraso} ATRASO_POR_SENTIDO_MS=${atraso} VOLTA_CALIBRADA_MS=${volta} DURACAO_PROJETADA_MS=${projetada} DURACAO_OBSERVADA_MS=${prova.ms} (do callback: ${prova.msDoCallback}) status=${res.status} code=${res.code ?? ''}`,
     );
-    return { res, turma, duracao };
+    return { res, turma, projetada, observada: prova.ms, volta };
   }
 
   it('(a) latência para a transação levar 6,5 s → 200, matrícula gravada', async () => {
-    const { res, turma, duracao } = await correr(CASO_A_MS);
+    const { res, turma, observada } = await correr(CASO_A_MS);
+    if (observada > 7_000) {
+      throw new Error(`CALIBRACAO: (a) mediu ${observada} ms, acima de 7,0 s`);
+    }
     expect(res).toMatchObject({ status: 200 });
     expect(await matriculasDaTurma(db, turma)).toBe(1);
     // Passou do limite padrão de 5 s: sem o `timeout: 8000`, seria P2028.
-    expect(duracao).toBeGreaterThan(5_000);
+    expect(observada).toBeGreaterThan(5_000);
   });
 
   it('(b) latência para a transação levar 9,5 s → 503 SERVIDOR_OCUPADO com a I5, nada gravado', async () => {
-    const { res, turma } = await correr(CASO_B_MS);
+    const { res, turma, projetada, observada, volta } = await correr(CASO_B_MS);
+    if (projetada < 9_000) {
+      throw new Error(
+        `CALIBRACAO: (b) projetou ${projetada} ms, abaixo de 9,0 s`,
+      );
+    }
     expect(res).toMatchObject({
       status: 503,
       code: 'SERVIDOR_OCUPADO',
       message: I5,
     });
     expect(await matriculasDaTurma(db, turma)).toBe(0);
+    // Encerrada pelo tempo-limite, e não pelo fim do trabalho: começa em
+    // 8,0 s. **O teto de 8,5 s da v9 não é alcançável com a projeção de
+    // ≥ 9,0 s** — o `P2028` só aparece quando a volta em curso volta, então a
+    // observada fica em [8,0 s; 8,0 s + uma volta], e uma volta aqui é ≥ 0,7 s
+    // (9,0 s / ~13 voltas). O teto usado é o físico, 8,0 s + a volta
+    // calibrada; a divergência com a norma está registrada no CLI_AUDIT
+    // (rodada 2) para decisão.
+    expect(observada).toBeGreaterThanOrEqual(8_000);
+    expect(observada).toBeLessThanOrEqual(8_000 + volta);
   });
 });
