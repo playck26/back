@@ -68,6 +68,30 @@ export function etapaDoErro(erro: unknown): EtapaDaMatricula {
   return 'outra';
 }
 
+const FORA_DA_MATRICULA = Symbol.for('playck.spec082.foraDaMatricula');
+
+/**
+ * SPEC-082/D4 (v8, IMP-082-03) — marca o erro de um caminho que passa por uma
+ * rota leitora mas **não é** matrícula (a confirmação da fila de AULA): a
+ * tradução o deixa subir como veio.
+ */
+export function marcarForaDaMatricula(erro: unknown): void {
+  if (
+    erro !== null &&
+    typeof erro === 'object' &&
+    !(FORA_DA_MATRICULA in erro)
+  ) {
+    Object.defineProperty(erro, FORA_DA_MATRICULA, {
+      value: true,
+      enumerable: false,
+    });
+  }
+}
+
+function estaForaDaMatricula(erro: unknown): boolean {
+  return erro !== null && typeof erro === 'object' && FORA_DA_MATRICULA in erro;
+}
+
 /**
  * `55P03` — `lock_not_available`, o que o `lock_timeout` produz. O SQLSTATE sai
  * de `sqlstateDoErro`, que já lê as duas representações do Prisma (`meta.code`
@@ -96,6 +120,7 @@ export function ehServidorOcupado(erro: unknown): boolean {
  * - qualquer outro erro sobe como veio.
  */
 export function traduzirErroDaMatricula(erro: unknown): never {
+  if (estaForaDaMatricula(erro)) throw erro;
   if (ehEsperaEstourada(erro)) {
     throw new ConflictException(
       {

@@ -17,6 +17,13 @@ import {
   clienteContado,
   RAMO_MAIS_CARO,
 } from '../../../test/utils/cliente-contado-da-matricula';
+import type { PrismaService } from '../../prisma/prisma.service';
+import type { ConfigOperacaoService } from '../../company-settings/config-operacao.service';
+import type { MatriculaDoAlunoService } from '../../classes/matricula-do-aluno.service';
+import type { ReposicaoService } from '../../classes/reposicao.service';
+import type { AccessTokenPayload } from '../types/jwt-payload.type';
+import { FilaDeEsperaService } from '../../fila-de-espera/fila-de-espera.service';
+import { MeFilaDeEsperaController } from '../../fila-de-espera/me-fila-de-espera.controller';
 
 /**
  * SPEC-082/D4 (AC-008 e a parte de unidade do AC-006) — **a tradução das rotas
@@ -188,4 +195,68 @@ describe('SPEC-082/AC-008 — P2028 dentro da transação de verdade vira 503, s
       expect(rotulos).not.toContain('COMMIT');
     },
   );
+});
+
+/**
+ * SPEC-082/D4 (v8, achado IMP-082-03) — **em `confirmar`, a tradução é só da
+ * fila de TURMA.** A fila de aula vira reposição, não é transação leitora de
+ * matrícula, e o erro dela sobe como no `main`.
+ */
+describe('SPEC-082/D4 — confirmar traduz só a fila de turma', () => {
+  function rotaDeConfirmar(ocupacaoId: string | null, erro: unknown) {
+    const prisma = {
+      aluno: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'a1', vinculo: 'aprovado', nivelId: null }),
+      },
+      listaDeEspera: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'l1',
+          turmaId: ocupacaoId ? null : 't1',
+          ocupacaoId,
+          faltaId: ocupacaoId ? 'f1' : null,
+        }),
+      },
+      $transaction: jest.fn().mockRejectedValue(erro),
+    } as unknown as PrismaService;
+    const fila = new FilaDeEsperaService(
+      prisma,
+      {} as ConfigOperacaoService,
+      {} as MatriculaDoAlunoService,
+      {} as ReposicaoService,
+    );
+    const usuario = {
+      sub: 'u1',
+      companyId: 'c1',
+      role: 'aluno',
+    } as unknown as AccessTokenPayload;
+    return new MeFilaDeEsperaController(fila).confirmar(usuario, 'l1');
+  }
+
+  it.each(['P2028', 'P2024'])(
+    'fila de AULA: o %s simulado sobe como veio (não vira 503)',
+    async (code) => {
+      const original = erroDoPrisma(code);
+      await expect(rotaDeConfirmar('o1', original)).rejects.toBe(original);
+    },
+  );
+
+  it('fila de AULA: o 55P03 também sobe como veio (não vira 409)', async () => {
+    const original = esperaEstourada();
+    await expect(rotaDeConfirmar('o1', original)).rejects.toBe(original);
+  });
+
+  it('fila de TURMA: o P2028 simulado vira 503 SERVIDOR_OCUPADO com a I5', async () => {
+    const e = await rotaDeConfirmar(null, erroDoPrisma('P2028')).then(
+      () => null,
+      (x: unknown) => x,
+    );
+    expect(e).toBeInstanceOf(ServiceUnavailableException);
+    expect(corpo(e)).toEqual({
+      statusCode: 503,
+      code: 'SERVIDOR_OCUPADO',
+      message: I5,
+    });
+  });
 });
