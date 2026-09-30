@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../people/students.service';
 import { parseDurationToMs } from '../common/utils/parse-duration';
+import { confereHashDoRefresh, hashDoRefresh } from './hash-do-refresh';
 import {
   gerarSenhaTemporaria,
   senhaTemporariaExpiraEm,
@@ -136,7 +137,12 @@ export class AuthService {
       throw new UnauthorizedException();
     }
 
-    const matches = await bcrypt.compare(refreshTokenRaw, stored.tokenHash);
+    // SPEC-081/D1 — SHA-256 em tempo constante; bcrypt só para linha legada.
+    // Hash que não confere recusa ANTES da claim: a linha não é revogada.
+    const matches = await confereHashDoRefresh(
+      refreshTokenRaw,
+      stored.tokenHash,
+    );
     if (!matches) {
       throw new UnauthorizedException();
     }
@@ -387,7 +393,7 @@ export class AuthService {
       secret: refreshSecret,
       expiresIn: refreshExpiresIn as unknown as number,
     });
-    const tokenHash = await bcrypt.hash(refreshToken, BCRYPT_COST);
+    const tokenHash = hashDoRefresh(refreshToken);
 
     await this.prisma.refreshToken.create({
       data: {

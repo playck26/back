@@ -10,6 +10,7 @@ import {
 } from './utils/auth-helpers';
 import { createTestApp } from './utils/create-test-app';
 import { bodyOf } from './utils/http';
+import { hashDoRefresh } from '../src/auth/hash-do-refresh';
 import { buildPrismaMock, type PrismaMock } from './utils/prisma-mock';
 
 interface LoginBody {
@@ -164,10 +165,12 @@ describe('Auth (e2e) - TEST-001', () => {
       const usuario = await buildUsuarioAtivo();
       const { refreshToken } = await loginAndGetTokens(app, prisma, usuario);
 
+      // SPEC-081/D1 — a linha nova guarda o SHA-256 do token. Os outros
+      // casos deste bloco seguem com bcrypt: é o legado que ainda rotaciona.
       prisma.refreshToken.findUnique.mockResolvedValue({
         id: 'rt1',
         usuarioId: usuario.id,
-        tokenHash: await bcrypt.hash(refreshToken, 4),
+        tokenHash: hashDoRefresh(refreshToken),
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         revokedAt: null,
       });
