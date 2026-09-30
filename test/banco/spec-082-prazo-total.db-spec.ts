@@ -494,14 +494,10 @@ describe('SPEC-082/AC-020 — o tempo-limite de 8 s é o que vale, e vira 503', 
       message: I5,
     });
     expect(await matriculasDaTurma(db, turma)).toBe(0);
-    // Encerrada pelo tempo-limite, e não pelo fim do trabalho: começa em
-    // 8,0 s. **O teto de 8,5 s da v9 não é alcançável com a projeção de
-    // ≥ 9,0 s** — o `P2028` só aparece quando a volta em curso volta, então a
-    // observada fica em [8,0 s; 8,0 s + uma volta], e uma volta aqui é ≥ 0,7 s
-    // (9,0 s / ~13 voltas). O teto usado é o físico, 8,0 s + a volta
-    // calibrada; a divergência com a norma está registrada no CLI_AUDIT
-    // (rodada 2) para decisão.
+    // Encerrada pelo tempo-limite, e não pelo fim do trabalho (v10/v11): o
+    // `P2028` só aparece quando a volta em curso termina, então a observada
+    // fica entre 8,0 s e 8,0 s + uma volta calibrada + 50 ms de execução.
     expect(observada).toBeGreaterThanOrEqual(8_000);
-    expect(observada).toBeLessThanOrEqual(8_000 + volta);
+    expect(observada).toBeLessThanOrEqual(8_000 + volta + 50);
   });
 });
