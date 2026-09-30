@@ -203,7 +203,18 @@ describe('SPEC-082/AC-008 — P2028 dentro da transação de verdade vira 503, s
  * matrícula, e o erro dela sobe como no `main`.
  */
 describe('SPEC-082/D4 — confirmar traduz só a fila de turma', () => {
-  function rotaDeConfirmar(ocupacaoId: string | null, erro: unknown) {
+  let transacoes: jest.Mock = jest.fn();
+  function rotaDeConfirmar(
+    ocupacaoId: string | null,
+    erro: unknown,
+    falhaNaLeituraComum = false,
+  ) {
+    const linhaDaFila = {
+      id: 'l1',
+      turmaId: ocupacaoId ? null : 't1',
+      ocupacaoId,
+      faltaId: ocupacaoId ? 'f1' : null,
+    };
     const prisma = {
       aluno: {
         findFirst: jest
@@ -211,15 +222,18 @@ describe('SPEC-082/D4 — confirmar traduz só a fila de turma', () => {
           .mockResolvedValue({ id: 'a1', vinculo: 'aprovado', nivelId: null }),
       },
       listaDeEspera: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'l1',
-          turmaId: ocupacaoId ? null : 't1',
-          ocupacaoId,
-          faltaId: ocupacaoId ? 'f1' : null,
-        }),
+        // AC-021: a leitura comum falha ANTES de o serviço saber a fila; a
+        // linha que ela leria é a do caso (turma ou aula).
+        findFirst: falhaNaLeituraComum
+          ? jest.fn().mockRejectedValue(erro)
+          : jest.fn().mockResolvedValue(linhaDaFila),
       },
-      $transaction: jest.fn().mockRejectedValue(erro),
+      $transaction: falhaNaLeituraComum
+        ? jest.fn().mockResolvedValue(linhaDaFila)
+        : jest.fn().mockRejectedValue(erro),
     } as unknown as PrismaService;
+    transacoes = (prisma as unknown as { $transaction: jest.Mock })
+      .$transaction;
     const fila = new FilaDeEsperaService(
       prisma,
       {} as ConfigOperacaoService,
@@ -259,4 +273,39 @@ describe('SPEC-082/D4 — confirmar traduz só a fila de turma', () => {
       message: I5,
     });
   });
+
+  /**
+   * SPEC-082/AC-021 (v12, achado 082-V11-01) — **a exceção do D4 tem prova
+   * nas duas filas.** A leitura da linha da fila é comum às duas, e acontece
+   * antes de o serviço saber se ela é de turma ou de aula: uma falha de
+   * infraestrutura ali é da rota de matrícula, e vira 503 — nas duas.
+   */
+  describe.each([
+    ['TURMA', null],
+    ['AULA', 'o1'],
+  ] as const)(
+    'AC-021 — linha de fila de %s, falha na leitura comum',
+    (_fila, ocupacaoId) => {
+      it.each(['P2024', 'P2028'])(
+        '%s ⇒ 503 SERVIDOR_OCUPADO com a I5, sem abrir transação',
+        async (code) => {
+          const e = await rotaDeConfirmar(
+            ocupacaoId,
+            erroDoPrisma(code),
+            true,
+          ).then(
+            () => null,
+            (x: unknown) => x,
+          );
+          expect(e).toBeInstanceOf(ServiceUnavailableException);
+          expect(corpo(e)).toEqual({
+            statusCode: 503,
+            code: 'SERVIDOR_OCUPADO',
+            message: I5,
+          });
+          expect(transacoes).not.toHaveBeenCalled();
+        },
+      );
+    },
+  );
 });
