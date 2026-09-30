@@ -18,6 +18,7 @@ import { TeacherPhotoController } from '../src/people/teacher-photo.controller';
 import { FotoDeProfessorService } from '../src/people/foto-de-professor.service';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { comPortaoDoUsuario } from './utils/portao-no-duble';
 import { StorageService } from '../src/storage/storage.service';
 import { FilaDeExclusao } from '../src/storage/fila-de-exclusao.service';
 import {
@@ -213,7 +214,7 @@ describe('FIT-007 — os portões nas rotas reais (AC-018)', () => {
         FotoDeProfessorService,
         StorageService,
         JwtAccessStrategy,
-        { provide: PrismaService, useValue: prisma },
+        { provide: PrismaService, useValue: comPortaoDoUsuario(prisma) },
         { provide: STORAGE_PROVIDER, useValue: provider },
         {
           provide: FilaDeExclusao,

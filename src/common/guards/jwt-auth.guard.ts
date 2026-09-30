@@ -10,6 +10,7 @@ import { PERMITE_ACEITE_PENDENTE } from '../decorators/permite-aceite-pendente.d
 import { PERMITE_SENHA_TEMPORARIA } from '../decorators/permite-senha-temporaria.decorator';
 import type { AccessTokenPayload } from '../types/jwt-payload.type';
 import { TERMO_VERSAO_VIGENTE } from '../../aceites/termo-vigente';
+import { lerPortaoDoUsuario } from './portao-do-usuario';
 
 /**
  * Autenticação por access token + as travas de INV-008 (SPEC-009, senha
@@ -66,25 +67,12 @@ export class JwtAuthGuard extends AuthGuard('jwt-access') {
       return true;
     }
 
-    // SPEC-024 — as colunas de aceite entram NESTE select, e a versao
-    // vigente do contrato vem por join da empresa. O guard continua fazendo
-    // **uma** leitura por requisicao: o portao do aceite nao pode custar uma
-    // segunda ida ao banco em toda rota autenticada do sistema.
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { id: usuarioId },
-      select: {
-        senhaTemporaria: true,
-        status: true,
-        role: true,
-        termoVersaoAceita: true,
-        contratoVersaoAceita: true,
-        // DEF-028 — `status` entra NESTE select, ao lado do
-        // `contratoVersaoVigente` que ja vinha: e a mesma linha da mesma
-        // empresa, entao o portao da empresa suspensa custa **zero** consulta
-        // a mais. Era essa a objecao que manteria a checagem de fora.
-        empresa: { select: { contratoVersaoVigente: true, status: true } },
-      },
-    });
+    // SPEC-024 — as colunas de aceite entram NESTA leitura, e a versao
+    // vigente do contrato vem por join da empresa; DEF-028 — o `status` da
+    // empresa tambem, da mesma linha. SPEC-081/D2 — e o join agora e de
+    // verdade: o `findUnique` com `select` aninhado eram DUAS consultas (o
+    // Prisma roda sem `relationJoins`), e esta e uma.
+    const usuario = await lerPortaoDoUsuario(this.prisma, usuarioId);
 
     // INV-013 (SPEC-013/DEF-001) — vale para toda rota autenticada, marcada
     // ou não. É o que torna a inativação imediata: o access token vivo (até

@@ -10,6 +10,7 @@ import { MeFotoController } from '../src/auth/me-foto.controller';
 import { FotoDePerfilService } from '../src/auth/foto-de-perfil.service';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { comPortaoDoUsuario } from './utils/portao-no-duble';
 import { StorageService } from '../src/storage/storage.service';
 import { FilaDeExclusao } from '../src/storage/fila-de-exclusao.service';
 import {
@@ -123,7 +124,7 @@ describe('/me/foto (e2e)', () => {
         FotoDePerfilService,
         StorageService,
         JwtAccessStrategy,
-        { provide: PrismaService, useValue: prisma },
+        { provide: PrismaService, useValue: comPortaoDoUsuario(prisma) },
         { provide: STORAGE_PROVIDER, useValue: provider },
         {
           provide: FilaDeExclusao,
