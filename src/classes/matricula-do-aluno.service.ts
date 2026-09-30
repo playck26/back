@@ -242,7 +242,7 @@ export class MatriculaDoAlunoService {
         // chamá-lo.
         await naEtapa(
           'travas',
-          travarNivelDaEmpresa(tx, companyId, { leituraDoAluno: aluno.id }),
+          travarNivelDaEmpresa(tx, companyId, 'leitura', aluno.id),
         );
         return this.entrarNaTransacao(tx, companyId, aluno, turmaId);
       },

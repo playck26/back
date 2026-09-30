@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { travarNivelDaEmpresa } from '../people/nivel-efetivo';
 
 /**
  * SPEC-075/AC-029 — **nenhum escritor protegido fora da lista.**
@@ -176,7 +177,7 @@ describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho'
         const chamada = linhas.slice(i, i + 3).join(' ');
         const modo = /'escrita'/.test(chamada)
           ? 'escrita'
-          : /\{\s*leituraDoAluno:/.test(chamada)
+          : /'leitura'/.test(chamada)
             ? 'leitura'
             : 'SEM_MODO';
         achadas.push(`${arquivo}#${caminho}: ${modo}`);
@@ -201,6 +202,21 @@ describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho'
         'prisma/seed.ts#seedEtapa3: escrita',
       ].sort(),
     );
+  });
+
+  it('o tipo exige o aluno no modo leitura (sobrecarga, D1 v8)', () => {
+    // Não roda: é o compilador que prova. Se a sobrecarga aceitar a leitura
+    // sem aluno, o `@ts-expect-error` fica sem erro e o arquivo não compila.
+    const semAluno = (db: Parameters<typeof travarNivelDaEmpresa>[0]) =>
+      // @ts-expect-error — leitura sem o aluno não compila
+      travarNivelDaEmpresa(db, 'c1', 'leitura');
+    const escritaComAluno = (db: Parameters<typeof travarNivelDaEmpresa>[0]) =>
+      // @ts-expect-error — escrita não recebe aluno
+      travarNivelDaEmpresa(db, 'c1', 'escrita', 'a1');
+    expect([typeof semAluno, typeof escritaComAluno]).toEqual([
+      'function',
+      'function',
+    ]);
   });
 
   it('nenhum caminho aparece nas duas listas (sem promoção na mesma transação)', () => {

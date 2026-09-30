@@ -855,7 +855,7 @@ export class ClassesService {
         // de alunos diferentes, sim.
         await naEtapa(
           'travas',
-          travarNivelDaEmpresa(tx, companyId, { leituraDoAluno: alunoId }),
+          travarNivelDaEmpresa(tx, companyId, 'leitura', alunoId),
         );
 
         // REQ-004/INV-003 (DATA_MODEL.md): SELECT ... FOR UPDATE na linha da

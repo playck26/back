@@ -437,16 +437,36 @@ export async function conferirEdicaoDeNivel<T>(
  * turmas (SPEC-023) conta com isso. Ordem fixa: clube, depois aluno, depois
  * qualquer lock de linha.
  *
- * O `modo` é **obrigatório** e sem padrão: ninguém herda o modo errado por
+ * O `modo` (`'leitura' | 'escrita'`) é **obrigatório** e sem padrão, e a
+ * leitura exige o `alunoId` (sobrecarga): ninguém herda o modo errado por
  * omissão. A instrução do leitor grava também o prazo absoluto da matrícula
  * (`prazo-de-espera.ts`, D2).
  */
-export type ModoDaTrava = 'escrita' | { leituraDoAluno: string };
+export type ModoDaTrava = 'leitura' | 'escrita';
 
+type ClienteDaTrava = Pick<
+  Prisma.TransactionClient,
+  '$executeRaw' | '$queryRaw'
+>;
+
+// A sobrecarga é o que impõe o aluno na leitura (D1, v8): sem ele, o leitor
+// não teria a trava do aluno, e o limite de turmas furaria.
 export async function travarNivelDaEmpresa(
-  db: Pick<Prisma.TransactionClient, '$executeRaw' | '$queryRaw'>,
+  db: ClienteDaTrava,
+  companyId: string,
+  modo: 'escrita',
+): Promise<void>;
+export async function travarNivelDaEmpresa(
+  db: ClienteDaTrava,
+  companyId: string,
+  modo: 'leitura',
+  alunoId: string,
+): Promise<void>;
+export async function travarNivelDaEmpresa(
+  db: ClienteDaTrava,
   companyId: string,
   modo: ModoDaTrava,
+  alunoId?: string,
 ): Promise<void> {
   const chave = ChaveDeLock.deTexto(`nivel-da-empresa:${companyId}`);
   if (modo === 'escrita') {
@@ -455,8 +475,9 @@ export async function travarNivelDaEmpresa(
     await db.$executeRaw`SELECT pg_advisory_xact_lock(${chave}::bigint)`;
     return;
   }
-  const chaveDoAluno = ChaveDeLock.deTexto(
-    `matricula-do-aluno:${modo.leituraDoAluno}`,
-  );
+  if (!alunoId) {
+    throw new Error('travarNivelDaEmpresa: o modo leitura exige o aluno');
+  }
+  const chaveDoAluno = ChaveDeLock.deTexto(`matricula-do-aluno:${alunoId}`);
   await db.$queryRaw(instrucaoInicialDaMatricula(chave, chaveDoAluno));
 }

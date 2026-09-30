@@ -455,7 +455,7 @@ export class FilaDeEsperaService {
           if (fila === 'turma') {
             await naEtapa(
               'travas',
-              travarNivelDaEmpresa(tx, companyId, { leituraDoAluno: aluno.id }),
+              travarNivelDaEmpresa(tx, companyId, 'leitura', aluno.id),
             );
           }
 
