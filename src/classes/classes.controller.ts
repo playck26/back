@@ -366,7 +366,7 @@ export class ClassesController {
   @ApiCreatedResponse({ type: MatriculaEmTurmaResponseDto })
   @ApiConflictResponse({
     description:
-      'Turma sem vaga de matrícula (capacidade), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia. `MATRICULA_EM_ANDAMENTO` (SPEC-082): a alocação esperou a vez por mais de 2 s; nada foi gravado.',
+      'Turma sem vaga de matrícula (capacidade; `TURMA_CHEIA` desde a SPEC-082/AC-009), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia. `MATRICULA_EM_ANDAMENTO` (SPEC-082): a alocação esperou a vez por mais de 2 s; nada foi gravado.',
   })
   @ApiServiceUnavailableResponse({
     type: ErroTransitorioResponseDto,

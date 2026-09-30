@@ -1,5 +1,6 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { sqlstateDoErro } from '../../courts/recusas-de-estoque';
 
 /**
  * SPEC-082/D4 — **erro de espera e de infraestrutura nas rotas de matrícula
@@ -67,25 +68,13 @@ export function etapaDoErro(erro: unknown): EtapaDaMatricula {
   return 'outra';
 }
 
-const SQLSTATE_NA_MENSAGEM = /PostgresError \{ code: "([0-9A-Z]{5})"/;
-
-/** O SQLSTATE nas duas representações do Prisma (cru: `meta.code`; modelo: texto). */
-export function sqlstateDe(erro: unknown): string | undefined {
-  if (erro instanceof Prisma.PrismaClientKnownRequestError) {
-    const meta = erro.meta as
-      { code?: unknown; db_error_code?: unknown } | undefined;
-    const doMeta = meta?.code ?? meta?.db_error_code;
-    return typeof doMeta === 'string' ? doMeta : undefined;
-  }
-  if (erro instanceof Prisma.PrismaClientUnknownRequestError) {
-    return SQLSTATE_NA_MENSAGEM.exec(erro.message)?.[1];
-  }
-  return undefined;
-}
-
-/** `55P03` — `lock_not_available`, o que o `lock_timeout` produz. */
+/**
+ * `55P03` — `lock_not_available`, o que o `lock_timeout` produz. O SQLSTATE sai
+ * de `sqlstateDoErro`, que já lê as duas representações do Prisma (`meta.code`
+ * do SQL cru; a mensagem, na API de modelo) — um leitor só, e não dois.
+ */
 export function ehEsperaEstourada(erro: unknown): boolean {
-  return sqlstateDe(erro) === '55P03';
+  return sqlstateDoErro(erro) === '55P03';
 }
 
 export function ehServidorOcupado(erro: unknown): boolean {
