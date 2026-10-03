@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AcessoModule } from '../acesso/acesso.module';
 import { FrequenciaModule } from '../frequencia/frequencia.module';
 import { StorageModule } from '../storage/storage.module';
 import { DisponibilidadeProfessorService } from './disponibilidade-professor.service';
@@ -21,7 +22,12 @@ import { TeachersService } from './teachers.service';
   // StorageModule entra pela foto de professor (SPEC-018/TASK-004), pelo
   // mesmo caminho que a logo entrou em MOD-002 e a imagem de quadra em
   // MOD-004.
-  imports: [FrequenciaModule, StorageModule],
+  //
+  // SPEC-083/D12 — `AcessoModule` entra pela ficha do aluno (e, depois, a do
+  // professor), que emite o convite por e-mail. **A seta é só esta:** o
+  // `AcessoModule` não importa este, porque o `AuthModule` já importa o
+  // `PeopleModule` e o ciclo fecharia.
+  imports: [FrequenciaModule, StorageModule, AcessoModule],
   controllers: [
     StudentsController,
     TeachersController,

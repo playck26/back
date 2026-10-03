@@ -558,6 +558,74 @@
         ]
       }
     },
+    "/api/v1/students/{id}/convite-de-acesso": {
+      "get": {
+        "operationId": "StudentsController_situacaoDoConvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SituacaoDoConviteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "operationId": "StudentsController_enviarConvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SituacaoDoConviteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/{id}/aprovar": {
       "post": {
         "operationId": "StudentsController_aprovar",
@@ -1344,6 +1412,60 @@
         ],
         "tags": [
           "alunos"
+        ]
+      }
+    },
+    "/api/v1/public/ativacao/{token}": {
+      "get": {
+        "operationId": "AtivacaoPublicaController_consultar",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AtivacaoPublicaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "ativacao"
+        ]
+      }
+    },
+    "/api/v1/public/ativacao": {
+      "post": {
+        "operationId": "AtivacaoPublicaController_ativar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AtivarContaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ativacao"
         ]
       }
     },
@@ -7209,6 +7331,51 @@
           "senhaTemporaria"
         ]
       },
+      "SituacaoDoConviteResponseDto": {
+        "type": "object",
+        "properties": {
+          "situacao": {
+            "type": "string",
+            "enum": [
+              "ativado",
+              "sem_conta",
+              "nao_enviado",
+              "enviado",
+              "falhou",
+              "expirado"
+            ],
+            "example": "enviado"
+          },
+          "em": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expiraEm": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "motivo": {
+            "type": "string",
+            "enum": [
+              "cota",
+              "recusado",
+              "indisponivel",
+              "tempo_esgotado",
+              "configuracao",
+              "sem_confirmacao"
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "situacao",
+          "em",
+          "expiraEm",
+          "motivo"
+        ]
+      },
       "CreateStudentDto": {
         "type": "object",
         "properties": {
@@ -7791,19 +7958,6 @@
             "type": "string",
             "nullable": true
           },
-          "dataNascimento": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "emergenciaNome": {
-            "type": "string",
-            "nullable": true
-          },
-          "emergenciaTelefone": {
-            "type": "string",
-            "nullable": true
-          },
           "nivelId": {
             "type": "string",
             "format": "uuid",
@@ -7815,9 +7969,6 @@
           "nome",
           "email",
           "telefone",
-          "dataNascimento",
-          "emergenciaNome",
-          "emergenciaTelefone",
           "nivelId"
         ]
       },
@@ -7893,6 +8044,50 @@
         },
         "required": [
           "criados"
+        ]
+      },
+      "EmpresaDaAtivacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          }
+        },
+        "required": [
+          "nome"
+        ]
+      },
+      "AtivacaoPublicaResponseDto": {
+        "type": "object",
+        "properties": {
+          "primeiroNome": {
+            "type": "string",
+            "example": "Maria"
+          },
+          "empresa": {
+            "$ref": "#/components/schemas/EmpresaDaAtivacaoResponseDto"
+          }
+        },
+        "required": [
+          "primeiroNome",
+          "empresa"
+        ]
+      },
+      "AtivarContaDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "senha": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "token",
+          "senha"
         ]
       },
       "PlanoResponseDto": {

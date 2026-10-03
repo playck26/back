@@ -18,6 +18,8 @@ import {
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { AcessoService } from '../acesso/acesso.service';
+import { SituacaoDoConviteResponseDto } from '../acesso/dto/situacao-do-convite.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -47,6 +49,8 @@ export class StudentsController {
   constructor(
     private readonly studentsService: StudentsService,
     private readonly frequencias: FrequenciaService,
+    /** SPEC-083 — por último, pela lição da SPEC-039 (ver `InvitesService`). */
+    private readonly acesso: AcessoService,
   ) {}
 
   /**
@@ -99,6 +103,36 @@ export class StudentsController {
       user.companyId as string,
       id,
     );
+  }
+
+  /**
+   * SPEC-083/D9 — a situação do convite por e-mail, para o cartão da ficha.
+   * Rota própria, e não campo do `AlunoResponseDto`: aquele é o das listas, e
+   * a situação custaria uma leitura por linha.
+   */
+  @Get(':id/convite-de-acesso')
+  @ApiOkResponse({ type: SituacaoDoConviteResponseDto })
+  situacaoDoConvite(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.acesso.situacaoDoAluno(user.companyId as string, id);
+  }
+
+  /**
+   * SPEC-083/D9 — enviar e reenviar são o mesmo gesto: revoga o convite vivo,
+   * emite outro e manda o e-mail depois do commit. Responde a situação já com
+   * o resultado do envio; **e-mail recusado não é erro da rota** (AC-026), é
+   * `falhou` com o motivo. Conta com senha própria é `409 CONTA_JA_ATIVADA`.
+   */
+  @Post(':id/convite-de-acesso')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: SituacaoDoConviteResponseDto })
+  enviarConvite(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.acesso.enviarParaAluno(user.companyId as string, id, user.sub);
   }
 
   @Post(':id/aprovar')
