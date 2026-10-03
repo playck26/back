@@ -33,6 +33,23 @@
  * Cada requisição do par vai para um app diferente, cada um com a própria
  * pool (o motivo está em `test/fit/app-real.ts`).
  *
+ * ## A transação única, com a sonda — e a corrida PASSAVA com a sabotagem
+ *
+ * A sabotagem foi tirar `criarConta` da transação da emissão: a conta e o
+ * vínculo numa `$transaction` própria, commitada, e o convite noutra. Os dois
+ * casos da corrida ficaram **verdes**, e com razão: a perdedora falha no
+ * `INSERT` de `usuarios`, a primeira instrução, antes de gravar qualquer
+ * coisa, e a vencedora nunca falha. Uma transação ou duas dão o mesmo 200 +
+ * 409. A corrida prova quem decide; não prova que nada fica pela metade.
+ *
+ * Conta pela metade só aparece quando a emissão falha **depois** da conta, e
+ * nenhum dado provoca isso: o convite de uma conta recém-criada não tem com
+ * quem colidir. O que sobra é uma falha que nenhuma validação prevê, e é o
+ * que a sonda produz (o molde da INV-117, em `spec-038-importacao`): um
+ * gatilho que recusa o `INSERT` do convite **só se a conta já estiver lá**.
+ * Com uma transação, a recusa desfaz conta e vínculo; com duas, os dois ficam
+ * commitados e a ficha aponta para uma conta sem convite.
+ *
  * ## AC-043 — o tradutor, com erros reais
  *
  * Cada violação é provocada **pela API de modelo** (a forma que a ficha usa),
@@ -55,7 +72,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
@@ -341,6 +358,80 @@ describe('AC-042 — a corrida do professor sem conta, com barreira', () => {
     expect(vinculadas[0].usuario_id).toBe(estado.contas[0].id);
     const vencedora = respostas[0].status === 200 ? p1 : p2;
     expect(vinculadas[0].id).toBe(vencedora);
+    expect(emailsPara(email)).toHaveLength(1);
+  });
+
+  it('a emissão falhando DEPOIS da conta (sonda no convite): 500, e nada fica — nem conta, nem vínculo, nem convite, nem e-mail; sem a sonda, a segunda tentativa emite', async () => {
+    const email = 'spec083-corrida-sonda@teste.local';
+    const professor = await novoProfessor(email);
+
+    // Recusa só o convite desta conta, e só se a conta já existir: quando a
+    // recusa acontece, ela prova que a conta veio antes.
+    await q(
+      `CREATE OR REPLACE FUNCTION sonda_083_convite_depois_da_conta() RETURNS trigger AS $BODY$ BEGIN IF EXISTS (SELECT 1 FROM usuarios WHERE id = NEW.usuario_id AND email = '${email}') THEN RAISE EXCEPTION 'sonda-083: o convite falhou depois da conta' USING ERRCODE = '23514'; END IF; RETURN NEW; END $BODY$ LANGUAGE plpgsql`,
+    );
+    await q(
+      `CREATE TRIGGER sonda_083 BEFORE INSERT ON convites_de_acesso FOR EACH ROW EXECUTE FUNCTION sonda_083_convite_depois_da_conta()`,
+    );
+    // O `500` sem filtro global é logado pelo `ExceptionsHandler` do Nest, com
+    // o erro inteiro: é por ele que se sabe que foi a sonda que derrubou.
+    const logDeErro = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    let status = 0;
+    let logado = '';
+    try {
+      status = (await enviarConvite(appA, professor)).status;
+      logado = JSON.stringify(
+        logDeErro.mock.calls.map((c) => c.map((x) => String(x))),
+      );
+    } finally {
+      logDeErro.mockRestore();
+      // Um gatilho deixado para trás recusaria convites nas suítes seguintes,
+      // e a mensagem não diria que a culpa é deste arquivo.
+      await q('DROP TRIGGER IF EXISTS sonda_083 ON convites_de_acesso');
+      await q('DROP FUNCTION IF EXISTS sonda_083_convite_depois_da_conta()');
+    }
+
+    // Fora da tabela do tradutor, sobe como `500`. E foi a sonda: sem ela
+    // ter disparado, este caso não mediria nada.
+    expect(status).toBe(500);
+    expect(logado).toContain('sonda-083: o convite falhou depois da conta');
+
+    // **Zero, e não a conta sem convite.** Com a conta numa transação própria,
+    // conta e vínculo ficam commitados, e a ficha passa a apontar para uma
+    // conta que nunca recebeu link.
+    expect(await estadoDoEmail(email)).toEqual({
+      contas: [],
+      vinculos: 0,
+      convites: 0,
+      vivos: 0,
+    });
+    const [ficha] = await ler<{ usuario_id: string | null }>(
+      `SELECT usuario_id FROM professores WHERE id = $1::uuid`,
+      professor,
+    );
+    expect(ficha.usuario_id).toBeNull();
+    expect(emailsPara(email)).toHaveLength(0);
+
+    // Sem a sonda, a segunda tentativa cria tudo de uma vez, pelo caminho de
+    // quem não tem conta: nada da primeira ficou para atrapalhar.
+    const segunda = await enviarConvite(appB, professor);
+    const detalhe = segunda.text.slice(0, 300);
+    expect({ status: segunda.status, detalhe }).toEqual({
+      status: 200,
+      detalhe,
+    });
+    expect(bodyOf<{ situacao: string }>(segunda).situacao).toBe('enviado');
+    const estado = await estadoDoEmail(email);
+    expect(estado.contas).toEqual([
+      {
+        id: expect.any(String) as string,
+        role: 'professor',
+        senha_temporaria: true,
+      },
+    ]);
+    expect(estado).toMatchObject({ vinculos: 1, convites: 1, vivos: 1 });
     expect(emailsPara(email)).toHaveLength(1);
   });
 });
