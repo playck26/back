@@ -21,6 +21,7 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { ImportacaoDeAlunosService } from '../../src/people/importacao/importacao-de-alunos.service';
+import { nivelEfetivoDoAluno } from '../../src/people/nivel-efetivo';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(180_000);
@@ -82,25 +83,84 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
     }
   });
 
-  it('grava os campos da SPEC-036 que vieram na planilha', async () => {
+  /**
+   * SPEC-083/AC-001 — era o caso "grava os campos da SPEC-036", com nascimento
+   * e emergência. Essas colunas saíram (D1, I5) e o modelo novo é de `;`: o
+   * que sobra da SPEC-036 na planilha é o telefone, e é ele que se prova aqui.
+   */
+  it('SPEC-083/AC-001: o telefone da planilha de `;` vai para `usuarios.telefone`', async () => {
     await servico().importar(
       EMPRESA,
       [
-        'nome,email,telefone,dataNascimento,emergenciaNome,emergenciaTelefone',
-        'Ana,ana038@teste.local,11999990000,1990-05-10,Beto,11988887777',
-      ].join('\n'),
+        'nome;email;telefone;nivel;turma',
+        'Ana;ana038@teste.local;(11) 99999-0000;;',
+      ].join('\r\n'),
     );
 
     const aluno = await db.aluno.findFirstOrThrow({
       where: { companyId: EMPRESA },
       include: { usuario: true },
     });
-    expect(aluno.usuario.telefone).toBe('11999990000');
-    expect(aluno.dataNascimento?.toISOString().slice(0, 10)).toBe('1990-05-10');
-    expect(aluno.emergenciaNome).toBe('Beto');
-    // Com nome, e-mail, telefone, nascimento e os dois de emergência, este
-    // aluno nasce com 86% de completude — falta só o nível (SPEC-036).
-    expect(aluno.emergenciaTelefone).toBe('11988887777');
+    expect(aluno.usuario.telefone).toBe('(11) 99999-0000');
+  });
+
+  it('SPEC-083/AC-002: a planilha antiga é recusada, e nada é escrito', async () => {
+    await expect(
+      servico().importar(
+        EMPRESA,
+        ['nome,email,dataNascimento', 'Ana,ana038@teste.local,1990-05-10'].join(
+          '\n',
+        ),
+      ),
+    ).rejects.toMatchObject({ response: { code: 'COLUNA_DESCONHECIDA' } });
+
+    expect(await contarAlunos()).toBe(0);
+    expect(
+      await db.usuario.count({ where: { email: 'ana038@teste.local' } }),
+    ).toBe(0);
+  });
+
+  /**
+   * SPEC-083/AC-005 e S8 — **nível vazio grava `alunos.nivel_id` NULO**, contra
+   * o banco: é a coluna, e não o relatório, que diz o que ficou gravado.
+   *
+   * O clube tem dois níveis de propósito. Sem nível nenhum, nulo seria a única
+   * resposta possível, e o caso passaria com a sabotagem (gravar o id do
+   * primeiro).
+   */
+  it('SPEC-083/AC-005: sem nível grava NULO, e o efetivo é o primeiro', async () => {
+    const primeiro = 'f0380000-0000-4000-8000-0000000000b1';
+    const segundo = 'f0380000-0000-4000-8000-0000000000b2';
+    await q(
+      `INSERT INTO niveis (id,company_id,nome,ordem) VALUES ('${primeiro}','${EMPRESA}','Iniciante',1),('${segundo}','${EMPRESA}','Intermediário',2)`,
+    );
+
+    await servico().importar(
+      EMPRESA,
+      [
+        'nome;email;nivel',
+        'Ana;ana038@teste.local;',
+        'Beto;beto038@teste.local;Intermediário',
+      ].join('\r\n'),
+    );
+
+    const porEmail = async (email: string) =>
+      db.aluno.findFirstOrThrow({
+        where: { companyId: EMPRESA, usuario: { email } },
+      });
+    const ana = await porEmail('ana038@teste.local');
+    const beto = await porEmail('beto038@teste.local');
+
+    // `primeiro` aqui seria a S8: a ordem de hoje congelada no aluno.
+    expect(ana.nivelId).toBeNull();
+    expect(beto.nivelId).toBe(segundo);
+    // E a regra que já existe (ADR-026) resolve a Ana para o primeiro, na
+    // leitura — a mesma função que toda recusa por nível usa.
+    expect(await nivelEfetivoDoAluno(db, EMPRESA, ana.nivelId)).toEqual({
+      id: primeiro,
+      nome: 'Iniciante',
+      doPrimeiro: true,
+    });
   });
 
   /**

@@ -7,7 +7,6 @@ import {
   senhaTemporariaExpiraEm,
 } from '../../common/utils/senha-temporaria';
 import { PrismaService } from '../../prisma/prisma.service';
-import { normalizarNascimento } from '../normalizar-nascimento';
 import { linhasComNumero } from './csv';
 import type {
   ErroDeImportacaoDto,
@@ -15,29 +14,26 @@ import type {
 } from './dto/importacao-response.dto';
 
 /**
- * As colunas aceitas. **`nome` e `email` são os únicos obrigatórios** (D9): o
- * resto é o cadastro da SPEC-036, que não bloqueia nada. Importar 300 alunos
- * com nome e e-mail é um estado legítimo — eles nascem com 29% de completude e
- * a faixa do app pede o resto.
+ * As colunas aceitas — **cinco, em qualquer ordem** (SPEC-083/D1). **`nome` e
+ * `email` são os únicos obrigatórios** (D9 da 038): importar 300 alunos com
+ * nome e e-mail é um estado legítimo, e a faixa do app pede o resto.
+ *
+ * *Por que saíram nascimento e os dois de emergência:* o Israel pediu o modelo
+ * só com o que foi alinhado (I5), e manter colunas que o modelo não traz
+ * deixaria a importação aceitando uma planilha que ninguém mais distribui.
+ * Uma planilha antiga cai em `COLUNA_DESCONHECIDA`, com as cinco na mensagem.
  */
-const COLUNAS = [
-  'nome',
-  'email',
-  'telefone',
-  'dataNascimento',
-  'emergenciaNome',
-  'emergenciaTelefone',
-  'nivel',
-] as const;
+const COLUNAS = ['nome', 'email', 'telefone', 'nivel', 'turma'] as const;
 
 type Coluna = (typeof COLUNAS)[number];
 
 /**
- * Aceita o cabeçalho como o gestor o escreveria.
+ * Aceita o cabeçalho como o gestor o escreveria: `E-mail`, `Celular` e `Nível`
+ * são o que sai de uma planilha feita à mão (o normalizador tira caixa e
+ * acento, então `nível` já chega como `nivel`).
  *
- * *Não é gentileza:* `data de nascimento` com espaços e acento é o que sai de
- * qualquer planilha feita à mão, e recusá-lo transformaria o primeiro uso numa
- * caça ao nome exato da coluna.
+ * *Não é gentileza:* recusá-los transformaria o primeiro uso numa caça ao nome
+ * exato da coluna.
  */
 const APELIDOS: Record<string, Coluna> = {
   nome: 'nome',
@@ -45,14 +41,8 @@ const APELIDOS: Record<string, Coluna> = {
   'e-mail': 'email',
   telefone: 'telefone',
   celular: 'telefone',
-  datanascimento: 'dataNascimento',
-  'data de nascimento': 'dataNascimento',
-  nascimento: 'dataNascimento',
-  emergencianome: 'emergenciaNome',
-  'contato de emergencia': 'emergenciaNome',
-  emergenciatelefone: 'emergenciaTelefone',
-  'telefone de emergencia': 'emergenciaTelefone',
   nivel: 'nivel',
+  turma: 'turma',
 };
 
 /** Sem acento, sem caixa, sem espaço nas pontas — para casar apelido. */
@@ -182,9 +172,6 @@ export class ImportacaoDeAlunosService {
       nome: string;
       email: string;
       telefone: string | null;
-      dataNascimento: Date | null;
-      emergenciaNome: string | null;
-      emergenciaTelefone: string | null;
       nivelId: string | null;
     }[] = [];
 
@@ -236,22 +223,11 @@ export class ImportacaoDeAlunosService {
         vistos.set(email, numero);
       }
 
-      let dataNascimento: Date | null = null;
-      const nascimentoBruto = valor('dataNascimento');
-      if (nascimentoBruto !== '') {
-        try {
-          // **A MESMA regra da SPEC-036, num lugar só.** Reimplementar aqui
-          // criaria uma segunda verdade sobre datas plausíveis, e a primeira
-          // a divergir seria esta — que ninguém olha depois de importar.
-          dataNascimento = normalizarNascimento(nascimentoBruto) ?? null;
-        } catch {
-          erro(
-            'dataNascimento',
-            `"${nascimentoBruto}" precisa ser AAAA-MM-DD, existir no calendário, ser posterior a 1900 e não estar no futuro.`,
-          );
-        }
-      }
-
+      // SPEC-083/I4 e ADR-026 — **nível vazio fica NULO, e nunca o id do
+      // primeiro nível.** O aluno sem nível já conta como o primeiro, pela
+      // regra resolvida na leitura (`nivelEfetivoDoAluno`). Gravar o id aqui
+      // congelaria a ordem de hoje: o gestor reordena os níveis, e este aluno
+      // continuaria no antigo primeiro (S8).
       let nivelId: string | null = null;
       const nivelBruto = valor('nivel');
       if (nivelBruto !== '') {
@@ -268,6 +244,21 @@ export class ImportacaoDeAlunosService {
         }
       }
 
+      // **PROVISÓRIO** (SPEC-083/TASK-001): a coluna `turma` já é aceita no
+      // cabeçalho, mas a busca da turma pelo nome (a D3) é da TASK-005, que
+      // depende da SPEC-082 no ar. A TASK-005 troca este erro pela D3.
+      // *Por que erro, e não ignorar:* ignorar em silêncio importaria o aluno
+      // fora da turma que o gestor escreveu, e ele só descobriria na chamada.
+      // Com o erro, a linha não entra, e a importação inteira é recusada
+      // (tudo ou nada, D3 da 038).
+      const turma = valor('turma');
+      if (turma !== '') {
+        erro(
+          'turma',
+          `A coluna turma ainda não é processada nesta versão, e "${turma}" não seria aplicada. Deixe a coluna vazia e coloque o aluno na turma pelo Admin depois de importar.`,
+        );
+      }
+
       const temErroNestaLinha = erros.some((x) => x.linha === numero);
       if (!temErroNestaLinha) {
         validas.push({
@@ -275,9 +266,6 @@ export class ImportacaoDeAlunosService {
           nome,
           email,
           telefone: valor('telefone') || null,
-          dataNascimento,
-          emergenciaNome: valor('emergenciaNome') || null,
-          emergenciaTelefone: valor('emergenciaTelefone') || null,
           nivelId,
         });
       }
@@ -358,9 +346,6 @@ export class ImportacaoDeAlunosService {
             // Foi o CLUBE que trouxe estas pessoas: elas não pedem para
             // entrar, já entraram. Mesmo raciocínio do convite (AC-014).
             vinculo: 'aprovado',
-            dataNascimento: linha.dataNascimento,
-            emergenciaNome: linha.emergenciaNome,
-            emergenciaTelefone: linha.emergenciaTelefone,
           },
           select: { id: true },
         });

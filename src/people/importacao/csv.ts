@@ -24,6 +24,14 @@
  * é recusada com "coluna desconhecida" apontando para uma coluna que, na tela
  * do gestor, está escrita certa.
  *
+ * ## O separador vem do arquivo (SPEC-083/D2)
+ *
+ * O Excel em português grava CSV com `;`, porque o separador de lista do
+ * Windows em `pt-BR` é `;`. Com um analisador só de vírgula, o cabeçalho
+ * inteiro virava **uma** coluna desconhecida, e a planilha que o próprio gestor
+ * acabou de salvar era recusada. O `detectarSeparador` decide pela primeira
+ * linha, e o resto do arquivo obedece.
+ *
  * ## O que este módulo NÃO faz
  *
  * Não conhece aluno, coluna obrigatória nem validação. Ele transforma texto em
@@ -34,6 +42,51 @@
 /** Uma linha do arquivo, já com os campos separados. */
 export type LinhaDeCsv = string[];
 
+/** Os dois separadores que uma planilha de verdade usa (SPEC-083/D2). */
+export type Separador = ',' | ';';
+
+/** **O BOM sai aqui, uma vez.** Removê-lo campo a campo depois deixaria passar
+ *  o caso em que a primeira coluna está entre aspas. */
+function semBom(texto: string): string {
+  return texto.charCodeAt(0) === 0xfeff ? texto.slice(1) : texto;
+}
+
+/**
+ * SPEC-083/D2 — **o separador é decidido só pela primeira linha**: conta `;` e
+ * `,` fora de aspas, e ganha o que aparecer mais. Empate ou nenhum vale `,`,
+ * que era o único separador antes desta spec.
+ *
+ * *Por que só a primeira linha:* o cabeçalho é a única linha cujo conteúdo a
+ * importação conhece. Uma linha de dados pode ter vírgula num nome
+ * (`Souza, Ana`) ou ponto e vírgula num campo livre; deixar os dados votarem
+ * faria um nome mudar o separador do arquivo inteiro.
+ *
+ * As aspas valem aqui também: `"nome;completo",email` é um cabeçalho de
+ * vírgula, e o `;` entre aspas não conta. Uma quebra de linha entre aspas
+ * também não encerra a primeira linha, pela mesma regra do analisador.
+ */
+export function detectarSeparador(texto: string): Separador {
+  const conteudo = semBom(texto);
+  let pontoEVirgula = 0;
+  let virgula = 0;
+  let dentroDeAspas = false;
+
+  for (const c of conteudo) {
+    // `""` dentro de aspas alterna duas vezes e volta para dentro — o mesmo
+    // efeito da aspa literal no analisador, sem precisar olhar adiante.
+    if (c === '"') {
+      dentroDeAspas = !dentroDeAspas;
+      continue;
+    }
+    if (dentroDeAspas) continue;
+    if (c === '\r' || c === '\n') break;
+    if (c === ';') pontoEVirgula += 1;
+    if (c === ',') virgula += 1;
+  }
+
+  return pontoEVirgula > virgula ? ';' : ',';
+}
+
 /**
  * `\r\n`, `\n` e `\r` são todos fim de linha; **fora das aspas**.
  *
@@ -41,11 +94,13 @@ export type LinhaDeCsv = string[];
  * remendos para aspas é o caminho que parece mais curto e quebra no primeiro
  * campo com vírgula dentro — que é justamente o caso que as aspas existem para
  * resolver.
+ *
+ * **O separador é parâmetro, e não detecção feita aqui dentro** (SPEC-083/D2):
+ * quem chama decide uma vez, pelo cabeçalho, e todas as linhas usam o mesmo.
+ * O outro caractere é texto comum do campo, com ou sem aspas.
  */
-export function analisarCsv(texto: string): LinhaDeCsv[] {
-  // **O BOM sai aqui, uma vez.** Removê-lo campo a campo depois deixaria
-  // passar o caso em que a primeira coluna está entre aspas.
-  const conteudo = texto.charCodeAt(0) === 0xfeff ? texto.slice(1) : texto;
+export function analisarCsv(texto: string, separador: Separador): LinhaDeCsv[] {
+  const conteudo = semBom(texto);
 
   const linhas: LinhaDeCsv[] = [];
   let campos: string[] = [];
@@ -89,7 +144,7 @@ export function analisarCsv(texto: string): LinhaDeCsv[] {
       i += 1;
       continue;
     }
-    if (c === ',') {
+    if (c === separador) {
       fecharCampo();
       i += 1;
       continue;
@@ -121,11 +176,13 @@ export function analisarCsv(texto: string): LinhaDeCsv[] {
  * é ela que o gestor vê no Excel. Renumerar depois de filtrar faria a
  * mensagem apontar para a linha errada, e ele procuraria o problema no lugar
  * errado.
+ *
+ * É aqui que o separador é decidido, uma vez, pelo cabeçalho (SPEC-083/D2).
  */
 export function linhasComNumero(
   texto: string,
 ): { numero: number; campos: LinhaDeCsv }[] {
-  return analisarCsv(texto)
+  return analisarCsv(texto, detectarSeparador(texto))
     .map((campos, indice) => ({ numero: indice + 1, campos }))
     .filter(({ campos }) => campos.some((c) => c.trim() !== ''));
 }

@@ -18,7 +18,13 @@ export class ErroDeImportacaoDto {
   mensagem!: string;
 }
 
-/** Uma linha que passou na conferencia, ja normalizada. */
+/**
+ * Uma linha que passou na conferencia, ja normalizada.
+ *
+ * SPEC-083/D1: `dataNascimento`, `emergenciaNome` e `emergenciaTelefone`
+ * sairam junto com as colunas -- um campo que nenhuma planilha aceita mais
+ * viria sempre nulo, e o Admin seguiria mostrando uma coluna morta.
+ */
 export class LinhaValidaDto {
   @ApiProperty({ example: 2 })
   linha!: number;
@@ -31,15 +37,6 @@ export class LinhaValidaDto {
 
   @ApiProperty({ type: String, nullable: true })
   telefone!: string | null;
-
-  @ApiProperty({ type: String, format: 'date-time', nullable: true })
-  dataNascimento!: Date | null;
-
-  @ApiProperty({ type: String, nullable: true })
-  emergenciaNome!: string | null;
-
-  @ApiProperty({ type: String, nullable: true })
-  emergenciaTelefone!: string | null;
 
   @ApiProperty({ type: String, format: 'uuid', nullable: true })
   nivelId!: string | null;
