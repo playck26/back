@@ -85,6 +85,94 @@ function atributo(tag: string, nome: string): string | null {
   return new RegExp(`\\s${nome}="([^"]*)"`).exec(tag)?.[1] ?? null;
 }
 
+/** `<td style="x">` vira `td`; `</tr>` vira `/tr`. */
+function nomeDaTag(tag: string): string {
+  return /^<(\/?[^\s/>]+)/.exec(tag)?.[1].toLowerCase() ?? tag;
+}
+
+/** As declarações do `style` da tag, em minúsculas: `[propriedade, valor]`. */
+function estilo(tag: string): [string, string][] {
+  return (atributo(tag, 'style') ?? '')
+    .split(';')
+    .map((declaracao) => declaracao.split(':').map((p) => p.trim()))
+    .filter(([propriedade]) => propriedade !== '')
+    .map(([propriedade, ...valor]): [string, string] => [
+      propriedade.toLowerCase(),
+      valor.join(':').toLowerCase(),
+    ]);
+}
+
+/** O que pode vir antes do banner: a estrutura de tabela que o contém. */
+const ESTRUTURA_EM_VOLTA_DO_BANNER = new Set([
+  'body',
+  'table',
+  'tbody',
+  'tr',
+  'td',
+]);
+
+/**
+ * AC-028/D8 — o banner é **o primeiro elemento visível do corpo**. Não ter
+ * texto antes dele não basta (DOR-083-R2-05, e a revisão da TASK-003): um
+ * `<hr>`, uma faixa colorida numa linha própria ou uma borda não têm texto e
+ * aparecem antes da imagem. Então tudo o que vem antes do `<img>` tem de ser
+ * **ancestral** dele, só estrutura de tabela, e sem desenhar nada sozinho.
+ *
+ * Devolve o que impede o banner de ser o primeiro; vazio é conforme. Devolve
+ * a lista, e não um booleano, para o vermelho dizer o que achou.
+ */
+function problemasAntesDoBanner(html: string): string[] {
+  const inicio = html.indexOf('<body');
+  const fim = html.indexOf('<img', inicio);
+  if (inicio < 0 || fim < 0) return ['sem <body>, ou sem <img> depois dele'];
+  const trecho = html.slice(inicio, fim);
+  const problemas: string[] = [];
+
+  // Nenhum texto: nem pré-cabeçalho escondido, nem `&nbsp;`.
+  const texto = trecho.replace(/<[^>]*>/g, '').trim();
+  if (texto !== '') problemas.push(`texto antes do banner: ${texto}`);
+
+  const antes = tags(trecho);
+  for (const tag of antes) {
+    const nome = nomeDaTag(tag);
+    if (nome.startsWith('/')) {
+      // Tag fechada antes do banner é um irmão que vem antes dele, e não um
+      // ancestral: a faixa numa linha própria, o `<div>` vazio de altura fixa.
+      problemas.push(`fechada antes do banner: ${tag}`);
+    } else if (!ESTRUTURA_EM_VOLTA_DO_BANNER.has(nome)) {
+      // `<hr>`, `<div>`, `<p>`, `<span>`, `<br>`: não é a tabela que o contém.
+      problemas.push(`não é estrutura: ${tag}`);
+    }
+    // A estrutura não desenha por conta própria: uma borda, um contorno ou uma
+    // sombra num ancestral é uma linha visível acima da imagem.
+    for (const [propriedade, valor] of estilo(tag)) {
+      if (
+        /^(border|outline|box-shadow)/.test(propriedade) &&
+        !/^(0(px)?|none)$/.test(valor)
+      ) {
+        problemas.push(`${propriedade} num ancestral do banner: ${tag}`);
+      }
+    }
+    const borda = atributo(tag, 'border');
+    if (borda !== null && borda !== '0') {
+      problemas.push(`border="${borda}" num ancestral do banner: ${tag}`);
+    }
+  }
+
+  // Quem contém o banner direto não tem respiro: com fundo, o respiro é uma
+  // faixa acima da imagem.
+  for (const [propriedade, valor] of estilo(antes.at(-1) ?? '')) {
+    if (
+      propriedade.startsWith('padding') &&
+      !/^0(px)?(\s+0(px)?)*$/.test(valor)
+    ) {
+      problemas.push(`${propriedade}:${valor} em volta do banner`);
+    }
+  }
+
+  return problemas;
+}
+
 // ---------------------------------------------------------------------------
 // O dublê do cliente da Resend. Tipos locais: este arquivo não pode importar o
 // pacote (o gate do AC-029 varre os `.spec.ts` também).
@@ -378,7 +466,7 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
   );
 
   it.each(MODELOS_DE_EMAIL.map((modelo) => [modelo.nome, modelo] as const))(
-    '%s: a única imagem é o banner, primeiro elemento visível do corpo',
+    '%s: a única imagem é o banner, com src, medidas e alt exatos',
     (_nome, modelo) => {
       const { html, text } = modelo.renderizar(CONFIG, modelo.exemplo);
 
@@ -396,17 +484,99 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
       );
       expect(BANNER_DO_EMAIL.alt).toBe('PlayCK — Mais que tênis, é conexão.');
 
-      // Primeiro elemento visível: entre o `<body>` e o `<img>` só há
-      // estrutura. Tiradas as tags, não sobra nenhum texto — nem pré-cabeçalho
-      // escondido, nem `&nbsp;`.
-      const corpo = html.slice(html.indexOf('<body'));
-      const antesDoBanner = corpo.slice(0, corpo.indexOf('<img'));
-      expect(corpo.indexOf('<img')).toBeGreaterThan(0);
-      expect(antesDoBanner.replace(/<[^>]*>/g, '').trim()).toBe('');
-
       // Nenhum pixel nem outra imagem por outro caminho.
       expect(html).not.toMatch(/url\(|background=|<picture|<svg|<iframe/i);
       expect(text).not.toContain('<img');
+    },
+  );
+
+  it.each(MODELOS_DE_EMAIL.map((modelo) => [modelo.nome, modelo] as const))(
+    '%s: o banner é o primeiro elemento visível do corpo (antes dele, só a tabela que o contém)',
+    (_nome, modelo) => {
+      const { html } = modelo.renderizar(CONFIG, modelo.exemplo);
+      expect(problemasAntesDoBanner(html)).toEqual([]);
+    },
+  );
+
+  // A prova da prova. Cada forma realista de pôr algo visível antes do banner,
+  // aplicada ao HTML de verdade, tem de ser recusada pelo verificador acima, e
+  // pela regra certa: cada uma das seis regras tem um intruso que mira nela. A
+  // versão anterior só procurava texto, e um `<hr>` antes do banner passava
+  // verde (achado da revisão da TASK-003).
+  const CELULA_DO_BANNER = '<td style="padding:0;"><img';
+  const LINHA_DO_BANNER = `<tr>${CELULA_DO_BANNER}`;
+  const TABELA_DO_CARTAO =
+    'width="600" cellpadding="0" cellspacing="0" border="0"';
+  const intrusos = [
+    {
+      rotulo: 'um &nbsp; colado no banner',
+      ancora: CELULA_DO_BANNER,
+      troca: '<td style="padding:0;">&nbsp;<img',
+      regra: 'texto antes do banner',
+    },
+    {
+      rotulo: 'um pré-cabeçalho escondido',
+      ancora: CELULA_DO_BANNER,
+      troca:
+        '<td style="padding:0;"><span style="display:none;">Seu convite</span><img',
+      regra: 'texto antes do banner',
+    },
+    {
+      rotulo: 'um <hr> numa linha antes (o da revisão)',
+      ancora: LINHA_DO_BANNER,
+      troca: `<tr><td><hr style="border:4px solid #e11d48;"></td></tr>${LINHA_DO_BANNER}`,
+      regra: 'fechada antes do banner',
+    },
+    {
+      rotulo: 'uma faixa colorida numa linha própria, sem conteúdo',
+      ancora: LINHA_DO_BANNER,
+      troca: `<tr><td style="height:4px;background-color:#e11d48;"></td></tr>${LINHA_DO_BANNER}`,
+      regra: 'fechada antes do banner',
+    },
+    {
+      rotulo: 'um <hr> sem estilo, na célula do banner',
+      ancora: CELULA_DO_BANNER,
+      troca: '<td style="padding:0;"><hr><img',
+      regra: 'não é estrutura: <hr>',
+    },
+    {
+      rotulo: 'uma borda na célula do banner',
+      ancora: CELULA_DO_BANNER,
+      troca: '<td style="padding:0;border-top:4px solid #e11d48;"><img',
+      regra: 'border-top num ancestral do banner',
+    },
+    {
+      rotulo: 'border="1" na tabela do cartão',
+      ancora: TABELA_DO_CARTAO,
+      troca: 'width="600" cellpadding="0" cellspacing="0" border="1"',
+      regra: 'border="1" num ancestral do banner',
+    },
+    {
+      rotulo: 'um respiro colorido na célula do banner',
+      ancora: CELULA_DO_BANNER,
+      troca: '<td style="padding:4px 0 0;background-color:#e11d48;"><img',
+      regra: 'padding:4px 0 0 em volta do banner',
+    },
+  ];
+
+  it('são 8 intrusos, e cada regra do verificador tem o seu', () => {
+    expect(intrusos).toHaveLength(8);
+    expect(new Set(intrusos.map((i) => i.regra.split(':')[0])).size).toBe(6);
+  });
+
+  it.each(intrusos)(
+    'o verificador recusa $rotulo',
+    ({ ancora, troca, regra }) => {
+      const { html } = renderizarConviteDeAcesso(CONFIG, convite());
+      expect(problemasAntesDoBanner(html)).toEqual([]);
+      // A sabotagem tem de mudar o HTML, num lugar só: âncora sumida faria o
+      // caso passar sem ter testado nada.
+      expect(html.split(ancora)).toHaveLength(2);
+      const comIntruso = html.replace(ancora, troca);
+      expect(comIntruso).not.toBe(html);
+      expect(problemasAntesDoBanner(comIntruso)).toEqual(
+        expect.arrayContaining([expect.stringContaining(regra)]),
+      );
     },
   );
 });
