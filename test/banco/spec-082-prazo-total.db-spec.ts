@@ -14,7 +14,8 @@
  * Os dois no relógio do servidor — medir o fim no cliente somaria o tempo de
  * montar o erro do Prisma, que na primeira vez passa de 100 ms e não é espera. A tolerância de 50 ms
  * é de execução no banco local, não de espera: as implementações erradas
- * ficam 1,5 s ou mais acima (LIM-082e).
+ * ficam 1,5 s ou mais acima (LIM-082e). Um aquecimento no `beforeAll` reduz na
+ * primeira medição o custo do código frio (ver o comentário dele).
  */
 import { Prisma, PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
@@ -22,6 +23,7 @@ import { abrirProxy, type ProxyDeLatencia } from './proxy-de-latencia';
 import {
   type AlunoDaFixtura,
   type Clube,
+  type DetalheDaEspera,
   I4,
   I5,
   I6,
@@ -72,6 +74,60 @@ afterAll(async () => {
 });
 
 /**
+ * **Aquecimento antes da primeira medição** (achado do CI, run 37158002173, PR
+ * #163: o primeiro teste do arquivo mediu 87 ms depois do prazo; os outros
+ * cinco do mesmo run, de 2 a 14 ms). A origem do "depois do prazo" é o
+ * `xact_start` (o `BEGIN`), e o código grava o prazo na instrução inicial, um
+ * pouco depois. No primeiro `entrar` do arquivo, com o código frio no processo,
+ * essa distância passou de 40 ms (medido local); aquecida, fica em poucos ms.
+ * O aquecimento **reduz** essa parcela, não a zera, e passa pelos dois
+ * caminhos — o sucesso e o `409` — porque montar o erro a frio também atrasa o
+ * amostrador, que roda neste mesmo processo. O log de `medirEntrar` separa as
+ * parcelas, para o CI mostrar quanto do número é cada uma.
+ *
+ * **O teto continua conservador:** o `BEGIN` vem antes da instrução inicial,
+ * então o número só pode exagerar o atraso, nunca escondê-lo, e a origem e os
+ * 50 ms não mudam. O piso do primeiro teste fica mais rígido, não mais frouxo.
+ */
+beforeAll(async () => {
+  const c = await montarClube(db);
+  try {
+    const turma = await criarTurma(db, c);
+    const a = await criarAluno(db, c);
+    const b = await criarAluno(db, c);
+    const sucesso = await resposta(
+      rotas(cliente(urlDoCaminho('spec082-aquecimento'))).entrar(c, a, turma),
+    );
+    if (sucesso.status !== 200) {
+      throw new Error(
+        `AQUECIMENTO: a matrícula sem disputa devia dar 200, deu ${sucesso.status} ${sucesso.code ?? ''}`,
+      );
+    }
+    const soltar = await segurar(db, travaDoClube(c.id, 'exclusiva'));
+    let recusa: Resposta = { status: 0 };
+    try {
+      recusa = await resposta(
+        rotas(cliente(urlDoCaminho('spec082-aquecimento-erro'))).entrar(
+          c,
+          b,
+          turma,
+        ),
+      );
+    } finally {
+      await soltar();
+    }
+    if (recusa.status !== 409) {
+      throw new Error(
+        `AQUECIMENTO: com a trava do clube segura devia dar 409, deu ${recusa.status} ${recusa.code ?? ''}`,
+      );
+    }
+  } finally {
+    await limparClube(db, c);
+    await desconectarTodos();
+  }
+});
+
+/**
  * Dispara `entrar` pela conexão `app`, deixa `durante` agir sobre o início da
  * transação (relógio do servidor), e devolve a resposta e quanto DEPOIS do
  * prazo ela veio (negativo = antes).
@@ -86,14 +142,23 @@ async function medirEntrar(
   const pedido = resposta(
     rotas(cliente(urlDoCaminho(app))).entrar(c, a, turma),
   );
-  const vigia = fimDaEspera(db, app, pedido);
+  const detalhe: DetalheDaEspera = {
+    inicioDaInstrucaoQueEspera: Number.NaN,
+    ultimaComEspera: Number.NaN,
+  };
+  const vigia = fimDaEspera(db, app, pedido, detalhe);
   const inicio = await inicioDaTransacao(db, app);
   await durante(inicio);
   const r = await pedido;
   const fim = await vigia;
   const depoisDoPrazoMs = fim - (inicio + PRAZO_MS);
+  // Só log. No AC-005 a instrução que espera é a inicial, e a primeira parcela
+  // é a distância BEGIN → prazo; nos outros, é o início da instrução que
+  // esperou. A segunda é o vão entre as duas amostras que cercam o fim.
   console.log(
-    `${app}: DEPOIS_DO_PRAZO_MS=${Math.round(depoisDoPrazoMs)} status=${r.status} code=${r.code ?? ''}`,
+    `${app}: DEPOIS_DO_PRAZO_MS=${Math.round(depoisDoPrazoMs)} status=${r.status} code=${r.code ?? ''}` +
+      ` BEGIN_ATE_INSTRUCAO_QUE_ESPERA_MS=${(detalhe.inicioDaInstrucaoQueEspera - inicio).toFixed(1)}` +
+      ` VAO_DA_AMOSTRAGEM_MS=${(fim - detalhe.ultimaComEspera).toFixed(1)}`,
   );
   return { r, depoisDoPrazoMs };
 }

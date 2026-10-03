@@ -436,6 +436,17 @@ export async function esperouEnquanto(
 }
 
 /**
+ * O que o log precisa para separar as parcelas do "depois do prazo" (achado do
+ * CI, run 37158002173): **não entra em nenhuma asserção**, só no log.
+ */
+export interface DetalheDaEspera {
+  /** `query_start` da instrução vista esperando pela primeira vez. */
+  inicioDaInstrucaoQueEspera: number;
+  /** A última amostra com espera: o fim real está entre ela e a devolvida. */
+  ultimaComEspera: number;
+}
+
+/**
  * **Quando a espera do caminho TERMINOU**, no relógio do servidor: amostra
  * `pg_stat_activity` enquanto o pedido corre, e devolve a primeira amostra sem
  * espera depois da última com espera. Medir no cliente somaria o tempo de
@@ -445,6 +456,7 @@ export async function fimDaEspera(
   db: PrismaClient,
   app: string,
   enquanto: Promise<unknown>,
+  detalhe?: DetalheDaEspera,
 ): Promise<number> {
   let fim = false;
   void enquanto.then(
@@ -454,14 +466,22 @@ export async function fimDaEspera(
   let ultimaComEspera = -1;
   let primeiraSemEsperaDepois = -1;
   while (!fim) {
-    const r = await db.$queryRawUnsafe<{ n: bigint; ms: number }[]>(
+    const r = await db.$queryRawUnsafe<
+      { n: bigint; ms: number; qs: number | null }[]
+    >(
       `SELECT count(*) FILTER (WHERE wait_event_type = 'Lock') AS n,
-              (extract(epoch FROM clock_timestamp()) * 1000)::float8 AS ms
+              (extract(epoch FROM clock_timestamp()) * 1000)::float8 AS ms,
+              (min(extract(epoch FROM query_start) * 1000)
+                 FILTER (WHERE wait_event_type = 'Lock'))::float8 AS qs
          FROM pg_stat_activity WHERE application_name = '${app}'`,
     );
     if (Number(r[0].n) > 0) {
       ultimaComEspera = r[0].ms;
       primeiraSemEsperaDepois = -1;
+      if (detalhe && Number.isNaN(detalhe.inicioDaInstrucaoQueEspera)) {
+        detalhe.inicioDaInstrucaoQueEspera = r[0].qs ?? Number.NaN;
+      }
+      if (detalhe) detalhe.ultimaComEspera = ultimaComEspera;
     } else if (ultimaComEspera >= 0 && primeiraSemEsperaDepois < 0) {
       primeiraSemEsperaDepois = r[0].ms;
     }
