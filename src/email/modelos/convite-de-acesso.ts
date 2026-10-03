@@ -82,8 +82,11 @@ export function renderizarConviteDeAcesso(
 
   // Tabelas e estilo em linha porque é o que os programas de e-mail entendem.
   // **O banner é o primeiro elemento visível do corpo** (D8): antes dele só há
-  // estrutura, nenhum texto — nem o "pré-cabeçalho" escondido que muitos
-  // e-mails usam, que seria texto antes da imagem.
+  // a cadeia de tabelas que o contém, nenhum texto — nem o "pré-cabeçalho"
+  // escondido que muitos e-mails usam, que seria texto antes da imagem. E o
+  // CSS fica **só no atributo `style`**, sem `<style>` no `<head>`: é o que
+  // deixa o teste do AC-028 ver tudo o que se aplica ao banner, e as listas
+  // fechadas dele dizem o que cada tag pode declarar.
   const html = `<!doctype html>
 <html lang="pt-BR">
 <head>

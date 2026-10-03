@@ -81,11 +81,29 @@ function tags(html: string): string[] {
   return html.match(/<[^>]*>/g) ?? [];
 }
 
-function atributo(tag: string, nome: string): string | null {
-  return new RegExp(`\\s${nome}="([^"]*)"`).exec(tag)?.[1] ?? null;
+/**
+ * Os atributos da tag como o navegador os lê: valor entre aspas duplas,
+ * simples ou sem aspas, e **o primeiro vence** quando o nome se repete. Ler só
+ * aspas duplas deixava um `style='border-top:...'` invisível ao verificador do
+ * banner (achado da 2ª revisão da TASK-003).
+ */
+function atributos(tag: string): Map<string, string> {
+  const lidos = new Map<string, string>();
+  const corpo = tag.replace(/^<\/?[^\s/>]+/, '').replace(/\/?>$/, '');
+  for (const [, nome, duplas, simples, nuas] of corpo.matchAll(
+    /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g,
+  )) {
+    const chave = nome.toLowerCase();
+    if (!lidos.has(chave)) lidos.set(chave, duplas ?? simples ?? nuas ?? '');
+  }
+  return lidos;
 }
 
-/** `<td style="x">` vira `td`; `</tr>` vira `/tr`. */
+function atributo(tag: string, nome: string): string | null {
+  return atributos(tag).get(nome) ?? null;
+}
+
+/** `<td style="x">` vira `td`; `</tr>`, `/tr`; `<!doctype html>`, `!doctype`. */
 function nomeDaTag(tag: string): string {
   return /^<(\/?[^\s/>]+)/.exec(tag)?.[1].toLowerCase() ?? tag;
 }
@@ -98,75 +116,282 @@ function estilo(tag: string): [string, string][] {
     .filter(([propriedade]) => propriedade !== '')
     .map(([propriedade, ...valor]): [string, string] => [
       propriedade.toLowerCase(),
-      valor.join(':').toLowerCase(),
+      valor.join(':').toLowerCase().replace(/\s+/g, ' '),
     ]);
 }
 
-/** O que pode vir antes do banner: a estrutura de tabela que o contém. */
-const ESTRUTURA_EM_VOLTA_DO_BANNER = new Set([
-  'body',
-  'table',
-  'tbody',
-  'tr',
-  'td',
+/**
+ * As regras do verificador do banner. Cada problema começa pela sua, e o teste
+ * dos intrusos exige que cada uma tenha ao menos um intruso que ela pega — um
+ * intruso pode cair em mais de uma, e o teste confere a que ele mira.
+ */
+const REGRA = {
+  texto: 'texto antes do banner',
+  fechada: 'fechada antes do banner',
+  cadeia: 'fora da cadeia de tabela que leva ao banner',
+  atributo: 'atributo fora da lista',
+  estilo: 'estilo fora da lista',
+  respiro: 'respiro sobre fundo pintado',
+  cssEscondido: 'CSS que o verificador não lê',
+  subir: 'CSS que pode subir para cima do banner',
+  secao: 'seção que a tabela desenha no topo',
+} as const;
+
+/** Antes do `<body>`: só a moldura do documento. */
+const ANTES_DO_CORPO = new Set([
+  '!doctype',
+  'html',
+  'head',
+  '/head',
+  'meta',
+  'title',
+  '/title',
 ]);
 
 /**
+ * A cadeia de ancestrais do banner: cada tag tem de ser filha direta da
+ * anterior. Um `<td>` logo depois de outro `<td>`, ou uma `<table>` direto na
+ * `<table>`, não é filho: o navegador fecha o primeiro sozinho, e ele vira um
+ * irmão que vem antes do banner — sem `</td>` nenhum para a regra das tags
+ * fechadas ver.
+ */
+const FILHOS_NA_CADEIA: Readonly<Record<string, readonly string[]>> = {
+  body: ['table'],
+  table: ['tbody', 'tr'],
+  tbody: ['tr'],
+  tr: ['td'],
+  td: ['table', 'img'],
+};
+
+const ZERO = (valor: string) => valor === '0';
+
+/** Atributos permitidos até o banner, e o valor que cada um pode ter. */
+const ATRIBUTOS_ATE_O_BANNER: Readonly<
+  Record<string, Readonly<Record<string, (valor: string) => boolean>>>
+> = {
+  html: { lang: () => true },
+  head: {},
+  meta: { charset: () => true, name: () => true, content: () => true },
+  title: {},
+  body: { style: () => true },
+  table: {
+    role: () => true,
+    width: () => true,
+    cellpadding: ZERO,
+    cellspacing: ZERO,
+    border: ZERO,
+    style: () => true,
+  },
+  tbody: {},
+  tr: {},
+  td: { align: () => true, style: () => true },
+  img: {
+    src: () => true,
+    width: () => true,
+    height: () => true,
+    alt: () => true,
+    style: () => true,
+  },
+};
+
+const ESPACO = /^(margin|padding)(-(top|right|bottom|left))?$/;
+
+/** Zero em toda posição: `0`, `0px`, `0 auto` (margem vertical `auto` é 0). */
+function semRespiro(valor: string): boolean {
+  return valor.split(' ').every((parte) => /^(0(px)?|auto)$/.test(parte));
+}
+
+/**
+ * O que a estrutura até o banner pode declarar no `style`: espaço, largura e
+ * fundo. Borda, contorno, sombra, altura, alinhamento vertical e o atalho
+ * `background` ficam de fora por não estarem aqui, e não por estarem numa
+ * lista de proibidos — o que ninguém pensou é recusado também.
+ */
+function estiloDaEstruturaPermitido(propriedade: string): boolean {
+  return (
+    ESPACO.test(propriedade) ||
+    ['background-color', 'width', 'max-width'].includes(propriedade)
+  );
+}
+
+/** O estilo do próprio banner: nada que o esconda, encolha ou ponha borda. */
+const ESTILO_DO_BANNER: Readonly<Record<string, (valor: string) => boolean>> = {
+  display: (valor) => valor === 'block',
+  width: (valor) => ['100%', '600px'].includes(valor),
+  'max-width': (valor) => ['100%', '600px'].includes(valor),
+  height: (valor) => ['auto', '213px'].includes(valor),
+  border: (valor) => ['0', '0px', 'none'].includes(valor),
+};
+
+/**
+ * O vocabulário de CSS do documento inteiro. Fora dele ficam as formas de
+ * levar uma caixa de depois do banner para cima dele: `position`, `float`,
+ * `transform`, `outline` e `box-shadow` (que desenham fora da caixa), `order`
+ * e companhia. Propriedade nova entra aqui depois de alguém mostrar que ela
+ * não leva nada para cima do banner.
+ */
+function estiloDoDocumentoPermitido(propriedade: string): boolean {
+  return (
+    ESPACO.test(propriedade) ||
+    /^border(-(top|right|bottom|left))?$/.test(propriedade) ||
+    [
+      'background-color',
+      'color',
+      'font-family',
+      'font-size',
+      'font-weight',
+      'line-height',
+      'text-decoration',
+      'display',
+      'width',
+      'max-width',
+      'height',
+      'border-radius',
+      'word-break',
+    ].includes(propriedade)
+  );
+}
+
+/**
  * AC-028/D8 — o banner é **o primeiro elemento visível do corpo**. Não ter
- * texto antes dele não basta (DOR-083-R2-05, e a revisão da TASK-003): um
- * `<hr>`, uma faixa colorida numa linha própria ou uma borda não têm texto e
- * aparecem antes da imagem. Então tudo o que vem antes do `<img>` tem de ser
- * **ancestral** dele, só estrutura de tabela, e sem desenhar nada sozinho.
+ * texto antes dele não basta (DOR-083-R2-05 e as duas revisões da TASK-003):
+ * um `<hr>`, uma faixa colorida numa linha própria, uma borda, o respiro
+ * colorido de uma célula que envolve outra tabela e uma regra de CSS no
+ * `<head>` não têm texto e aparecem antes da imagem.
+ *
+ * Então o verificador lê por **listas fechadas**, e não por uma lista de
+ * proibidos que cada revisão alonga:
+ *
+ * - no documento inteiro, o CSS mora só no atributo `style` (nenhum `<style>`,
+ *   `<link>` nem escape), para tudo o que se aplica ao banner estar à vista
+ *   daqui; e só com o vocabulário de `estiloDoDocumentoPermitido`, sem margem
+ *   negativa, sem `<thead>` nem `<caption>` — o que impede o que vem depois de
+ *   subir para cima do banner;
+ * - até o banner, nenhum texto, nenhuma tag fechada, só a moldura do documento
+ *   e depois a cadeia `body > table > (tbody >) tr > td > … > td > img`, em que
+ *   cada tag é ancestral da seguinte; só os atributos e as propriedades das
+ *   listas acima; e, do primeiro fundo diferente do da página para dentro,
+ *   nenhum respiro, porque respiro sobre fundo pintado é uma faixa visível.
+ *
+ * **O que ele não prova** (não é um navegador): que as propriedades da lista
+ * nunca transbordam a própria caixa — um texto de fonte maior que a altura da
+ * linha, logo depois do banner, pode invadi-lo —, nem a largura dos ancestrais,
+ * que estreita o banner mas não põe nada antes dele.
  *
  * Devolve o que impede o banner de ser o primeiro; vazio é conforme. Devolve
  * a lista, e não um booleano, para o vermelho dizer o que achou.
  */
-function problemasAntesDoBanner(html: string): string[] {
-  const inicio = html.indexOf('<body');
-  const fim = html.indexOf('<img', inicio);
-  if (inicio < 0 || fim < 0) return ['sem <body>, ou sem <img> depois dele'];
-  const trecho = html.slice(inicio, fim);
+function problemasDaPosicaoDoBanner(html: string): string[] {
   const problemas: string[] = [];
+  const achou = (regra: string, detalhe: string) =>
+    problemas.push(`${regra}: ${detalhe}`);
 
-  // Nenhum texto: nem pré-cabeçalho escondido, nem `&nbsp;`.
-  const texto = trecho.replace(/<[^>]*>/g, '').trim();
-  if (texto !== '') problemas.push(`texto antes do banner: ${texto}`);
-
-  const antes = tags(trecho);
-  for (const tag of antes) {
+  // 1. O documento inteiro: o que se aplica ao banner de longe, ou o que sobe.
+  if (/<(style|link)\b/i.test(html)) {
+    achou(REGRA.cssEscondido, '<style> ou <link> no documento');
+  }
+  for (const tag of tags(html)) {
     const nome = nomeDaTag(tag);
-    if (nome.startsWith('/')) {
-      // Tag fechada antes do banner é um irmão que vem antes dele, e não um
-      // ancestral: a faixa numa linha própria, o `<div>` vazio de altura fixa.
-      problemas.push(`fechada antes do banner: ${tag}`);
-    } else if (!ESTRUTURA_EM_VOLTA_DO_BANNER.has(nome)) {
-      // `<hr>`, `<div>`, `<p>`, `<span>`, `<br>`: não é a tabela que o contém.
-      problemas.push(`não é estrutura: ${tag}`);
+    if (nome === 'thead' || nome === 'caption') {
+      // O navegador desenha os dois no topo da tabela, onde quer que estejam.
+      achou(REGRA.secao, tag);
     }
-    // A estrutura não desenha por conta própria: uma borda, um contorno ou uma
-    // sombra num ancestral é uma linha visível acima da imagem.
+    // Entidade e escape de CSS são lidos pelo navegador, e não por este
+    // leitor: `border&#45;top` é `border-top` lá.
+    if (/[&\\]/.test(atributo(tag, 'style') ?? '')) {
+      achou(REGRA.cssEscondido, `escape no style: ${tag}`);
+    }
     for (const [propriedade, valor] of estilo(tag)) {
-      if (
-        /^(border|outline|box-shadow)/.test(propriedade) &&
-        !/^(0(px)?|none)$/.test(valor)
-      ) {
-        problemas.push(`${propriedade} num ancestral do banner: ${tag}`);
-      }
-    }
-    const borda = atributo(tag, 'border');
-    if (borda !== null && borda !== '0') {
-      problemas.push(`border="${borda}" num ancestral do banner: ${tag}`);
+      const subiria =
+        !estiloDoDocumentoPermitido(propriedade) ||
+        (propriedade === 'display' &&
+          !['block', 'inline-block'].includes(valor)) ||
+        (propriedade.startsWith('margin') && /(^| )-/.test(valor));
+      if (subiria) achou(REGRA.subir, `${propriedade}:${valor} em ${tag}`);
     }
   }
 
-  // Quem contém o banner direto não tem respiro: com fundo, o respiro é uma
-  // faixa acima da imagem.
-  for (const [propriedade, valor] of estilo(antes.at(-1) ?? '')) {
-    if (
-      propriedade.startsWith('padding') &&
-      !/^0(px)?(\s+0(px)?)*$/.test(valor)
-    ) {
-      problemas.push(`${propriedade}:${valor} em volta do banner`);
+  // 2. Do começo do documento até o banner, inclusive.
+  const banner = /<img\b[^>]*>/i.exec(html);
+  if (!banner) {
+    achou(REGRA.cadeia, 'nenhum <img> no documento');
+    return problemas;
+  }
+  const ate = html.slice(0, banner.index + banner[0].length);
+  let noCorpo = false;
+  let noTitulo = false;
+  // Os ancestrais abertos da cadeia. Uma tag fechada já é problema, mas sai
+  // da pilha para o resto da leitura não acusar em cascata.
+  const pilha: string[] = [];
+  let fundoDaPagina: string | undefined;
+  let pintado = false;
+  let depoisDaTag = 0;
+
+  for (const casamento of ate.matchAll(/<[^>]*>/g)) {
+    const tag = casamento[0];
+    const nome = nomeDaTag(tag);
+    // Nenhum texto antes do banner: nem pré-cabeçalho escondido, nem
+    // `&nbsp;`. Antes do corpo, só o do `<title>`, que não aparece.
+    const texto = ate.slice(depoisDaTag, casamento.index).trim();
+    depoisDaTag = casamento.index + tag.length;
+    if (texto !== '' && !noTitulo) achou(REGRA.texto, texto);
+
+    if (!noCorpo && nome !== 'body') {
+      // Uma tag de corpo antes do `<body>` (no `<head>`, ou entre os dois)
+      // abre o corpo sozinha, e vira o primeiro elemento dele.
+      if (!ANTES_DO_CORPO.has(nome)) {
+        achou(REGRA.cadeia, `${tag} antes do <body>`);
+      }
+      if (nome === 'title') noTitulo = true;
+      if (nome === '/title') noTitulo = false;
+    } else if (nome.startsWith('/')) {
+      // Tag fechada antes do banner é um irmão que vem antes dele, e não um
+      // ancestral: a faixa numa linha própria, o `<div>` vazio de altura fixa.
+      achou(REGRA.fechada, tag);
+      if (pilha.at(-1) === nome.slice(1)) pilha.pop();
+    } else if (noCorpo) {
+      // `<hr>`, `<div>`, `<span>`, `<br>`, ou um `<td>` direto noutro `<td>`.
+      const pai = pilha.at(-1) ?? '';
+      if ((FILHOS_NA_CADEIA[pai] ?? []).includes(nome)) pilha.push(nome);
+      else achou(REGRA.cadeia, `${tag} dentro de <${pai}>`);
+    }
+    if (nome === 'body') {
+      noCorpo = true;
+      pilha.push(nome);
+    }
+
+    // Os atributos: `bgcolor`, `height`, `valign`, `background`, `class`
+    // ficam de fora por não estarem na lista da tag.
+    const permitidos = ATRIBUTOS_ATE_O_BANNER[nome];
+    if (permitidos) {
+      for (const [chave, valor] of atributos(tag)) {
+        if (!permitidos[chave]?.(valor)) {
+          achou(REGRA.atributo, `${chave}="${valor}" em ${tag}`);
+        }
+      }
+    }
+
+    if (!noCorpo) continue;
+    const declaracoes = estilo(tag);
+    for (const [propriedade, valor] of declaracoes) {
+      const aceito =
+        nome === 'img'
+          ? ESTILO_DO_BANNER[propriedade]?.(valor) === true
+          : estiloDaEstruturaPermitido(propriedade);
+      if (!aceito) achou(REGRA.estilo, `${propriedade}:${valor} em ${tag}`);
+    }
+    // Do primeiro fundo que não é o da página para dentro, todo respiro é uma
+    // faixa daquela cor em volta do banner — a da célula do banner e a da
+    // célula de fora que envolve uma tabela aninhada (a borda segura do
+    // Outlook) do mesmo jeito.
+    const fundo = declaracoes.find(([p]) => p === 'background-color')?.[1];
+    if (nome === 'body') fundoDaPagina = fundo;
+    else if (fundo !== undefined && fundo !== fundoDaPagina) pintado = true;
+    if (!pintado) continue;
+    for (const [propriedade, valor] of declaracoes) {
+      if (ESPACO.test(propriedade) && !semRespiro(valor)) {
+        achou(REGRA.respiro, `${propriedade}:${valor} em ${tag}`);
+      }
     }
   }
 
@@ -494,88 +719,310 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
     '%s: o banner é o primeiro elemento visível do corpo (antes dele, só a tabela que o contém)',
     (_nome, modelo) => {
       const { html } = modelo.renderizar(CONFIG, modelo.exemplo);
-      expect(problemasAntesDoBanner(html)).toEqual([]);
+      expect(problemasDaPosicaoDoBanner(html)).toEqual([]);
     },
   );
 
-  // A prova da prova. Cada forma realista de pôr algo visível antes do banner,
-  // aplicada ao HTML de verdade, tem de ser recusada pelo verificador acima, e
-  // pela regra certa: cada uma das seis regras tem um intruso que mira nela. A
-  // versão anterior só procurava texto, e um `<hr>` antes do banner passava
-  // verde (achado da revisão da TASK-003).
+  // A prova da prova: intrusos aplicados ao HTML de verdade, cada um recusado
+  // pelo verificador e pela regra que mira. São os das duas revisões da
+  // TASK-003 (o `<hr>` da 1ª; N1, N1c, N2, N3b e N5 da 2ª) e os que a correção
+  // achou ao fechar as listas. **A lista não é exaustiva, e não precisa ser:**
+  // o que recusa a forma que ninguém pensou é a lista fechada do verificador;
+  // os intrusos provam que cada regra dele existe e pega o que diz pegar.
   const CELULA_DO_BANNER = '<td style="padding:0;"><img';
   const LINHA_DO_BANNER = `<tr>${CELULA_DO_BANNER}`;
+  const FIM_DA_LINHA_DO_BANNER = 'border:0;"></td></tr>';
   const TABELA_DO_CARTAO =
     'width="600" cellpadding="0" cellspacing="0" border="0"';
-  const intrusos = [
+  const CELULA_DE_FORA = '<td align="center" style="padding:24px 12px;">';
+  const SAUDACAO = '<p style="margin:0 0 16px;">';
+
+  /** Envolve a linha do banner numa célula de fora com uma tabela aninhada. */
+  function aninhado(celula: string): [string, string][] {
+    return [
+      [
+        LINHA_DO_BANNER,
+        `<tr>${celula}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${LINHA_DO_BANNER}`,
+      ],
+      [FIM_DA_LINHA_DO_BANNER, `${FIM_DA_LINHA_DO_BANNER}</table></td></tr>`],
+    ];
+  }
+
+  type Intruso = {
+    rotulo: string;
+    /** Âncora e troca, aplicadas em ordem; cada âncora existe uma vez só. */
+    trocas: [string, string][];
+    regra: (typeof REGRA)[keyof typeof REGRA];
+    /** O que o problema daquela regra tem de citar: pegou no lugar certo. */
+    detalhe: string;
+  };
+
+  const intrusos: Intruso[] = [
     {
       rotulo: 'um &nbsp; colado no banner',
-      ancora: CELULA_DO_BANNER,
-      troca: '<td style="padding:0;">&nbsp;<img',
-      regra: 'texto antes do banner',
+      trocas: [[CELULA_DO_BANNER, '<td style="padding:0;">&nbsp;<img']],
+      regra: REGRA.texto,
+      detalhe: '&nbsp;',
     },
     {
+      // O único que não muda a tela: ele aparece na prévia da caixa de
+      // entrada, e é texto antes do banner, que a D8 proíbe com todas as letras.
       rotulo: 'um pré-cabeçalho escondido',
-      ancora: CELULA_DO_BANNER,
-      troca:
-        '<td style="padding:0;"><span style="display:none;">Seu convite</span><img',
-      regra: 'texto antes do banner',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          '<td style="padding:0;"><span style="display:none;">Seu convite</span><img',
+        ],
+      ],
+      regra: REGRA.texto,
+      detalhe: 'Seu convite',
     },
     {
-      rotulo: 'um <hr> numa linha antes (o da revisão)',
-      ancora: LINHA_DO_BANNER,
-      troca: `<tr><td><hr style="border:4px solid #e11d48;"></td></tr>${LINHA_DO_BANNER}`,
-      regra: 'fechada antes do banner',
+      rotulo: 'um <hr> numa linha antes (o da 1ª revisão)',
+      trocas: [
+        [
+          LINHA_DO_BANNER,
+          `<tr><td><hr style="border:4px solid #e11d48;"></td></tr>${LINHA_DO_BANNER}`,
+        ],
+      ],
+      regra: REGRA.fechada,
+      detalhe: '</td>',
     },
     {
       rotulo: 'uma faixa colorida numa linha própria, sem conteúdo',
-      ancora: LINHA_DO_BANNER,
-      troca: `<tr><td style="height:4px;background-color:#e11d48;"></td></tr>${LINHA_DO_BANNER}`,
-      regra: 'fechada antes do banner',
+      trocas: [
+        [
+          LINHA_DO_BANNER,
+          `<tr><td style="height:4px;background-color:#e11d48;"></td></tr>${LINHA_DO_BANNER}`,
+        ],
+      ],
+      regra: REGRA.fechada,
+      detalhe: '</tr>',
     },
     {
       rotulo: 'um <hr> sem estilo, na célula do banner',
-      ancora: CELULA_DO_BANNER,
-      troca: '<td style="padding:0;"><hr><img',
-      regra: 'não é estrutura: <hr>',
+      trocas: [[CELULA_DO_BANNER, '<td style="padding:0;"><hr><img']],
+      regra: REGRA.cadeia,
+      detalhe: '<hr> dentro de <td>',
+    },
+    {
+      rotulo: 'um <hr> entre o </head> e o <body> (o navegador o põe no corpo)',
+      trocas: [['</head>', '</head>\n<hr>']],
+      regra: REGRA.cadeia,
+      detalhe: '<hr> antes do <body>',
+    },
+    {
+      rotulo:
+        'uma célula colorida sem </td> antes da do banner (o navegador a fecha)',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          `<td style="background-color:#e11d48;width:8px;">${CELULA_DO_BANNER}`,
+        ],
+      ],
+      regra: REGRA.cadeia,
+      detalhe: '<td style="padding:0;"> dentro de <td>',
     },
     {
       rotulo: 'uma borda na célula do banner',
-      ancora: CELULA_DO_BANNER,
-      troca: '<td style="padding:0;border-top:4px solid #e11d48;"><img',
-      regra: 'border-top num ancestral do banner',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          '<td style="padding:0;border-top:4px solid #e11d48;"><img',
+        ],
+      ],
+      regra: REGRA.estilo,
+      detalhe: 'border-top:4px solid #e11d48',
+    },
+    {
+      rotulo: 'a mesma borda num style entre aspas simples (N5)',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          "<td style='padding:0;border-top:4px solid #e11d48;'><img",
+        ],
+      ],
+      regra: REGRA.estilo,
+      detalhe: 'border-top:4px solid #e11d48',
+    },
+    {
+      rotulo: 'o banner escondido pelo próprio estilo',
+      trocas: [['style="display:block;', 'style="display:none;']],
+      regra: REGRA.estilo,
+      detalhe: 'display:none em <img',
     },
     {
       rotulo: 'border="1" na tabela do cartão',
-      ancora: TABELA_DO_CARTAO,
-      troca: 'width="600" cellpadding="0" cellspacing="0" border="1"',
-      regra: 'border="1" num ancestral do banner',
+      trocas: [
+        [
+          TABELA_DO_CARTAO,
+          'width="600" cellpadding="0" cellspacing="0" border="1"',
+        ],
+      ],
+      regra: REGRA.atributo,
+      detalhe: 'border="1"',
+    },
+    {
+      // `cellpadding` não serviria: o `padding:0` em linha da célula vence.
+      rotulo: 'cellspacing="4" na tabela do cartão (uma faixa branca)',
+      trocas: [
+        [
+          TABELA_DO_CARTAO,
+          'width="600" cellpadding="0" cellspacing="4" border="0"',
+        ],
+      ],
+      regra: REGRA.atributo,
+      detalhe: 'cellspacing="4"',
+    },
+    {
+      rotulo: 'bgcolor, height e valign na célula do banner (N2)',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          '<td bgcolor="#e11d48" height="240" valign="bottom" style="padding:0;"><img',
+        ],
+      ],
+      regra: REGRA.atributo,
+      detalhe: 'bgcolor="#e11d48"',
+    },
+    {
+      rotulo:
+        'bgcolor, height e valign numa célula que envolve uma tabela aninhada (N1c)',
+      trocas: aninhado('<td bgcolor="#e11d48" height="217" valign="bottom">'),
+      regra: REGRA.atributo,
+      detalhe: 'bgcolor="#e11d48"',
     },
     {
       rotulo: 'um respiro colorido na célula do banner',
-      ancora: CELULA_DO_BANNER,
-      troca: '<td style="padding:4px 0 0;background-color:#e11d48;"><img',
-      regra: 'padding:4px 0 0 em volta do banner',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          '<td style="padding:4px 0 0;background-color:#e11d48;"><img',
+        ],
+      ],
+      regra: REGRA.respiro,
+      detalhe: 'padding:4px 0 0',
+    },
+    {
+      // Sem fundo próprio: a faixa é o branco do cartão, pintado dois níveis
+      // acima. Prova que o fundo pintado vale da tag que o declara para
+      // dentro, e não só nela.
+      rotulo:
+        'um respiro sem cor na célula do banner (aparece o branco do cartão)',
+      trocas: [[CELULA_DO_BANNER, '<td style="padding:4px 0 0;"><img']],
+      regra: REGRA.respiro,
+      detalhe: 'padding:4px 0 0',
+    },
+    {
+      rotulo:
+        'padding-top com fundo numa célula que envolve uma tabela aninhada (N1, a borda segura do Outlook)',
+      trocas: aninhado(
+        '<td style="padding-top:4px;background-color:#e11d48;">',
+      ),
+      regra: REGRA.respiro,
+      detalhe: 'padding-top:4px',
+    },
+    {
+      rotulo: 'fundo vermelho na célula de fora, que tem respiro',
+      trocas: [
+        [
+          CELULA_DE_FORA,
+          '<td align="center" style="padding:24px 12px;background-color:#e11d48;">',
+        ],
+      ],
+      regra: REGRA.respiro,
+      detalhe: 'padding:24px 12px',
+    },
+    {
+      rotulo: 'uma regra de CSS no <head> (N3b)',
+      trocas: [
+        [
+          '</head>',
+          '<style>table table td{border-top:4px solid #e11d48;}</style>\n</head>',
+        ],
+      ],
+      regra: REGRA.cssEscondido,
+      detalhe: '<style>',
+    },
+    {
+      rotulo: 'a borda escrita com entidade no style',
+      trocas: [
+        [
+          CELULA_DO_BANNER,
+          '<td style="padding:0;border&#45;top:4px solid #e11d48;"><img',
+        ],
+      ],
+      regra: REGRA.cssEscondido,
+      detalhe: 'escape no style',
+    },
+    {
+      rotulo: 'um <thead> depois do banner',
+      trocas: [
+        [
+          FIM_DA_LINHA_DO_BANNER,
+          `${FIM_DA_LINHA_DO_BANNER}<thead><tr><td style="height:4px;background-color:#e11d48;"></td></tr></thead>`,
+        ],
+      ],
+      regra: REGRA.secao,
+      detalhe: '<thead>',
+    },
+    {
+      // No `<tr>` não serviria: o `<tbody>` implícito o segura no lugar. Um
+      // `<tbody>` explícito é filho da tabela, e sobe.
+      rotulo: 'um <tbody> depois do banner, desenhado como cabeçalho',
+      trocas: [
+        [
+          FIM_DA_LINHA_DO_BANNER,
+          `${FIM_DA_LINHA_DO_BANNER}<tbody style="display:table-header-group;"><tr><td style="height:4px;background-color:#e11d48;"></td></tr></tbody>`,
+        ],
+      ],
+      regra: REGRA.subir,
+      detalhe: 'display:table-header-group',
+    },
+    {
+      rotulo: 'um parágrafo posicionado no topo da página',
+      trocas: [
+        [
+          SAUDACAO,
+          '<p style="position:absolute;top:0;left:0;margin:0;width:100%;height:8px;background-color:#e11d48;">',
+        ],
+      ],
+      regra: REGRA.subir,
+      detalhe: 'position:absolute',
+    },
+    {
+      rotulo: 'uma margem negativa que sobe o texto para cima do banner',
+      trocas: [[SAUDACAO, '<p style="margin:-240px 0 16px;">']],
+      regra: REGRA.subir,
+      detalhe: 'margin:-240px 0 16px',
     },
   ];
 
-  it('são 8 intrusos, e cada regra do verificador tem o seu', () => {
-    expect(intrusos).toHaveLength(8);
-    expect(new Set(intrusos.map((i) => i.regra.split(':')[0])).size).toBe(6);
+  it('são 24 intrusos, e cada regra do verificador tem ao menos um', () => {
+    expect(intrusos).toHaveLength(24);
+    expect(new Set(intrusos.map((i) => i.regra))).toEqual(
+      new Set(Object.values(REGRA)),
+    );
   });
 
   it.each(intrusos)(
     'o verificador recusa $rotulo',
-    ({ ancora, troca, regra }) => {
+    ({ trocas, regra, detalhe }) => {
       const { html } = renderizarConviteDeAcesso(CONFIG, convite());
-      expect(problemasAntesDoBanner(html)).toEqual([]);
-      // A sabotagem tem de mudar o HTML, num lugar só: âncora sumida faria o
-      // caso passar sem ter testado nada.
-      expect(html.split(ancora)).toHaveLength(2);
-      const comIntruso = html.replace(ancora, troca);
+      expect(problemasDaPosicaoDoBanner(html)).toEqual([]);
+      // A sabotagem tem de mudar o HTML, cada troca num lugar só: âncora
+      // sumida faria o caso passar sem ter testado nada.
+      let comIntruso = html;
+      for (const [ancora, troca] of trocas) {
+        expect(comIntruso.split(ancora)).toHaveLength(2);
+        comIntruso = comIntruso.replace(ancora, troca);
+      }
       expect(comIntruso).not.toBe(html);
-      expect(problemasAntesDoBanner(comIntruso)).toEqual(
-        expect.arrayContaining([expect.stringContaining(regra)]),
+      const daRegra = problemasDaPosicaoDoBanner(comIntruso).filter((p) =>
+        p.startsWith(`${regra}: `),
+      );
+      expect(daRegra).toEqual(
+        expect.arrayContaining([expect.stringContaining(detalhe)]),
       );
     },
   );
