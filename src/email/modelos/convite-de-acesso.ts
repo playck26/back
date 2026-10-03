@@ -87,8 +87,11 @@ export function renderizarConviteDeAcesso(
   // CSS fica **só no atributo `style`**, sem `<style>` no `<head>`.
   //
   // **Mudar este HTML obriga a rever a cópia literal do `email.spec.ts`**
-  // (AC-028): o teste exige este HTML exato, porque nenhuma lista de formas
+  // (AC-028): o teste exige este HTML exato com os dados do exemplo e nos dois
+  // ramos (pessoa sem nome, clube sem nome), porque nenhuma lista de formas
   // proibidas fechou a prova de "o banner é o primeiro elemento visível".
+  // **Ramo novo aqui pede cópia nova lá** — o teste não enxerga o que os dados
+  // dele não produzem.
   const html = `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -181,7 +184,9 @@ export const CONVITE_DE_ACESSO: ModeloDeEmail<DadosDoConviteDeAcesso> = {
 
 /**
  * **O registro, mesmo com um modelo só.** Um modelo novo entra aqui e herda,
- * sem teste novo, as provas de escape, remetente, banner e imagem única.
+ * sem teste novo, as provas de escape, remetente e imagem única; a do banner
+ * primeiro, não: ela é uma cópia revisada por modelo, e o `email.spec.ts`
+ * reprova o modelo do registro que não tiver a sua.
  * Mora neste arquivo enquanto há um modelo; com o segundo, vale um arquivo
  * próprio.
  */

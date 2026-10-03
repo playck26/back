@@ -83,9 +83,9 @@ function tags(html: string): string[] {
 
 /**
  * Os atributos da tag como o navegador os lê: valor entre aspas duplas,
- * simples ou sem aspas, e **o primeiro vence** quando o nome se repete. Ler só
- * aspas duplas deixava um `style='border-top:...'` invisível ao verificador do
- * banner (achado da 2ª revisão da TASK-003).
+ * simples ou sem aspas, e **o primeiro vence** quando o nome se repete — um
+ * leitor só de aspas duplas não veria um `style='...'` (achado da 2ª revisão
+ * da TASK-003, quando um verificador de posição do banner ainda morava aqui).
  */
 function atributos(tag: string): Map<string, string> {
   const lidos = new Map<string, string>();
@@ -434,9 +434,16 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
    * sem conteúdo; depois dele, nada com `position`, margem negativa ou
    * transformação.
    *
-   * **Qualquer mudança no modelo deixa este teste vermelho**, e quem mudar tem
-   * de rever o literal com esses mesmos olhos antes de trocá-lo. O texto
-   * alternativo (`text`) entra junto, pela mesma razão.
+   * **O alcance é o dos dados que o teste passa, não o do modelo inteiro.**
+   * Ficam vermelhas: qualquer mudança no HTML que o exemplo produz, e nos dois
+   * ramos que o modelo tem — nome da pessoa vazio (`Olá.`) e nome do clube
+   * vazio (`PlayCK`), conferidos abaixo pela mesma cópia com uma troca só.
+   * **Não fica vermelha** uma mudança que só aparece com outros valores — outra
+   * `urlCliente`, outro token, um nome com certo comprimento: o link e o escape
+   * desses campos têm provas próprias neste arquivo, mas a posição do banner
+   * com eles, não. Quem acrescentar um ramo ao modelo acrescenta a sua cópia
+   * aqui. O texto alternativo (`text`) entra junto, pela mesma razão, e quem
+   * mudar o modelo revê o literal com os mesmos olhos antes de trocá-lo.
    */
   const HTML_REVISADO_DO_CONVITE = `<!doctype html>
 <html lang="pt-BR">
@@ -479,6 +486,54 @@ Se você não esperava este convite, ignore este e-mail.
     const { html, text } = renderizarConviteDeAcesso(CONFIG, convite());
     expect(html).toBe(HTML_REVISADO_DO_CONVITE);
     expect(text).toBe(TEXTO_REVISADO_DO_CONVITE);
+  });
+
+  /**
+   * A cópia de um ramo é a cópia revisada com **exatamente uma** troca: se a
+   * âncora sumir ou se repetir, o teste quebra aqui, e não passa comparando
+   * contra uma cópia que ninguém revisou.
+   */
+  function trocarUmaVez(base: string, de: string, para: string): string {
+    expect(base.split(de)).toHaveLength(2);
+    return base.replace(de, para);
+  }
+
+  it('convite_de_acesso sem nome da pessoa: a mesma cópia, com "Olá."', () => {
+    const { html, text } = renderizarConviteDeAcesso(
+      CONFIG,
+      convite({ nomeDaPessoa: '' }),
+    );
+    expect(html).toBe(
+      trocarUmaVez(
+        HTML_REVISADO_DO_CONVITE,
+        '<p style="margin:0 0 16px;">Olá, Maria Souza.</p>',
+        '<p style="margin:0 0 16px;">Olá.</p>',
+      ),
+    );
+    expect(text).toBe(
+      trocarUmaVez(TEXTO_REVISADO_DO_CONVITE, 'Olá, Maria Souza.\n', 'Olá.\n'),
+    );
+  });
+
+  it('convite_de_acesso sem nome do clube: a mesma cópia, com "PlayCK"', () => {
+    const { html, text } = renderizarConviteDeAcesso(
+      CONFIG,
+      convite({ nomeDoClube: '' }),
+    );
+    expect(html).toBe(
+      trocarUmaVez(
+        HTML_REVISADO_DO_CONVITE,
+        '<strong>Clube Exemplo</strong>',
+        '<strong>PlayCK</strong>',
+      ),
+    );
+    expect(text).toBe(
+      trocarUmaVez(
+        TEXTO_REVISADO_DO_CONVITE,
+        'Clube Exemplo convidou',
+        'PlayCK convidou',
+      ),
+    );
   });
 
   it('todo modelo do registro tem a sua cópia revisada', () => {
