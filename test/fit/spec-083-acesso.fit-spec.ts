@@ -8,17 +8,16 @@ import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types';
-import { MemoriaProvedorDeEmail } from '../src/email/memoria-provedor-de-email';
+import { MemoriaProvedorDeEmail } from '../../src/email/memoria-provedor-de-email';
 import {
   PROVEDOR_DE_EMAIL,
   type MotivoDaFalha,
-} from '../src/email/provedor-de-email';
-import bootstrapRoleDeLimpeza from './banco/bootstrap-role-de-limpeza';
-import { exigirBancoLocal } from './banco/exigir-banco-local';
-import { limparEmpresa } from './banco/limpar-empresa';
-import { comNivelDaFixture } from './banco/nivel-da-fixture';
-import { subirAppReal } from './fit/app-real';
-import { bodyOf } from './utils/http';
+} from '../../src/email/provedor-de-email';
+import { exigirBancoLocal } from '../banco/exigir-banco-local';
+import { limparEmpresa } from '../banco/limpar-empresa';
+import { comNivelDaFixture } from '../banco/nivel-da-fixture';
+import { bodyOf } from '../utils/http';
+import { subirAppReal } from './app-real';
 
 /**
  * SPEC-083/TASK-004 (parte A) — **o link de ativação e a ficha do aluno, pela
@@ -37,11 +36,22 @@ import { bodyOf } from './utils/http';
  * pipe de produção) com o provedor de e-mail **memória**, que é de onde o
  * teste lê o link — o token cru não existe em nenhum outro lugar (INV-083f).
  *
+ * ## Por que em `test/fit`, e não num `.e2e-spec.ts`
+ *
  * **Precisa de `DATABASE_URL` local e migrado**, e a trava `exigirBancoLocal`
- * recusa qualquer outro. **É o primeiro `.e2e-spec.ts` com banco**: o passo
- * `pnpm test:e2e` do `ci.yml` roda sem `DATABASE_URL` e antes do `prisma
- * migrate deploy`, e falha aqui (alto, pela trava) até ganhar o banco — ou até
- * este arquivo mudar de suíte. A escolha não é deste arquivo.
+ * recusa qualquer outro. Nasceu como `test/acesso.e2e-spec.ts`, e a revisão da
+ * TASK-004a mediu o que isso fazia: o passo `pnpm test:e2e` do job `build` roda
+ * **sem** `DATABASE_URL` e **antes** do `prisma migrate deploy` — os e2e são de
+ * Prisma dublado por desenho —, então a trava lançava ao carregar o arquivo e o
+ * job fechava vermelho, levando junto o `test:banco`, o build e o conferidor do
+ * `openapi.json`. Pular sem banco também não serve: gate que pula é gate que
+ * mente.
+ *
+ * Aqui ele entra no `fit-critical`, o job obrigatório do PR, que migra antes de
+ * rodar e cria a role da limpeza no `globalSetup` do `jest-fit.json` — o mesmo
+ * lugar das outras suítes de app real com banco (`spec-054-catalogo`,
+ * `spec-078-avisos`). O write-set da spec ainda diz `test/acesso.e2e-spec.ts`:
+ * a troca é um delta a registrar nela.
  *
  * ## O limite por IP
  *
@@ -252,9 +262,8 @@ async function montarFixture(): Promise<void> {
 }
 
 beforeAll(async () => {
-  // A limpeza toma a role de teste para as tabelas append-only; quem cria a
-  // role é o `globalSetup` das suítes de banco, que esta config não tem.
-  await bootstrapRoleDeLimpeza();
+  // A role que a limpeza usa nas tabelas append-only já foi criada pelo
+  // `globalSetup` do `jest-fit.json`.
   for (const empresa of [EMPRESA, EMPRESA_B]) {
     await limparEmpresa(db, empresa);
   }

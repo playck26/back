@@ -30,8 +30,8 @@ import {
  * **O que só se prova aqui:** a forma do token e da impressão, a tabela da
  * situação inteira, o corpo único do `410`, e a ORDEM dos passos (o bcrypt
  * antes da transação; o e-mail depois do commit). O que depende de trava, de
- * `now()` do banco e de constraint fica no e2e contra o Postgres
- * (`test/acesso.e2e-spec.ts`) e no FIT-056.
+ * `now()` do banco e de constraint fica na suíte HTTP contra o Postgres
+ * (`test/fit/spec-083-acesso.fit-spec.ts`) e no FIT-056.
  */
 
 // O bcrypt é dublado no módulo que o serviço importa: é ele que registra a
