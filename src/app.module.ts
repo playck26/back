@@ -19,6 +19,7 @@ import { MatriculasModule } from './matriculas/matriculas.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ThrottlerPorUsuario } from './storage/limite-de-upload';
 import { StorageModule } from './storage/storage.module';
+import { EmailModule } from './email/email.module';
 import { PresencaAutomaticaModule } from './presenca-automatica/presenca-automatica.module';
 import { PushModule } from './push/push.module';
 import { FilaDeEsperaModule } from './fila-de-espera/fila-de-espera.module';
@@ -53,6 +54,11 @@ import { PreReservaModule } from './pre-reserva/pre-reserva.module';
     // propósito: é o que faz a validação das seis variáveis do Spaces
     // rodar no boot. Nenhuma rota depende dele até a SPEC-018.
     StorageModule,
+    // SPEC-083 (MOD-015) — o e-mail. Registrado antes de ter consumidor pelo
+    // mesmo motivo do storage: é o que faz a configuração ser validada no
+    // boot, e o deploy sem `EMAIL_RESPONDER_PARA` falhar em vez de subir
+    // (AC-030).
+    EmailModule,
     // SPEC-057/TASK-001 — o fechamento automático da chamada.
     PresencaAutomaticaModule,
     // SPEC-062 — infraestrutura de push. Nasce DESLIGADA sem o par VAPID.
