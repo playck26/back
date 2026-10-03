@@ -654,7 +654,11 @@ describe('AC-024 — senha trocada por outro caminho mata o link (INV-083c)', ()
       )
       .send({ senhaAtual: aluno.senha, novaSenha: 'senha-escolhida-no-app' })
       .expect(200);
+    // Aqui são DUAS defesas: a troca zera o `senha_temporaria` e muda o hash.
+    // Tirar só a impressão (S2) não derruba este caso; tirar as duas (S22),
+    // sim.
     const antes = await contaDe(aluno.usuarioId);
+    expect(antes.senha_temporaria).toBe(false);
     expectLinkInvalido(await consultar(token));
     expectLinkInvalido(await ativar(token, 'senha-que-nao-entra'));
     expect((await contaDe(aluno.usuarioId)).senha_hash).toBe(antes.senha_hash);
