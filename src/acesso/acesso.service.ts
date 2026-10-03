@@ -10,6 +10,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { BCRYPT_COST } from '../common/utils/senha-temporaria';
+import { traduzirViolacaoDeUnicidade } from './traduzir-violacao-de-unicidade';
 import {
   CONFIGURACAO_DOS_MODELOS,
   type ConfiguracaoDosModelos,
@@ -239,28 +240,35 @@ export interface ConviteParaEnviar {
 }
 
 /**
- * D9 — **a violação do índice parcial, reconhecida pelo que o Prisma traz.**
+ * D4/D9 — **o hash de uma senha que ninguém conhece.** A conta convidada nasce
+ * com `senha_temporaria = true` e este hash. O segredo são 32 bytes aleatórios
+ * que existem só dentro desta função: não vão a banco, a log nem à resposta.
+ * 256 bits não se quebram por força bruta, então a conta só entra pelo link,
+ * ou por uma senha temporária que o gestor gere depois (e que troca o hash).
  *
- * O `P2002` não traz o nome da constraint, só modelo e colunas. Medido em
- * 2026-10-03 contra o Postgres local, criando dois convites vivos pela API de
- * modelo: `{modelName: 'ConviteDeAcesso', target: ['usuario_id']}` — e o
- * UNIQUE do token dá `target: ['token_hash']`, que **não** é este caso e sobe
- * sem tradução. O tradutor único da D9 (`traduzirViolacaoDeUnicidade`, com a
- * conta do professor) absorve esta regra quando chegar.
+ * Custa um bcrypt (~270 ms nesta máquina, State 3): **quem chama calcula antes
+ * de abrir a transação** (D4), para o hash não segurar trava nenhuma.
  */
-function ehOutroConviteVivo(erro: unknown): boolean {
-  const e = erro as {
-    code?: string;
-    meta?: { modelName?: unknown; target?: unknown };
-  };
-  return (
-    e?.code === 'P2002' &&
-    e.meta?.modelName === 'ConviteDeAcesso' &&
-    Array.isArray(e.meta.target) &&
-    e.meta.target.length === 1 &&
-    e.meta.target[0] === 'usuario_id'
-  );
+export function hashDeSegredoDescartado(): Promise<string> {
+  return bcrypt.hash(randomBytes(32).toString('base64url'), BCRYPT_COST);
 }
+
+/**
+ * D9 — de quem é a conta do convite que a ficha vai emitir.
+ *
+ * - `usuarioId`: a conta já existe (o aluno; o professor com conta).
+ * - `criarConta`: o professor sem conta. A conta é criada **dentro** da
+ *   transação da emissão, para conta, vínculo e convite entrarem juntos ou
+ *   nada entrar. Quem a cria é o `TeachersService`, dono da regra do
+ *   `gerarAcesso`: este módulo não importa o `PeopleModule` (D12), e uma
+ *   segunda cópia da criação de conta divergiria na primeira revisão.
+ *   Devolve o id da conta criada.
+ */
+export type ContaDoConvite =
+  | { readonly usuarioId: string }
+  | {
+      readonly criarConta: (tx: Prisma.TransactionClient) => Promise<string>;
+    };
 
 /** O dono, lido sob `FOR UPDATE` na emissão (D9). */
 interface UsuarioTravadoNaEmissao {
@@ -303,9 +311,8 @@ export class AcessoService {
 
   /**
    * D9 — **a parte transacional da emissão**, para quem já tem uma transação
-   * aberta: a ficha do aluno abre a sua aqui embaixo; a do professor sem conta
-   * (parte B) cria a conta, o vínculo e o convite numa transação só, e chama
-   * isto dentro dela.
+   * aberta: a ficha abre a sua em `emitirEEnviar`, e no professor sem conta a
+   * mesma transação cria a conta e o vínculo antes de chegar aqui.
    *
    * O `FOR UPDATE` no usuário vem **primeiro**: é a mesma trava que a
    * ativação toma (D7 passo 2), e é ela que serializa ativar × reenviar. A
@@ -415,34 +422,70 @@ export class AcessoService {
   }
 
   /**
-   * D9 — emitir para uma conta que já existe: a transação, e o envio depois
-   * dela. **Falha de e-mail não é falha da rota** (AC-026): o convite fica
-   * gravado com `falhou`, e quem chamou lê a situação.
+   * D9 — **a emissão inteira da ficha**: a transação e o envio depois dela,
+   * para os dois tipos de conta (`ContaDoConvite`). **Falha de e-mail não é
+   * falha da rota** (AC-026): o convite fica gravado com `falhou`, e quem
+   * chamou lê a situação.
+   *
+   * No professor sem conta, a conta nasce dentro da mesma transação, e quem
+   * decide a corrida (dois envios para o mesmo professor, dois professores com
+   * o mesmo e-mail) é o `UNIQUE` de `usuarios.email`: a perdedora recebe o
+   * `P2002` e desfaz tudo, sem conta, vínculo ou convite pela metade.
+   *
+   * O tradutor da D9 é o único `catch` daqui: transforma as duas violações
+   * que têm resposta (`EMAIL_EM_USO`, `CONVITE_EM_EMISSAO`) e deixa qualquer
+   * outra subir como `500`.
    */
+  private async emitirEEnviar(
+    companyId: string,
+    criadoPorId: string,
+    conta: ContaDoConvite,
+  ): Promise<{ usuarioId: string; resultado: ResultadoDoEnvio }> {
+    let convite: ConviteParaEnviar;
+    try {
+      convite = await this.prisma.$transaction(async (tx) => {
+        const usuarioId =
+          'criarConta' in conta ? await conta.criarConta(tx) : conta.usuarioId;
+        return this.emitirNaTransacao(tx, {
+          companyId,
+          usuarioId,
+          criadoPorId,
+        });
+      });
+    } catch (erro) {
+      throw traduzirViolacaoDeUnicidade(erro);
+    }
+    return {
+      usuarioId: convite.usuarioId,
+      resultado: await this.enviarDepoisDoCommit(convite),
+    };
+  }
+
+  /** D9 — emitir para uma conta que já existe (o caminho do aluno). */
   async emitirParaUsuario(
     companyId: string,
     usuarioId: string,
     criadoPorId: string,
   ): Promise<ResultadoDoEnvio> {
-    let convite: ConviteParaEnviar;
-    try {
-      convite = await this.prisma.$transaction((tx) =>
-        this.emitirNaTransacao(tx, { companyId, usuarioId, criadoPorId }),
-      );
-    } catch (erro) {
-      // Só acontece numa corrida que a trava já deveria ter serializado
-      // (D9): responde "tente de novo", e não `500`.
-      if (ehOutroConviteVivo(erro)) {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'CONVITE_EM_EMISSAO',
-          message:
-            'Outro convite para esta pessoa está sendo emitido agora. Tente de novo.',
-        });
-      }
-      throw erro;
-    }
-    return this.enviarDepoisDoCommit(convite);
+    return (await this.emitirEEnviar(companyId, criadoPorId, { usuarioId }))
+      .resultado;
+  }
+
+  /**
+   * D9 — o `POST` da ficha: emite, envia, e responde a situação já com o
+   * resultado do envio. Serve ao aluno e ao professor, com ou sem conta.
+   */
+  async enviarParaConta(
+    companyId: string,
+    criadoPorId: string,
+    conta: ContaDoConvite,
+  ): Promise<SituacaoDoConviteDeAcesso> {
+    const { usuarioId } = await this.emitirEEnviar(
+      companyId,
+      criadoPorId,
+      conta,
+    );
+    return this.situacao(companyId, usuarioId);
   }
 
   // ==========================================================================
@@ -530,8 +573,30 @@ export class AcessoService {
     criadoPorId: string,
   ): Promise<SituacaoDoConviteDeAcesso> {
     const usuarioId = await this.usuarioDoAluno(companyId, alunoId);
-    await this.emitirParaUsuario(companyId, usuarioId, criadoPorId);
-    return this.situacao(companyId, usuarioId);
+    return this.enviarParaConta(companyId, criadoPorId, { usuarioId });
+  }
+
+  // ==========================================================================
+  // A ficha do professor — o `POST` passa pelo `TeachersService`, que sabe
+  // criar a conta de quem não tem (`ContaDoConvite`); o `GET` só lê.
+  // ==========================================================================
+
+  /**
+   * `404` para professor de outra empresa, como o resto da ficha. Professor
+   * sem `usuarioId` é `sem_conta` (D9).
+   */
+  async situacaoDoProfessor(
+    companyId: string,
+    professorId: string,
+  ): Promise<SituacaoDoConviteDeAcesso> {
+    const professor = await this.prisma.professor.findFirst({
+      where: { id: professorId, companyId },
+      select: { usuarioId: true },
+    });
+    if (!professor) {
+      throw new NotFoundException();
+    }
+    return this.situacao(companyId, professor.usuarioId);
   }
 
   // ==========================================================================

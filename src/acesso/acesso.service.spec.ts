@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import {
+  BadRequestException,
   ConflictException,
   GoneException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { BCRYPT_COST } from '../common/utils/senha-temporaria';
 import type { ConfiguracaoDosModelos } from '../email/email.config';
@@ -14,15 +16,19 @@ import type {
   MensagemDeEmail,
   ResultadoDoEnvio,
 } from '../email/provedor-de-email';
+import type { FotoDeProfessorService } from '../people/foto-de-professor.service';
+import { TeachersService } from '../people/teachers.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import {
   AcessoService,
   derivarSituacao,
+  hashDeSegredoDescartado,
   LINK_INVALIDO,
   prepararConvite,
   primeiroNome,
   type ConviteVivo,
 } from './acesso.service';
+import { EMAIL_EM_USO } from './traduzir-violacao-de-unicidade';
 
 /**
  * SPEC-083/TASK-004 (parte A) — o `AcessoService` sem banco.
@@ -75,8 +81,17 @@ interface Tx {
     updateMany: jest.Mock;
     create: jest.Mock;
   };
-  usuario: { update: jest.Mock };
+  usuario: { update: jest.Mock; create: jest.Mock };
+  professor: { update: jest.Mock };
   refreshToken: { updateMany: jest.Mock };
+}
+
+/** O `P2002` real, com o `meta` medido (ver o tradutor). */
+function p2002(meta: { modelName: string; target: string[] }) {
+  return new Prisma.PrismaClientKnownRequestError(
+    'Unique constraint failed on the fields',
+    { code: 'P2002', clientVersion: Prisma.prismaVersion.client, meta },
+  );
 }
 
 function montar() {
@@ -89,7 +104,14 @@ function montar() {
       updateMany: jest.fn(() => Promise.resolve({ count: 0 })),
       create: jest.fn(() => Promise.resolve({ id: 'convite-novo' })),
     },
-    usuario: { update: jest.fn(() => Promise.resolve({})) },
+    usuario: {
+      update: jest.fn(() => Promise.resolve({})),
+      create: jest.fn(() => {
+        ordem.push('cria-conta');
+        return Promise.resolve({ id: 'usuario-novo' });
+      }),
+    },
+    professor: { update: jest.fn() },
     refreshToken: { updateMany: jest.fn(() => Promise.resolve({ count: 2 })) },
   };
   const prisma = {
@@ -107,8 +129,9 @@ function montar() {
         return Promise.resolve({ count: 1 });
       }),
     },
-    usuario: { findFirst: jest.fn() },
+    usuario: { findFirst: jest.fn(), findUnique: jest.fn() },
     aluno: { findFirst: jest.fn() },
+    professor: { findFirst: jest.fn() },
   };
   const provedor = new MemoriaQueAnota(ordem);
   hashDoBcrypt.mockClear();
@@ -655,10 +678,9 @@ describe('SPEC-083 — emitir (D9) e o envio depois do commit (D8)', () => {
 
   it('P2002 do índice parcial (medido: ConviteDeAcesso, [usuario_id]) → 409 CONVITE_EM_EMISSAO, sem envio', async () => {
     const { service, tx, provedor } = pronto();
-    tx.conviteDeAcesso.create.mockRejectedValue({
-      code: 'P2002',
-      meta: { modelName: 'ConviteDeAcesso', target: ['usuario_id'] },
-    });
+    tx.conviteDeAcesso.create.mockRejectedValue(
+      p2002({ modelName: 'ConviteDeAcesso', target: ['usuario_id'] }),
+    );
     const erro = await recusa(
       service.emitirParaUsuario('empresa-1', 'usuario-1', 'gestor-1'),
     );
@@ -674,14 +696,331 @@ describe('SPEC-083 — emitir (D9) e o envio depois do commit (D8)', () => {
       'o UNIQUE do token',
       { modelName: 'ConviteDeAcesso', target: ['token_hash'] },
     ],
-    ['o e-mail da conta', { modelName: 'Usuario', target: ['email'] }],
+    [
+      'o vínculo do professor (a mesma coluna do índice, noutro modelo)',
+      { modelName: 'Professor', target: ['usuario_id'] },
+    ],
   ])('outro P2002 (%s) sobe sem tradução', async (_nome, meta) => {
     const { service, tx } = pronto();
-    const original = { code: 'P2002', meta };
+    const original = p2002(meta);
     tx.conviteDeAcesso.create.mockRejectedValue(original);
     await expect(
       service.emitirParaUsuario('empresa-1', 'usuario-1', 'gestor-1'),
     ).rejects.toBe(original);
+  });
+
+  it('o tradutor é UM só (D9): o P2002 do e-mail da conta vira EMAIL_EM_USO também aqui', async () => {
+    const { service, tx, provedor } = pronto();
+    tx.conviteDeAcesso.create.mockRejectedValue(
+      p2002({ modelName: 'Usuario', target: ['email'] }),
+    );
+    const erro = await recusa(
+      service.emitirParaUsuario('empresa-1', 'usuario-1', 'gestor-1'),
+    );
+    expect((erro as ConflictException).getResponse()).toBe(EMAIL_EM_USO);
+    expect(provedor.blocos).toHaveLength(0);
+  });
+});
+
+describe('SPEC-083 — hashDeSegredoDescartado (D4, D9)', () => {
+  it('bcrypt de 32 bytes aleatórios em base64url, com o custo do projeto; o segredo não sai', async () => {
+    hashDoBcrypt.mockClear();
+    hashDoBcrypt.mockImplementation(() => Promise.resolve('$2b$12$hash-x'));
+    const hash = await hashDeSegredoDescartado();
+    await hashDeSegredoDescartado();
+
+    expect(hash).toBe('$2b$12$hash-x');
+    const segredos = hashDoBcrypt.mock.calls.map(
+      ([segredo, custo]: [string, number]) => {
+        expect(custo).toBe(BCRYPT_COST);
+        expect(segredo).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(Buffer.from(segredo, 'base64url')).toHaveLength(32);
+        return segredo;
+      },
+    );
+    // Um segredo novo a cada conta: nada derivado da pessoa ou fixo.
+    expect(segredos).toHaveLength(2);
+    expect(segredos[0]).not.toBe(segredos[1]);
+  });
+});
+
+describe('SPEC-083 — enviarParaConta com conta nova (o professor sem conta, D9)', () => {
+  /** O usuário recém-criado, como a trava da emissão o lê na mesma transação. */
+  const recemCriado = {
+    id: 'usuario-novo',
+    email: 'prof@teste.local',
+    nome: 'Professor Novo',
+    senha_hash: '$2b$12$segredo-descartado',
+    senha_temporaria: true,
+    empresa_nome: 'Clube Exemplo',
+  };
+
+  function pronto() {
+    const ctx = montar();
+    ctx.tx.$queryRaw.mockResolvedValue([recemCriado]);
+    ctx.prisma.usuario.findFirst.mockResolvedValue({
+      senhaTemporaria: true,
+      senhaHash: recemCriado.senha_hash,
+    });
+    return ctx;
+  }
+
+  it('conta, vínculo e convite numa transação só, a conta PRIMEIRO — e o envio depois do commit, para a conta criada', async () => {
+    const { service, tx, ordem, provedor } = pronto();
+    const criarConta = jest.fn(async (t: unknown) => {
+      expect(t).toBe(tx);
+      await tx.usuario.create({ data: {} });
+      return 'usuario-novo';
+    });
+
+    await service.enviarParaConta('empresa-1', 'gestor-1', { criarConta });
+
+    expect(ordem).toEqual([
+      'transacao:inicio',
+      'cria-conta',
+      'commit',
+      'envio',
+      'grava-resultado',
+    ]);
+    // A conta antes da trava: a emissão trava a conta que acabou de nascer.
+    expect(tx.usuario.create.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[0],
+    );
+    expect(sqlDe(tx.$queryRaw)).toContain('FOR UPDATE OF u');
+    expect(tx.conviteDeAcesso.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          companyId: 'empresa-1',
+          usuarioId: 'usuario-novo',
+          criadoPorId: 'gestor-1',
+          impressaoCredencial: sha256(recemCriado.senha_hash),
+        }) as object,
+      }),
+    );
+    expect(provedor.enviados[0].to).toBe('prof@teste.local');
+  });
+
+  it('a corrida perdida no UNIQUE do e-mail (P2002 Usuario, [email]) → 409 EMAIL_EM_USO, sem convite e sem envio', async () => {
+    const { service, tx, provedor } = pronto();
+    const erro = await recusa(
+      service.enviarParaConta('empresa-1', 'gestor-1', {
+        criarConta: () =>
+          Promise.reject(p2002({ modelName: 'Usuario', target: ['email'] })),
+      }),
+    );
+    expect(erro).toBeInstanceOf(ConflictException);
+    expect((erro as ConflictException).getResponse()).toBe(EMAIL_EM_USO);
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.conviteDeAcesso.create).not.toHaveBeenCalled();
+    expect(provedor.blocos).toHaveLength(0);
+  });
+
+  it('outra violação na criação (o vínculo, Professor [usuario_id]) sobe sem tradução', async () => {
+    const { service } = pronto();
+    const original = p2002({ modelName: 'Professor', target: ['usuario_id'] });
+    await expect(
+      service.enviarParaConta('empresa-1', 'gestor-1', {
+        criarConta: () => Promise.reject(original),
+      }),
+    ).rejects.toBe(original);
+  });
+
+  it('responde a situação da conta criada, já com o resultado do envio', async () => {
+    const { service, prisma } = pronto();
+    prisma.conviteDeAcesso.findFirst.mockResolvedValue({
+      impressaoCredencial: sha256(recemCriado.senha_hash),
+      expiraEm: new Date(Date.now() + DIA_MS),
+      emailResultado: 'enviado',
+      emailMotivo: null,
+      emailEm: new Date(),
+    });
+    await expect(
+      service.enviarParaConta('empresa-1', 'gestor-1', {
+        criarConta: () => Promise.resolve('usuario-novo'),
+      }),
+    ).resolves.toMatchObject({ situacao: 'enviado' });
+    const [args] = prisma.usuario.findFirst.mock.calls[0] as [
+      { where: Record<string, string> },
+    ];
+    expect(args.where).toEqual({ id: 'usuario-novo', companyId: 'empresa-1' });
+  });
+});
+
+describe('SPEC-083 — situacaoDoProfessor (D9)', () => {
+  it('professor de outra empresa → 404, procurado NA empresa', async () => {
+    const { service, prisma } = montar();
+    prisma.professor.findFirst.mockResolvedValue(null);
+    await expect(
+      service.situacaoDoProfessor('empresa-1', 'professor-x'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    const [args] = prisma.professor.findFirst.mock.calls[0] as [
+      { where: Record<string, string> },
+    ];
+    expect(args.where).toEqual({ id: 'professor-x', companyId: 'empresa-1' });
+  });
+
+  it('sem usuarioId → sem_conta, sem ler conta nenhuma', async () => {
+    const { service, prisma } = montar();
+    prisma.professor.findFirst.mockResolvedValue({ usuarioId: null });
+    await expect(
+      service.situacaoDoProfessor('empresa-1', 'professor-1'),
+    ).resolves.toEqual({
+      situacao: 'sem_conta',
+      em: null,
+      expiraEm: null,
+      motivo: null,
+    });
+    expect(prisma.usuario.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('com conta → a situação da conta, como a do aluno', async () => {
+    const { service, prisma } = montar();
+    prisma.professor.findFirst.mockResolvedValue({ usuarioId: 'usuario-9' });
+    prisma.usuario.findFirst.mockResolvedValue({
+      senhaTemporaria: false,
+      senhaHash: SENHA_HASH_ATUAL,
+    });
+    await expect(
+      service.situacaoDoProfessor('empresa-1', 'professor-1'),
+    ).resolves.toMatchObject({ situacao: 'ativado' });
+    const [args] = prisma.usuario.findFirst.mock.calls[0] as [
+      { where: Record<string, string> },
+    ];
+    expect(args.where).toEqual({ id: 'usuario-9', companyId: 'empresa-1' });
+  });
+});
+
+/**
+ * A ficha do professor de ponta a ponta, sem banco: o `TeachersService` de
+ * verdade (que sabe criar a conta) com este `AcessoService`, sobre o mesmo
+ * Prisma dublado. **É aqui que se prova a D4 no caminho do professor:** o
+ * bcrypt do segredo descartado acontece antes de a transação abrir, e nunca
+ * dentro dela.
+ */
+describe('SPEC-083 — o professor sem conta, TeachersService + AcessoService (D4, D9)', () => {
+  const ficha = {
+    id: 'professor-1',
+    companyId: 'empresa-1',
+    nome: 'Professor Novo',
+    telefone: '11999990000',
+    email: 'prof@teste.local' as string | null,
+    usuarioId: null as string | null,
+    fotoKey: null,
+    usuario: null,
+  };
+
+  function pronto(professor: typeof ficha = ficha) {
+    const ctx = montar();
+    const fotos = {
+      resolver: jest.fn(() => Promise.resolve({ fotoUrl: null })),
+    } as unknown as FotoDeProfessorService;
+    const teachers = new TeachersService(
+      ctx.prisma as unknown as PrismaService,
+      fotos,
+    );
+    ctx.prisma.professor.findFirst.mockResolvedValue(professor);
+    ctx.prisma.usuario.findUnique.mockResolvedValue(null);
+    ctx.tx.professor.update.mockResolvedValue({
+      ...professor,
+      usuarioId: 'usuario-novo',
+    });
+    ctx.tx.$queryRaw.mockResolvedValue([
+      {
+        id: 'usuario-novo',
+        email: professor.email,
+        nome: professor.nome,
+        senha_hash: '$2b$12$senha-nova-do-link',
+        senha_temporaria: true,
+        empresa_nome: 'Clube Exemplo',
+      },
+    ]);
+    ctx.prisma.usuario.findFirst.mockResolvedValue({
+      senhaTemporaria: true,
+      senhaHash: '$2b$12$senha-nova-do-link',
+    });
+    const enviar = async () =>
+      ctx.service.enviarParaConta(
+        'empresa-1',
+        'gestor-1',
+        await teachers.contaParaConvite('empresa-1', professor.id),
+      );
+    return { ...ctx, enviar };
+  }
+
+  it('bcrypt ANTES da transação; a conta do gerarAcesso (papel, nome, telefone, e-mail, empresa) com o hash do segredo; o vínculo; o convite', async () => {
+    const { enviar, tx, ordem, provedor } = pronto();
+    await enviar();
+
+    expect(ordem).toEqual([
+      'bcrypt',
+      'transacao:inicio',
+      'cria-conta',
+      'commit',
+      'envio',
+      'grava-resultado',
+    ]);
+    expect(tx.usuario.create).toHaveBeenCalledWith({
+      data: {
+        email: 'prof@teste.local',
+        senhaHash: '$2b$12$senha-nova-do-link',
+        nome: 'Professor Novo',
+        telefone: '11999990000',
+        role: 'professor',
+        companyId: 'empresa-1',
+        senhaTemporaria: true,
+        senhaTemporariaExpiraEm: expect.any(Date) as Date,
+      },
+    });
+    expect(tx.professor.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'professor-1' },
+        data: { usuarioId: 'usuario-novo' },
+      }),
+    );
+    // O vínculo antes da trava da emissão, e a trava antes do convite.
+    const [criar, vincular, travar, inserir] = [
+      tx.usuario.create,
+      tx.professor.update,
+      tx.$queryRaw,
+      tx.conviteDeAcesso.create,
+    ].map((m) => m.mock.invocationCallOrder[0]);
+    expect([criar, vincular, travar, inserir]).toEqual(
+      [criar, vincular, travar, inserir].sort((a, b) => a - b),
+    );
+    // O segredo é o de 32 bytes, e não uma `pck-` mostrada a alguém.
+    const [[segredo]] = hashDoBcrypt.mock.calls as [[string, number]];
+    expect(segredo).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(provedor.enviados[0].to).toBe('prof@teste.local');
+  });
+
+  it('professor COM conta → o caminho do aluno: nenhum bcrypt, nenhuma conta criada', async () => {
+    const { enviar, tx, ordem } = pronto({ ...ficha, usuarioId: 'usuario-9' });
+    await enviar();
+    expect(ordem).not.toContain('bcrypt');
+    expect(tx.usuario.create).not.toHaveBeenCalled();
+    // A trava da emissão é na conta que a ficha já tinha.
+    const [[, usuarioTravado]] = tx.$queryRaw.mock.calls as [unknown[]];
+    expect(usuarioTravado).toBe('usuario-9');
+  });
+
+  it('sem e-mail na ficha → 400 EMAIL_OBRIGATORIO, antes de bcrypt e de transação', async () => {
+    const { enviar, prisma, ordem } = pronto({ ...ficha, email: null });
+    const erro = await recusa(enviar());
+    expect(erro).toBeInstanceOf(BadRequestException);
+    expect((erro as BadRequestException).getResponse()).toMatchObject({
+      code: 'EMAIL_OBRIGATORIO',
+    });
+    expect(ordem).toEqual([]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('e-mail de outra conta (a conferência de antes) → 409 EMAIL_EM_USO, com o mesmo corpo do tradutor', async () => {
+    const { enviar, prisma, ordem } = pronto();
+    prisma.usuario.findUnique.mockResolvedValue({ id: 'outra-conta' });
+    const erro = await recusa(enviar());
+    expect((erro as ConflictException).getResponse()).toBe(EMAIL_EM_USO);
+    expect(ordem).toEqual([]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
 

@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -15,6 +17,8 @@ import {
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { AcessoService } from '../acesso/acesso.service';
+import { SituacaoDoConviteResponseDto } from '../acesso/dto/situacao-do-convite.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyAdminGuard } from '../common/guards/company-admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -41,6 +45,8 @@ export class TeachersController {
   constructor(
     private readonly teachersService: TeachersService,
     private readonly disponibilidade: DisponibilidadeProfessorService,
+    /** SPEC-083 — por último, pela lição da SPEC-039 (ver `InvitesService`). */
+    private readonly acesso: AcessoService,
   ) {}
 
   @Get()
@@ -74,6 +80,40 @@ export class TeachersController {
     @Param('id', UuidCanonicoPipe) id: string,
   ) {
     return this.teachersService.gerarAcesso(user.companyId as string, id);
+  }
+
+  /**
+   * SPEC-083/D9 — a situação do convite por e-mail, para o cartão da ficha.
+   * Além das cinco do aluno, `sem_conta`: o professor sem acesso nenhum.
+   */
+  @Get(':id/convite-de-acesso')
+  @ApiOkResponse({ type: SituacaoDoConviteResponseDto })
+  situacaoDoConvite(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    return this.acesso.situacaoDoProfessor(user.companyId as string, id);
+  }
+
+  /**
+   * SPEC-083/D9 — enviar e reenviar. Professor com conta: o mesmo gesto do
+   * aluno. **Sem conta:** cria a conta como o `gerarAcesso` cria, mas sem
+   * senha conhecida, e conta, vínculo e convite entram numa transação só,
+   * antes do envio. Sem e-mail na ficha é `400 EMAIL_OBRIGATORIO`; e-mail de
+   * outra conta, `409 EMAIL_EM_USO`, inclusive para quem perde a corrida no
+   * UNIQUE (dois envios para o mesmo professor, ou dois professores com o
+   * mesmo e-mail). Responde a situação já com o resultado do envio.
+   */
+  @Post(':id/convite-de-acesso')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: SituacaoDoConviteResponseDto })
+  async enviarConvite(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id', UuidCanonicoPipe) id: string,
+  ) {
+    const companyId = user.companyId as string;
+    const conta = await this.teachersService.contaParaConvite(companyId, id);
+    return this.acesso.enviarParaConta(companyId, user.sub, conta);
   }
 
   /**

@@ -20,8 +20,13 @@ import { bodyOf } from '../utils/http';
 import { subirAppReal } from './app-real';
 
 /**
- * SPEC-083/TASK-004 (parte A) — **o link de ativação e a ficha do aluno, pela
- * HTTP, contra o Postgres de verdade.**
+ * SPEC-083/TASK-004 (partes A e B) — **o link de ativação, a ficha do aluno e
+ * a do professor, pela HTTP, contra o Postgres de verdade.** A parte B soma o
+ * professor: a sexta situação (`sem_conta`), a conta criada pelo convite
+ * (AC-037), o terceiro caminho do AC-024 e as seis situações pela rota do
+ * professor (o contrato que o cartão lê, AC-038). A corrida do professor sem
+ * conta e o tradutor contra erros reais ficam em
+ * `test/banco/spec-083-corrida-do-professor.db-spec.ts`.
  *
  * ## Por que banco de verdade, e não o dublê dos outros e2e
  *
@@ -181,6 +186,100 @@ async function novoAluno(
     senha,
     primeiroNome: `Aluna${alunoSeq}`,
   };
+}
+
+const enviarAoProfessor = (professorId: string) =>
+  http()
+    .post(`/api/v1/teachers/${professorId}/convite-de-acesso`)
+    .set('Authorization', `Bearer ${tokenDoGestor}`);
+
+const situacaoDoProfessor = (professorId: string) =>
+  http()
+    .get(`/api/v1/teachers/${professorId}/convite-de-acesso`)
+    .set('Authorization', `Bearer ${tokenDoGestor}`);
+
+interface Professor {
+  professorId: string;
+  /** Nulo no professor sem conta. */
+  usuarioId: string | null;
+  email: string | null;
+  nome: string;
+  telefone: string;
+}
+
+let professorSeq = 0;
+/**
+ * Uma ficha de professor por SQL, com ou sem conta. Com conta, a conta é a de
+ * quem recebeu acesso: papel `professor`, o e-mail da ficha, e a senha
+ * temporária ou uma própria.
+ */
+async function novoProfessor(
+  opcoes: {
+    email?: string | null;
+    conta?: 'temporaria' | 'propria';
+    empresa?: string;
+  } = {},
+): Promise<Professor> {
+  professorSeq += 1;
+  const professorId = randomUUID();
+  const empresa = opcoes.empresa ?? EMPRESA;
+  const email =
+    opcoes.email === undefined
+      ? `spec083-acesso-prof-${professorSeq}@teste.local`
+      : opcoes.email;
+  const nome = `Professor${professorSeq} Andrade`;
+  const telefone = `1197777${String(professorSeq).padStart(4, '0')}`;
+  let usuarioId: string | null = null;
+  if (opcoes.conta) {
+    usuarioId = randomUUID();
+    const temporaria = opcoes.conta === 'temporaria';
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,senha_temporaria,senha_temporaria_expira_em,updated_at)
+       VALUES ($1::uuid,$2,$3,$4,'professor',$5::uuid,$6,${temporaria ? "now() + interval '7 days'" : 'NULL'},now())`,
+      usuarioId,
+      email,
+      await bcrypt.hash(`pck-PROF${professorSeq}`, 4),
+      nome,
+      empresa,
+      temporaria,
+    );
+  }
+  await q(
+    `INSERT INTO professores (id,company_id,nome,telefone,email,usuario_id)
+     VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6::uuid)`,
+    professorId,
+    empresa,
+    nome,
+    telefone,
+    email,
+    usuarioId,
+  );
+  return { professorId, usuarioId, email, nome, telefone };
+}
+
+/** O vínculo da ficha, como está no banco agora. */
+async function vinculoDe(professorId: string): Promise<string | null> {
+  const [linha] = await ler<{ usuario_id: string | null }>(
+    `SELECT usuario_id FROM professores WHERE id = $1::uuid`,
+    professorId,
+  );
+  return linha.usuario_id;
+}
+
+/** O contrato que o cartão do Admin lê (AC-038): estas quatro chaves. */
+function situacaoLida(res: Response) {
+  expect(Object.keys(bodyOf<object>(res)).sort()).toEqual([
+    'em',
+    'expiraEm',
+    'motivo',
+    'situacao',
+  ]);
+  return bodyOf<{
+    situacao: string;
+    em: string | null;
+    expiraEm: string | null;
+    motivo: string | null;
+  }>(res);
 }
 
 /** O token do último e-mail capturado — o único lugar onde ele existe. */
@@ -564,7 +663,37 @@ describe('AC-024 — senha trocada por outro caminho mata o link (INV-083c)', ()
     );
   });
 
-  // O terceiro caminho, gerar o acesso do professor, é da parte B da TASK-004.
+  it('gerar o acesso do professor (o convite criou a conta; o gerarAcesso troca a senha)', async () => {
+    const professor = await novoProfessor();
+    await enviarAoProfessor(professor.professorId).expect(200);
+    const token = tokenDoUltimoEmail();
+    const usuarioId = (await vinculoDe(professor.professorId)) as string;
+    const antes = await contaDe(usuarioId);
+
+    const gerado = await http()
+      .post(`/api/v1/teachers/${professor.professorId}/acesso`)
+      .set('Authorization', `Bearer ${tokenDoGestor}`)
+      .expect(201);
+    const { senhaTemporaria } = bodyOf<{ senhaTemporaria: string }>(gerado);
+    expect(senhaTemporaria).toMatch(/^pck-/);
+
+    // Continua com senha temporária, e o hash é outro: quem recusa é a
+    // impressão, e não o `senha_temporaria`.
+    const depois = await contaDe(usuarioId);
+    expect(depois.senha_temporaria).toBe(true);
+    expect(depois.senha_hash).not.toBe(antes.senha_hash);
+    expectLinkInvalido(await consultar(token));
+    expectLinkInvalido(await ativar(token, 'senha-que-nao-entra'));
+    expect((await contaDe(usuarioId)).senha_hash).toBe(depois.senha_hash);
+    expect(
+      situacaoLida(await situacaoDoProfessor(professor.professorId).expect(200))
+        .situacao,
+    ).toBe('nao_enviado');
+    // A senha que o gerarAcesso mostrou é a que vale agora.
+    expect(
+      (await login(professor.email as string, senhaTemporaria)).status,
+    ).toBe(200);
+  });
 });
 
 describe('AC-026 — provedor fora: a ficha responde o sucesso de hoje, e o convite fica gravado com o motivo', () => {
@@ -879,6 +1008,274 @@ describe('AC-041 — remetente e responder-para da configuração, pela ficha', 
       replyTo: 'respostas@suporte.teste.local',
       to: aluno.email,
       subject: `${NOME_DO_CLUBE} convidou você para o PlayCK`,
+    });
+  });
+});
+
+// ============================================================================
+// A ficha do professor (TASK-004, parte B)
+// ============================================================================
+
+describe('AC-033 — sem_conta, a sexta situação: o professor sem conta', () => {
+  it('nenhum convite, nenhuma conta, tudo nulo', async () => {
+    const professor = await novoProfessor();
+    expect(
+      situacaoLida(
+        await situacaoDoProfessor(professor.professorId).expect(200),
+      ),
+    ).toEqual({
+      situacao: 'sem_conta',
+      em: null,
+      expiraEm: null,
+      motivo: null,
+    });
+  });
+});
+
+describe('AC-037 — professor sem conta: enviar cria a conta e o convite', () => {
+  it('com e-mail: a conta (professor, senha desconhecida, senha temporária), o vínculo na ficha e o convite — e o link ativa', async () => {
+    const professor = await novoProfessor();
+    const email = professor.email as string;
+
+    const res = await enviarAoProfessor(professor.professorId).expect(200);
+    // A resposta é a situação, e só ela: nenhuma senha sai da rota.
+    expect(situacaoLida(res).situacao).toBe('enviado');
+
+    const [conta] = await ler<{
+      id: string;
+      role: string;
+      nome: string;
+      telefone: string | null;
+      company_id: string;
+      senha_hash: string;
+      senha_temporaria: boolean;
+      senha_temporaria_expira_em: Date | null;
+    }>(
+      `SELECT id, role::text AS role, nome, telefone, company_id, senha_hash,
+              senha_temporaria, senha_temporaria_expira_em
+         FROM usuarios WHERE email = $1`,
+      email,
+    );
+    expect(conta).toMatchObject({
+      role: 'professor',
+      nome: professor.nome,
+      telefone: professor.telefone,
+      company_id: EMPRESA,
+      senha_temporaria: true,
+    });
+    expect(conta.senha_temporaria_expira_em).not.toBeNull();
+    // Um bcrypt com o custo do projeto — de um segredo que não saiu daqui.
+    expect(conta.senha_hash).toMatch(/^\$2[aby]\$12\$/);
+    expect(await vinculoDe(professor.professorId)).toBe(conta.id);
+
+    const convites = await convitesDe(conta.id);
+    expect(convites).toHaveLength(1);
+    expect(convites[0]).toMatchObject({
+      usado_em: null,
+      revogado_em: null,
+      email_resultado: 'enviado',
+    });
+    expect(memoria.enviados).toHaveLength(1);
+    expect(memoria.enviados[0].to).toBe(email);
+    const token = tokenDoUltimoEmail();
+    expect(convites[0].token_hash).toBe(sha256(token));
+    // Nenhuma senha mostrada no e-mail, como nenhuma na resposta.
+    expect(
+      `${memoria.enviados[0].html}\n${memoria.enviados[0].text}`,
+    ).not.toMatch(/pck-/);
+
+    // Senha desconhecida: nada que alguém tenha visto entra.
+    for (const tentativa of [
+      'pck-AAAAAA',
+      professor.nome,
+      email,
+      professor.telefone,
+    ]) {
+      expect((await login(email, tentativa)).status).toBe(401);
+    }
+
+    // A conta entra pelo link, e é de professor.
+    await ativar(token, 'senha-nova-do-professor').expect(204);
+    const entrou = await login(email, 'senha-nova-do-professor');
+    expect(entrou.status).toBe(200);
+    expect(bodyOf<{ usuario: { role: string } }>(entrou).usuario.role).toBe(
+      'professor',
+    );
+  });
+
+  it('o e-mail falhando não desfaz a conta: ela fica criada, com o convite gravado como falhou (AC-026)', async () => {
+    const professor = await novoProfessor();
+    memoria.falharCom('cota');
+    const res = await enviarAoProfessor(professor.professorId).expect(200);
+    expect(situacaoLida(res)).toMatchObject({
+      situacao: 'falhou',
+      motivo: 'cota',
+    });
+    const usuarioId = await vinculoDe(professor.professorId);
+    expect(usuarioId).not.toBeNull();
+    const convites = await convitesDe(usuarioId as string);
+    expect(convites).toHaveLength(1);
+    expect(convites[0]).toMatchObject({
+      email_resultado: 'falhou',
+      email_motivo: 'cota',
+    });
+  });
+
+  it('sem e-mail na ficha → 400 EMAIL_OBRIGATORIO, e nada criado', async () => {
+    const professor = await novoProfessor({ email: null });
+    const res = await enviarAoProfessor(professor.professorId).expect(400);
+    expect(bodyOf<{ code: string }>(res).code).toBe('EMAIL_OBRIGATORIO');
+    expect(await vinculoDe(professor.professorId)).toBeNull();
+    expect(memoria.blocos).toHaveLength(0);
+    expect(
+      situacaoLida(await situacaoDoProfessor(professor.professorId).expect(200))
+        .situacao,
+    ).toBe('sem_conta');
+  });
+
+  it('e-mail de outra conta → 409 EMAIL_EM_USO, e nada criado (nem conta, nem vínculo, nem convite)', async () => {
+    const aluno = await novoAluno();
+    const professor = await novoProfessor({ email: aluno.email });
+    const res = await enviarAoProfessor(professor.professorId).expect(409);
+    expect(bodyOf<object>(res)).toEqual({
+      statusCode: 409,
+      code: 'EMAIL_EM_USO',
+      message:
+        'Este e-mail já pertence a outra conta. Uma pessoa não pode ter duas contas na plataforma (LIM-001).',
+    });
+    expect(await vinculoDe(professor.professorId)).toBeNull();
+    const [{ n }] = await ler<{ n: number }>(
+      `SELECT count(*)::int AS n FROM usuarios WHERE email = $1`,
+      aluno.email,
+    );
+    expect(n).toBe(1);
+    // Nem para a conta que já tinha o e-mail: o convite não muda de dono.
+    expect(await convitesDe(aluno.usuarioId)).toHaveLength(0);
+    expect(memoria.blocos).toHaveLength(0);
+  });
+
+  it('professor de outra empresa → 404 no GET e no POST, e nada criado', async () => {
+    const deFora = await novoProfessor({ empresa: EMPRESA_B });
+    await situacaoDoProfessor(deFora.professorId).expect(404);
+    await enviarAoProfessor(deFora.professorId).expect(404);
+    expect(await vinculoDe(deFora.professorId)).toBeNull();
+    expect(memoria.blocos).toHaveLength(0);
+  });
+
+  it('sem login → 401 no GET e no POST', async () => {
+    const professor = await novoProfessor();
+    await http()
+      .get(`/api/v1/teachers/${professor.professorId}/convite-de-acesso`)
+      .expect(401);
+    await http()
+      .post(`/api/v1/teachers/${professor.professorId}/convite-de-acesso`)
+      .expect(401);
+  });
+});
+
+describe('AC-037 — professor COM conta: o mesmo gesto do aluno', () => {
+  it('envia para a conta que já existe, sem criar outra; reenviar revoga o vivo', async () => {
+    const professor = await novoProfessor({ conta: 'temporaria' });
+    const usuarioId = professor.usuarioId as string;
+    await enviarAoProfessor(professor.professorId).expect(200);
+    const antigo = tokenDoUltimoEmail();
+    await enviarAoProfessor(professor.professorId).expect(200);
+    const novo = tokenDoUltimoEmail();
+
+    const [{ n }] = await ler<{ n: number }>(
+      `SELECT count(*)::int AS n FROM usuarios WHERE email = $1`,
+      professor.email,
+    );
+    expect(n).toBe(1);
+    expect(await vinculoDe(professor.professorId)).toBe(usuarioId);
+    const convites = await convitesDe(usuarioId);
+    expect(convites.map((c) => [c.token_hash, c.revogado_em !== null])).toEqual(
+      [
+        [sha256(antigo), true],
+        [sha256(novo), false],
+      ],
+    );
+    expectLinkInvalido(await consultar(antigo));
+    await consultar(novo).expect(200);
+  });
+
+  it('conta com senha própria → 409 CONTA_JA_ATIVADA, e nada é emitido (AC-036)', async () => {
+    const professor = await novoProfessor({ conta: 'propria' });
+    const res = await enviarAoProfessor(professor.professorId).expect(409);
+    expect(bodyOf<{ code: string }>(res).code).toBe('CONTA_JA_ATIVADA');
+    expect(await convitesDe(professor.usuarioId as string)).toHaveLength(0);
+    expect(memoria.blocos).toHaveLength(0);
+  });
+});
+
+describe('AC-038 (Back) — a rota do professor responde as seis situações, no contrato do cartão', () => {
+  it('sem_conta → falhou → enviado → expirado → ativado → nao_enviado, com em, expiraEm e motivo coerentes', async () => {
+    const professor = await novoProfessor();
+    const ler083 = async () =>
+      situacaoLida(
+        await situacaoDoProfessor(professor.professorId).expect(200),
+      );
+
+    expect((await ler083()).situacao).toBe('sem_conta');
+
+    // 1. O primeiro envio cria a conta, e o provedor recusa.
+    memoria.falharCom('indisponivel');
+    await enviarAoProfessor(professor.professorId).expect(200);
+    memoria.falharCom(null);
+    const usuarioId = (await vinculoDe(professor.professorId)) as string;
+    let [vivo] = await convitesDe(usuarioId);
+    expect(await ler083()).toEqual({
+      situacao: 'falhou',
+      em: vivo.email_em?.toISOString(),
+      expiraEm: vivo.expira_em.toISOString(),
+      motivo: 'indisponivel',
+    });
+
+    // 2. Reenviar, agora aceito.
+    await enviarAoProfessor(professor.professorId).expect(200);
+    vivo = (await convitesDe(usuarioId)).filter((c) => !c.revogado_em)[0];
+    expect(await ler083()).toEqual({
+      situacao: 'enviado',
+      em: vivo.email_em?.toISOString(),
+      expiraEm: vivo.expira_em.toISOString(),
+      motivo: null,
+    });
+
+    // 3. O tempo passa.
+    await q(
+      `UPDATE convites_de_acesso SET expira_em = now() - interval '1 minute' WHERE id = $1::uuid`,
+      vivo.id,
+    );
+    [vivo] = (await convitesDe(usuarioId)).filter((c) => c.id === vivo.id);
+    expect(await ler083()).toEqual({
+      situacao: 'expirado',
+      em: vivo.email_em?.toISOString(),
+      expiraEm: vivo.expira_em.toISOString(),
+      motivo: null,
+    });
+
+    // 4. Reenviar o expirado e ativar pelo link.
+    await enviarAoProfessor(professor.professorId).expect(200);
+    await ativar(tokenDoUltimoEmail(), 'senha-do-professor-083').expect(204);
+    const usado = (await convitesDe(usuarioId)).find((c) => c.usado_em);
+    expect(await ler083()).toEqual({
+      situacao: 'ativado',
+      em: usado?.usado_em?.toISOString(),
+      expiraEm: null,
+      motivo: null,
+    });
+
+    // 5. O gestor gera uma senha temporária: a conta volta a não ter senha
+    // própria, e nenhum convite vivo vale para ela.
+    await http()
+      .post(`/api/v1/teachers/${professor.professorId}/acesso`)
+      .set('Authorization', `Bearer ${tokenDoGestor}`)
+      .expect(201);
+    expect(await ler083()).toEqual({
+      situacao: 'nao_enviado',
+      em: null,
+      expiraEm: null,
+      motivo: null,
     });
   });
 });
