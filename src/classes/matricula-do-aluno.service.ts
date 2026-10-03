@@ -23,6 +23,14 @@ import {
   recusaPorNivel,
   travarNivelDaEmpresa,
 } from '../people/nivel-efetivo';
+import {
+  CTE_DO_PRAZO,
+  DEPOIS_DO_PRAZO,
+  TIMEOUT_DA_MATRICULA_MS,
+} from '../common/lock/prazo-de-espera';
+import { naEtapa } from '../common/erros/erro-transitorio';
+import { inserirMatriculaComPrazo } from './matricula-com-prazo';
+import { cheiaAntesDaFila } from './cheia-antes-da-fila';
 
 /**
  * SPEC-023 — **o aluno entra e sai de turma sozinho.**
@@ -37,6 +45,13 @@ import {
  * caminho do aluno usa a mesma trava na mesma linha — dois caminhos de
  * matrícula com travas diferentes seriam duas verdades sobre a mesma vaga.
  */
+/** A recusa de turma cheia, a mesma dentro e fora da transação (D5). */
+const MENSAGEM_DE_TURMA_CHEIA = {
+  statusCode: 409,
+  code: 'TURMA_CHEIA',
+  message: 'Esta turma já está com todas as vagas ocupadas.',
+};
+
 @Injectable()
 export class MatriculaDoAlunoService {
   constructor(
@@ -210,14 +225,30 @@ export class MatriculaDoAlunoService {
    */
   async entrar(companyId: string, usuarioId: string, turmaId: string) {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
-    return this.prisma.$transaction(async (tx) => {
-      // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução, antes
-      // do `FOR UPDATE` da turma que o `entrarNaTransacao` toma. O
-      // `entrarNaTransacao` não a toma: quem o chama já a tomou (este `entrar`
-      // e o `confirmar` da fila) — e a AC-029 fixa quem pode chamá-lo.
-      await travarNivelDaEmpresa(tx, companyId);
-      return this.entrarNaTransacao(tx, companyId, aluno, turmaId);
-    });
+    // SPEC-082/D5 — turma já cheia é recusada ANTES da fila da trava, sem
+    // trava nenhuma, e só quando a transação daria a mesma resposta.
+    if (
+      await cheiaAntesDaFila(this.prisma, companyId, turmaId, aluno.id, 'aluno')
+    ) {
+      throw new ConflictException(MENSAGEM_DE_TURMA_CHEIA);
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        // SPEC-075/D13 + SPEC-082/D1-D2 — a instrução inicial, PRIMEIRA da
+        // transação: grava o prazo absoluto, toma a trava do clube em modo
+        // COMPARTILHADO (leitor) e a do aluno em modo exclusivo. O
+        // `entrarNaTransacao` não a toma: quem o chama já a tomou (este
+        // `entrar` e o `confirmar` da fila) — e a AC-029 fixa quem pode
+        // chamá-lo.
+        await naEtapa(
+          'travas',
+          travarNivelDaEmpresa(tx, companyId, 'leitura', aluno.id),
+        );
+        return this.entrarNaTransacao(tx, companyId, aluno, turmaId);
+      },
+      // SPEC-082/D3 — o tempo-limite declarado, amarrado aos tetos (AC-014).
+      { timeout: TIMEOUT_DA_MATRICULA_MS },
+    );
   }
 
   /**
@@ -237,19 +268,26 @@ export class MatriculaDoAlunoService {
     aluno: { id: string; vinculo: string },
     turmaId: string,
   ) {
-    const turmaRows = await tx.$queryRaw<
-      {
-        id: string;
-        capacidade: number;
-        status: string;
-        nivel_id: string | null;
-      }[]
-    >`
+    // SPEC-082/D2b — o prazo é recalculado DENTRO desta instrução, antes da
+    // espera pela linha; a etapa `turma` é o que dá a mensagem da I4.
+    const turmaRows = await naEtapa(
+      'turma',
+      tx.$queryRaw<
+        {
+          id: string;
+          capacidade: number;
+          status: string;
+          nivel_id: string | null;
+        }[]
+      >`
+      WITH ${CTE_DO_PRAZO}
       SELECT id, capacidade, status::text AS status, nivel_id::text AS nivel_id
         FROM turmas
       WHERE id = ${turmaId}::uuid AND company_id = ${companyId}::uuid
+        AND ${DEPOIS_DO_PRAZO}
       FOR UPDATE
-    `;
+    `,
+    );
     const turma = turmaRows[0];
     // 404 e não 403: dizer "existe mas não é sua" já entrega informação
     // sobre a outra empresa (INV-023b).
@@ -323,11 +361,7 @@ export class MatriculaDoAlunoService {
     // Sob a trava: é a checagem que a concorrência ataca.
     const alocados = await tx.turmaAluno.count({ where: { turmaId } });
     if (alocados >= turma.capacidade) {
-      throw new ConflictException({
-        statusCode: 409,
-        code: 'TURMA_CHEIA',
-        message: 'Esta turma já está com todas as vagas ocupadas.',
-      });
+      throw new ConflictException(MENSAGEM_DE_TURMA_CHEIA);
     }
 
     // E cabe em TODAS as próximas aulas, contando as reposições já marcadas
@@ -349,9 +383,9 @@ export class MatriculaDoAlunoService {
       });
     }
 
-    const matricula = await tx.turmaAluno.create({
-      data: { turmaId, alunoId: aluno.id },
-    });
+    // SPEC-082/D2b e AC-018 — SQL cru com o prazo dentro e o aluno travado
+    // em `FOR KEY SHARE` antes de gravar; o retorno tem os nomes do `create`.
+    const matricula = await inserirMatriculaComPrazo(tx, turmaId, aluno.id);
 
     // SPEC-078/REQ-001 — **aqui, e não na rota**: a confirmação da fila de
     // turma também passa por este método (I12). Depois do `create`: a saída

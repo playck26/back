@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { travarNivelDaEmpresa } from '../people/nivel-efetivo';
 
 /**
  * SPEC-075/AC-029 — **nenhum escritor protegido fora da lista.**
@@ -73,12 +74,30 @@ describe('SPEC-075/AC-029 — nenhum escritor protegido fora da lista', () => {
     expect(arquivos.some((a) => a.endsWith('.sql'))).toBe(true);
   });
 
-  it('escritores de MATRÍCULA: exatamente classes.service, matricula-do-aluno.service e o seed — um em cada', () => {
+  /**
+   * **SPEC-082/D2b — o `INSERT` mudou de casa, não de dono.** O
+   * `tx.turmaAluno.create` de `allocateStudent` e de `entrarNaTransacao` virou
+   * SQL cru, num lugar só (`matricula-com-prazo.ts`), porque a API de modelo
+   * não carrega o prazo nem o `FOR KEY SHARE`. Os escritores continuam os
+   * mesmos dois caminhos — agora provados pelo teste de baixo, que conta
+   * quem CHAMA a instrução.
+   */
+  it('escritores de MATRÍCULA: exatamente a instrução com prazo e o seed — um em cada', () => {
     const achados = ocorrencias(
       /turmaAluno\.(create|createMany|upsert)\b|INSERT\s+INTO\s+"?turma_alunos"?/i,
     );
     expect(Object.fromEntries(achados)).toEqual({
       'prisma/seed.ts': 1,
+      'src/classes/matricula-com-prazo.ts': 1,
+    });
+  });
+
+  it('chamadores da instrução com prazo (SPEC-082): só classes.service e matricula-do-aluno.service — um em cada', () => {
+    const achados = ocorrencias(
+      /inserirMatriculaComPrazo\(/,
+      /function inserirMatriculaComPrazo\(/,
+    );
+    expect(Object.fromEntries(achados)).toEqual({
       'src/classes/classes.service.ts': 1,
       'src/classes/matricula-do-aluno.service.ts': 1,
     });
@@ -116,5 +135,98 @@ describe('SPEC-075/AC-029 — nenhum escritor protegido fora da lista', () => {
       'src/classes/matricula-do-aluno.service.ts': 1,
       'src/fila-de-espera/fila-de-espera.service.ts': 1,
     });
+  });
+});
+
+/**
+ * SPEC-082/AC-003 — **a tabela leitor/escritor, caminho a caminho (forma).**
+ *
+ * Leitor toma a trava do clube em modo compartilhado e a do aluno (a instrução
+ * única do D2); escritor, a exclusiva. Uma transação que tomasse as duas
+ * formas promoveria a compartilhada para exclusiva — e o Postgres não promove
+ * sem esperar, o que é o caminho mais curto para um deadlock. Por isso cada
+ * caminho aparece numa lista só.
+ *
+ * O caminho é o arquivo e o método (ou função) que envolve a chamada; o modo é
+ * o terceiro argumento dela. **É varredura textual**, como as de cima: prova a
+ * forma; o comportamento (o leitor não espera o compartilhado, o escritor
+ * espera) são o AC-001 e o AC-002, contra banco.
+ */
+describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho', () => {
+  const DECLARACAO =
+    /^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^ {2}(?:private\s+|public\s+)?(?:async\s+)?(\w+)\(/;
+
+  function chamadas(): string[] {
+    const achadas: string[] = [];
+    for (const arquivo of arquivosRastreados()) {
+      const linhas = readFileSync(join(RAIZ, arquivo), 'utf8').split('\n');
+      let caminho = '?';
+      linhas.forEach((linha, i) => {
+        const declaracao = DECLARACAO.exec(linha);
+        if (declaracao) caminho = declaracao[1] ?? declaracao[2];
+        const s = linha.trim();
+        if (s.startsWith('//') || s.startsWith('*') || s.startsWith('/*')) {
+          return;
+        }
+        if (
+          !/travarNivelDaEmpresa\(/.test(linha) ||
+          /function travarNivelDaEmpresa\(/.test(linha)
+        ) {
+          return;
+        }
+        const chamada = linhas.slice(i, i + 3).join(' ');
+        const modo = /'escrita'/.test(chamada)
+          ? 'escrita'
+          : /'leitura'/.test(chamada)
+            ? 'leitura'
+            : 'SEM_MODO';
+        achadas.push(`${arquivo}#${caminho}: ${modo}`);
+      });
+    }
+    return achadas.sort();
+  }
+
+  it('cada caminho com o seu modo, e nenhum outro', () => {
+    expect(chamadas()).toEqual(
+      [
+        // leitores (instrução única: clube compartilhado + aluno)
+        'src/classes/matricula-do-aluno.service.ts#entrar: leitura',
+        'src/classes/classes.service.ts#allocateStudent: leitura',
+        'src/fila-de-espera/fila-de-espera.service.ts#confirmar: leitura',
+        // escritores (exclusiva, como na SPEC-075)
+        'src/classes/classes.service.ts#update: escrita',
+        'src/people/levels.service.ts#gravarConferindoOPrimeiro: escrita',
+        'src/people/levels.service.ts#remove: escrita',
+        'src/people/students.service.ts#update: escrita',
+        'prisma/seed.ts#seedEtapa3: escrita',
+        'prisma/seed.ts#seedEtapa3: escrita',
+      ].sort(),
+    );
+  });
+
+  it('o tipo exige o aluno no modo leitura (sobrecarga, D1 v8)', () => {
+    // Não roda: é o compilador que prova. Se a sobrecarga aceitar a leitura
+    // sem aluno, o `@ts-expect-error` fica sem erro e o arquivo não compila.
+    const semAluno = (db: Parameters<typeof travarNivelDaEmpresa>[0]) =>
+      // @ts-expect-error — leitura sem o aluno não compila
+      travarNivelDaEmpresa(db, 'c1', 'leitura');
+    const escritaComAluno = (db: Parameters<typeof travarNivelDaEmpresa>[0]) =>
+      // @ts-expect-error — escrita não recebe aluno
+      travarNivelDaEmpresa(db, 'c1', 'escrita', 'a1');
+    expect([typeof semAluno, typeof escritaComAluno]).toEqual([
+      'function',
+      'function',
+    ]);
+  });
+
+  it('nenhum caminho aparece nas duas listas (sem promoção na mesma transação)', () => {
+    const modos = new Map<string, Set<string>>();
+    for (const linha of chamadas()) {
+      const [caminho, modo] = linha.split(': ');
+      modos.set(caminho, (modos.get(caminho) ?? new Set()).add(modo));
+    }
+    const nasDuas = [...modos].filter(([, m]) => m.size > 1).map(([c]) => c);
+    expect(nasDuas).toEqual([]);
+    expect(modos.size).toBe(8);
   });
 });

@@ -513,7 +513,8 @@ export class StudentsService {
       // SPEC-075/D13 — quando o corpo traz `nivelId` (inclusive `null`), a
       // trava de nível da empresa é a PRIMEIRA instrução, antes das escritas
       // em `usuarios` logo abaixo.
-      if (dto.nivelId !== undefined) await travarNivelDaEmpresa(tx, companyId);
+      if (dto.nivelId !== undefined)
+        await travarNivelDaEmpresa(tx, companyId, 'escrita');
 
       if (dto.nome !== undefined || dto.telefone !== undefined) {
         await tx.usuario.update({

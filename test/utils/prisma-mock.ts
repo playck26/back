@@ -1,4 +1,30 @@
+import { Prisma } from '@prisma/client';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
+import { MARCADOR_DA_MATRICULA_COM_PRAZO } from '../../src/classes/matricula-com-prazo';
+
+/**
+ * SPEC-082/AC-018 — **o `INSERT` da matrícula é roteado pelo MARCADOR fixo**
+ * `/* matricula-com-prazo *\/`, nunca pelo predicado (DEF-VC031-02): o
+ * `tx.turmaAluno.create` virou SQL cru, e os dublês devolvem o que o
+ * `turmaAluno.create` que os testes já armam devolver.
+ *
+ * Os dois parâmetros da instrução são, nesta ordem, o aluno e a turma (o
+ * `lock_timeout` recalculado é `Prisma.raw`, e não conta como parâmetro).
+ * Devolve `null` para qualquer outra instrução.
+ */
+export function matriculaComPrazoDoSql(
+  strings: unknown,
+  values: unknown[],
+): { turmaId: string; alunoId: string } | null {
+  if (!Array.isArray(strings)) return null;
+  const partes = strings as readonly string[];
+  if (!partes.join('').startsWith(MARCADOR_DA_MATRICULA_COM_PRAZO)) {
+    return null;
+  }
+  const [alunoId, turmaId] = Prisma.sql(partes, ...(values as Prisma.Sql[]))
+    .values as string[];
+  return { turmaId, alunoId };
+}
 
 // Mock de PrismaService compartilhado pelas suítes e2e (TEST-001,
 // TEST-002) — mesmo espírito dos mocks usados nos testes unitários
@@ -59,7 +85,8 @@ export interface TxMock {
   $queryRaw: jest.Mock;
   // SPEC-037/D6: o link de pagamento do plano herda o da empresa quando nulo.
   ocupacaoQuadra: { findFirstOrThrow: jest.Mock; update: jest.Mock };
-  turmaAluno: { findFirst: jest.Mock };
+  // SPEC-082/AC-018: `create` recebe o `INSERT` roteado pelo marcador.
+  turmaAluno: { findFirst: jest.Mock; create: jest.Mock };
   // SPEC-064: `retirar` le as faltas antes de apagar, para encerrar as
   // filas de espera que usavam o credito -- e a ORDEM e normativa.
   faltaAvisada: {
@@ -223,7 +250,10 @@ export function buildPrismaMock(): PrismaMock {
     // é de turma e não está cancelada. Quem testa a recusa sobrescreve.
     $queryRaw: jest.fn(),
     ocupacaoQuadra: { findFirstOrThrow: jest.fn(), update: jest.fn() },
-    turmaAluno: { findFirst: jest.fn().mockResolvedValue({ id: 'm1' }) },
+    turmaAluno: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'm1' }),
+      create: jest.fn(),
+    },
     faltaAvisada: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -371,84 +401,95 @@ export function buildPrismaMock(): PrismaMock {
       mock.ocupacaoQuadra.update(args) as unknown,
   );
 
-  tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
-    const sql = strings.join('');
-    /**
-     * **DEF-VC031-02 — o mock NAO pode ramificar pelo predicado que a
-     * sabotagem remove.**
-     *
-     * A versão anterior distinguia as duas famílias por `origem_turma_id`:
-     * a de `courts` não menciona, a da falta menciona. Parecia esperto e era
-     * armadilha — a sabotagem **S8** remove exatamente esse predicado, então
-     * a consulta da falta caía no ramo de `courts`, devolvia outra linha, e o
-     * e2e falhava com `404` onde esperava `204`.
-     *
-     * **O CI ficava vermelho pelo motivo errado**, e a evidência dizia
-     * "turma A alcança a ocorrência de B" quando o que ela mostrava era o
-     * mock trocando de ramo. Achado pela validação cruzada de 2026-09-06.
-     *
-     * O critério agora é a **comparação `origem_tipo = 'TURMA'`**, que só a
-     * consulta da falta faz e que **nenhuma sabotagem desta spec remove** — a
-     * S8 tira `origem_turma_id` e deixa `origem_tipo` de pé.
-     *
-     * Projetar `status_pagamento` não serve como critério: as DUAS famílias
-     * projetam (foi a primeira tentativa deste conserto, e ela quebrou o e2e
-     * da falta na hora).
-     */
-    const ehDaFaltaAvisada =
-      sql.includes('origem_tipo') && sql.includes("'TURMA'");
-    if (!ehDaFaltaAvisada && sql.includes('ocupacoes_quadra')) {
-      const linha = (await mock.ocupacaoQuadra.findFirst()) as {
-        id: string;
-        companyId?: string;
-        alunoId?: string | null;
-        origemTipo?: string;
-        statusPagamento?: string;
-        data?: Date;
-        horaInicio?: Date;
-      } | null;
-      return linha
-        ? [
-            {
-              id: linha.id,
-              company_id: linha.companyId ?? 'c1',
-              aluno_id: linha.alunoId ?? null,
-              origem_tipo: linha.origemTipo,
-              status_pagamento: linha.statusPagamento,
-              data: linha.data,
-              hora_inicio: linha.horaInicio,
-            },
-          ]
-        : [];
-    }
-    // A consulta da falta avisada: `alunos FOR KEY SHARE`, e a ocorrência
-    // filtrada por `origem_turma_id` — que é o que a distingue da de cima.
-    if (sql.includes('FROM alunos')) {
-      return [{ id: 'aluno-1' }];
-    }
-    // SPEC-078 — os gestores que recebem o aviso da ação do aluno. UMA linha,
-    // e não `[]`: com a lista vazia o `INSERT` do aviso nunca rodaria, e o
-    // e2e ficaria verde sobre um caminho não exercido (a mesma lição do
-    // `FROM usuarios` do `courts.service.spec.ts`).
-    if (sql.includes('FROM usuarios')) {
-      return [{ usuario_id: 'u-gestor' }];
-    }
-    return [
-      {
-        id: 'oc-1',
-        status_pagamento: 'pendente_pagamento',
-        // SPEC-077/TASK-000 — a aula padrão é FUTURA relativa ao hoje do
-        // clube; era `2099-01-01`, que vira passado em 2099 e faz o prazo
-        // de cancelamento recusar o `POST`/`DELETE` da falta avisada.
-        data: new Date(
-          hojeNoFusoDoClube().getTime() + 30 * 24 * 60 * 60 * 1000,
-        ),
-        hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
-        // SPEC-078 — o aviso ao gestor expira no fim da aula.
-        hora_fim: new Date('1970-01-01T20:00:00.000Z'),
-      },
-    ];
-  });
+  tx.$queryRaw.mockImplementation(
+    async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const matricula = matriculaComPrazoDoSql(strings, values);
+      if (matricula) {
+        const gravada: unknown = await tx.turmaAluno.create({
+          data: matricula,
+        });
+        return gravada ? [gravada] : [];
+      }
+      const sql = Array.isArray(strings)
+        ? strings.join('')
+        : ((strings as { sql?: string }).sql ?? '');
+      /**
+       * **DEF-VC031-02 — o mock NAO pode ramificar pelo predicado que a
+       * sabotagem remove.**
+       *
+       * A versão anterior distinguia as duas famílias por `origem_turma_id`:
+       * a de `courts` não menciona, a da falta menciona. Parecia esperto e era
+       * armadilha — a sabotagem **S8** remove exatamente esse predicado, então
+       * a consulta da falta caía no ramo de `courts`, devolvia outra linha, e o
+       * e2e falhava com `404` onde esperava `204`.
+       *
+       * **O CI ficava vermelho pelo motivo errado**, e a evidência dizia
+       * "turma A alcança a ocorrência de B" quando o que ela mostrava era o
+       * mock trocando de ramo. Achado pela validação cruzada de 2026-09-06.
+       *
+       * O critério agora é a **comparação `origem_tipo = 'TURMA'`**, que só a
+       * consulta da falta faz e que **nenhuma sabotagem desta spec remove** — a
+       * S8 tira `origem_turma_id` e deixa `origem_tipo` de pé.
+       *
+       * Projetar `status_pagamento` não serve como critério: as DUAS famílias
+       * projetam (foi a primeira tentativa deste conserto, e ela quebrou o e2e
+       * da falta na hora).
+       */
+      const ehDaFaltaAvisada =
+        sql.includes('origem_tipo') && sql.includes("'TURMA'");
+      if (!ehDaFaltaAvisada && sql.includes('ocupacoes_quadra')) {
+        const linha = (await mock.ocupacaoQuadra.findFirst()) as {
+          id: string;
+          companyId?: string;
+          alunoId?: string | null;
+          origemTipo?: string;
+          statusPagamento?: string;
+          data?: Date;
+          horaInicio?: Date;
+        } | null;
+        return linha
+          ? [
+              {
+                id: linha.id,
+                company_id: linha.companyId ?? 'c1',
+                aluno_id: linha.alunoId ?? null,
+                origem_tipo: linha.origemTipo,
+                status_pagamento: linha.statusPagamento,
+                data: linha.data,
+                hora_inicio: linha.horaInicio,
+              },
+            ]
+          : [];
+      }
+      // A consulta da falta avisada: `alunos FOR KEY SHARE`, e a ocorrência
+      // filtrada por `origem_turma_id` — que é o que a distingue da de cima.
+      if (sql.includes('FROM alunos')) {
+        return [{ id: 'aluno-1' }];
+      }
+      // SPEC-078 — os gestores que recebem o aviso da ação do aluno. UMA linha,
+      // e não `[]`: com a lista vazia o `INSERT` do aviso nunca rodaria, e o
+      // e2e ficaria verde sobre um caminho não exercido (a mesma lição do
+      // `FROM usuarios` do `courts.service.spec.ts`).
+      if (sql.includes('FROM usuarios')) {
+        return [{ usuario_id: 'u-gestor' }];
+      }
+      return [
+        {
+          id: 'oc-1',
+          status_pagamento: 'pendente_pagamento',
+          // SPEC-077/TASK-000 — a aula padrão é FUTURA relativa ao hoje do
+          // clube; era `2099-01-01`, que vira passado em 2099 e faz o prazo
+          // de cancelamento recusar o `POST`/`DELETE` da falta avisada.
+          data: new Date(
+            hojeNoFusoDoClube().getTime() + 30 * 24 * 60 * 60 * 1000,
+          ),
+          hora_inicio: new Date('1970-01-01T19:00:00.000Z'),
+          // SPEC-078 — o aviso ao gestor expira no fim da aula.
+          hora_fim: new Date('1970-01-01T20:00:00.000Z'),
+        },
+      ];
+    },
+  );
 
   return mock;
 }

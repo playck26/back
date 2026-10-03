@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma, type OrigemTipo, type StatusPagamento } from '@prisma/client';
+import { CODIGOS_DE_INFRA } from '../common/erros/erro-transitorio';
 import { DisponibilidadeProfessorService } from '../people/disponibilidade-professor.service';
 import { PrecoDeAulaService } from '../people/preco-de-aula.service';
 import { StudentsService } from '../people/students.service';
@@ -154,14 +155,8 @@ interface ConflitoDetectado {
  * aqui continua tratado como corrida, que é o comportamento conservador
  * (recusar a escrita) e o que a INV-001 exige.
  */
-const CODIGOS_DE_INFRA_NAO_SAO_CONFLITO = new Set([
-  'P1001', // servidor inalcançável
-  'P1002', // timeout ao abrir conexão
-  'P1008', // timeout de operação
-  'P1017', // o servidor encerrou a conexão
-  'P2024', // esgotou o pool esperando conexão
-  'P2028', // transação expirada ou já fechada
-]);
+// SPEC-082/D4 — a lista mora num lugar só (`common/erros/erro-transitorio.ts`).
+const CODIGOS_DE_INFRA_NAO_SAO_CONFLITO = CODIGOS_DE_INFRA;
 
 /**
  * DEF-013 — **nem todo erro do Prisma é corrida perdida.**

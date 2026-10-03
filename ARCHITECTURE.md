@@ -788,7 +788,10 @@ src/
                    da chave, StorageService, fonte única do upload, fila,
                    worker, advisory lock, limite de abuso e medidor de
                    bucket (SPEC-017). **Sem controller**
-  common/          guards, decorators, **pipes**, utils, tipos, smoke
+  common/          guards, decorators, **pipes**, utils, tipos, smoke;
+                   `erros/` (SPEC-082: a tradução de espera e de
+                   infraestrutura das rotas de matrícula) e `lock/` (a chave
+                   de advisory e, SPEC-082, o prazo de espera da matrícula)
   prisma/          PrismaService (@Global)
 ```
 
@@ -1032,6 +1035,35 @@ o seed o importa por caminho relativo.
   `niveis` são **compostas** `(company_id, nivel_id)`; apagar nível usado por
   aluno ou turma é `RESTRICT` (o Postgres devolve **`23001`**, e não `23503`);
   convite é `SET NULL (nivel_id)`, que o Prisma não expressa (o schema documenta).
+
+**SPEC-082 — a trava virou leitor/escritor, com prazo (2026-09-30).** Quem
+**escreve** nível (editar turma com nível, editar/remover nível, editar aluno
+com nível, o seed) continua tomando a trava **exclusiva**, como acima. Os três
+caminhos que só **leem** o nível para matricular (`entrar`, `allocateStudent`,
+`confirmar` de fila de turma) tomam a do clube em modo **compartilhado** e, na
+mesma instrução, uma trava **exclusiva por aluno**
+(`matricula-do-aluno:<alunoId>`) — `travarNivelDaEmpresa(tx, empresa, modo)`,
+com `modo` obrigatório. Matrículas de alunos diferentes em turmas diferentes
+deixam de esperar umas pelas outras; a edição de nível continua excluindo
+todas; duas do mesmo aluno continuam em fila (o limite de turmas conta com
+isso).
+
+A espera da matrícula é de **2 s no total**, e não por trava: a instrução
+inicial grava um prazo absoluto (`playck.prazo`, relógio do servidor), e cada
+aquisição seguinte — o `FOR UPDATE` de `turmas` e de `lista_de_espera`, e as
+linhas referenciadas por FK, travadas em `FOR KEY SHARE` antes de gravar —
+recalcula o `lock_timeout` pelo resto do prazo, dentro da própria instrução
+(`src/common/lock/prazo-de-espera.ts`). Por isso o `INSERT` em `turma_alunos`
+virou SQL cru, num lugar só (`src/classes/matricula-com-prazo.ts`, com o
+marcador `/* matricula-com-prazo */` por onde os dublês o roteiam). Estourou ⇒
+**409 `MATRICULA_EM_ANDAMENTO`**; tempo-limite (`timeout: 8000` nas três
+transações) ou pool esgotado ⇒ **503 `SERVIDOR_OCUPADO`** — traduzidos **na
+borda HTTP** (`src/common/erros/erro-transitorio.ts`), pela etapa em que a
+espera nasceu. `entrar` e `allocateStudent` recusam turma já cheia **antes** da
+fila da trava, com uma leitura sem lock (`cheia-antes-da-fila.ts`). Gates:
+`test/banco/spec-082-*.db-spec.ts` (seis arquivos), o teto de idas
+(`spec-082-orcamento-da-matricula.spec.ts`: 13/17/20) e o gate das escritas
+(`spec-082-escritas-com-prazo.spec.ts`).
 
 **Os gates:** `test/banco/spec-075-*.db-spec.ts` (integridade, acesso, empresa
 nova, edições), o **FIT-055** (`test/fit/spec-075-trava-de-nivel.fit-spec.ts`:

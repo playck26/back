@@ -4621,10 +4621,20 @@
             }
           },
           "409": {
-            "description": "Turma sem vaga de matrícula (capacidade), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia."
+            "description": "Turma sem vaga de matrícula (capacidade; `TURMA_CHEIA` desde a SPEC-082/AC-009), ou uma das próximas aulas já lotada contando as reposições marcadas (`AULA_LOTADA`): alocar deixaria esse dia acima da capacidade, e a mensagem diz o dia. `MATRICULA_EM_ANDAMENTO` (SPEC-082): a alocação esperou a vez por mais de 2 s; nada foi gravado."
           },
           "422": {
             "description": "Aluno desligado (`ALUNO_INATIVO`), ou de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075/D5): o gestor também é recusado, e a mensagem diz o que fazer — mudar o nível do aluno."
+          },
+          "503": {
+            "description": "SPEC-082 — o tempo-limite da matrícula estourou ou o servidor está sem conexão livre (`SERVIDOR_OCUPADO`). Nada foi gravado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroTransitorioResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4847,6 +4857,16 @@
           },
           "422": {
             "description": "Turma de outro nível (`NIVEL_INCOMPATIVEL`, SPEC-075). A mensagem diz o nível da turma e o do aluno — ou que ele ainda não tem nível e conta como o primeiro."
+          },
+          "503": {
+            "description": "SPEC-082 — o tempo-limite da matrícula estourou ou o servidor está sem conexão livre (`SERVIDOR_OCUPADO`). Nada foi gravado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroTransitorioResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6138,7 +6158,17 @@
             }
           },
           "409": {
-            "description": "A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu (`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino (`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, `NIVEL_INCOMPATIVEL` (SPEC-075), `TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**"
+            "description": "A vez nao esta aberta (`NAO_E_SUA_VEZ`), o prazo venceu (`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino (`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, `NIVEL_INCOMPATIVEL` (SPEC-075), `TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.** Exceção (SPEC-082): `MATRICULA_EM_ANDAMENTO` — a confirmação esperou a vez por mais de 2 s; nada foi gravado e a linha continua chamada."
+          },
+          "503": {
+            "description": "SPEC-082 — o tempo-limite estourou ou o servidor está sem conexão livre (`SERVIDOR_OCUPADO`). Nada foi gravado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErroTransitorioResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -11400,6 +11430,31 @@
           "createdAt"
         ]
       },
+      "ErroTransitorioResponseDto": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 503
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "SERVIDOR_OCUPADO"
+            ],
+            "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso."
+          },
+          "message": {
+            "type": "string",
+            "example": "O sistema está com muita procura agora. Tente de novo em alguns segundos."
+          }
+        },
+        "required": [
+          "statusCode",
+          "code",
+          "message"
+        ]
+      },
       "AulaDoAlunoResponseDto": {
         "type": "object",
         "properties": {
@@ -11622,9 +11677,10 @@
               "TURMA_INATIVA",
               "LIMITE_DE_TURMAS",
               "TURMA_CHEIA",
-              "PRAZO_DE_CANCELAMENTO"
+              "PRAZO_DE_CANCELAMENTO",
+              "MATRICULA_EM_ANDAMENTO"
             ],
-            "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy. `TURMA_CHEIA` vem também quando uma das próximas aulas já está lotada contando as reposições marcadas, e então a mensagem diz o dia."
+            "description": "O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy. `TURMA_CHEIA` vem também quando uma das próximas aulas já está lotada contando as reposições marcadas, e então a mensagem diz o dia. `MATRICULA_EM_ANDAMENTO` (SPEC-082): a matrícula esperou a vez por mais de 2 s — outra pessoa entrando na mesma turma, ou uma alteração em andamento na matrícula do aluno ou no clube; nada foi gravado, e a mensagem pede para tentar de novo."
           },
           "message": {
             "type": "string",
