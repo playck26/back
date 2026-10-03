@@ -84,9 +84,11 @@ export function renderizarConviteDeAcesso(
   // **O banner é o primeiro elemento visível do corpo** (D8): antes dele só há
   // a cadeia de tabelas que o contém, nenhum texto — nem o "pré-cabeçalho"
   // escondido que muitos e-mails usam, que seria texto antes da imagem. E o
-  // CSS fica **só no atributo `style`**, sem `<style>` no `<head>`: é o que
-  // deixa o teste do AC-028 ver tudo o que se aplica ao banner, e as listas
-  // fechadas dele dizem o que cada tag pode declarar.
+  // CSS fica **só no atributo `style`**, sem `<style>` no `<head>`.
+  //
+  // **Mudar este HTML obriga a rever a cópia literal do `email.spec.ts`**
+  // (AC-028): o teste exige este HTML exato, porque nenhuma lista de formas
+  // proibidas fechou a prova de "o banner é o primeiro elemento visível".
   const html = `<!doctype html>
 <html lang="pt-BR">
 <head>
