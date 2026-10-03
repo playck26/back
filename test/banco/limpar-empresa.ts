@@ -235,6 +235,15 @@ export const TABELAS_DA_EMPRESA = [
   // proxima pessoa manter o CASCADE — e o db-spec de cobertura exige toda
   // tabela com `company_id` na lista ou declarada como excecao.
   'assinaturas_push',
+  // SPEC-083: ANTES de `usuarios` -- e NAO por causa da FK do dono, que e
+  // composta e CASCADE. **Quem segura e a FK de quem emitiu**
+  // (`convites_de_acesso_criado_por_fkey`, simples e NO ACTION). Medido em
+  // 2026-10-03: com o gestor criado antes do aluno convidado, o `DELETE FROM
+  // usuarios` unico morre com `23503` nessa FK, mesmo com o CASCADE do dono no
+  // mesmo comando. Passar ou nao depende da ordem em que o comando visita as
+  // linhas -- e limpeza que depende disso e a que quebra no dia errado, com a
+  // mensagem culpando `usuarios`.
+  'convites_de_acesso',
   'usuarios',
 ] as const;
 
