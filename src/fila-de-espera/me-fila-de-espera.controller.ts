@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiServiceUnavailableResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -18,6 +19,8 @@ import {
   ApiTags,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
+import { ErroTransitorioResponseDto } from '../common/erros/erro-transitorio-response.dto';
+import { comTraducaoDaMatricula } from '../common/erros/erro-transitorio';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -157,7 +160,14 @@ export class MeFilaDeEsperaController {
       '(`VEZ_EXPIRADA`) ou a confirmacao foi recusada pelo gesto de destino ' +
       '(`TURMA_SEM_VAGA`, `TURMA_CHEIA`, `SEM_CREDITO_DE_REPOSICAO`, ' +
       '`NIVEL_INCOMPATIVEL` (SPEC-075), ' +
-      '`TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.**',
+      '`TETO_DE_REPOSICAO`, ...). **Em todos, a linha fica encerrada.** ' +
+      'Exceção (SPEC-082): `MATRICULA_EM_ANDAMENTO` — a confirmação esperou a ' +
+      'vez por mais de 2 s; nada foi gravado e a linha continua chamada.',
+  })
+  @ApiServiceUnavailableResponse({
+    type: ErroTransitorioResponseDto,
+    description:
+      'SPEC-082 — o tempo-limite estourou ou o servidor está sem conexão livre (`SERVIDOR_OCUPADO`). Nada foi gravado.',
   })
   @HttpCode(200)
   @Roles('aluno')
@@ -165,7 +175,10 @@ export class MeFilaDeEsperaController {
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', UuidCanonicoPipe) id: string,
   ): Promise<ConfirmacaoDaVezResponseDto> {
-    const r = await this.fila.confirmar(user.companyId as string, user.sub, id);
+    // SPEC-082/D4 — tradução na borda HTTP.
+    const r = await comTraducaoDaMatricula(() =>
+      this.fila.confirmar(user.companyId as string, user.sub, id),
+    );
     if (!r.ok) {
       throw new ConflictException({
         statusCode: 409,

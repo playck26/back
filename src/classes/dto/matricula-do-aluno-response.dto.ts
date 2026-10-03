@@ -110,9 +110,10 @@ export class ErroDeMatriculaResponseDto {
       'LIMITE_DE_TURMAS',
       'TURMA_CHEIA',
       'PRAZO_DE_CANCELAMENTO',
+      'MATRICULA_EM_ANDAMENTO',
     ],
     description:
-      'O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy. `TURMA_CHEIA` vem também quando uma das próximas aulas já está lotada contando as reposições marcadas, e então a mensagem diz o dia.',
+      'O código é o contrato; a mensagem é texto para humano e pode mudar sem aviso. Tela que decide pela mensagem quebra na primeira revisão de copy. `TURMA_CHEIA` vem também quando uma das próximas aulas já está lotada contando as reposições marcadas, e então a mensagem diz o dia. `MATRICULA_EM_ANDAMENTO` (SPEC-082): a matrícula esperou a vez por mais de 2 s — outra pessoa entrando na mesma turma, ou uma alteração em andamento na matrícula do aluno ou no clube; nada foi gravado, e a mensagem pede para tentar de novo.',
   })
   code!: string;
 

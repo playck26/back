@@ -121,7 +121,7 @@ export class LevelsService {
   ): Promise<NivelResponseDto> {
     return this.prisma.$transaction(async (tx) => {
       // SPEC-075/D13 — a trava de nível da empresa, PRIMEIRA instrução.
-      await travarNivelDaEmpresa(tx, companyId);
+      await travarNivelDaEmpresa(tx, companyId, 'escrita');
       const antigo = await primeiroNivel(tx, companyId);
       const r = await conferirEdicaoDeNivel(
         tx,
@@ -150,7 +150,7 @@ export class LevelsService {
    */
   async remove(companyId: string, id: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
-      await travarNivelDaEmpresa(tx, companyId);
+      await travarNivelDaEmpresa(tx, companyId, 'escrita');
       await this.findOne(companyId, id, tx);
 
       const doClube = await tx.nivel.count({ where: { companyId } });

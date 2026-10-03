@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiServiceUnavailableResponse,
   ApiConflictResponse,
   ApiUnprocessableEntityResponse,
   ApiForbiddenResponse,
@@ -21,6 +22,8 @@ import {
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { ErroTransitorioResponseDto } from '../common/erros/erro-transitorio-response.dto';
+import { comTraducaoDaMatricula } from '../common/erros/erro-transitorio';
 import { UuidCanonicoPipe } from '../common/pipes/uuid-canonico.pipe';
 import {
   AulasProximasPaginadasResponseDto,
@@ -187,13 +190,22 @@ export class MeClassesController {
     description:
       'Turma inexistente — ou de outra empresa. São 404 iguais de propósito (INV-023b): distinguir já entregaria informação sobre o outro clube.',
   })
+  @ApiServiceUnavailableResponse({
+    type: ErroTransitorioResponseDto,
+    description:
+      'SPEC-082 — o tempo-limite da matrícula estourou ou o servidor está sem conexão livre (`SERVIDOR_OCUPADO`). Nada foi gravado.',
+  })
   @HttpCode(200)
   @Roles('aluno')
   entrar(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id', UuidCanonicoPipe) turmaId: string,
   ) {
-    return this.matricula.entrar(user.companyId as string, user.sub, turmaId);
+    // SPEC-082/D4 — a espera estourada e o servidor ocupado viram 409/503 com
+    // código aqui, na borda HTTP; o serviço continua lançando o erro do banco.
+    return comTraducaoDaMatricula(() =>
+      this.matricula.entrar(user.companyId as string, user.sub, turmaId),
+    );
   }
 
   /**

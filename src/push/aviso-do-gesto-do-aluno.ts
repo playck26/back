@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { instanteNoFusoDoClube } from '../courts/date-time.util';
 import { momentoDaAula } from './avisos-de-gesto';
+import { RESTO_DO_PRAZO } from '../common/lock/prazo-de-espera';
 
 /**
  * SPEC-078/REQ-001 — **o gestor sabe o que o aluno fez.**
@@ -145,7 +146,8 @@ export class AvisosDoGestoDoAluno {
        WHERE company_id = ${this.companyId}::uuid
          AND role = 'company_admin'
          AND status = 'ativo'
-         AND id IS DISTINCT FROM ${this.autorUsuarioId}::uuid`;
+         AND id IS DISTINCT FROM ${this.autorUsuarioId}::uuid
+       ORDER BY id`;
     if (gestores.length === 0) {
       return 0;
     }
@@ -154,13 +156,45 @@ export class AvisosDoGestoDoAluno {
       (g) =>
         Prisma.sql`(${randomUUID()}::uuid, ${this.companyId}::uuid,
                     ${g.usuario_id}::uuid, ${origemId}::uuid,
-                    ${TIPO_GESTO_DO_ALUNO}, ${aviso.titulo}, ${aviso.corpo},
-                    ${aviso.destinoUrl}, ${aviso.expiraEm})`,
+                    ${TIPO_GESTO_DO_ALUNO}::text, ${aviso.titulo}::text,
+                    ${aviso.corpo}::text, ${aviso.destinoUrl}::text,
+                    ${aviso.expiraEm}::timestamptz)`,
     );
+    // SPEC-082/AC-015(a), v9 (achado 082-V8-01) — a ordem das aquisições é
+    // FIXA: os gestores vêm por `id`, e o `unnest … WITH ORDINALITY` segue a
+    // ordem deste array. Com ordem livre, a prova não saberia qual espera vem
+    // primeiro.
+    const destinatarios = gestores.map((g) => g.usuario_id);
+    // SPEC-082/D2b (achado 082-V4-01) — cada linha grava uma FK para
+    // `usuarios`, e cada checagem é uma AQUISIÇÃO: um `lock_timeout` único para
+    // a instrução deixaria a soma passar do prazo. As linhas dos gestores são
+    // travadas ANTES, em `FOR KEY SHARE`, uma a uma, com o prazo recalculado
+    // imediatamente antes de CADA uma — e o recálculo DEPENDE da linha
+    // (`WHERE d.id IS NOT NULL`): sem a dependência o Postgres o avalia uma vez
+    // só (a pré-prova da spec: 3.513 ms contra 2.030 ms). A checagem de FK
+    // encontra a linha já travada pela própria transação e não espera.
+    //
+    // Fora de matrícula (sair da turma, falta), a transação não tem prazo e o
+    // recálculo devolve o `lock_timeout` vigente: nada muda para eles.
     return this.tx.$executeRaw`
+      WITH alvo AS MATERIALIZED (
+        SELECT u.id
+          FROM unnest(${destinatarios}::uuid[]) WITH ORDINALITY AS d(id, ord),
+               LATERAL (SELECT set_config('lock_timeout', ${RESTO_DO_PRAZO}, true) AS cfg
+                         WHERE d.id IS NOT NULL) r,
+               LATERAL (SELECT us.id FROM usuarios us
+                         WHERE us.company_id = ${this.companyId}::uuid
+                           AND us.id = d.id AND r.cfg IS NOT NULL
+                         FOR KEY SHARE) u
+         ORDER BY d.ord)
       INSERT INTO notificacoes (id, company_id, destinatario_id, origem_id,
                                 tipo, titulo, corpo, destino_url, expira_em)
-      VALUES ${Prisma.join(linhas)}
+      SELECT v.id, v.company_id, v.destinatario_id, v.origem_id, v.tipo,
+             v.titulo, v.corpo, v.destino_url, v.expira_em
+        FROM (VALUES ${Prisma.join(linhas)})
+             AS v(id, company_id, destinatario_id, origem_id, tipo, titulo,
+                  corpo, destino_url, expira_em)
+       WHERE v.destinatario_id IN (SELECT id FROM alvo)
       ON CONFLICT (origem_id, destinatario_id) WHERE tipo = 'gesto_do_aluno'
       DO NOTHING`;
   }

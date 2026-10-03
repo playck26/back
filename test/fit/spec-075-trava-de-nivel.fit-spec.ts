@@ -111,7 +111,7 @@ async function segurarTrava(empresa: string): Promise<() => Promise<void>> {
   const travado = new Promise<void>((r) => (pronto = r));
   const tx = db.$transaction(
     async (t) => {
-      await travarNivelDaEmpresa(t, empresa);
+      await travarNivelDaEmpresa(t, empresa, 'escrita');
       pronto();
       await liberado;
     },

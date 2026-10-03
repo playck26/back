@@ -376,8 +376,14 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
       'LIMITE_DE_TURMAS',
       'TURMA_CHEIA',
       'PRAZO_DE_CANCELAMENTO',
+      // SPEC-082/D6 — a espera estourada (55P03) nas três rotas leitoras;
+      // vem de `traduzirErroDaMatricula` (`common/erros/erro-transitorio.ts`).
+      'MATRICULA_EM_ANDAMENTO',
     ],
   ],
+  // SPEC-082/D6 — tempo-limite da transação ou pool esgotado (P2028/P2024)
+  // nas três rotas leitoras; vem de `traduzirErroDaMatricula`.
+  ['ErroTransitorioResponseDto.code', ['SERVIDOR_OCUPADO']],
   // SPEC-024 — o portão do aceite. `ACEITE_PENDENTE` vem do `JwtAuthGuard`;
   // `VERSAO_DESATUALIZADA`, do `AceitesService`.
   ['ErroDeAceiteResponseDto.code', ['ACEITE_PENDENTE', 'VERSAO_DESATUALIZADA']],

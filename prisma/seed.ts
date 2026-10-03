@@ -218,7 +218,7 @@ async function seedEtapa3(companyId: string) {
   // passava verde.)
   if ((await prisma.nivel.count({ where: { companyId } })) === 0) {
     await prisma.$transaction(async (tx) => {
-      await travarNivelDaEmpresa(tx, companyId);
+      await travarNivelDaEmpresa(tx, companyId, 'escrita');
       if ((await tx.nivel.count({ where: { companyId } })) === 0) {
         await criarNiveisPadrao(tx, companyId);
       }
@@ -353,7 +353,7 @@ async function seedEtapa3(companyId: string) {
   // julgada na 5ª rodada, R5-03). Matrícula que já existe não é reescrita.
   const turmaDemo = turma;
   await prisma.$transaction(async (tx) => {
-    await travarNivelDaEmpresa(tx, companyId);
+    await travarNivelDaEmpresa(tx, companyId, 'escrita');
     for (const alunoId of alunosIds) {
       const jaExiste = await tx.turmaAluno.findUnique({
         where: { turmaId_alunoId: { turmaId: turmaDemo.id, alunoId } },

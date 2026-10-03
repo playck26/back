@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { MatriculaDoAlunoService } from './matricula-do-aluno.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { matriculaComPrazoDoSql } from '../../test/utils/prisma-mock';
 
 /**
  * SPEC-023 — as provas de o aluno entrar e sair de turma sozinho.
@@ -74,21 +75,35 @@ function montar(opcoes?: {
     ...opcoes,
   };
 
+  const linhaDaTurma = o.turmaExiste
+    ? [
+        {
+          id: TURMA,
+          capacidade: o.capacidade,
+          status: o.statusDaTurma,
+          // SPEC-075 — o SELECT de verdade traz a coluna; turma sem nível
+          // é `null`. **O dublê traz o mesmo**: o serviço trata a coluna
+          // ausente como recusa (falha fechada), e não como "sem nível".
+          nivel_id: null,
+        },
+      ]
+    : [];
   const tx: TxMock = {
-    $queryRaw: jest.fn().mockResolvedValue(
-      o.turmaExiste
-        ? [
-            {
-              id: TURMA,
-              capacidade: o.capacidade,
-              status: o.statusDaTurma,
-              // SPEC-075 — o SELECT de verdade traz a coluna; turma sem nível
-              // é `null`. **O dublê traz o mesmo**: o serviço trata a coluna
-              // ausente como recusa (falha fechada), e não como "sem nível".
-              nivel_id: null,
-            },
-          ]
-        : [],
+    // SPEC-082/AC-018 — o `INSERT` da matrícula é SQL cru, roteado pelo
+    // marcador fixo para o `turmaAluno.create` que estes testes já armam
+    // (DEF-VC031-02). As demais instruções cruas devolvem a linha da turma,
+    // como antes (a instrução das travas descarta o resultado).
+    $queryRaw: jest.fn(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const matricula = matriculaComPrazoDoSql(strings, values);
+        if (matricula) {
+          const gravada: unknown = await tx.turmaAluno.create({
+            data: matricula,
+          });
+          return gravada ? [gravada] : [];
+        }
+        return linhaDaTurma;
+      },
     ),
     // SPEC-064 — `$executeRaw` entrou no duble porque `encerrarFila` escreve por
     // ele. **Devolve 0, e nao `undefined`:** o valor e a contagem de linhas
@@ -159,6 +174,11 @@ function montar(opcoes?: {
         .fn()
         .mockResolvedValue({ id: 'aluno-1', vinculo: o.vinculo }),
     },
+    // SPEC-082/D5 — a leitura de fora da transação. `false` = "não sei dizer
+    // que está cheia": a transação decide, e cada caso aqui continua provando
+    // só o que provava. A leitura de fora tem prova própria contra banco
+    // (`test/banco/spec-082-cheia-antes.db-spec.ts`).
+    $queryRaw: jest.fn().mockResolvedValue([{ cheia: false }]),
     $transaction: jest.fn((cb: (t: TxMock) => unknown) => cb(tx)),
   } as unknown as PrismaService;
 

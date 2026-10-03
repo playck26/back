@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ClassesService } from './classes.service';
 import { RegistradorDeAcao } from '../common/auditoria/registrador-de-acao';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import { matriculaComPrazoDoSql } from '../../test/utils/prisma-mock';
 
 // TEST-004 (SPEC-003, fatia de turmas): unit tests de MOD-004 com Prisma e
 // CourtsService (MOD-005) mockados. A garantia física de INV-001 (sem
@@ -114,6 +115,9 @@ function buildMocks() {
     // próximas aulas da turma para a `proximaAulaLotada` (ADR-027). Nenhuma
     // aula no dublê — os casos que dependem das aulas armam a sua.
     ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-082/D5 — a leitura de fora da transação do `allocateStudent`.
+    // `false` = "não sei dizer que está cheia": a transação decide.
+    $queryRaw: jest.fn().mockResolvedValue([{ cheia: false }]),
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
   const courtsService = {
@@ -704,8 +708,28 @@ describe('ClassesService', () => {
   });
 
   describe('allocateStudent', () => {
+    /**
+     * SPEC-082/AC-018 — a turma é o que a leitura crua devolve; o `INSERT`
+     * da matrícula (SQL cru) é roteado pelo marcador fixo para o
+     * `turmaAluno.create` que estes testes já armam (DEF-VC031-02).
+     */
+    function armarTurma(linhas: unknown[]) {
+      tx.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const matricula = matriculaComPrazoDoSql(strings, values);
+          if (matricula) {
+            const gravada: unknown = await tx.turmaAluno.create({
+              data: matricula,
+            });
+            return gravada ? [gravada] : [];
+          }
+          return linhas;
+        },
+      );
+    }
+
     it('lança 404 se a turma não existe na empresa', async () => {
-      tx.$queryRaw.mockResolvedValue([]);
+      armarTurma([]);
 
       await expect(
         service.allocateStudent('c1', 't1', 'a1'),
@@ -713,7 +737,7 @@ describe('ClassesService', () => {
     });
 
     it('lança 404 se o aluno não existe na empresa', async () => {
-      tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
+      armarTurma([{ id: 't1', capacidade: 2 }]);
       tx.aluno.findFirst.mockResolvedValue(null);
 
       await expect(
@@ -724,7 +748,7 @@ describe('ClassesService', () => {
     // SPEC-009/INV-010: vaga de turma é recurso finito da empresa
     // (INV-003). Cadastro não aprovado não ocupa.
     it('bloqueia alocação de aluno com vínculo pendente (INV-010)', async () => {
-      tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
+      armarTurma([{ id: 't1', capacidade: 2 }]);
       tx.aluno.findFirst.mockResolvedValue({
         id: 'a1',
         vinculo: 'pendente',
@@ -743,7 +767,7 @@ describe('ClassesService', () => {
     });
 
     it('re-adicionar o mesmo aluno é idempotente (não recria)', async () => {
-      tx.$queryRaw.mockResolvedValue([{ id: 't1', capacidade: 2 }]);
+      armarTurma([{ id: 't1', capacidade: 2 }]);
       tx.aluno.findFirst.mockResolvedValue({ id: 'a1' });
       tx.turmaAluno.findFirst.mockResolvedValue({
         id: 'ta1',
@@ -760,9 +784,7 @@ describe('ClassesService', () => {
     it('rejeita alocar o N+1-ésimo aluno numa turma de capacidade N com 409 (AC-002, INV-003)', async () => {
       // SPEC-075 — o SELECT de verdade traz `nivel_id`; turma sem nível e a
       // regra inerte, para o caso provar só a capacidade.
-      tx.$queryRaw.mockResolvedValue([
-        { id: 't1', capacidade: 2, nivel_id: null },
-      ]);
+      armarTurma([{ id: 't1', capacidade: 2, nivel_id: null }]);
       tx.aluno.findFirst.mockResolvedValue({ id: 'a3' });
       tx.turmaAluno.findFirst.mockResolvedValue(null);
       tx.turmaAluno.count.mockResolvedValue(2);
@@ -776,9 +798,7 @@ describe('ClassesService', () => {
     it('aloca aluno quando há vaga disponível', async () => {
       // SPEC-075 — o SELECT de verdade traz `nivel_id`; turma sem nível e a
       // regra inerte, para o caso provar só a capacidade.
-      tx.$queryRaw.mockResolvedValue([
-        { id: 't1', capacidade: 2, nivel_id: null },
-      ]);
+      armarTurma([{ id: 't1', capacidade: 2, nivel_id: null }]);
       tx.aluno.findFirst.mockResolvedValue({ id: 'a1' });
       tx.turmaAluno.findFirst.mockResolvedValue(null);
       tx.turmaAluno.count.mockResolvedValue(1);
