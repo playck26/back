@@ -618,6 +618,13 @@ export class PresencaService {
    * frequência, e o dublê compartilhado dos e2e já responde `$queryRaw` (com
    * `[]`, que é "ninguém marcado") — um `groupBy` exigiria mexer no dublê que
    * a AC-009 congela.
+   *
+   * O `p.company_id` do token não é redundante com o `ocupacao_id` (SPEC-081
+   * v9, achado 081-V8-01; LIM-081f): que a presença seja do clube da
+   * ocorrência é precondição de APLICAÇÃO (os escritores tiram o
+   * `company_id` da ocorrência), não de constraint. Se uma escrita manual a
+   * quebrar, a linha divergente não conta como marcada aqui — provado em
+   * banco pelo AC-018.
    */
   private async marcadosPorOcorrencia(
     companyId: string,

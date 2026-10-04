@@ -187,16 +187,33 @@ export class FrequenciaService {
    * relatório da turma, a turma). O custo é proporcional às presenças DO
    * CLUBE na janela, não da plataforma.
    *
-   * **`p.company_id` também, e não por isolamento.** Sem ele, com os 11 clubes
-   * da medição, o planejador escolhia `Seq Scan` em `presencas` (a tabela da
-   * plataforma inteira) e um hash join: 80 ms no clube da avaliação. Com ele,
-   * a leitura vai pelo índice `presencas_company_id_ocupacao_id_idx` e cai
-   * para ~10 ms (AC-016, medido no `CLI_AUDIT.md`).
+   * **`p.company_id` também — entrou pelo desempenho.** Sem ele, com os 11
+   * clubes da medição, o planejador escolhia `Seq Scan` em `presencas` (a
+   * tabela da plataforma inteira) e um hash join: 80 ms no clube da
+   * avaliação. Com ele, a leitura vai pelo índice
+   * `presencas_company_id_ocupacao_id_idx` e cai para ~10 ms (AC-016, medido
+   * no `CLI_AUDIT.md`).
+   *
+   * **Ele não muda o número sob uma PRECONDIÇÃO DE APLICAÇÃO, e não de
+   * constraint** (SPEC-081 v9, achado 081-V8-01; LIM-081f): toda presença tem
+   * o `company_id` do clube da sua ocorrência. A PK global de
+   * `ocupacoes_quadra` identifica a ocorrência, mas nada no banco obriga a
+   * presença a ser do clube dela — `presencas_ocupacao_fkey` não leva
+   * `company_id`, e a FK composta da DEF-024 amarra a presença ao ALUNO.
+   * Quem sustenta a precondição são os escritores (o único `INSERT`,
+   * `gravarPresencasDoFechamento`, recebe o `company_id` tirado da
+   * ocorrência pelos seus dois chamadores; o único `UPDATE`, `aplicarD9`, não
+   * muda `company_id` nem `aluno_id`). Um escritor novo de `presencas` tem de
+   * tirar o `company_id` da ocorrência, ou a quebra. **Se ela quebrar** (por
+   * escrita manual no banco), a linha divergente NÃO conta para o clube da
+   * ocorrência — decisão a favor do isolamento, provada em banco pelo AC-018,
+   * com o valor ligado conferido por posição pelo AC-019.
    *
    * A chave do mapa é o `id` da OCORRÊNCIA (AC-015): contar por turma daria a
    * uma aula sem chamada as presenças da vizinha. A ligação `o.id =
-   * p.ocupacao_id` e o `company_id` são defesa — o isolamento real é a PK
-   * global de `ocupacoes_quadra` —, afirmados por contrato do SQL no teste.
+   * p.ocupacao_id` e o `o.company_id` são defesa por construção — a
+   * IDENTIDADE da ocorrência é da PK global —, afirmados por contrato do SQL
+   * no teste.
    */
   private async presencasPorOcorrencia(
     companyId: string,

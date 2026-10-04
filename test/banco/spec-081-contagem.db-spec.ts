@@ -14,6 +14,11 @@
  * aconteceram); na lista do professor, `marcados` é 2, 0, 1 e 1. A
  * implementação errada que isto derruba é contar por TURMA: Y receberia as
  * presenças das vizinhas, e ficaria "lançada" com 4 marcados.
+ *
+ * AC-018 (v9, achado 081-V8-01) — a presença DIVERGENTE: nada no banco obriga
+ * a presença a ser do clube da ocorrência (LIM-081f). Os casos do fim montam
+ * esse estado com `UPDATE` comum nas presenças de X e restauram as linhas em
+ * `finally`, para os cinco casos acima não dependerem da ordem.
  */
 import { PrismaClient } from '@prisma/client';
 import { PresencaService } from '../../src/classes/presenca.service';
@@ -224,5 +229,102 @@ describe('SPEC-081 AC-014/AC-015 — presença contada por ocorrência', () => {
       30,
     );
     expect(r.data.map((o) => [o.ocupacaoId, o.marcados])).toEqual([[B.V, 3]]);
+  });
+});
+
+/**
+ * SPEC-081/AC-018 — a presença divergente não conta para o clube da ocorrência.
+ *
+ * O estado é montado com `UPDATE` comum (sem válvula, sem desligar gatilho,
+ * sem tirar constraint): a ocorrência, o `origem_tipo` e o `registrado_por`
+ * nulo ficam; só `company_id` e `aluno_id` passam a ser do clube B, juntos,
+ * porque a FK composta da DEF-024 amarra a presença ao aluno do mesmo clube.
+ * O `finally` devolve cada linha ao que era.
+ */
+describe('SPEC-081 AC-018 — a presença divergente não conta para o clube da ocorrência', () => {
+  type Linha = { id: string; aluno_id: string; company_id: string };
+
+  async function presencasDeX(): Promise<Linha[]> {
+    return db.$queryRawUnsafe<Linha[]>(
+      `SELECT id::text, aluno_id::text, company_id::text FROM presencas WHERE ocupacao_id = '${A.X}' ORDER BY aluno_id`,
+    );
+  }
+
+  /** Passa as presenças de X dos alunos dados para os alunos de B dados. */
+  async function divergir(
+    trocas: [deAluno: string, paraAluno: string][],
+    corpo: () => Promise<void>,
+  ) {
+    const antes = await presencasDeX();
+    expect(antes.map((l) => [l.aluno_id, l.company_id])).toEqual([
+      [A.S1, A.EMPRESA],
+      [A.S2, A.EMPRESA],
+    ]);
+    try {
+      for (const [de, para] of trocas) {
+        const n = await q(
+          `UPDATE presencas SET company_id = '${B.EMPRESA}', aluno_id = '${para}' WHERE ocupacao_id = '${A.X}' AND aluno_id = '${de}'`,
+        );
+        expect(n).toBe(1);
+      }
+      await corpo();
+    } finally {
+      for (const l of antes) {
+        await q(
+          `UPDATE presencas SET company_id = '${l.company_id}', aluno_id = '${l.aluno_id}' WHERE id = '${l.id}'`,
+        );
+      }
+      const depois = await presencasDeX();
+      expect(depois).toEqual(antes);
+    }
+  }
+
+  const contagemDaFrequencia = async () => {
+    const s = new FrequenciaService(app);
+    const { desde, hoje } = s['janela'](30);
+    return s['presencasPorOcorrencia'](A.EMPRESA, desde, hoje, A.TURMA);
+  };
+
+  const marcadosDoProfessor = async () => {
+    const r = await new PresencaService(app).ocorrenciasDaTurma(
+      A.EMPRESA,
+      A.UPROF,
+      A.TURMA,
+      30,
+    );
+    return Object.fromEntries(r.data.map((o) => [o.ocupacaoId, o.marcados]));
+  };
+
+  it('(a) uma das duas presenças de X vira do clube B: a contagem dá 1 e marcados 1', async () => {
+    await divergir([[A.S2, B.S1]], async () => {
+      const mapa = await contagemDaFrequencia();
+      expect(mapa.get(A.X)).toBe(1);
+      const marcados = await marcadosDoProfessor();
+      expect(marcados[A.X]).toBe(1);
+    });
+  });
+
+  it('(b) as duas presenças de X viram do clube B: daTurma não a lança, marcados 0', async () => {
+    await divergir(
+      [
+        [A.S1, B.S1],
+        [A.S2, B.S2],
+      ],
+      async () => {
+        const r = await new FrequenciaService(app).daTurma(
+          A.EMPRESA,
+          A.TURMA,
+          30,
+        );
+        // X continua tendo acontecido (tem cabeçalho de chamada); só deixa
+        // de ter presença do clube: lançadas são Z1 e Z2.
+        expect(r.cobertura.aconteceram).toBe(4);
+        expect(r.cobertura.lancadas).toBe(2);
+        const mapa = await contagemDaFrequencia();
+        expect(mapa.has(A.X)).toBe(false);
+        const marcados = await marcadosDoProfessor();
+        expect(marcados[A.X]).toBe(0);
+      },
+    );
   });
 });
