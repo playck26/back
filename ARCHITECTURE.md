@@ -14,8 +14,8 @@ em SHA-256 (com o bcrypt aceito só para linha legada, por 7 dias), o portão do
 `JwtAuthGuard` em uma ida ao banco, o pool registrado na subida e as presenças
 contadas por ocorrência.
 
-**Números de 2026-10-04, na branch da SPEC-083 (`spec083/convite-por-email`,
-`e3b178b`, 18 commits sobre o `main` em `ff0c9f5`). Conferidos por comando:**
+**Números de 2026-10-04, no `main` com a SPEC-083 mergeada (back#164 →
+`994a091`, no ar). Conferidos por comando:**
 **59 migrations**, **124 caminhos / 172 operações** no `openapi.json`, **43
 modelos e 19 enums** no `schema.prisma`. **Derivados da migration, e não lidos
 de um banco: 44 tabelas e 25 triggers** não-internas (os 43 e 25 do bloco de
@@ -2348,9 +2348,9 @@ todos. **O nome não é o portador; o valor é.**
 ### O convite de acesso por e-mail: MOD-015 e o `AcessoModule` (SPEC-083)
 
 *Escrita em 2026-10-04 sobre a branch `spec083/convite-por-email`
-(`e3b178b`). **Nada disto está em produção**: a branch não foi enviada, e a
-operação na Resend ainda tem três itens por confirmar (`OPERATIONS.md`,
-"Runbook — E-mail pela Resend"). Decisão: ADR-030.*
+(`e3b178b`). **No ar desde 2026-10-04** (back#164 → `994a091`), com o convite
+real recebido e ativado pelo Israel no mesmo dia (`OPERATIONS.md`, "Runbook —
+E-mail pela Resend"). Decisão: ADR-030.*
 
 **O produto passou a enviar um e-mail, e só um: o convite de acesso.** O gestor
 o emite pela ficha do aluno ou do professor, ou marca linhas na importação; a
@@ -2448,8 +2448,8 @@ etapa: só na de `usuarios` a conferência é refeita, e só erro de e-mail vira
 
 *As provas HTTP do acesso ficaram em `test/fit/spec-083-acesso.fit-spec.ts`, e
 não em `test/acesso.e2e-spec.ts`, que a TASK-004 da spec listava e não existe.*
-**Nenhum destes gates rodou no CI ainda**: a branch não foi enviada, e o
-`evd.json` e o `CLI_AUDIT.md` da SPEC-083 não existem em 2026-10-04.
+**Estes gates rodaram no CI do merge** (run `37218674583`, `994a091`), e o
+`evd.json` da SPEC-083 aponta para ele (`validar-evd.ps1` exit 0).
 
 ### O custo de cada requisição (SPEC-081)
 
