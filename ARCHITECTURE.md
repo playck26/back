@@ -1,6 +1,32 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-09-28** (era 2026-09-26).
+**Fonte: análise direta do código.** Data: **2026-10-04** (era 2026-09-28).
+
+**Números de 2026-10-04, na branch da SPEC-083 (`spec083/convite-por-email`,
+`e3b178b`, 18 commits sobre o `main` em `ff0c9f5`). Conferidos por comando:**
+**59 migrations**, **124 caminhos / 172 operações** no `openapi.json`, **43
+modelos e 19 enums** no `schema.prisma`. **Derivados da migration, e não lidos
+de um banco: 44 tabelas e 25 triggers** não-internas (os 43 e 25 do bloco de
+2026-09-28 desta planta, mais o que a migration nova cria) —
+**a conferir em banco** (`pg_tables`, `pg_trigger`) quando o Postgres local
+estiver livre.
+
+*Mudou: **+1 migration** (`20261003120000_spec083_convites_de_acesso`), **+1
+tabela** (`convites_de_acesso`), **+1 enum** (`resultado_do_email`), **nenhum
+trigger**, **+4 caminhos / +6 operações** (`/public/ativacao/{token}` `GET`,
+`/public/ativacao` `POST`, e `GET`/`POST` de `/students/{id}/convite-de-acesso`
+e `/teachers/{id}/convite-de-acesso`). Como: `ls -d prisma/migrations/*/`
+(59; o `main` tem 58); `^model`/`^enum` no `schema.prisma` (43/19; o `main`,
+42/18); caminhos e operações lidos do `openapi.json` por `node` (124/172; o do
+`main`, 120/166). **Tabelas e triggers foram somados pela migration, e não
+lidos de um banco** — ela tem um `CREATE TABLE` e nenhum `CREATE TRIGGER`
+(`grep -ci` na migration: 1 e 0) —,
+porque outra leva roda suítes contra o Postgres local nesta máquina. A seção
+"O convite de acesso por e-mail", na seção 10, diz o que mudou.*
+
+*A SPEC-082 (no ar em `ff0c9f5`) não somou nada nesta conta: nenhuma migration,
+nenhum caminho; o `openapi.json` dela muda respostas e enums de rotas que já
+existiam.*
 
 **Números conferidos por comando em 2026-09-28, na branch do Back B da SPEC-079
 (`spec079/back-b`):** **58 migrations, 43 tabelas, 25 triggers** não-internas,
@@ -156,13 +182,20 @@ Do `package.json` (produção):
 | `class-validator`, `class-transformer` | ^0.15 / ^0.5 | validação de DTO |
 | `cookie-parser` | ^1.4.7 | cookie de refresh |
 | `helmet` | ^8.3.0 | cabeçalhos de segurança |
+| `resend` | ^6.32.0 | e-mail (SPEC-083, MOD-015) — **só o adaptador importa** (`src/email/resend-provedor-de-email.ts`, gate `so-o-adaptador-importa-resend.spec.ts`) |
 
 **Banco:** PostgreSQL **18.6** (Neon, `aws-sa-east-1`), verificado em
 2026-08-22.
 
 **NÃO existem no projeto** (docs antigos ou suposições comuns podem citar):
 Turborepo ou qualquer monorepo (ADR-001 é poly-repo), Redis, GraphQL, ORM
-além do Prisma, provedor de e-mail, gateway de pagamento, WebSocket.
+além do Prisma, gateway de pagamento, WebSocket. **E-mail de recuperação de
+senha, aviso de senha alterada e outbox de e-mail também não existem.**
+
+**Provedor de e-mail passou a existir com a SPEC-083 (2026-10-04, nesta
+branch)** e saiu da lista acima — **para um e-mail só, o convite de acesso**
+(ADR-030). Ler `src/email/` esperando "esqueci minha senha" é ler errado: isso
+é da SPEC-051, que segue rascunho.
 
 **Storage de arquivo passou a existir em 2026-08-24** (SPEC-017) e é o único
 item que saiu desta lista. Existem, das TASK-001/002/002b/003/004: a porta `StorageProvider`, o
@@ -543,7 +576,14 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**42 modelos e 18 enums** no `schema.prisma` (conferido por
+**43 modelos e 19 enums** no `schema.prisma`, **59 migrations** (conferido em
+**2026-10-04**, na branch da SPEC-083: `^model`/`^enum` no `schema.prisma` e
+`ls -d prisma/migrations/*/`). *A SPEC-083 somou um modelo
+(`ConviteDeAcesso`), um enum (`ResultadoDoEmail`) e uma migration; as quatro
+migrations entre a SPEC-075 e a SPEC-079 não mudaram a contagem de modelos e
+enums (42/18 no `main` em `ff0c9f5`, conferido).*
+
+*Registro anterior:* **42 modelos e 18 enums** no `schema.prisma` (conferido por
 `grep -c '^model'` / `'^enum'` em **2026-09-25**, com a SPEC-075 — os mesmos da
 SPEC-074), **54 migrations** (`ls -d prisma/migrations/*/ | wc -l`). *Eram "40 tabelas e 16
 enums / 47 migrations", conferidos em 2026-09-20 e não atualizados por quatro
@@ -634,6 +674,7 @@ conta `pg_tables` (43).*
 | `usuarios` | MOD-001 | identidade. E-mail único **global** (INV-004). `senha_temporaria` tranca a conta até a troca (INV-008). `foto_key` (SPEC-018) é a foto de quem **tem conta**; CHECK exige empresa, então `super_admin` não tem foto |
 | `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira |
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
+| `convites_de_acesso` | MOD-001 (dados), `AcessoModule` | **SPEC-083.** O link de ativação do convite por e-mail. Mesmo `token_hash` sha256 de `convites_aluno`, mais **`impressao_credencial`** (sha256 de `usuarios.senha_hash` na emissão): a ativação a compara sob `FOR UPDATE` no usuário, e senha trocada por qualquer caminho mata o link (INV-083c). `company_id NOT NULL` + FK composta para `usuarios (company_id, id)`: `super_admin` não tem convite (INV-083d). `email_resultado`/`email_motivo`/`email_em` gravados **depois** do `COMMIT`; os dois nulos querem dizer `sem_confirmacao`. Também escrita pela **importação** (MOD-003), no SQL cru dela, com linhas que o `AcessoService` prepara |
 | `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload. **SPEC-054/D9:** pedido sem adicional (ou com lista vazia) grava `quadraId\|data\|slots` byte a byte como antes; com adicional, ganha `\|adicionais=<id>:<q>,…` em ordem de id — a comparação é `!==`, e mudar o formato de todo pedido quebraria o replay de chaves já gravadas |
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
 | `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
@@ -683,6 +724,9 @@ que são a garantia real):
 | `quadras_imagem_confirmada_check` (SPEC-018) | AC-007/008 no banco: `imagem_key`, `imagem_confirmada_por` e `imagem_confirmada_em` são as três nulas ou as três preenchidas. Sem isto, imagem pública sem autor seria gravável por qualquer caminho que esquecesse o campo — e a exigência de confirmação viraria aviso de tela |
 | `quadras_imagem_confirmada_por_fkey` (`ON DELETE RESTRICT`) | a confirmação vale por ter nome de gente: apagar a conta não pode apagar o autor da afirmação. Mesmo regime de `chamadas.registrada_por` |
 | `usuarios_foto_da_empresa_check`, `professores_foto_da_empresa_check`, `quadras_imagem_da_empresa_check`, `empresas_logo_da_empresa_check` (SPEC-018) | INV-030 por coluna de mídia: a chave gravada mora sob a empresa **da própria linha**. Pega chave adulterada no banco, que o prefixo e o escopo por token não pegam — os dois leem o mesmo token. O resto da gramática fica com `chave-de-midia.ts`, fonte única |
+| `convites_de_acesso_um_vivo_por_usuario` (índice único **parcial**, SPEC-083) | INV-083b: no máximo um convite vivo (`usado_em` e `revogado_em` nulos) por usuário. Expirado continua vivo para o índice — o reenvio o revoga na mesma transação. **Não aparece no `schema.prisma`** (o Prisma não expressa `WHERE`); a violação vira `409 CONVITE_EM_EMISSAO` pelo tradutor por constraint |
+| `convites_de_acesso_fim_unico`, `convites_de_acesso_email_coerente` (SPEC-083) | usado **ou** revogado, nunca os dois; `email_resultado` e `email_em` nulos juntos ou preenchidos juntos |
+| `convites_de_acesso_usuario_fkey` (composta, `ON DELETE CASCADE`), `convites_de_acesso_criado_por_fkey` (simples, sem ação) | o convite não cruza empresa e não existe para `super_admin`; apagar o gestor que convidou é recusado pelo banco, em vez de decidido por ele |
 | `usuarios_foto_da_empresa_check`, parte `company_id IS NOT NULL` | consequência declarada: **`super_admin` não tem foto de perfil.** A gramática da chave começa por `empresas/<company_id>/` e não representa foto de quem não tem empresa. **Decidido em 2026-08-25** (SPEC-018/LIM-005): é conta operacional e o SAdmin não tem tela de perfil. A rota devolve 403 `PERFIL_SEM_EMPRESA` antes de tocar o storage, para o caso nunca virar 500 vindo de constraint |
 
 ### 3.1 Triggers — e são as primeiras do projeto
@@ -763,8 +807,19 @@ código que grava eventos estiver no ar. Junto, abriria uma janela em que
 ```
 src/
   auth/            MOD-001 — login, sessão, convites, troca de senha
+  acesso/          SPEC-083 — `AcessoModule` (dados de MOD-001): o convite
+                   de acesso por e-mail — emitir, consultar, ativar, a
+                   situação, as rotas públicas `/public/ativacao` e o
+                   tradutor por constraint. `cli/` é outra coisa, de antes:
+                   o `pnpm acesso:sadmin` (super admin sem senha), fora do
+                   módulo Nest
+  email/           SPEC-083 — MOD-015 (Email): a porta `ProvedorDeEmail`,
+                   os adaptadores Resend e memória, `email.config.ts`, o
+                   escape e o modelo `convite_de_acesso`. **Sem controller
+                   e sem tabela**
   companies/       MOD-002 — tenants (+ rota pública por slug)
-  people/          MOD-003 — alunos, professores, níveis
+  people/          MOD-003 — alunos, professores, níveis; `importacao/`
+                   (SPEC-038; SPEC-083: cinco colunas, turma, convidados)
   classes/         MOD-004 — turmas, chamada e presença.
                    `estado-da-chamada.ts` é a **fonte única** do estado de
                    uma chamada (SPEC-030/INV-030b) e é importado também por
@@ -1647,8 +1702,13 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 - Throttle: **a chave é o usuário quando o Bearer token confere**, e o IP
   quando não confere ou não existe (SPEC-017/TASK-006). **Exceto onde o
   limite existe para conter quem ainda não é ninguém** — login, aceite de
-  convite, auto-cadastro e leitura pública contam **sempre por IP**, via
+  convite, auto-cadastro, leitura pública e, com a SPEC-083, as duas rotas do
+  link de ativação (`/public/ativacao`) contam **sempre por IP**, via
   `@ContagemPorIp()`. Ver seção 10.
+- **SPEC-083 — ativar pelo link não abre sessão.** `POST /public/ativacao`
+  grava a senha e responde `204`; a pessoa entra pelo login, e passa pelos
+  dois portões do `JwtAuthGuard` como qualquer conta criada pelo gestor (o do
+  aceite, no primeiro acesso). Nenhum guard novo.
 
 ### Papéis de banco (SPEC-057/TASK-001/D3)
 
@@ -1715,7 +1775,7 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008). `presencas` é base para resolver, mas **não resolve** — remarcar exige estado além de presente/ausente/justificado | Média — adiado por decisão |
 | 6 | Cancelar parte de um bloco de reserva não é suportado (GAP-013) | Baixa |
 | 7 | **A regra do passado é assimétrica por papel, e mora só na aplicação** (SPEC-042, D-I5): o aluno não cria nem cancela horário já começado; o gestor faz os dois, porque fechar caixa e corrigir lançamento errado são trabalho real. **Não há CHECK que possa sustentar isso** — a regra depende de quem pede, e o banco não conhece papel. Sete ocupações passadas nasceram antes da guarda e **ficaram**: duas com cobrança em aberto, e apagar cobrança por script é pior que a origem | Média — invariante só de aplicação, por impossibilidade e não por descuido |
-| 7 | Sem e-mail transacional (GAP-004): recuperação de senha é manual, via admin | Baixa — ADR-013 |
+| 7 | Sem e-mail de recuperação de senha (GAP-004): recuperação é manual, via admin. **Desde a SPEC-083 (nesta branch) existe e-mail, mas só o convite de acesso** (ADR-030); "esqueci minha senha" continua com a SPEC-051 | Baixa — ADR-013 |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
 | 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
 | 11 | ~~**DEF-006 — o `GET` e o `PUT` da chamada discordam sobre quem ela cobre.**~~ — **fechado em 2026-09-26 (SPEC-076)**: o `PUT` saiu, e não há mais escritor humano de presença para discordar do `GET`. `chamada()` com cabeçalho `completa` devolve o snapshot (INV-020 estrita); `salvarChamada()` recalcula `esperados` como `matriculados hoje ∪ já registrados`. Matrícula posterior a uma chamada completa faz o `PUT` do que o próprio `GET` devolveu virar 422 `CHAMADA_INCOMPLETA`, acusando aluno que a tela não mostra — e sem saída pelo produto (LIM-002: o gestor só lê) | **Alta quando ocorrer** — reproduzida em produção em 2026-08-23 |
@@ -1729,6 +1789,8 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | ID | Módulo | Escreve em | Invariantes |
 |---|---|---|---|
 | MOD-001 | AuthIdentity | `usuarios`, `refresh_tokens`, `convites_aluno` | INV-002, INV-004, INV-008, INV-009, INV-013 |
+| MOD-001 (`AcessoModule`) | AcessoModule | `convites_de_acesso`; na ativação, `usuarios` (senha) e `refresh_tokens` (revoga) | **SPEC-083.** INV-083a a INV-083f. Módulo Nest próprio, com os dados de MOD-001, por ciclo: `AuthModule → PeopleModule`, e o `PeopleModule` emite convite. **A importação (MOD-003) também escreve `convites_de_acesso`**, no SQL cru dela, com linhas preparadas por `AcessoService.prepararConvite` |
+| **MOD-015** | **Email** | — (sem tabela; quem grava o resultado do envio é quem emitiu) | **SPEC-083.** INV-083e, INV-083f, INV-083h. Porta `ProvedorDeEmail` (token `PROVEDOR_DE_EMAIL`), que **nunca lança**; Resend em produção, memória nos testes; sem controller |
 | MOD-002 | CompanyManagement | `empresas` | INV-005 |
 | MOD-003 | PeopleManagement | `alunos`, `professores`, `niveis` | INV-002, INV-006, INV-010, INV-013, INV-014 |
 | MOD-004 | ClassScheduling | `turmas`, `turma_alunos`, `presencas`, `chamadas` | INV-003, INV-012, INV-015 a INV-020, INV-026, INV-027 |
@@ -1748,7 +1810,10 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 `PaymentConfigModule → CourtsModule`;
 `ClassesModule, PeopleModule, DashboardModule → FrequenciaModule`;
 `ClassesModule, FrequenciaModule → PresencaAutomaticaModule` (SPEC-057, só
-Prisma por baixo). Sem ciclos.
+Prisma por baixo); **SPEC-083:** `PeopleModule → AcessoModule, EmailModule`,
+`AcessoModule → EmailModule`, e o `AppModule` registra o `EmailModule` direto,
+para a configuração ser validada no boot. Sem ciclos — o `AcessoModule` não
+importa o `PeopleModule`.
 **`StorageModule` não tem dependente nenhum hoje** — é fundação registrada
 antes do consumidor, e quem passa a depender dela é a SPEC-018. Exporta
 `StorageService` (o caminho de leitura, com a conferência obrigatória) e
@@ -2261,6 +2326,112 @@ repositórios** — `scripts/gate-g5-chave-privada.mjs` aqui, `gates-de-push.mjs
 nos três fronts. O aprendizado que os produziu: os primeiros gates procuravam o
 **nome** da variável, e bastava cadastrá-la com outro nome para passar por
 todos. **O nome não é o portador; o valor é.**
+
+### O convite de acesso por e-mail: MOD-015 e o `AcessoModule` (SPEC-083)
+
+*Escrita em 2026-10-04 sobre a branch `spec083/convite-por-email`
+(`e3b178b`). **Nada disto está em produção**: a branch não foi enviada, e a
+operação na Resend ainda tem três itens por confirmar (`OPERATIONS.md`,
+"Runbook — E-mail pela Resend"). Decisão: ADR-030.*
+
+**O produto passou a enviar um e-mail, e só um: o convite de acesso.** O gestor
+o emite pela ficha do aluno ou do professor, ou marca linhas na importação; a
+pessoa recebe um link de uso único e cria a própria senha. Três peças, e a
+fronteira entre elas é o desenho:
+
+| Peça | Arquivos | Faz | Não faz |
+|---|---|---|---|
+| **MOD-015 — Email** (`EmailModule`) | `src/email/`: `provedor-de-email.ts` (porta, motivos, blocos de 100), `resend-provedor-de-email.ts`, `memoria-provedor-de-email.ts`, `email.config.ts`, `escapar-html.ts`, `modelos/convite-de-acesso.ts` | monta e envia a mensagem; traduz o erro da Resend num dos cinco motivos | não toca o banco; não conhece convite nem pessoa além dos campos do modelo |
+| **`AcessoModule`** (dados de MOD-001) | `src/acesso/`: `acesso.service.ts`, `ativacao-publica.controller.ts`, `traduzir-violacao-de-unicidade.ts`, `dto/` | emite (ficha), consulta e ativa (rotas públicas), deriva a situação; grava o resultado do envio | não importa o `PeopleModule` |
+| **a importação** (MOD-003) | `src/people/importacao/` | escreve as linhas de convite no SQL cru dela, dentro da transação, e manda o lote depois do `COMMIT` | não usa o tradutor por constraint (trata o `23505` pela etapa, D3) |
+
+**A porta nunca lança.** `enviar` e `enviarLote` devolvem, por mensagem, `{ ok:
+true, id }` ou `{ ok: false, motivo }`, com `motivo` ∈ `cota`, `recusado`,
+`indisponivel`, `tempo_esgotado`, `configuracao`. O convite já está gravado
+quando o envio acontece — **depois do `COMMIT`** —, e uma exceção ali viraria
+`500` para uma importação que deu certo. O resultado vai para
+`convites_de_acesso.email_resultado`/`email_motivo`/`email_em` num `UPDATE`
+seguinte; se o processo cair entre os dois, a ficha mostra `falhou` com
+`sem_confirmacao`. O lote é partido em blocos de 100, uma chamada e uma chave
+de idempotência por bloco (o `sha256` dos ids); o envio avulso usa
+`convite-de-acesso/<id>`. Cada chamada à Resend tem teto de 10 s
+(`TEMPO_MAXIMO_POR_CHAMADA_MS`).
+
+**Só o adaptador importa `resend`** (INV-083h), e um gate varre `src/` atrás de
+`from 'resend'` (`so-o-adaptador-importa-resend.spec.ts`). **Não há adaptador
+de log**: logar o corpo logaria o link. O de memória é o padrão fora de
+produção, e o boot avisa em `warn` quando ele está ligado.
+
+**A configuração é validada no boot** (`email.config.ts`, no molde de
+`storage.config.ts`), e é por isso que o `AppModule` registra o `EmailModule`
+mesmo sem consumidor direto. Em produção não há padrão: sem `EMAIL_PROVEDOR`
+(só `resend`), `RESEND_API_KEY`, `EMAIL_REMETENTE`, `EMAIL_RESPONDER_PARA` ou
+`URL_CLIENTE` (`https://`, sem caminho), o app não sobe. O módulo exporta a
+porta e uma configuração **sem a chave** (`CONFIGURACAO_DOS_MODELOS`); a com a
+chave fica dentro dele, como o `STORAGE_CONFIG`.
+
+**O link sai da configuração, nunca da requisição** (INV-083e):
+`montarLinkDeAtivacao` monta `URL_CLIENTE/ativar/<token>` e não recebe
+`Request`. O modelo escapa todo valor de pessoa (`escaparHtml`), higieniza o
+nome do clube no remetente (`"<clube> via PlayCK" <EMAIL_REMETENTE>`) e tem
+uma imagem só, o banner, servido pelo Cliente em `/email/playck-banner.jpg`.
+
+**Ativar é uma transação com o usuário travado primeiro** (D7): o bcrypt da
+senha nova é calculado **antes**; dentro, localiza o convite pelo `sha256` do
+token, trava o usuário (`FOR UPDATE OF u`), confere conta ativa, senha ainda
+temporária, empresa ativa e a impressão da credencial, reivindica com `UPDATE
+… WHERE usado_em IS NULL AND revogado_em IS NULL AND expira_em > now()` (0
+linhas → `410`), grava a senha e revoga os refresh tokens. Qualquer falha é o
+mesmo `410 LINK_INVALIDO`, um objeto congelado (`LINK_INVALIDO`) para o corpo
+ser idêntico byte a byte. **Emitir toma a mesma trava** (`emitirNaTransacao`),
+revoga o convite vivo e insere o novo — é ela que serializa ativar × reenviar.
+Conta com senha própria é `409 CONTA_JA_ATIVADA`. No professor sem conta, a
+conta é criada na mesma transação pelo `TeachersService` (que o
+`AcessoService` recebe como função, sem importar o `PeopleModule`), e a
+corrida é decidida pelo `UNIQUE` de `usuarios.email`.
+
+**O tradutor é por constraint, e lê modelo E colunas** do `P2002`, porque o
+Prisma não traz o nome da constraint (`traduzirViolacaoDeUnicidade`, com a
+tabela do `meta` medido no comentário): `Usuario`/`[email]` →
+`EMAIL_EM_USO`, `ConviteDeAcesso`/`[usuario_id]` → `CONVITE_EM_EMISSAO`; a
+mesma coluna em `Professor`, ou o mesmo modelo com `[id]` ou `[token_hash]`,
+sobe sem tradução.
+
+**A importação** (SPEC-083/D3, D4, D5) entra no protocolo da SPEC-082 como um
+escritor de `turma_alunos` a mais, pelo modo **`lote-novo`** de
+`travarNivelDaEmpresa` (o terceiro valor de `ModoDaTrava`, ao lado de
+`leitura` e `escrita`): a trava do clube compartilhada com o prazo de 2 s,
+**sem** trava por aluno, e a recusa de matricular `aluno_id` que não saiu do
+próprio `INSERT`. Depois, `FOR KEY SHARE` na empresa, nos níveis citados e no
+gestor; `FOR UPDATE` nas turmas do arquivo em ordem de `id`; a conferência de
+turma refeita sob as travas; quatro escritas em SQL cru e em lote (`usuarios`
+→ `alunos` → `turma_alunos` → `convites_de_acesso`, os usuários em ordem de
+e-mail), **cada uma precedida de uma instrução que fixa `statement_timeout` e
+`lock_timeout` no que sobra do prazo**, e o `statement_timeout` devolvido ao
+padrão antes do `COMMIT`. `timeout` da transação: 15 s
+(`TIMEOUT_DA_IMPORTACAO_MS`). **Nenhum bcrypt dentro da transação**: as senhas
+das linhas não convidadas são calculadas antes, e as convidadas recebem todas o
+hash de **um** segredo descartado por importação. O `23505` é decidido pela
+etapa: só na de `usuarios` a conferência é refeita, e só erro de e-mail vira
+`422`; em qualquer outra, `500`.
+
+**Os gates**, por camada:
+
+| Gate | Prova |
+|---|---|
+| `src/email/email.spec.ts` | porta, configuração (AC-030), escape e cópia literal do HTML (AC-028), remetente e `reply_to` (AC-041), blocos de 100 (AC-032) |
+| `src/email/so-o-adaptador-importa-resend.spec.ts` | um arquivo só importa `resend` (AC-029) |
+| `src/acesso/acesso.service.spec.ts`, `traduzir-violacao-de-unicidade.spec.ts` | situação, emissão, ativação; o tradutor |
+| `src/people/importacao/sem-bcrypt-na-transacao.spec.ts` | nenhum `bcrypt` começa dentro do callback do `$transaction` (AC-014, estrutural) |
+| `src/people/importacao/prazo-em-toda-escrita.spec.ts` | cada escrita vem depois do ajuste do prazo, nos dois ramos, e a reposição antes do `COMMIT` (AC-051) |
+| `src/classes/escritores-de-matricula.spec.ts` | conhece a importação, com o modo `lote-novo` (AC-047) |
+| `test/banco/spec-083-*.db-spec.ts` (cinco arquivos) | as constraints da tabela, a corrida do professor e o `meta` real do tradutor, a importação, a importação concorrente, a unicidade inesperada |
+| `test/fit/fit-056-ativacao-concorrente.fit-spec.ts`, `fit-057-importacao-concorrente.fit-spec.ts`, `spec-083-acesso.fit-spec.ts` | ativação e emissão concorrentes; a importação contra matrículas e contra si mesma, com o prazo medido por amostras (`test/fit/classificar-amostras.ts`); as rotas do acesso por HTTP |
+
+*As provas HTTP do acesso ficaram em `test/fit/spec-083-acesso.fit-spec.ts`, e
+não em `test/acesso.e2e-spec.ts`, que a TASK-004 da spec listava e não existe.*
+**Nenhum destes gates rodou no CI ainda**: a branch não foi enviada, e o
+`evd.json` e o `CLI_AUDIT.md` da SPEC-083 não existem em 2026-10-04.
 
 ## 11. Patterns observados
 

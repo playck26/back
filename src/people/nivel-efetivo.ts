@@ -1,6 +1,11 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ChaveDeLock } from '../common/lock/chave-de-lock';
-import { instrucaoInicialDaMatricula } from '../common/lock/prazo-de-espera';
+import {
+  instrucaoInicialDaMatricula,
+  MARCADOR_DO_PRAZO,
+  PRAZO_DA_MATRICULA_MS,
+  RESTO_DO_PRAZO,
+} from '../common/lock/prazo-de-espera';
 
 /**
  * SPEC-075 — **o nível decide o acesso, e a regra mora aqui, num lugar só.**
@@ -437,20 +442,91 @@ export async function conferirEdicaoDeNivel<T>(
  * turmas (SPEC-023) conta com isso. Ordem fixa: clube, depois aluno, depois
  * qualquer lock de linha.
  *
- * O `modo` (`'leitura' | 'escrita'`) é **obrigatório** e sem padrão, e a
- * leitura exige o `alunoId` (sobrecarga): ninguém herda o modo errado por
- * omissão. A instrução do leitor grava também o prazo absoluto da matrícula
- * (`prazo-de-espera.ts`, D2).
+ * O `modo` (`'leitura' | 'escrita' | 'lote-novo'`) é **obrigatório** e sem
+ * padrão, e a leitura exige o `alunoId` (sobrecarga): ninguém herda o modo
+ * errado por omissão. A instrução do leitor grava também o prazo absoluto da
+ * matrícula (`prazo-de-espera.ts`, D2).
+ *
+ * ## SPEC-083/D3 — o quarto modo, `lote-novo`: a importação com turma
+ *
+ * A importação de alunos escreve `turma_alunos` para alunos que ela mesma
+ * cria. Toma a trava do clube **compartilhada** — a edição de nível, que trava
+ * exclusiva, continua esperando a importação (INV-075h), e as matrículas de
+ * outras turmas não esperam (INV-083i) — e grava o mesmo prazo absoluto de
+ * 2 s, na mesma instrução, como o leitor.
+ *
+ * **Sem a trava por aluno, e é por isso que o modo tem nome próprio.** Ela
+ * existe para pôr em fila duas matrículas do MESMO aluno; os alunos do lote
+ * nascem na transação de quem trava, com ids gerados por ela, e até o
+ * `COMMIT` nenhuma outra transação os enxerga (READ COMMITTED). Nenhuma
+ * matrícula concorrente pode citá-los.
+ *
+ * Esse argumento só vale para aluno criado ali, e o modo devolve quem o cobra
+ * ({@link LoteNovo}): a importação registra os ids que saíram do próprio
+ * `INSERT` em `alunos` e exige que todo `aluno_id` de `turma_alunos` esteja
+ * entre eles (AC-049). Um aluno de fora seria uma matrícula sem a trava dele.
  */
-export type ModoDaTrava = 'leitura' | 'escrita';
+export type ModoDaTrava = 'leitura' | 'escrita' | 'lote-novo';
 
 type ClienteDaTrava = Pick<
   Prisma.TransactionClient,
   '$executeRaw' | '$queryRaw'
 >;
 
+/**
+ * SPEC-083/D3 e AC-049 — **o que o modo `lote-novo` cobra de quem o tomou.**
+ *
+ * Não é trava: é a condição sob a qual dispensar a trava do aluno é correto.
+ * Quem escreve `turma_alunos` registra os alunos que o `INSERT` da mesma
+ * transação devolveu e, antes de matricular, exige que todos estejam lá. Um id
+ * de fora é **erro de programação** — lança `Error`, que sobe como 500 e
+ * desfaz tudo, e não uma recusa ao gestor: nenhum arquivo bem-formado chega
+ * aqui com um aluno que não foi criado nele.
+ */
+export class LoteNovo {
+  private readonly criados = new Set<string>();
+
+  /** Os ids que o `INSERT` em `alunos` desta transação devolveu. */
+  registrarCriados(ids: readonly string[]): void {
+    for (const id of ids) this.criados.add(id);
+  }
+
+  exigirCriados(alunoIds: readonly string[]): void {
+    const deFora = alunoIds.filter((id) => !this.criados.has(id));
+    if (deFora.length > 0) {
+      // O texto não escreve a chamada da trava com parênteses: o gate de
+      // escritores (`escritores-de-matricula.spec.ts`) a leria como um
+      // caminho que trava sem modo.
+      throw new Error(
+        `trava do clube no modo lote-novo: ${deFora.length} aluno(s) não saíram do INSERT desta transação (${deFora.slice(0, 3).join(', ')}) — sem a trava por aluno, só se matricula quem nasceu aqui`,
+      );
+    }
+  }
+}
+
+/**
+ * A instrução inicial do `lote-novo`: grava o prazo absoluto, recalcula o
+ * `lock_timeout` e toma a trava do clube **compartilhada**. É a do leitor
+ * (`instrucaoInicialDaMatricula`) sem o último passo, a trava do aluno — e
+ * mora aqui, e não ao lado dela, porque é este modo que a dispensa e é aqui
+ * que está a razão.
+ */
+function instrucaoInicialDoLoteNovo(chaveDoClube: bigint): Prisma.Sql {
+  return Prisma.sql`
+    SELECT 1 AS ok
+      FROM (SELECT set_config('${Prisma.raw(MARCADOR_DO_PRAZO)}',
+                     (clock_timestamp()
+                      + ${PRAZO_DA_MATRICULA_MS}::int * interval '1 millisecond')::text,
+                     true) AS p) a,
+           LATERAL (SELECT set_config('lock_timeout', ${RESTO_DO_PRAZO}, true) AS cfg
+                     WHERE a.p IS NOT NULL) r1,
+           LATERAL (SELECT pg_advisory_xact_lock_shared(${chaveDoClube}::bigint) AS c
+                     WHERE r1.cfg IS NOT NULL) b`;
+}
+
 // A sobrecarga é o que impõe o aluno na leitura (D1, v8): sem ele, o leitor
-// não teria a trava do aluno, e o limite de turmas furaria.
+// não teria a trava do aluno, e o limite de turmas furaria. O `lote-novo` não
+// recebe aluno nenhum, e devolve o que cobra no lugar dela (SPEC-083/D3).
 export async function travarNivelDaEmpresa(
   db: ClienteDaTrava,
   companyId: string,
@@ -465,15 +541,24 @@ export async function travarNivelDaEmpresa(
 export async function travarNivelDaEmpresa(
   db: ClienteDaTrava,
   companyId: string,
+  modo: 'lote-novo',
+): Promise<LoteNovo>;
+export async function travarNivelDaEmpresa(
+  db: ClienteDaTrava,
+  companyId: string,
   modo: ModoDaTrava,
   alunoId?: string,
-): Promise<void> {
+): Promise<void | LoteNovo> {
   const chave = ChaveDeLock.deTexto(`nivel-da-empresa:${companyId}`);
   if (modo === 'escrita') {
     // `$executeRaw`, e não `$queryRaw`: a função devolve `void`, que o Prisma
     // não desserializa (medido na 4ª rodada, com `pg_sleep`).
     await db.$executeRaw`SELECT pg_advisory_xact_lock(${chave}::bigint)`;
     return;
+  }
+  if (modo === 'lote-novo') {
+    await db.$queryRaw(instrucaoInicialDoLoteNovo(chave));
+    return new LoteNovo();
   }
   if (!alunoId) {
     throw new Error('travarNivelDaEmpresa: o modo leitura exige o aluno');

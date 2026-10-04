@@ -175,6 +175,11 @@ model Usuario {
   /// SPEC-062 — os aparelhos desta pessoa e os avisos destinados a ela.
   assinaturasPush              AssinaturaPush[]
   notificacoes                 Notificacao[]
+  /// SPEC-083 — os links de ativacao desta conta, e os que esta pessoa emitiu
+  /// como gestora. Nomeadas porque `ConviteDeAcesso` tem DUAS pernas para
+  /// `usuarios`: a do dono (composta) e a de quem emitiu (simples).
+  convitesDeAcesso             ConviteDeAcesso[]    @relation("ConviteDeAcessoDoUsuario")
+  convitesDeAcessoEmitidos     ConviteDeAcesso[]    @relation("ConviteDeAcessoCriadoPor")
 
   /// DEF-024 fase 1 — alvo da FK composta de `alunos`. `company_id` aqui e
   /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
@@ -1997,4 +2002,76 @@ enum EstadoDaPreReserva {
   encerrada
 
   @@map("estado_da_pre_reserva")
+}
+
+/// SPEC-083/D6 — **o convite de acesso: o link de uso unico para a pessoa
+/// criar a propria senha**, emitido na importacao (linha convidada) e na
+/// ficha do aluno e do professor (enviar/reenviar).
+///
+/// O token NUNCA e guardado: so o sha256 dele, que e a chave de busca da
+/// ativacao (a mesma razao de `ConviteAluno`, SPEC-009). O token cru existe so
+/// em memoria, entre a emissao e o envio do e-mail (INV-083f).
+///
+/// **Tres coisas aqui sao do BANCO e nao deste arquivo**, e a migration
+/// `20261003120000_spec083_convites_de_acesso` e a fonte de verdade das tres:
+///
+///   1. o indice unico PARCIAL `convites_de_acesso_um_vivo_por_usuario`, em
+///      `usuario_id` `WHERE usado_em IS NULL AND revogado_em IS NULL`
+///      (INV-083b) -- o Prisma nao expressa `WHERE`, e um `@@unique` sem ele
+///      proibiria o segundo convite da vida inteira da conta. Um convite
+///      EXPIRADO e nao usado continua vivo para o indice: o reenvio o revoga;
+///   2. o CHECK `convites_de_acesso_fim_unico`: usado OU revogado, nunca os
+///      dois;
+///   3. o CHECK `convites_de_acesso_email_coerente`: `emailResultado` e
+///      `emailEm` sao nulos juntos ou preenchidos juntos. Os dois nulos querem
+///      dizer `sem_confirmacao` (D8): o processo caiu entre o commit e a
+///      gravacao do resultado.
+///
+/// `prisma migrate diff` nao enxerga nenhum dos tres, e nao acusa a falta.
+model ConviteDeAcesso {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId           String            @map("company_id") @db.Uuid
+  usuarioId           String            @map("usuario_id") @db.Uuid
+  criadoPorId         String            @map("criado_por_id") @db.Uuid
+  /// sha256 do token, nunca o token.
+  tokenHash           String            @unique(map: "convites_de_acesso_token_hash_key") @map("token_hash")
+  /// sha256 de `usuarios.senha_hash` na emissao (INV-083c). A ativacao a
+  /// compara com a senha lida sob `FOR UPDATE`: senha trocada por QUALQUER
+  /// caminho deixa de bater, porque o bcrypt tem salt.
+  impressaoCredencial String            @map("impressao_credencial")
+  /// 7 dias, a validade do convite e da senha temporaria (ADR-013).
+  expiraEm            DateTime          @map("expira_em") @db.Timestamptz(6)
+  usadoEm             DateTime?         @map("usado_em") @db.Timestamptz(6)
+  revogadoEm          DateTime?         @map("revogado_em") @db.Timestamptz(6)
+  /// D8 — gravados num UPDATE DEPOIS do commit da emissao.
+  emailResultado      ResultadoDoEmail? @map("email_resultado")
+  emailMotivo         String?           @map("email_motivo")
+  emailEm             DateTime?         @map("email_em") @db.Timestamptz(6)
+  criadoEm            DateTime          @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  /// INV-083d — FK COMPOSTA para `usuarios(company_id, id)`: com `companyId`
+  /// obrigatorio, o `super_admin` (de `company_id` nulo) nao tem convite, e o
+  /// convite nao cruza empresa. `Cascade` porque convite de conta que nao
+  /// existe mais nao tem o que ativar. **`onUpdate: NoAction` e explicito de
+  /// proposito:** o padrao do Prisma e `Cascade`, e a migration (como a D6)
+  /// nao escreve acao no UPDATE -- omitir aqui seria drift.
+  usuario   Usuario @relation("ConviteDeAcessoDoUsuario", fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, onUpdate: NoAction, map: "convites_de_acesso_usuario_fkey")
+  /// Quem emitiu. FK simples, sem acao: o banco recusa apagar o gestor que
+  /// convidou, em vez de decidir por ele. Mesmo motivo do `NoAction` explicito.
+  criadoPor Usuario @relation("ConviteDeAcessoCriadoPor", fields: [criadoPorId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "convites_de_acesso_criado_por_fkey")
+
+  @@map("convites_de_acesso")
+}
+
+/// SPEC-083/D8 — o resultado do envio do convite. **O terceiro estado e o
+/// NULL** (`sem_confirmacao`): ninguem o grava, ele e a ausencia de gravacao.
+///
+/// Ordem NOVA entra no FIM (mesma regra de `EstadoDaNotificacao`).
+enum ResultadoDoEmail {
+  /// Aceito pela Resend — nao quer dizer "chegou" (LIM-083a).
+  enviado
+  /// Recusado ou sem resposta; o motivo vai em `email_motivo`.
+  falhou
+
+  @@map("resultado_do_email")
 }

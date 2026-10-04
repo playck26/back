@@ -417,6 +417,29 @@ const ENUMS_DE_CODIGO = new Map<string, string[]>([
   ['OcorrenciaNoHistoricoResponseDto.origemInicial', [...ORIGENS_DA_CHAMADA]],
   ['OcorrenciaDoAlunoResponseDto.origem', [...ORIGENS_DA_CHAMADA]],
   ['OcorrenciaDoAlunoResponseDto.origemInicial', [...ORIGENS_DA_CHAMADA]],
+
+  // SPEC-083/D9 — a situação do convite por e-mail, derivada e NÃO gravada:
+  // vem de `derivarSituacao` (`acesso/acesso.service.ts`), cuja tabela é a da
+  // D9. Escrita aqui por extenso, e não importada, para uma situação nova lá
+  // ter de passar por este arquivo.
+  [
+    'SituacaoDoConviteResponseDto.situacao',
+    ['ativado', 'sem_conta', 'nao_enviado', 'enviado', 'falhou', 'expirado'],
+  ],
+  // SPEC-083/D8 — os cinco motivos da porta de e-mail (`MOTIVOS_DA_FALHA`),
+  // que é o que `email_motivo` grava, mais o `sem_confirmacao`, que ninguém
+  // grava: é o convite sem resultado (o processo caiu depois do commit).
+  [
+    'SituacaoDoConviteResponseDto.motivo',
+    [
+      'cota',
+      'recusado',
+      'indisponivel',
+      'tempo_esgotado',
+      'configuracao',
+      'sem_confirmacao',
+    ],
+  ],
 ]);
 
 function enumsPublicadosEmRespostas(): {

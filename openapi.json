@@ -558,6 +558,74 @@
         ]
       }
     },
+    "/api/v1/students/{id}/convite-de-acesso": {
+      "get": {
+        "operationId": "StudentsController_situacaoDoConvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SituacaoDoConviteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "operationId": "StudentsController_enviarConvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SituacaoDoConviteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/{id}/aprovar": {
       "post": {
         "operationId": "StudentsController_aprovar",
@@ -805,6 +873,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProfessorComSenhaTemporariaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "teachers"
+        ]
+      }
+    },
+    "/api/v1/teachers/{id}/convite-de-acesso": {
+      "get": {
+        "operationId": "TeachersController_situacaoDoConvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SituacaoDoConviteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "teachers"
+        ]
+      },
+      "post": {
+        "operationId": "TeachersController_enviarConvite",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SituacaoDoConviteResponseDto"
                 }
               }
             }
@@ -1312,6 +1448,11 @@
                   "arquivo": {
                     "type": "string",
                     "format": "binary"
+                  },
+                  "convidar": {
+                    "type": "string",
+                    "example": "3,5,9",
+                    "description": "Números de linha da planilha (contando o cabeçalho), separados por vírgula, que recebem convite por e-mail em vez de senha temporária. Um número que não é linha válida do arquivo responde 400 CONVIDAR_LINHA_INVALIDA, e nada é escrito. Ignorado com conferir=true."
                   }
                 }
               }
@@ -1344,6 +1485,60 @@
         ],
         "tags": [
           "alunos"
+        ]
+      }
+    },
+    "/api/v1/public/ativacao/{token}": {
+      "get": {
+        "operationId": "AtivacaoPublicaController_consultar",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AtivacaoPublicaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "ativacao"
+        ]
+      }
+    },
+    "/api/v1/public/ativacao": {
+      "post": {
+        "operationId": "AtivacaoPublicaController_ativar",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AtivarContaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ativacao"
         ]
       }
     },
@@ -7209,6 +7404,51 @@
           "senhaTemporaria"
         ]
       },
+      "SituacaoDoConviteResponseDto": {
+        "type": "object",
+        "properties": {
+          "situacao": {
+            "type": "string",
+            "enum": [
+              "ativado",
+              "sem_conta",
+              "nao_enviado",
+              "enviado",
+              "falhou",
+              "expirado"
+            ],
+            "example": "enviado"
+          },
+          "em": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expiraEm": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "motivo": {
+            "type": "string",
+            "enum": [
+              "cota",
+              "recusado",
+              "indisponivel",
+              "tempo_esgotado",
+              "configuracao",
+              "sem_confirmacao"
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "situacao",
+          "em",
+          "expiraEm",
+          "motivo"
+        ]
+      },
       "CreateStudentDto": {
         "type": "object",
         "properties": {
@@ -7791,23 +8031,20 @@
             "type": "string",
             "nullable": true
           },
-          "dataNascimento": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "emergenciaNome": {
-            "type": "string",
-            "nullable": true
-          },
-          "emergenciaTelefone": {
-            "type": "string",
-            "nullable": true
-          },
           "nivelId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Terça 19h"
           }
         },
         "required": [
@@ -7815,10 +8052,9 @@
           "nome",
           "email",
           "telefone",
-          "dataNascimento",
-          "emergenciaNome",
-          "emergenciaTelefone",
-          "nivelId"
+          "nivelId",
+          "turmaId",
+          "turmaNome"
         ]
       },
       "RelatorioDeImportacaoDto": {
@@ -7853,6 +8089,33 @@
           "linhas"
         ]
       },
+      "ConviteDaImportacaoDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "enum": [
+              "enviado",
+              "falhou"
+            ],
+            "example": "enviado"
+          },
+          "motivo": {
+            "type": "string",
+            "enum": [
+              "cota",
+              "recusado",
+              "indisponivel",
+              "tempo_esgotado",
+              "configuracao"
+            ],
+            "example": "cota"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
       "AlunoImportadoDto": {
         "type": "object",
         "properties": {
@@ -7870,15 +8133,22 @@
           },
           "senhaTemporaria": {
             "type": "string",
-            "example": "Kx7-mQ2p",
-            "description": "Sai UMA VEZ. Nenhuma outra rota a devolve -- se o gestor perder, o caminho e regenerar."
+            "example": "pck-ACDE34",
+            "description": "Sai UMA VEZ, so na linha NAO convidada. Nenhuma outra rota a devolve -- se o gestor perder, o caminho e regenerar."
+          },
+          "convite": {
+            "description": "So na linha convidada (campo `convidar`).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConviteDaImportacaoDto"
+              }
+            ]
           }
         },
         "required": [
           "linha",
           "alunoId",
-          "email",
-          "senhaTemporaria"
+          "email"
         ]
       },
       "ImportacaoConcluidaDto": {
@@ -7893,6 +8163,50 @@
         },
         "required": [
           "criados"
+        ]
+      },
+      "EmpresaDaAtivacaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          }
+        },
+        "required": [
+          "nome"
+        ]
+      },
+      "AtivacaoPublicaResponseDto": {
+        "type": "object",
+        "properties": {
+          "primeiroNome": {
+            "type": "string",
+            "example": "Maria"
+          },
+          "empresa": {
+            "$ref": "#/components/schemas/EmpresaDaAtivacaoResponseDto"
+          }
+        },
+        "required": [
+          "primeiroNome",
+          "empresa"
+        ]
+      },
+      "AtivarContaDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "senha": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "token",
+          "senha"
         ]
       },
       "PlanoResponseDto": {

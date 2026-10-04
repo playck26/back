@@ -4,7 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import {
+  hashDeSegredoDescartado,
+  type ContaDoConvite,
+} from '../acesso/acesso.service';
+import { EMAIL_EM_USO } from '../acesso/traduzir-violacao-de-unicidade';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   gerarSenhaTemporaria,
@@ -42,6 +48,22 @@ type ProfessorCru = {
   /** SPEC-047 — `Decimal` do Prisma; vira `number` no `comFoto`. */
   precoAula?: { toString(): string } | null;
 };
+
+/**
+ * SPEC-013/AC-002 — o e-mail da ficha é o login: sem ele não há conta. Vale
+ * para o `gerarAcesso` e para o convite do professor sem conta (SPEC-083/D9).
+ */
+function exigirEmail(professor: { email: string | null }): string {
+  if (!professor.email) {
+    throw new BadRequestException({
+      statusCode: 400,
+      code: 'EMAIL_OBRIGATORIO',
+      message:
+        'Preencha o e-mail do professor antes de gerar o acesso — ele é o login.',
+    });
+  }
+  return professor.email;
+}
 
 @Injectable()
 export class TeachersService {
@@ -223,15 +245,7 @@ export class TeachersService {
     id: string,
   ): Promise<ProfessorComSenhaTemporariaResponseDto> {
     const professor = await this.carregarCru(companyId, id);
-
-    if (!professor.email) {
-      throw new BadRequestException({
-        statusCode: 400,
-        code: 'EMAIL_OBRIGATORIO',
-        message:
-          'Preencha o e-mail do professor antes de gerar o acesso — ele é o login.',
-      });
-    }
+    const email = exigirEmail(professor);
 
     const senhaTemporaria = gerarSenhaTemporaria();
     const senhaHash = await bcrypt.hash(senhaTemporaria, 12);
@@ -259,42 +273,103 @@ export class TeachersService {
       return { ...(await this.comFoto(professor)), senhaTemporaria };
     }
 
-    // AC-004 — o e-mail ja e de outra pessoa. Checado antes da transacao
-    // para dar mensagem util, e de novo pelo UNIQUE do banco, que e quem
-    // de fato garante sob concorrencia.
-    const emailEmUso = await this.prisma.usuario.findUnique({
-      where: { email: professor.email },
-    });
-    if (emailEmUso) {
-      throw new ConflictException({
-        statusCode: 409,
-        code: 'EMAIL_EM_USO',
-        message:
-          'Este e-mail já pertence a outra conta. Uma pessoa não pode ter duas contas na plataforma (LIM-001).',
-      });
+    await this.recusarEmailEmUso(email);
+
+    const { vinculado } = await this.prisma.$transaction((tx) =>
+      this.criarContaNaTransacao(tx, companyId, professor, email, senhaHash),
+    );
+
+    return { ...(await this.comFoto(vinculado)), senhaTemporaria };
+  }
+
+  /**
+   * SPEC-083/D9 — a conta do convite por e-mail, pela ficha do professor.
+   *
+   * Com conta, é ela, e o convite segue o caminho do aluno. **Sem conta,
+   * devolve como criá-la**, e a criação roda dentro da transação da emissão
+   * (`AcessoService.enviarParaConta`): conta, vínculo e convite entram juntos.
+   *
+   * É a conta do `gerarAcesso`, com papel, nome, telefone e e-mail da ficha e
+   * as mesmas recusas, com uma diferença: o hash é de um segredo descartado,
+   * e não de uma senha mostrada. Ninguém conhece a senha; a pessoa cria a sua
+   * pelo link. O bcrypt roda aqui, **antes** de a transação abrir (D4).
+   */
+  async contaParaConvite(
+    companyId: string,
+    id: string,
+  ): Promise<ContaDoConvite> {
+    const professor = await this.carregarCru(companyId, id);
+    if (professor.usuarioId) {
+      return { usuarioId: professor.usuarioId };
     }
 
-    const atualizado = await this.prisma.$transaction(async (tx) => {
-      const usuario = await tx.usuario.create({
-        data: {
-          email: professor.email as string,
-          senhaHash,
-          nome: professor.nome,
-          telefone: professor.telefone,
-          role: 'professor',
-          companyId,
-          senhaTemporaria: true,
-          senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
-        },
-      });
+    const email = exigirEmail(professor);
+    await this.recusarEmailEmUso(email);
+    const senhaHash = await hashDeSegredoDescartado();
 
-      return tx.professor.update({
-        where: { id },
-        include: COM_FOTO_DA_CONTA,
-        data: { usuarioId: usuario.id },
-      });
+    return {
+      criarConta: async (tx) =>
+        (
+          await this.criarContaNaTransacao(
+            tx,
+            companyId,
+            professor,
+            email,
+            senhaHash,
+          )
+        ).usuarioId,
+    };
+  }
+
+  /**
+   * AC-004 (SPEC-013) — o e-mail já é de outra pessoa. Conferido antes da
+   * transação para dar mensagem útil, e de novo pelo UNIQUE do banco, que é
+   * quem de fato garante sob concorrência. O corpo é o mesmo que o tradutor
+   * da SPEC-083 dá a quem perde a corrida no UNIQUE.
+   */
+  private async recusarEmailEmUso(email: string): Promise<void> {
+    const emailEmUso = await this.prisma.usuario.findUnique({
+      where: { email },
+    });
+    if (emailEmUso) {
+      throw new ConflictException(EMAIL_EM_USO);
+    }
+  }
+
+  /**
+   * A conta do professor e o vínculo na ficha, **dentro da transação de quem
+   * chama**: a do `gerarAcesso` e a da emissão do convite (SPEC-083). O hash
+   * chega pronto, porque bcrypt não roda dentro de transação.
+   *
+   * Nasce com senha temporária e a validade de 7 dias nos dois casos: no
+   * convite, a senha é a que ninguém conhece, e o link (ou uma senha
+   * temporária gerada depois) a substitui.
+   */
+  private async criarContaNaTransacao(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    professor: { id: string; nome: string; telefone: string | null },
+    email: string,
+    senhaHash: string,
+  ) {
+    const usuario = await tx.usuario.create({
+      data: {
+        email,
+        senhaHash,
+        nome: professor.nome,
+        telefone: professor.telefone,
+        role: 'professor',
+        companyId,
+        senhaTemporaria: true,
+        senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
+      },
     });
 
-    return { ...(await this.comFoto(atualizado)), senhaTemporaria };
+    const vinculado = await tx.professor.update({
+      where: { id: professor.id },
+      include: COM_FOTO_DA_CONTA,
+      data: { usuarioId: usuario.id },
+    });
+    return { usuarioId: usuario.id, vinculado };
   }
 }

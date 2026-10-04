@@ -1,0 +1,6 @@
+# SPEC-083/TASK-001 -- a fixture do modelo de importacao e comparada BYTE A
+# BYTE com o arquivo da spec (BOM, `;` e CRLF; SHA-256 conferido no teste).
+# Sem `-text`, o `core.autocrlf` desta maquina (e o checkout do CI em Linux)
+# trocaria o CRLF por LF, e o teste passaria a provar um arquivo que o Excel
+# nao grava.
+test/fixtures/modelo-alunos.csv -text
