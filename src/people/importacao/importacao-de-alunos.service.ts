@@ -1431,11 +1431,19 @@ export class ImportacaoDeAlunosService {
     // Foi o CLUBE que trouxe estas pessoas: elas não pedem para entrar, já
     // entraram. Mesmo raciocínio do convite (AC-014 da SPEC-009). E o nível
     // vazio vai NULO (S8, ver a conferência).
+    //
+    // `alunos.created_at` é TIMESTAMP(3) sem fuso, como as de `usuarios`, e é
+    // a ordem da lista de alunos (`StudentsService`): deixado ao `DEFAULT`, o
+    // importado nasceria, numa sessão fora de UTC, horas "mais velho" que o
+    // cadastrado à mão no mesmo minuto. Daí o UTC explícito (ver
+    // `inserirUsuarios`).
     const gravados = await tx.$queryRaw<{ id: string }[]>`
       WITH ${CTE_DO_PRAZO}
-      INSERT INTO alunos (id, usuario_id, company_id, nivel_id, vinculo)
+      INSERT INTO alunos (id, usuario_id, company_id, nivel_id, vinculo,
+                          created_at)
       SELECT d.id, d.usuario_id, ${companyId}::uuid,
-             nullif(d.nivel_id, '')::uuid, 'aprovado'::vinculo_aluno
+             nullif(d.nivel_id, '')::uuid, 'aprovado'::vinculo_aluno,
+             (now() AT TIME ZONE 'UTC')
         FROM unnest(${linhas.map((l) => l.alunoId)}::uuid[],
                     ${linhas.map((l) => l.usuarioId)}::uuid[],
                     ${linhas.map((l) => l.linha.nivelId ?? '')}::text[])
@@ -1451,11 +1459,13 @@ export class ImportacaoDeAlunosService {
     linhas: readonly LinhaParaEscrever[],
   ): Promise<void> {
     // A turma já é desta transação, pelo `FOR UPDATE`; o aluno nasceu nela.
-    // Nenhuma das duas FKs espera.
+    // Nenhuma das duas FKs espera. `turma_alunos.created_at` também é
+    // TIMESTAMP sem fuso: o instante vai em UTC, como a API de modelo grava.
     const gravados = await tx.$executeRaw`
       WITH ${CTE_DO_PRAZO}
       INSERT INTO turma_alunos (id, turma_id, aluno_id, created_at)
-      SELECT gen_random_uuid(), d.turma_id, d.aluno_id, now()
+      SELECT gen_random_uuid(), d.turma_id, d.aluno_id,
+             (now() AT TIME ZONE 'UTC')
         FROM unnest(${linhas.map((l) => l.linha.turmaId as string)}::uuid[],
                     ${linhas.map((l) => l.alunoId)}::uuid[])
                AS d(turma_id, aluno_id)

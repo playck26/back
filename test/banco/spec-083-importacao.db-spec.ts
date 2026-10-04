@@ -309,14 +309,24 @@ describe('SPEC-083/AC-007 — a turma pelo nome, com caixa, acento e espaços di
       expect.objectContaining({ turmaId: t, turmaNome: 'Terça 19h' }),
     ]);
 
+    const antes = Date.now();
     const { r } = await pelaRota(csv);
+    const depois = Date.now();
     expect(r.status).toBe(200);
     const [criado] = corpoDe<ImportacaoConcluidaDto>(r).criados;
     const matricula = await db.turmaAluno.findMany({
       where: { turmaId: t },
-      select: { alunoId: true },
+      select: { alunoId: true, createdAt: true },
     });
-    expect(matricula).toEqual([{ alunoId: criado.alunoId }]);
+    expect(matricula.map((m) => m.alunoId)).toEqual([criado.alunoId]);
+    // TIMESTAMP sem fuso: o instante em UTC, como a API de modelo grava — e
+    // não deslocado pelo fuso da sessão (ver o AC-018). Folga de relógio só.
+    expect(matricula[0].createdAt.getTime()).toBeGreaterThanOrEqual(
+      antes - 5_000,
+    );
+    expect(matricula[0].createdAt.getTime()).toBeLessThanOrEqual(
+      depois + 5_000,
+    );
   });
 });
 
@@ -777,6 +787,14 @@ describe('SPEC-083/AC-018 — a linha convidada nasce sem senha conhecida; a nã
       noIntervalo(u.createdAt, antes, depois);
       noIntervalo(u.updatedAt, antes, depois);
     }
+    // O mesmo para `alunos.created_at`, que é a ordem da lista de alunos: o
+    // importado não pode cair abaixo de quem foi cadastrado à mão depois.
+    const alunos = await db.aluno.findMany({
+      where: { usuarioId: { in: [a.id, b.id, cris.id] } },
+      select: { createdAt: true },
+    });
+    expect(alunos).toHaveLength(3);
+    for (const al of alunos) noIntervalo(al.createdAt, antes, depois);
     // D4 — um segredo por importação: as duas convidadas têm o MESMO hash, e
     // ele não é o da linha com senha.
     expect(a.senhaHash).toBe(b.senhaHash);
