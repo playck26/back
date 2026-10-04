@@ -1392,14 +1392,26 @@ export class ImportacaoDeAlunosService {
     // individual, e a razão de a senha poder sair na resposta uma única vez.
     // A conta convidada também nasce com `senha_temporaria`: o link exige
     // isso (D7), e a senha dela ninguém conhece (D4).
+    //
+    // As três datas de `usuarios` são TIMESTAMP(3) SEM fuso, e a API de modelo
+    // — o cadastro individual, e esta importação antes da SPEC-083 — grava
+    // nelas o instante em UTC (o `created_at` e o `@updatedAt` ela mesma
+    // preenche). Um `timestamptz` atribuído à coluna seria convertido pelo
+    // `TimeZone` da SESSÃO: em `America/Sao_Paulo` a senha temporária
+    // valeria 3 h a menos que a do cadastro individual (AC-018 — "idêntica à
+    // de hoje"). Daí o `AT TIME ZONE 'UTC'` explícito nas três, e o
+    // `created_at` escrito aqui em vez de deixado ao `DEFAULT` do banco, que
+    // tem o mesmo deslocamento.
     const expiraEm = senhaTemporariaExpiraEm();
     const gravados = await tx.$executeRaw`
       WITH ${CTE_DO_PRAZO}
       INSERT INTO usuarios (id, email, senha_hash, nome, telefone, role, company_id,
-                            senha_temporaria, senha_temporaria_expira_em, updated_at)
+                            senha_temporaria, senha_temporaria_expira_em,
+                            created_at, updated_at)
       SELECT d.id, d.email, d.senha_hash, d.nome, nullif(d.telefone, ''),
              'aluno'::usuario_role, ${companyId}::uuid, true,
-             ${expiraEm}::timestamptz, now()
+             (${expiraEm}::timestamptz AT TIME ZONE 'UTC'),
+             (now() AT TIME ZONE 'UTC'), (now() AT TIME ZONE 'UTC')
         FROM unnest(${linhas.map((l) => l.usuarioId)}::uuid[],
                     ${linhas.map((l) => l.linha.email)}::text[],
                     ${linhas.map((l) => l.senhaHash)}::text[],

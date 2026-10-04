@@ -33,6 +33,7 @@ import { limparEmpresa } from './limpar-empresa';
 import { resposta, type Resposta, I6 } from './spec-082-fixture';
 import { AcessoService } from '../../src/acesso/acesso.service';
 import type { AccessTokenPayload } from '../../src/common/types/jwt-payload.type';
+import { SENHA_TEMPORARIA_VALIDADE_MS } from '../../src/common/utils/senha-temporaria';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import { MemoriaProvedorDeEmail } from '../../src/email/memoria-provedor-de-email';
 import type { MotivoDaFalha } from '../../src/email/provedor-de-email';
@@ -728,10 +729,12 @@ describe('SPEC-083/AC-018 — a linha convidada nasce sem senha conhecida; a nã
     const convidadaA = email('conv');
     const convidadaB = email('conv');
     const comSenha = email('senha');
+    const antes = Date.now();
     const { r } = await pelaRota(
       `nome;email\r\nAna;${convidadaA}\r\nBia;${convidadaB}\r\nCris;${comSenha}\r\n`,
       { convidar: '2,3' },
     );
+    const depois = Date.now();
     expect(r.status).toBe(200);
     const { criados } = corpoDe<ImportacaoConcluidaDto>(r);
     expect(criados[0]).not.toHaveProperty('senhaTemporaria');
@@ -746,14 +749,33 @@ describe('SPEC-083/AC-018 — a linha convidada nasce sem senha conhecida; a nã
         senhaHash: true,
         senhaTemporaria: true,
         senhaTemporariaExpiraEm: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
     const por = (e: string) => usuarios.find((u) => u.email === e)!;
     const [a, b, cris] = [por(convidadaA), por(convidadaB), por(comSenha)];
 
+    // O VALOR, e não só o tipo: as colunas são TIMESTAMP sem fuso, e o SQL
+    // cru que gravasse um `timestamptz` cru seria convertido pelo fuso da
+    // sessão — no banco local (`America/Sao_Paulo`), 3 h a menos que o
+    // cadastro individual, que grava o instante em UTC pela API de modelo.
+    // A folga de 5 s cobre o relógio, nunca um fuso.
+    const FOLGA = 5_000;
+    const noIntervalo = (d: Date, de: number, ate: number) => {
+      expect(d.getTime()).toBeGreaterThanOrEqual(de - FOLGA);
+      expect(d.getTime()).toBeLessThanOrEqual(ate + FOLGA);
+    };
     for (const u of [a, b, cris]) {
       expect(u.senhaTemporaria).toBe(true);
       expect(u.senhaTemporariaExpiraEm).toBeInstanceOf(Date);
+      noIntervalo(
+        u.senhaTemporariaExpiraEm!,
+        antes + SENHA_TEMPORARIA_VALIDADE_MS,
+        depois + SENHA_TEMPORARIA_VALIDADE_MS,
+      );
+      noIntervalo(u.createdAt, antes, depois);
+      noIntervalo(u.updatedAt, antes, depois);
     }
     // D4 — um segredo por importação: as duas convidadas têm o MESMO hash, e
     // ele não é o da linha com senha.
