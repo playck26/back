@@ -1,12 +1,26 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ImportacaoDeAlunosService } from './importacao-de-alunos.service';
+import { HttpException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import {
+  MENSAGEM_ALTERACAO_EM_ANDAMENTO,
+  MENSAGEM_OUTRA_PESSOA_NA_TURMA,
+  MENSAGEM_SERVIDOR_OCUPADO,
+} from '../../common/erros/erro-transitorio';
+import {
+  etapaDaImportacao,
+  ImportacaoDeAlunosService,
+  type EtapaDaImportacao,
+} from './importacao-de-alunos.service';
 import {
   ImportacaoController,
   decodificarPlanilha,
 } from './importacao.controller';
 import type { RelatorioDeImportacaoDto } from './dto/importacao-response.dto';
+import { AcessoService } from '../../acesso/acesso.service';
+import { MemoriaProvedorDeEmail } from '../../email/memoria-provedor-de-email';
+import { LoteNovo } from '../nivel-efetivo';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../../common/types/jwt-payload.type';
 
@@ -21,49 +35,152 @@ import type { AccessTokenPayload } from '../../common/types/jwt-payload.type';
  * recebe "este e-mail já apareceu" e procura a duplicata num arquivo de 300
  * linhas.
  */
-type DadosDoUsuario = { email: string; telefone: string | null };
-type DadosDoAluno = { nivelId: string | null };
+/** Uma instrução crua que a transação mandou, já montada. */
+interface Instrucao {
+  sql: string;
+  valores: unknown[];
+}
+
+function montarSql(primeiro: unknown, resto: unknown[]): Instrucao {
+  const montado = Array.isArray(primeiro)
+    ? Prisma.sql(primeiro as readonly string[], ...(resto as Prisma.Sql[]))
+    : (primeiro as Prisma.Sql);
+  return { sql: montado.sql, valores: montado.values };
+}
+
+/** Os arranjos de uma instrução de lote, na ordem do `unnest`. */
+const arranjos = (i: Instrucao) =>
+  i.valores.filter((v): v is unknown[] => Array.isArray(v));
+
+type TurmaDoDuble = {
+  id: string;
+  nome: string;
+  capacidade: number;
+  nivelId: string;
+  alocados?: number;
+};
 
 /**
- * O serviço com um Prisma de mentira, **e a transação aberta para olhar**: o
- * `tx` registra o que a importação mandou gravar, e é por ele que se prova o
- * que vai para `usuarios.telefone` e `alunos.nivel_id` sem banco.
+ * O serviço com um Prisma de mentira, **e a transação aberta para olhar**:
+ * desde a SPEC-083 a escrita é SQL cru em lote, e o `tx` registra cada
+ * instrução montada. É por ela que se prova o que vai para
+ * `usuarios.telefone` e `alunos.nivel_id` sem banco.
  */
 function montar(
   overrides: {
     usuarios?: { email: string }[];
     niveis?: { id: string; nome: string }[];
+    turmas?: TurmaDoDuble[];
   } = {},
 ) {
-  const tx = {
-    usuario: {
-      create: jest
-        .fn<
-          Promise<{ id: string; email: string }>,
-          [{ data: DadosDoUsuario }]
-        >()
-        .mockImplementation(({ data }) =>
-          Promise.resolve({ id: `u-${data.email}`, email: data.email }),
+  const instrucoes: Instrucao[] = [];
+  const niveis = overrides.niveis ?? [];
+  const turmas = overrides.turmas ?? [];
+
+  /** O que as conferências de turma leem — fora e dentro da transação. */
+  const leitorDeTurma = {
+    turmaAluno: {
+      groupBy: jest.fn(() =>
+        Promise.resolve(
+          turmas
+            .filter((t) => (t.alocados ?? 0) > 0)
+            .map((t) => ({ turmaId: t.id, _count: { _all: t.alocados } })),
         ),
+      ),
+      findMany: jest.fn().mockResolvedValue([]),
     },
-    aluno: {
-      create: jest
-        .fn<Promise<{ id: string }>, [{ data: DadosDoAluno }]>()
-        .mockResolvedValue({ id: 'a-1' }),
+    // O primeiro nível é o primeiro da lista (o dublê já vem em ordem).
+    nivel: {
+      findMany: jest.fn().mockResolvedValue(niveis),
+      findFirst: jest.fn().mockResolvedValue(niveis[0] ?? null),
     },
+    // Nenhuma aula futura: a conferência de aula lotada passa em branco aqui;
+    // a conta dela tem prova de banco (AC-012).
+    ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
+    faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
+    reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
+  };
+
+  const responder = (i: Instrucao): unknown => {
+    if (i.sql.includes('FROM empresas e2')) {
+      const [tabelas, ids] = arranjos(i) as [string[], string[]];
+      return tabelas.map((tabela, k) => ({
+        tabela,
+        achado: ids[k],
+        empresa_nome: tabela === 'empresa' ? 'Clube Dublê' : null,
+      }));
+    }
+    if (i.sql.includes('FROM turmas t2')) {
+      return turmas.map((t) => ({
+        id: t.id,
+        nome: t.nome,
+        capacidade: t.capacidade,
+        nivel_id: t.nivelId,
+        status: 'ativa',
+      }));
+    }
+    if (i.sql.includes('INSERT INTO alunos')) {
+      return (arranjos(i)[0] as string[]).map((id) => ({ id }));
+    }
+    return [{ ok: 1 }];
+  };
+
+  const tx = {
+    ...leitorDeTurma,
+    $queryRaw: jest.fn((primeiro: unknown, ...resto: unknown[]) => {
+      const i = montarSql(primeiro, resto);
+      instrucoes.push(i);
+      return Promise.resolve(responder(i));
+    }),
+    $executeRaw: jest.fn((primeiro: unknown, ...resto: unknown[]) => {
+      const i = montarSql(primeiro, resto);
+      instrucoes.push(i);
+      return Promise.resolve(arranjos(i)[0]?.length ?? 0);
+    }),
   };
   const prisma = {
+    ...leitorDeTurma,
     usuario: {
       findMany: jest.fn().mockResolvedValue(overrides.usuarios ?? []),
     },
-    nivel: { findMany: jest.fn().mockResolvedValue(overrides.niveis ?? []) },
+    turma: {
+      findMany: jest.fn().mockResolvedValue(
+        turmas.map((t) => ({
+          id: t.id,
+          nome: t.nome,
+          capacidade: t.capacidade,
+          nivelId: t.nivelId,
+        })),
+      ),
+    },
+    conviteDeAcesso: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
   };
+  const memoria = new MemoriaProvedorDeEmail();
+  const acesso = new AcessoService(
+    prisma as unknown as PrismaService,
+    memoria,
+    MODELOS,
+  );
   const servico = new ImportacaoDeAlunosService(
     prisma as unknown as PrismaService,
+    acesso,
+    memoria,
+    MODELOS,
   );
-  return { servico, prisma, tx };
+  /** A instrução de escrita de uma tabela (a primeira que a insere). */
+  const escritaDe = (tabela: string) =>
+    instrucoes.find((i) => i.sql.includes(`INSERT INTO ${tabela} `));
+  return { servico, prisma, tx, instrucoes, escritaDe, memoria };
 }
+
+const MODELOS = {
+  remetente: 'convites@unit.teste.local',
+  responderPara: 'suporte@unit.teste.local',
+  urlCliente: 'https://cliente.unit.teste.local',
+};
+
+const GESTOR = '9a000000-0000-4000-8000-000000000001';
 
 function servico(overrides?: Parameters<typeof montar>[0]) {
   return montar(overrides).servico;
@@ -181,6 +298,8 @@ describe('SPEC-038 — a validação por linha', () => {
       email: 'ana@x.com',
       telefone: null,
       nivelId: null,
+      turmaId: null,
+      turmaNome: null,
     });
   });
 
@@ -230,6 +349,8 @@ describe('SPEC-083 — as cinco colunas (AC-001)', () => {
           email: 'ana@x.com',
           telefone: '(11) 99999-0000',
           nivelId: 'n1',
+          turmaId: null,
+          turmaNome: null,
         },
       ]);
     },
@@ -247,6 +368,8 @@ describe('SPEC-083 — as cinco colunas (AC-001)', () => {
       email: 'beto@x.com',
       telefone: '(21) 3333-4444',
       nivelId: 'n2',
+      turmaId: null,
+      turmaNome: null,
     });
   });
 
@@ -275,6 +398,8 @@ describe('SPEC-083 — as cinco colunas (AC-001)', () => {
       email: 'dani@x.com',
       telefone: null,
       nivelId: null,
+      turmaId: null,
+      turmaNome: null,
     });
   });
 
@@ -288,17 +413,18 @@ describe('SPEC-083 — as cinco colunas (AC-001)', () => {
   });
 
   it('**o telefone preenchido é gravado em `usuarios.telefone`**', async () => {
-    const { servico: s, tx } = montar();
+    const { servico: s, escritaDe } = montar();
     await s.importar(
       'c1',
       'nome;email;telefone\r\nAna;ana@x.com;(11) 99999-0000\r\nBeto;beto@x.com;\r\n',
+      { gestorId: GESTOR },
     );
-    // É o `tx.usuario.create` que vira a linha de `usuarios`: o que a
-    // importação manda para ele é o que o banco grava.
-    const telefones = tx.usuario.create.mock.calls.map(
-      ([arg]) => arg.data.telefone,
-    );
-    expect(telefones).toEqual(['(11) 99999-0000', null]);
+    // É o `INSERT` em lote que vira as linhas de `usuarios`: o quinto arranjo
+    // do `unnest` é o telefone, e o vazio vai `''` — o `nullif` do SQL o
+    // grava nulo (o db-spec da 038 confere a coluna).
+    const usuarios = escritaDe('usuarios');
+    expect(usuarios?.sql).toContain("nullif(d.telefone, '')");
+    expect(arranjos(usuarios as Instrucao)[4]).toEqual(['(11) 99999-0000', '']);
   });
 });
 
@@ -337,15 +463,18 @@ describe('SPEC-083 — as colunas antigas são recusadas (AC-002)', () => {
   });
 
   it('**e nada é escrito**: a transação nem abre', async () => {
-    const { servico: s, prisma, tx } = montar();
+    const { servico: s, prisma, instrucoes } = montar();
     await expect(
-      s.importar('c1', 'nome;email;dataNascimento\r\nAna;ana@x.com;1990-05-10'),
+      s.importar(
+        'c1',
+        'nome;email;dataNascimento\r\nAna;ana@x.com;1990-05-10',
+        { gestorId: GESTOR },
+      ),
     ).rejects.toMatchObject({ response: { code: 'COLUNA_DESCONHECIDA' } });
     // Contar as escritas, e não só "lançou": uma implementação que gravasse
     // e depois lançasse também ficaria vermelha no `rejects`.
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(tx.usuario.create).not.toHaveBeenCalled();
-    expect(tx.aluno.create).not.toHaveBeenCalled();
+    expect(instrucoes).toEqual([]);
   });
 });
 
@@ -371,51 +500,271 @@ describe('SPEC-083 — nível vazio fica nulo (AC-005)', () => {
   });
 
   it('**na escrita: `alunos.nivel_id` vai nulo**, e o da linha com nível vai com o id dele', async () => {
-    const { servico: s, tx } = montar({ niveis: NIVEIS });
+    const { servico: s, escritaDe } = montar({ niveis: NIVEIS });
     await s.importar(
       'c1',
       'nome;email;nivel\r\nAna;ana@x.com;\r\nBeto;beto@x.com;Intermediário\r\n',
+      { gestorId: GESTOR },
     );
-    const gravados = tx.aluno.create.mock.calls.map(
-      ([arg]) => arg.data.nivelId,
-    );
-    // `n1` aqui seria a S8: o primeiro nível gravado no lugar do vazio.
-    expect(gravados).toEqual([null, 'n2']);
+    const alunos = escritaDe('alunos') as Instrucao;
+    // O terceiro arranjo do `unnest` é o nível; o vazio vai `''`, e o
+    // `nullif(…)::uuid` o grava NULO. `n1` aqui seria a S8: o primeiro nível
+    // gravado no lugar do vazio.
+    expect(alunos.sql).toContain("nullif(d.nivel_id, '')::uuid");
+    expect(arranjos(alunos)[2]).toEqual(['', 'n2']);
   });
 });
 
 /**
- * SPEC-083/TASK-001 — **a coluna `turma` é reconhecida, mas ainda não é
- * processada.** A busca pelo nome (D3) é da TASK-005, que depende da SPEC-082.
- * Até lá, a linha com turma é ERRO na conferência, e não um valor ignorado em
- * silêncio. **Este bloco é provisório: a TASK-005 o troca pelos casos da D3.**
+ * SPEC-083/D3 — **a turma pelo nome, entre as ativas.** O erro provisório da
+ * TASK-001 ("a coluna turma ainda não é processada") saiu: a linha com turma
+ * agora entra na turma, ou recebe o erro que diz por que não entra. As
+ * contagens (capacidade com alocados, aula lotada com reposições) têm prova
+ * contra o banco (`spec-083-importacao.db-spec.ts`); aqui fica a decisão
+ * por linha.
  */
-describe('SPEC-083 — turma: erro provisório até a TASK-005', () => {
-  it('só a linha COM turma recebe o erro, na coluna `turma`', async () => {
-    const r = await conferir(
-      ['Ana,ana@x.com,,,Turma Terça 19h', 'Beto,beto@x.com,,,'],
-      { niveis: NIVEIS },
-    );
+describe('SPEC-083/D3 — a turma da planilha', () => {
+  const TERCA: TurmaDoDuble = {
+    id: 't-terca',
+    nome: 'Turma Terça 19h',
+    capacidade: 10,
+    nivelId: 'n1',
+  };
+
+  it('casa sem caixa, sem acento e com espaços diferentes; a linha válida leva o id e o nome cadastrado', async () => {
+    const r = await conferir(['Ana,ana@x.com,,,  turma TERCA   19h '], {
+      niveis: NIVEIS,
+      turmas: [TERCA],
+    });
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0]).toMatchObject({
+      turmaId: 't-terca',
+      turmaNome: 'Turma Terça 19h',
+    });
+  });
+
+  it('turma que não está entre as ativas: erro na coluna turma; o clube sem turma ativa diz isso', async () => {
+    const r = await conferir(['Ana,ana@x.com,,,Outra'], { niveis: NIVEIS });
     expect(r.erros).toEqual([
       {
         linha: 2,
         coluna: 'turma',
-        mensagem: expect.stringContaining(
-          'ainda não é processada nesta versão',
-        ) as unknown,
+        mensagem:
+          'A turma "Outra" não existe — este clube não tem turma ativa.',
       },
     ]);
-    // A linha sem turma, no mesmo arquivo, continua válida.
-    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+    expect(r.linhas).toEqual([]);
   });
 
-  it('**a importação recusa o arquivo, e não importa o aluno sem a turma**', async () => {
+  it('a busca é só entre as ATIVAS da empresa — o filtro vai no `where`', async () => {
+    const { servico: s, prisma } = montar({ niveis: NIVEIS, turmas: [TERCA] });
+    await s.conferir(
+      'c1',
+      [CABECALHO, 'Ana,ana@x.com,,,Turma Terça 19h'].join('\n'),
+    );
+    expect(prisma.turma.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { companyId: 'c1', status: 'ativa' } }),
+    );
+  });
+
+  it('arquivo sem turma não paga a consulta de turmas', async () => {
+    const { servico: s, prisma } = montar({ niveis: NIVEIS });
+    await s.conferir('c1', [CABECALHO, 'Ana,ana@x.com,,,'].join('\n'));
+    expect(prisma.turma.findMany).not.toHaveBeenCalled();
+  });
+
+  it('linha sem nível em turma que não é do primeiro nível: o texto do gestor (I4)', async () => {
+    const r = await conferir(['Ana,ana@x.com,,,Turma Terça 19h'], {
+      niveis: NIVEIS,
+      turmas: [{ ...TERCA, nivelId: 'n2' }],
+    });
+    expect(r.erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma',
+        mensagem:
+          'Esta turma é do nível Intermediário, e este aluno ainda não tem nível — ele conta como Iniciante. Para alocá-lo, defina o nível dele.',
+      },
+    ]);
+  });
+
+  it('a capacidade conta os alocados e cai na primeira linha que passa', async () => {
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,,Turma Terça 19h',
+        'Beto,beto@x.com,,,Turma Terça 19h',
+        'Cris,cris@x.com,,,Turma Terça 19h',
+      ],
+      { niveis: NIVEIS, turmas: [{ ...TERCA, capacidade: 3, alocados: 1 }] },
+    );
+    expect(r.erros).toEqual([
+      {
+        linha: 4,
+        coluna: 'turma',
+        mensagem:
+          'A turma "Turma Terça 19h" tem 2 vaga(s) livre(s), e a planilha põe 3 aluno(s) nela. Esta é a primeira linha que não cabe.',
+      },
+    ]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([2, 3]);
+  });
+
+  it('**a capacidade é conferida de novo dentro da transação** (sob as travas), e a importação recusa com 422 se ela mudou', async () => {
+    // Fora da transação, a turma tem vaga; dentro, o dublê diz que encheu —
+    // como se outra matrícula tivesse entrado entre a conferência e a trava.
+    const {
+      servico: s,
+      tx,
+      instrucoes,
+    } = montar({
+      niveis: NIVEIS,
+      turmas: [{ ...TERCA, capacidade: 1 }],
+    });
+    tx.turmaAluno.groupBy.mockResolvedValueOnce([
+      { turmaId: 't-terca', _count: { _all: 1 } },
+    ]);
+    await expect(
+      s.importar(
+        'c1',
+        'nome;email;turma\r\nAna;ana@x.com;Turma Terça 19h\r\n',
+        {
+          gestorId: GESTOR,
+        },
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'PLANILHA_COM_ERROS',
+        erros: [
+          {
+            linha: 2,
+            coluna: 'turma',
+            mensagem: 'A turma "Turma Terça 19h" já está cheia (capacidade 1).',
+          },
+        ],
+      },
+    });
+    // Nenhuma escrita: a recusa veio antes delas.
+    expect(instrucoes.some((i) => /INSERT INTO/.test(i.sql))).toBe(false);
+  });
+});
+
+/**
+ * SPEC-083/D5 — **quem recebe convite é o gestor que marca.** O campo
+ * `convidar` traz os números de linha; um que não é linha válida do arquivo
+ * recusa tudo com 400, antes de qualquer bcrypt ou transação.
+ */
+describe('SPEC-083/D5 — `convidar`', () => {
+  const ARQUIVO = 'nome;email\r\nAna;ana@x.com\r\nBeto;beto@x.com\r\n';
+
+  it.each([['4'], ['2,9'], ['x'], ['2;3'], ['1']])(
+    'convidar=%s → 400 CONVIDAR_LINHA_INVALIDA, sem transação',
+    async (convidar) => {
+      const { servico: s, prisma } = montar();
+      await expect(
+        s.importar('c1', ARQUIVO, { gestorId: GESTOR, convidar }),
+      ).rejects.toMatchObject({
+        response: { statusCode: 400, code: 'CONVIDAR_LINHA_INVALIDA' },
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it('o campo repetido no multipart (chega como arranjo) é 400, e não 500', async () => {
     const { servico: s, prisma } = montar();
     await expect(
-      s.importar('c1', 'nome;email;turma\r\nAna;ana@x.com;Turma Terça 19h\r\n'),
-    ).rejects.toMatchObject({ response: { code: 'PLANILHA_COM_ERROS' } });
-    // Ignorar a turma importaria a Ana fora da turma que o gestor escreveu.
+      s.importar('c1', ARQUIVO, {
+        gestorId: GESTOR,
+        convidar: ['2', '3'] as unknown as string,
+      }),
+    ).rejects.toMatchObject({
+      response: { statusCode: 400, code: 'CONVIDAR_LINHA_INVALIDA' },
+    });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('ausente, vazio ou com espaços: ninguém é convidado, e todos ganham senha', async () => {
+    for (const convidar of [undefined, '', '  ']) {
+      const { servico: s } = montar();
+      const { criados } = await s.importar('c1', ARQUIVO, {
+        gestorId: GESTOR,
+        convidar,
+      });
+      expect(
+        criados.map((c) => [c.senhaTemporaria !== undefined, c.convite]),
+      ).toEqual([
+        [true, undefined],
+        [true, undefined],
+      ]);
+    }
+  });
+
+  it('a linha convidada sai sem senha e com o resultado do e-mail; a outra, com senha', async () => {
+    const { servico: s, escritaDe, memoria } = montar();
+    const { criados } = await s.importar('c1', ARQUIVO, {
+      gestorId: GESTOR,
+      convidar: ' 3 ',
+    });
+    expect(criados[0].senhaTemporaria).toMatch(/^pck-/);
+    expect(criados[0].convite).toBeUndefined();
+    expect(criados[1]).not.toHaveProperty('senhaTemporaria');
+    expect(criados[1].convite).toEqual({ email: 'enviado' });
+    // Um convite gravado, para a conta da linha 3, e um e-mail para ela.
+    const convites = escritaDe('convites_de_acesso') as Instrucao;
+    expect(arranjos(convites)[1]).toEqual([
+      (arranjos(escritaDe('usuarios') as Instrucao)[0] as string[])[1],
+    ]);
+    expect(memoria.enviados.map((m) => m.to)).toEqual(['beto@x.com']);
+  });
+
+  it('sem convidada, nenhuma escrita de convite e nenhum e-mail', async () => {
+    const { servico: s, escritaDe, memoria } = montar();
+    await s.importar('c1', ARQUIVO, { gestorId: GESTOR });
+    expect(escritaDe('convites_de_acesso')).toBeUndefined();
+    expect(memoria.blocos).toEqual([]);
+  });
+});
+
+/**
+ * SPEC-083/D3 e AC-049 — **o modo `lote-novo` só matricula quem nasceu na
+ * transação.** É a condição sob a qual dispensar a trava por aluno é correto:
+ * um aluno de fora seria uma matrícula sem a trava dele.
+ */
+describe('SPEC-083/AC-049 — o `lote-novo` recusa aluno que não saiu do INSERT', () => {
+  it('um aluno_id que não foi registrado é erro de programação (Error, não recusa ao gestor)', () => {
+    const lote = new LoteNovo();
+    lote.registrarCriados(['a1', 'a2']);
+    expect(() => lote.exigirCriados(['a1', 'a2'])).not.toThrow();
+    expect(() => lote.exigirCriados(['a1', 'de-fora'])).toThrow(
+      /não saíram do INSERT desta transação \(de-fora\)/,
+    );
+    // Nada registrado: nada passa.
+    expect(() => new LoteNovo().exigirCriados(['a1'])).toThrow(Error);
+  });
+
+  it('na importação, os ids de `turma_alunos` são os que o INSERT de `alunos` devolveu', async () => {
+    const {
+      servico: s,
+      tx,
+      escritaDe,
+    } = montar({
+      niveis: NIVEIS,
+      turmas: [{ id: 't-terca', nome: 'Terça', capacidade: 10, nivelId: 'n1' }],
+    });
+    // O dublê devolve, do INSERT de alunos, um id que NÃO é o da linha: o
+    // lote tem de recusar antes de escrever a matrícula.
+    const original = tx.$queryRaw.getMockImplementation() as (
+      ...a: unknown[]
+    ) => Promise<unknown>;
+    tx.$queryRaw.mockImplementation((primeiro: unknown, ...resto: unknown[]) =>
+      montarSql(primeiro, resto).sql.includes('INSERT INTO alunos')
+        ? Promise.resolve([{ id: 'aluno-que-nao-e-do-lote' }])
+        : original(primeiro, ...resto),
+    );
+    await expect(
+      s.importar('c1', 'nome;email;turma\r\nAna;ana@x.com;Terça\r\n', {
+        gestorId: GESTOR,
+      }),
+    ).rejects.toThrow(/lote-novo/);
+    expect(escritaDe('turma_alunos')).toBeUndefined();
   });
 });
 
@@ -525,6 +874,8 @@ describe('SPEC-083 — a codificação vem dos bytes (AC-004)', () => {
           email: 'joao@exemplo.com',
           telefone: null,
           nivelId: 'n2',
+          turmaId: null,
+          turmaNome: null,
         },
       ],
     });
@@ -557,35 +908,52 @@ describe('SPEC-083 — o modelo novo (AC-006, metade do Back)', () => {
     );
   });
 
-  it('**passa na conferência sem erro de cabeçalho**; o erro provisório de turma cai só na linha que tem turma', async () => {
-    const { servico: s } = montar({ niveis: NIVEIS });
-    const controller = new ImportacaoController(s);
+  /** A turma que o modelo cita, num clube que a tem ativa e no nível certo. */
+  const TURMA_DO_MODELO: TurmaDoDuble = {
+    id: 't-terca',
+    nome: 'Turma Terça 19h',
+    capacidade: 10,
+    nivelId: 'n1',
+  };
 
+  const conferirModelo = async (turmas: TurmaDoDuble[]) => {
+    const { servico: s } = montar({ niveis: NIVEIS, turmas });
+    const controller = new ImportacaoController(s);
     // Não lançar já é a prova de cabeçalho: `COLUNA_DESCONHECIDA` e
     // `PLANILHA_SEM_CABECALHO` são exceções, e não erros de linha.
-    const r = (await controller.importar(
+    return (await controller.importar(
       { companyId: 'c1' } as AccessTokenPayload,
       'true',
       { buffer: MODELO } as Express.Multer.File,
     )) as RelatorioDeImportacaoDto;
+  };
 
+  it('**passa na conferência sem nenhum erro**, num clube com a turma do exemplo', async () => {
+    const r = await conferirModelo([TURMA_DO_MODELO]);
+
+    // O erro provisório da TASK-001 ("a coluna turma ainda não é processada")
+    // saiu na TASK-005: com a turma ativa, o modelo inteiro é válido, e a Ana
+    // leva a turma achada pelo nome.
     expect(r.total).toBe(3);
-    // A Ana (linha 2) é a única com turma no modelo. Até a TASK-005, a coluna
-    // turma é reconhecida e ainda não processada: o erro é dela, e só dela.
-    expect(r.erros).toEqual([
+    expect(r.erros).toEqual([]);
+    expect(r.linhas).toEqual([
       {
         linha: 2,
-        coluna: 'turma',
-        mensagem: expect.stringContaining('Turma Terça 19h') as unknown,
+        nome: 'Ana Souza',
+        email: 'ana@exemplo.com',
+        telefone: '(11) 99999-0000',
+        nivelId: 'n1',
+        turmaId: 't-terca',
+        turmaNome: 'Turma Terça 19h',
       },
-    ]);
-    expect(r.linhas).toEqual([
       {
         linha: 3,
         nome: 'Carlos Lima',
         email: 'carlos@exemplo.com',
         telefone: '(11) 98888-7777',
         nivelId: null,
+        turmaId: null,
+        turmaNome: null,
       },
       {
         linha: 4,
@@ -593,7 +961,198 @@ describe('SPEC-083 — o modelo novo (AC-006, metade do Back)', () => {
         email: 'beatriz@exemplo.com',
         telefone: null,
         nivelId: 'n2',
+        turmaId: null,
+        turmaNome: null,
       },
     ]);
+  });
+
+  it('num clube SEM a turma do exemplo, o único erro é o de turma, e é de linha (não de cabeçalho)', async () => {
+    const r = await conferirModelo([]);
+    expect(r.erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma',
+        mensagem: expect.stringContaining('Turma Terça 19h') as unknown,
+      },
+    ]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3, 4]);
+  });
+});
+
+/**
+ * SPEC-083/D3, passo 5, e AC-048 — **a tradução da importação, um caso por
+ * etapa.** O erro nasce no dublê, na instrução daquela etapa, e a resposta
+ * sai do CONTROLLER: é ele que traduz (a borda HTTP, como a D4 da 082), e é o
+ * serviço que marca a etapa. Um caso que chamasse a função de tradução com a
+ * etapa escrita à mão provaria a tabela, e não que o serviço marca certo.
+ */
+describe('SPEC-083/AC-048 — a tradução da importação, por etapa', () => {
+  /** Como reconhecer, no dublê, a instrução de cada etapa. */
+  const INSTRUCAO_DA_ETAPA: Record<
+    EtapaDaImportacao,
+    (sql: string) => boolean
+  > = {
+    travas: (s) => s.includes('pg_advisory_xact_lock_shared'),
+    referenciadas: (s) => s.includes('FROM empresas e2'),
+    turmas: (s) => s.includes('FROM turmas t2'),
+    ajuste: (s) => s.includes('AS guardado'),
+    usuarios: (s) => s.includes('INSERT INTO usuarios'),
+    alunos: (s) => s.includes('INSERT INTO alunos'),
+    turma_alunos: (s) => s.includes('INSERT INTO turma_alunos'),
+    convites_de_acesso: (s) => s.includes('INSERT INTO convites_de_acesso'),
+    reposicao: (s) =>
+      s.includes("set_config('statement_timeout'") &&
+      !s.includes('lock_timeout'),
+  };
+
+  const erroDoBanco = (sqlstate: string) =>
+    new Prisma.PrismaClientKnownRequestError(`falhou com ${sqlstate}`, {
+      code: 'P2010',
+      clientVersion: 'teste',
+      meta: { code: sqlstate },
+    });
+
+  /** Um arquivo que passa por TODAS as etapas: turma e convidada. */
+  const ARQUIVO =
+    'nome;email;turma\r\nAna;ana@x.com;Terça\r\nBeto;beto@x.com;\r\n';
+
+  async function falharNa(etapa: EtapaDaImportacao, erro: Error) {
+    const { servico: s, tx } = montar({
+      niveis: NIVEIS,
+      turmas: [{ id: 't-terca', nome: 'Terça', capacidade: 10, nivelId: 'n1' }],
+    });
+    let lancou = false;
+    for (const metodo of ['$queryRaw', '$executeRaw'] as const) {
+      const original = tx[metodo].getMockImplementation() as (
+        ...a: unknown[]
+      ) => Promise<unknown>;
+      tx[metodo].mockImplementation(
+        (primeiro: unknown, ...resto: unknown[]) => {
+          if (
+            !lancou &&
+            INSTRUCAO_DA_ETAPA[etapa](montarSql(primeiro, resto).sql)
+          ) {
+            lancou = true;
+            return Promise.reject(erro);
+          }
+          // `$queryRaw` e `$executeRaw` resolvem tipos diferentes no dublê; o
+          // original é o de cada um.
+          return original(primeiro, ...resto) as Promise<never>;
+        },
+      );
+    }
+    const controller = new ImportacaoController(s);
+    let resposta: unknown;
+    try {
+      await controller.importar(
+        { companyId: 'c1', sub: GESTOR } as AccessTokenPayload,
+        undefined,
+        { buffer: Buffer.from(ARQUIVO, 'utf8') } as Express.Multer.File,
+        '3',
+      );
+    } catch (e) {
+      resposta = e;
+    }
+    // A precondição: a instrução daquela etapa existiu e foi a que falhou.
+    expect(lancou).toBe(true);
+    return resposta;
+  }
+
+  const comoHttp = (e: unknown) => {
+    expect(e).toBeInstanceOf(HttpException);
+    const http = e as HttpException;
+    const corpo = http.getResponse() as { code: string; message: string };
+    return {
+      status: http.getStatus(),
+      code: corpo.code,
+      message: corpo.message,
+    };
+  };
+
+  const TODAS = Object.keys(INSTRUCAO_DA_ETAPA) as EtapaDaImportacao[];
+
+  it.each(TODAS)(
+    '55P03 na etapa %s → 409 MATRICULA_EM_ANDAMENTO, I4 só nas turmas',
+    async (etapa) => {
+      const e = await falharNa(etapa, erroDoBanco('55P03'));
+      expect(comoHttp(e)).toEqual({
+        status: 409,
+        code: 'MATRICULA_EM_ANDAMENTO',
+        message:
+          etapa === 'turmas'
+            ? MENSAGEM_OUTRA_PESSOA_NA_TURMA
+            : MENSAGEM_ALTERACAO_EM_ANDAMENTO,
+      });
+    },
+  );
+
+  const COM_PRAZO_DE_INSTRUCAO: EtapaDaImportacao[] = [
+    'ajuste',
+    'usuarios',
+    'alunos',
+    'turma_alunos',
+    'convites_de_acesso',
+    'reposicao',
+  ];
+
+  it.each(COM_PRAZO_DE_INSTRUCAO)(
+    '57014 (o statement_timeout) na etapa %s → 409 com o texto I6 (LIM-083m)',
+    async (etapa) => {
+      const e = await falharNa(etapa, erroDoBanco('57014'));
+      expect(comoHttp(e)).toEqual({
+        status: 409,
+        code: 'MATRICULA_EM_ANDAMENTO',
+        message: MENSAGEM_ALTERACAO_EM_ANDAMENTO,
+      });
+    },
+  );
+
+  it.each(TODAS.filter((t) => !COM_PRAZO_DE_INSTRUCAO.includes(t)))(
+    '57014 na etapa %s, onde a importação não fixa statement_timeout, sobe como veio (500)',
+    async (etapa) => {
+      const erro = erroDoBanco('57014');
+      const e = await falharNa(etapa, erro);
+      expect(e).toBe(erro);
+      expect(etapaDaImportacao(e)).toBe(etapa);
+    },
+  );
+
+  it.each(['P2028', 'P2024'])(
+    '%s → 503 SERVIDOR_OCUPADO com o texto I5',
+    async (codigo) => {
+      const erro = new Prisma.PrismaClientKnownRequestError('ocupado', {
+        code: codigo,
+        clientVersion: 'teste',
+      });
+      // O `P2028` é do `$transaction`, e não de uma instrução: sem etapa.
+      const { servico: s, prisma } = montar();
+      prisma.$transaction.mockRejectedValueOnce(erro);
+      const controller = new ImportacaoController(s);
+      let e: unknown;
+      try {
+        await controller.importar(
+          { companyId: 'c1', sub: GESTOR } as AccessTokenPayload,
+          undefined,
+          {
+            buffer: Buffer.from('nome;email\r\nAna;ana@x.com\r\n'),
+          } as Express.Multer.File,
+        );
+      } catch (x) {
+        e = x;
+      }
+      expect(comoHttp(e)).toEqual({
+        status: 503,
+        code: 'SERVIDOR_OCUPADO',
+        message: MENSAGEM_SERVIDOR_OCUPADO,
+      });
+    },
+  );
+
+  it('um erro qualquer, sem SQLSTATE de espera, sobe como veio', async () => {
+    const erro = erroDoBanco('23503');
+    const e = await falharNa('alunos', erro);
+    expect(e).toBe(erro);
+    expect(etapaDaImportacao(e)).toBe('alunos');
   });
 });

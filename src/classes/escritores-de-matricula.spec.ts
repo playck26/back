@@ -82,13 +82,19 @@ describe('SPEC-075/AC-029 — nenhum escritor protegido fora da lista', () => {
    * mesmos dois caminhos — agora provados pelo teste de baixo, que conta
    * quem CHAMA a instrução.
    */
-  it('escritores de MATRÍCULA: exatamente a instrução com prazo e o seed — um em cada', () => {
+  /**
+   * **SPEC-083/D3 — o quarto escritor é a importação**, com o modo
+   * `lote-novo`: um `INSERT` em lote, só de alunos que a mesma transação
+   * criou. Que ele trava antes de escrever é o teste do fim deste arquivo.
+   */
+  it('escritores de MATRÍCULA: a instrução com prazo, a importação e o seed — um em cada', () => {
     const achados = ocorrencias(
       /turmaAluno\.(create|createMany|upsert)\b|INSERT\s+INTO\s+"?turma_alunos"?/i,
     );
     expect(Object.fromEntries(achados)).toEqual({
       'prisma/seed.ts': 1,
       'src/classes/matricula-com-prazo.ts': 1,
+      'src/people/importacao/importacao-de-alunos.service.ts': 1,
     });
   });
 
@@ -179,7 +185,9 @@ describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho'
           ? 'escrita'
           : /'leitura'/.test(chamada)
             ? 'leitura'
-            : 'SEM_MODO';
+            : /'lote-novo'/.test(chamada)
+              ? 'lote-novo'
+              : 'SEM_MODO';
         achadas.push(`${arquivo}#${caminho}: ${modo}`);
       });
     }
@@ -193,6 +201,9 @@ describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho'
         'src/classes/matricula-do-aluno.service.ts#entrar: leitura',
         'src/classes/classes.service.ts#allocateStudent: leitura',
         'src/fila-de-espera/fila-de-espera.service.ts#confirmar: leitura',
+        // SPEC-083/D3 — o lote de alunos novos: clube compartilhado, sem a
+        // trava por aluno (os alunos nascem na própria transação)
+        'src/people/importacao/importacao-de-alunos.service.ts#escreverNaTransacao: lote-novo',
         // escritores (exclusiva, como na SPEC-075)
         'src/classes/classes.service.ts#update: escrita',
         'src/people/levels.service.ts#gravarConferindoOPrimeiro: escrita',
@@ -213,10 +224,16 @@ describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho'
     const escritaComAluno = (db: Parameters<typeof travarNivelDaEmpresa>[0]) =>
       // @ts-expect-error — escrita não recebe aluno
       travarNivelDaEmpresa(db, 'c1', 'escrita', 'a1');
-    expect([typeof semAluno, typeof escritaComAluno]).toEqual([
-      'function',
-      'function',
-    ]);
+    // SPEC-083/D3 — o lote-novo é a dispensa da trava do aluno: passar um
+    // aluno a ele seria fingir uma trava que não é tomada.
+    const loteComAluno = (db: Parameters<typeof travarNivelDaEmpresa>[0]) =>
+      // @ts-expect-error — lote-novo não recebe aluno
+      travarNivelDaEmpresa(db, 'c1', 'lote-novo', 'a1');
+    expect([
+      typeof semAluno,
+      typeof escritaComAluno,
+      typeof loteComAluno,
+    ]).toEqual(['function', 'function', 'function']);
   });
 
   it('nenhum caminho aparece nas duas listas (sem promoção na mesma transação)', () => {
@@ -227,6 +244,83 @@ describe('SPEC-082/AC-003 — leitor e escritor da trava de nível, por caminho'
     }
     const nasDuas = [...modos].filter(([, m]) => m.size > 1).map(([c]) => c);
     expect(nasDuas).toEqual([]);
-    expect(modos.size).toBe(8);
+    expect(modos.size).toBe(9);
+  });
+});
+
+/**
+ * SPEC-083/AC-047 — **o escritor de `turma_alunos` da importação trava antes
+ * de escrever.** A lista de cima diz QUEM escreve; esta diz que a importação
+ * escreve DEPOIS da trava do clube no modo `lote-novo`, e depois de cobrar do
+ * lote que todo aluno a matricular nasceu na própria transação (AC-049).
+ *
+ * Varredura textual do corpo do método, como as de cima: um `INSERT` de
+ * matrícula chamado de outro método, ou antes da trava, fica vermelho aqui.
+ * Que a trava espera e é esperada como deve é o FIT-057 (ordem, AC-047), contra
+ * banco.
+ */
+describe('SPEC-083/AC-047 — a importação trava antes de escrever turma_alunos', () => {
+  const ARQUIVO = 'src/people/importacao/importacao-de-alunos.service.ts';
+
+  function corpoDoMetodo(texto: string, nome: string): string {
+    const inicio = texto.search(
+      new RegExp(`\\n {2}(?:private\\s+)?async ${nome}\\(`),
+    );
+    if (inicio < 0) throw new Error(`${ARQUIVO}: ${nome} não encontrado`);
+    const abre = texto.indexOf('{', texto.indexOf(')', inicio));
+    let profundidade = 0;
+    for (let i = abre; i < texto.length; i++) {
+      if (texto[i] === '{') profundidade++;
+      if (texto[i] === '}') profundidade--;
+      if (profundidade === 0) return texto.slice(inicio, i + 1);
+    }
+    throw new Error(`${ARQUIVO}: ${nome} sem fim`);
+  }
+
+  const texto = () => linhasDeCodigo(ARQUIVO).join('\n');
+
+  it('o INSERT em turma_alunos mora num método só, chamado de um lugar só', () => {
+    const t = texto();
+    expect(t.match(/INSERT\s+INTO\s+turma_alunos/g)).toHaveLength(1);
+    expect(corpoDoMetodo(t, 'inserirMatriculas')).toMatch(
+      /INSERT\s+INTO\s+turma_alunos/,
+    );
+    // A declaração e uma chamada.
+    expect(t.match(/inserirMatriculas\(/g)).toHaveLength(2);
+  });
+
+  /** Trava, cobrança e escrita, nessa ordem e todas presentes. */
+  function travaAntesDaEscrita(corpo: string): boolean {
+    const trava = corpo.search(
+      /travarNivelDaEmpresa\(\s*tx,\s*companyId,\s*'lote-novo'\s*\)/,
+    );
+    const cobranca = corpo.search(/lote\.exigirCriados\(/);
+    const escrita = corpo.search(/this\.inserirMatriculas\(/);
+    return trava > -1 && cobranca > trava && escrita > cobranca;
+  }
+
+  it('a chamada vem DEPOIS da trava lote-novo e da cobrança do lote, no mesmo corpo', () => {
+    expect(
+      travaAntesDaEscrita(corpoDoMetodo(texto(), 'escreverNaTransacao')),
+    ).toBe(true);
+  });
+
+  it('controle: a mesma conferência reprova o escritor sem trava, sem cobrança, ou com a trava depois', () => {
+    const trava = "await travarNivelDaEmpresa(tx, companyId, 'lote-novo');";
+    const cobranca = 'lote.exigirCriados(ids);';
+    const escrita = 'await this.inserirMatriculas(tx, m);';
+    expect(travaAntesDaEscrita([trava, cobranca, escrita].join('\n'))).toBe(
+      true,
+    );
+    expect(travaAntesDaEscrita([cobranca, escrita].join('\n'))).toBe(false);
+    expect(travaAntesDaEscrita([trava, escrita].join('\n'))).toBe(false);
+    expect(travaAntesDaEscrita([escrita, trava, cobranca].join('\n'))).toBe(
+      false,
+    );
+    expect(
+      travaAntesDaEscrita(
+        [trava.replace('lote-novo', 'escrita'), cobranca, escrita].join('\n'),
+      ),
+    ).toBe(false);
   });
 });

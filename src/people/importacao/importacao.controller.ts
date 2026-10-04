@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Post,
   Query,
@@ -27,7 +28,10 @@ import {
   ImportacaoConcluidaDto,
   RelatorioDeImportacaoDto,
 } from './dto/importacao-response.dto';
-import { ImportacaoDeAlunosService } from './importacao-de-alunos.service';
+import {
+  ImportacaoDeAlunosService,
+  traduzirErroDaImportacao,
+} from './importacao-de-alunos.service';
 
 /**
  * SPEC-083/D2 -- **a codificacao vem dos bytes, e nao de um palpite.**
@@ -103,6 +107,14 @@ export class ImportacaoController {
       type: 'object',
       properties: {
         [CAMPO_DO_ARQUIVO]: { type: 'string', format: 'binary' },
+        // SPEC-083/D5 — quem recebe convite por e-mail, escolhido na
+        // conferência. Ausente: ninguém, e todas as linhas ganham senha.
+        convidar: {
+          type: 'string',
+          example: '3,5,9',
+          description:
+            'Números de linha da planilha (contando o cabeçalho), separados por vírgula, que recebem convite por e-mail em vez de senha temporária. Um número que não é linha válida do arquivo responde 400 CONVIDAR_LINHA_INVALIDA, e nada é escrito. Ignorado com conferir=true.',
+        },
       },
     },
   })
@@ -118,6 +130,7 @@ export class ImportacaoController {
     @CurrentUser() user: AccessTokenPayload,
     @Query('conferir') conferir?: string,
     @UploadedFile() arquivo?: Express.Multer.File,
+    @Body('convidar') convidar?: string,
   ): Promise<RelatorioDeImportacaoDto | ImportacaoConcluidaDto> {
     // SPEC-083/D2: UTF-8 estrito, e `windows-1252` se os bytes nao forem
     // UTF-8 valido. Era `toString('utf8')`, que troca o byte invalido por
@@ -125,8 +138,21 @@ export class ImportacaoController {
     const conteudo = decodificarPlanilha(exigirArquivo(arquivo));
     const companyId = user.companyId as string;
 
-    return conferir === 'true'
-      ? this.importacao.conferir(companyId, conteudo)
-      : this.importacao.importar(companyId, conteudo);
+    if (conferir === 'true') {
+      return this.importacao.conferir(companyId, conteudo);
+    }
+    // SPEC-083/D3, passo 5 \u2014 a traducao mora AQUI, na borda, como na D4 da
+    // SPEC-082: o servico lanca o erro do banco com a etapa marcada, e so a
+    // resposta ao cliente vira 409/503. O `23505` ja chega decidido.
+    try {
+      return await this.importacao.importar(companyId, conteudo, {
+        // O gestor e o `criado_por_id` dos convites, e uma das linhas que a
+        // importacao trava antes de escrever (D3, passo 2).
+        gestorId: user.sub,
+        convidar,
+      });
+    } catch (erro) {
+      return traduzirErroDaImportacao(erro);
+    }
   }
 }

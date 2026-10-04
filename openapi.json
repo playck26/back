@@ -1448,6 +1448,11 @@
                   "arquivo": {
                     "type": "string",
                     "format": "binary"
+                  },
+                  "convidar": {
+                    "type": "string",
+                    "example": "3,5,9",
+                    "description": "Números de linha da planilha (contando o cabeçalho), separados por vírgula, que recebem convite por e-mail em vez de senha temporária. Um número que não é linha válida do arquivo responde 400 CONVIDAR_LINHA_INVALIDA, e nada é escrito. Ignorado com conferir=true."
                   }
                 }
               }
@@ -8030,6 +8035,16 @@
             "type": "string",
             "format": "uuid",
             "nullable": true
+          },
+          "turmaId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "turmaNome": {
+            "type": "string",
+            "nullable": true,
+            "example": "Terça 19h"
           }
         },
         "required": [
@@ -8037,7 +8052,9 @@
           "nome",
           "email",
           "telefone",
-          "nivelId"
+          "nivelId",
+          "turmaId",
+          "turmaNome"
         ]
       },
       "RelatorioDeImportacaoDto": {
@@ -8072,6 +8089,33 @@
           "linhas"
         ]
       },
+      "ConviteDaImportacaoDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "enum": [
+              "enviado",
+              "falhou"
+            ],
+            "example": "enviado"
+          },
+          "motivo": {
+            "type": "string",
+            "enum": [
+              "cota",
+              "recusado",
+              "indisponivel",
+              "tempo_esgotado",
+              "configuracao"
+            ],
+            "example": "cota"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
       "AlunoImportadoDto": {
         "type": "object",
         "properties": {
@@ -8089,15 +8133,22 @@
           },
           "senhaTemporaria": {
             "type": "string",
-            "example": "Kx7-mQ2p",
-            "description": "Sai UMA VEZ. Nenhuma outra rota a devolve -- se o gestor perder, o caminho e regenerar."
+            "example": "pck-ACDE34",
+            "description": "Sai UMA VEZ, so na linha NAO convidada. Nenhuma outra rota a devolve -- se o gestor perder, o caminho e regenerar."
+          },
+          "convite": {
+            "description": "So na linha convidada (campo `convidar`).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConviteDaImportacaoDto"
+              }
+            ]
           }
         },
         "required": [
           "linha",
           "alunoId",
-          "email",
-          "senhaTemporaria"
+          "email"
         ]
       },
       "ImportacaoConcluidaDto": {

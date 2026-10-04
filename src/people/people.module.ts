@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AcessoModule } from '../acesso/acesso.module';
+import { EmailModule } from '../email/email.module';
 import { FrequenciaModule } from '../frequencia/frequencia.module';
 import { StorageModule } from '../storage/storage.module';
 import { DisponibilidadeProfessorService } from './disponibilidade-professor.service';
@@ -27,7 +28,13 @@ import { TeachersService } from './teachers.service';
   // professor), que emite o convite por e-mail. **A seta é só esta:** o
   // `AcessoModule` não importa este, porque o `AuthModule` já importa o
   // `PeopleModule` e o ciclo fecharia.
-  imports: [FrequenciaModule, StorageModule, AcessoModule],
+  //
+  // SPEC-083/D8 — `EmailModule` entra pela IMPORTACAO, que envia os convites
+  // do arquivo em lote (`enviarLote`, blocos de 100 com uma chave de
+  // idempotencia por bloco) depois do commit. A ficha envia um por vez pelo
+  // `AcessoService`; o lote da importacao fala com a porta direto. O modulo e
+  // o mesmo que o `AcessoModule` importa, entao a porta e uma instancia so.
+  imports: [FrequenciaModule, StorageModule, AcessoModule, EmailModule],
   controllers: [
     StudentsController,
     TeachersController,
