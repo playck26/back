@@ -2,11 +2,14 @@
 
 **Fonte: análise direta do código.** Data: **2026-10-04** (era 2026-09-28).
 
-**Números conferidos por comando em 2026-10-04, na branch da SPEC-083
-(`spec083/convite-por-email`, `e3b178b`, 18 commits sobre o `main` em
-`ff0c9f5`):** **59 migrations, 44 tabelas, 25 triggers** não-internas, **124
-caminhos / 172 operações** no `openapi.json`; **43 modelos e 19 enums** no
-`schema.prisma`.
+**Números de 2026-10-04, na branch da SPEC-083 (`spec083/convite-por-email`,
+`e3b178b`, 18 commits sobre o `main` em `ff0c9f5`). Conferidos por comando:**
+**59 migrations**, **124 caminhos / 172 operações** no `openapi.json`, **43
+modelos e 19 enums** no `schema.prisma`. **Derivados da migration, e não lidos
+de um banco: 44 tabelas e 25 triggers** não-internas (os 43 e 25 do bloco de
+2026-09-28 desta planta, mais o que a migration nova cria) —
+**a conferir em banco** (`pg_tables`, `pg_trigger`) quando o Postgres local
+estiver livre.
 
 *Mudou: **+1 migration** (`20261003120000_spec083_convites_de_acesso`), **+1
 tabela** (`convites_de_acesso`), **+1 enum** (`resultado_do_email`), **nenhum
@@ -16,7 +19,8 @@ e `/teachers/{id}/convite-de-acesso`). Como: `ls -d prisma/migrations/*/`
 (59; o `main` tem 58); `^model`/`^enum` no `schema.prisma` (43/19; o `main`,
 42/18); caminhos e operações lidos do `openapi.json` por `node` (124/172; o do
 `main`, 120/166). **Tabelas e triggers foram somados pela migration, e não
-lidos de um banco** — ela tem um `CREATE TABLE` e nenhum `CREATE TRIGGER` —,
+lidos de um banco** — ela tem um `CREATE TABLE` e nenhum `CREATE TRIGGER`
+(`grep -ci` na migration: 1 e 0) —,
 porque outra leva roda suítes contra o Postgres local nesta máquina. A seção
 "O convite de acesso por e-mail", na seção 10, diz o que mudou.*
 
