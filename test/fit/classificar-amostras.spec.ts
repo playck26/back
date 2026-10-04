@@ -10,12 +10,15 @@
  *
  * ## Onde roda
  *
- * O nome é `.spec.ts`, como a spec manda, mas nenhuma configuração do jest
- * acha um `.spec.ts` em `test/`: a unitária olha `src/`, e a do FIT, só
- * `.fit-spec.ts`. Por isso o FIT-057 importa este arquivo, e estes casos
- * rodam com ele no `fit-critical`. À mão, sem banco:
+ * O nome é `.spec.ts`, como a spec manda, e a unitária olha só `src/`. Quem
+ * acha este arquivo é o `testRegex` do `jest-fit.json`, **pelo nome** (TASK-005c):
+ * ele roda no `fit-critical` (`pnpm run test:fit`) como arquivo próprio, ao
+ * lado do FIT-057, que importa só as funções. Antes, vinha por um `import` do
+ * FIT-057 — rodava só porque o FIT rodava, e contava como caso dele.
  *
- * `.\node_modules\.bin\jest.CMD --rootDir . --testRegex "test/fit/classificar-amostras\.spec\.ts$"`
+ * À mão, sem o resto do FIT (o `globalSetup` do jest-fit ainda exige o banco):
+ *
+ * `.\node_modules\.bin\jest.CMD --config ./test/jest-fit.json --runInBand classificar-amostras`
  */
 import {
   agregarTentativas,
@@ -145,6 +148,33 @@ describe('SPEC-083/AC-056 — classificarAmostras', () => {
     expect(c.veredito).toBe('vermelho');
     expect(c.L).toBe(3_100);
     expect(c.assinaturaTardia).toBe(true);
+  });
+
+  // A borda da assinatura tardia (TASK-005c): a spec diz `L − início ≥ 3 s`.
+  // Com só o 3.100, um `>` no lugar do `>=` passava; o 3.000 o pega, e o
+  // 2.999 pega o limite deslocado para baixo.
+  it('L em exatamente 3.000 ms já é a assinatura tardia (L − início ≥ 3 s, com o igual)', () => {
+    const c = veredito(
+      classificarAmostras(
+        sequencia({ ultimaAtiva: 3_000, primeiraFora: 3_020 }),
+      ),
+    );
+    expect(c.veredito).toBe('vermelho');
+    expect(c.L).toBe(3_000);
+    expect(c.assinaturaTardia).toBe(true);
+  });
+
+  it('L em 2.999 ms é vermelho, mas SEM a assinatura tardia', () => {
+    // Amostras em 19, 39, …, 2.999: a cadência de 20 ms, deslocada para a
+    // última `active` cair 1 ms antes dos 3 s.
+    const c = veredito(
+      classificarAmostras(
+        sequencia({ de: 19, ultimaAtiva: 2_999, primeiraFora: 3_019 }),
+      ),
+    );
+    expect(c.veredito).toBe('vermelho');
+    expect(c.L).toBe(2_999);
+    expect(c.assinaturaTardia).toBe(false);
   });
 
   it('um vão de 250 ms entre amostras é FALHA DO HARNESS, mesmo com um U que daria verde', () => {

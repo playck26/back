@@ -6,7 +6,7 @@
   ],
   "rootDir": ".",
   "testEnvironment": "node",
-  "testRegex": ".fit-spec.ts$",
+  "testRegex": "(\\.fit-spec|/classificar-amostras\\.spec)\\.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },

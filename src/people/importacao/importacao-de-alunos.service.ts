@@ -1402,6 +1402,35 @@ export class ImportacaoDeAlunosService {
     // de hoje"). Daí o `AT TIME ZONE 'UTC'` explícito nas três, e o
     // `created_at` escrito aqui em vez de deixado ao `DEFAULT` do banco, que
     // tem o mesmo deslocamento.
+    //
+    // **As linhas entram em ordem de e-mail, e não na do arquivo** (TASK-005c).
+    // O `INSERT` em lote toma as entradas de `usuarios_email_key` uma a uma, e
+    // cada e-mail que outra transação acabou de inserir (sem `COMMIT`) faz
+    // esta esperar por ela. Duas importações com os mesmos e-mails em ordens
+    // opostas — de clubes diferentes, ou do mesmo clube sem turma em comum,
+    // que nenhuma trava serializa — fechavam um ciclo: a primeira segurava
+    // `a` e esperava `b`, a segunda segurava `b` e esperava `a`, e o Postgres
+    // derrubava uma com `40P01`, que não tem tradução e subia `500`. Com as
+    // duas na mesma ordem total, quem espera nunca segura um e-mail maior que
+    // aquele por que espera: uma só espera a outra, e a perdedora recebe o
+    // `23505` da etapa de `usuarios`, que a D3 já decide (o `422` refeito).
+    //
+    // A ordem sai daqui, comparando o e-mail já normalizado (minúsculas, sem
+    // espaço) por unidade de código — e não de um `ORDER BY` do banco, que
+    // dependeria da collation; as duas importações rodam o mesmo código, e é
+    // isso que basta. O `WITH ORDINALITY … ORDER BY` só deixa explícito, no
+    // SQL, que a ordem do arranjo é a de inserção.
+    //
+    // As outras três escritas não precisam disto: as chaves delas são ids
+    // novos desta transação (aluno, matrícula do aluno novo, token novo), e
+    // nenhuma outra transação insere a mesma entrada de índice.
+    const emOrdem = [...linhas].sort((a, b) =>
+      a.linha.email < b.linha.email
+        ? -1
+        : a.linha.email > b.linha.email
+          ? 1
+          : 0,
+    );
     const expiraEm = senhaTemporariaExpiraEm();
     const gravados = await tx.$executeRaw`
       WITH ${CTE_DO_PRAZO}
@@ -1412,13 +1441,14 @@ export class ImportacaoDeAlunosService {
              'aluno'::usuario_role, ${companyId}::uuid, true,
              (${expiraEm}::timestamptz AT TIME ZONE 'UTC'),
              (now() AT TIME ZONE 'UTC'), (now() AT TIME ZONE 'UTC')
-        FROM unnest(${linhas.map((l) => l.usuarioId)}::uuid[],
-                    ${linhas.map((l) => l.linha.email)}::text[],
-                    ${linhas.map((l) => l.senhaHash)}::text[],
-                    ${linhas.map((l) => l.linha.nome)}::text[],
-                    ${linhas.map((l) => l.linha.telefone ?? '')}::text[])
-               AS d(id, email, senha_hash, nome, telefone)
-       WHERE ${DEPOIS_DO_PRAZO}`;
+        FROM unnest(${emOrdem.map((l) => l.usuarioId)}::uuid[],
+                    ${emOrdem.map((l) => l.linha.email)}::text[],
+                    ${emOrdem.map((l) => l.senhaHash)}::text[],
+                    ${emOrdem.map((l) => l.linha.nome)}::text[],
+                    ${emOrdem.map((l) => l.linha.telefone ?? '')}::text[])
+               WITH ORDINALITY AS d(id, email, senha_hash, nome, telefone, ord)
+       WHERE ${DEPOIS_DO_PRAZO}
+       ORDER BY d.ord`;
     exigirGravadas('usuarios', gravados, linhas.length);
   }
 

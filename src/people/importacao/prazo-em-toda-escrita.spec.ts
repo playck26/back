@@ -270,3 +270,66 @@ describe('SPEC-083/AC-051 — controle do gravador', () => {
     expect(ehAjusteDoPrazo(comParametro)).toBe(false);
   });
 });
+
+/**
+ * SPEC-083/TASK-005c — **as contas entram em ordem de e-mail**, e não na do
+ * arquivo. Duas importações com os mesmos e-mails em ordens opostas fechavam
+ * um ciclo no índice único de `usuarios.email` (cada `INSERT` em lote esperando
+ * a linha ainda não confirmada da outra), e o `40P01` subia `500`. A prova de
+ * banco é `test/banco/spec-083-importacao-concorrente.db-spec.ts`; esta é a
+ * forma, pelo mesmo gravador: o arranjo de e-mails do `INSERT` vem ordenado, as
+ * outras colunas acompanham a linha delas, e o aluno de cada linha continua
+ * apontando para a conta do e-mail dela.
+ */
+describe('SPEC-083/TASK-005c — o INSERT de usuários em ordem determinística', () => {
+  const FORA_DE_ORDEM = [
+    'nome;email;telefone',
+    'Zeca;zeca@x.com;111',
+    'Ana;ana@x.com;222',
+    'Mara;mara@x.com;333',
+  ].join('\r\n');
+
+  let usuarios: Instrucao;
+  let alunos: Instrucao;
+
+  beforeAll(async () => {
+    const { servico, daTransacao } = gravador();
+    await servico.importar('c1', FORA_DE_ORDEM, { gestorId: GESTOR });
+    const transacao = daTransacao();
+    usuarios = transacao.find(
+      (i) => tabelaEscrita(i) === 'usuarios',
+    ) as Instrucao;
+    alunos = transacao.find((i) => tabelaEscrita(i) === 'alunos') as Instrucao;
+  });
+
+  const arranjosDe = (i: Instrucao) =>
+    i.valores.filter((v): v is string[] => Array.isArray(v));
+
+  it('os e-mails vão ordenados, e nome e telefone acompanham a linha de cada um', () => {
+    const [, emails, , nomes, telefones] = arranjosDe(usuarios);
+    expect(emails).toEqual(['ana@x.com', 'mara@x.com', 'zeca@x.com']);
+    expect(nomes).toEqual(['Ana', 'Mara', 'Zeca']);
+    expect(telefones).toEqual(['222', '333', '111']);
+  });
+
+  it('a ordem do arranjo é a de inserção, dita no SQL', () => {
+    const s = plano(usuarios.sql);
+    expect(s).toContain(
+      'WITH ORDINALITY AS d(id, email, senha_hash, nome, telefone, ord)',
+    );
+    expect(s).toMatch(/ORDER BY d\.ord$/);
+  });
+
+  it('o aluno de cada linha aponta para a conta do e-mail dela (os ids não se embaralham)', () => {
+    const [ids, emails] = arranjosDe(usuarios);
+    const contaDo = new Map(emails.map((e, k) => [e, ids[k]]));
+    const [, usuarioDoAluno] = arranjosDe(alunos);
+    // `alunos` segue a ordem do arquivo: Zeca, Ana, Mara.
+    expect(usuarioDoAluno).toEqual([
+      contaDo.get('zeca@x.com'),
+      contaDo.get('ana@x.com'),
+      contaDo.get('mara@x.com'),
+    ]);
+    expect(new Set(ids).size).toBe(3);
+  });
+});

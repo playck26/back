@@ -44,12 +44,13 @@
  * depois de um diagnóstico escrito (AC-045). As linhas `FIT057_…` do log são
  * o que esse registro copia.
  *
- * ## O classificador roda junto
+ * ## O classificador roda no mesmo job, como arquivo próprio
  *
- * O `import` de `classificar-amostras.spec.ts` no fim dos imports é de
- * propósito: nenhuma configuração do jest acha um `.spec.ts` em `test/`, e é
- * assim que os casos do AC-056 (e a S19, a S20 e a S21) rodam no
- * `fit-critical` com este arquivo.
+ * Os casos do AC-056 (e a S19, a S20 e a S21) moram em
+ * `classificar-amostras.spec.ts`, e o `testRegex` do `jest-fit.json` acha esse
+ * arquivo pelo nome (TASK-005c). Até ali ele vinha por um `import` daqui, e só
+ * rodava porque este arquivo rodava — herdando o `exigirBancoLocal` de uma
+ * unidade que não toca banco, e somando os casos dele aos deste.
  */
 import { randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
@@ -99,7 +100,6 @@ import {
   type Amostra,
   type Classificacao,
 } from './classificar-amostras';
-import './classificar-amostras.spec';
 
 exigirBancoLocal();
 jest.setTimeout(600_000);
@@ -1010,11 +1010,65 @@ async function tentativaComDuasEsperas(opcoes: {
   }
 }
 
+/** O veredito de uma tentativa como o log o escreve. */
+const vereditoDa = (c: Classificacao) =>
+  c.tipo === 'veredito' ? c.veredito : c.tipo;
+
+/** A assinatura tardia de uma tentativa; `-` quando não houve veredito. */
+const tardiaDa = (c: Classificacao) =>
+  c.tipo === 'veredito' ? String(c.assinaturaTardia) : '-';
+
+/**
+ * TASK-005c — **o agregado do caso, numa linha, passe ou falhe.** O
+ * `CLI_AUDIT.md` copia as linhas `FIT057_…` de toda execução (AC-045), e o
+ * agregado das três tentativas só aparecia na mensagem do `expect`, quando o
+ * caso falhava. A ordem de decisão é a do `julgar`: a precondição de antes de
+ * soltar X, depois a resposta e o "nada escrito", e só então o tempo.
+ */
+function agregadoDoCaso(
+  caso: string,
+  tentativas: readonly Tentativa[],
+  respostaEsperada: ReturnType<typeof resumoDa>,
+): { resultado: string; linha: string } {
+  const classificacoes = tentativas.map((t) => t.classificacao);
+  const semPrecondicao = tentativas.find((t) => t.precondicao !== null);
+  const respostaErrada = tentativas.find(
+    (t) =>
+      JSON.stringify(t.resposta) !== JSON.stringify(respostaEsperada) ||
+      JSON.stringify(t.escritas) !== JSON.stringify(NADA),
+  );
+  let resultado: string;
+  let motivo: string;
+  if (semPrecondicao) {
+    resultado = 'reprova';
+    motivo = `precondição antes de soltar X na tentativa ${semPrecondicao.n}: ${semPrecondicao.precondicao}`;
+  } else if (respostaErrada) {
+    resultado = 'reprova';
+    motivo = `resposta ou escrita da tentativa ${respostaErrada.n}: ${JSON.stringify({ ...respostaErrada.resposta, escritas: respostaErrada.escritas })}`;
+  } else if (classificacoes.length !== TENTATIVAS) {
+    resultado = 'falha do harness';
+    motivo = `${classificacoes.length} tentativa(s), e não ${TENTATIVAS}`;
+  } else {
+    const c = concluirCaso(classificacoes);
+    resultado =
+      c.agregado === 'falha_do_harness' ? 'falha do harness' : c.agregado;
+    motivo = c.motivo;
+  }
+  const linha =
+    `FIT057_AGREGADO caso=${caso} vereditos=${classificacoes.map(vereditoDa).join(',')}` +
+    ` resultado=${resultado} motivo="${motivo}"` +
+    ` assinaturaTardia=${classificacoes.map(tardiaDa).join(',')}`;
+  return { resultado, linha };
+}
+
 /** As três tentativas já executadas: precondição, resposta, escrita, tempo. */
 function julgar(
+  caso: string,
   tentativas: readonly Tentativa[],
   respostaEsperada: ReturnType<typeof resumoDa>,
 ): void {
+  // Antes de qualquer `expect`: a linha sai também quando o caso falha.
+  console.log(agregadoDoCaso(caso, tentativas, respostaEsperada).linha);
   expect(tentativas).toHaveLength(TENTATIVAS);
   // 1. A precondição antes de soltar X — se falhar, o caso reprova por ela,
   //    e não pelo tempo (a S14 cai aqui).
@@ -1026,9 +1080,23 @@ function julgar(
     expect({ n: t.n, ...t.resposta }).toEqual({ n: t.n, ...respostaEsperada });
     expect({ n: t.n, ...t.escritas }).toEqual({ n: t.n, ...NADA });
   }
-  // 3. O tempo: o agregado conservador das três (AC-056).
-  const conclusao = concluirCaso(tentativas.map((t) => t.classificacao));
-  expect(conclusao).toEqual({ agregado: 'aprova', motivo: conclusao.motivo });
+  // 3. O tempo: o agregado conservador das três (AC-056). A reprovação diz
+  //    se houve assinatura tardia (L − início ≥ 3 s): é ela, e não um
+  //    vermelho qualquer, que prova a S10 (AC-045) e a S12 (AC-050).
+  const classificacoes = tentativas.map((t) => t.classificacao);
+  const conclusao = concluirCaso(classificacoes);
+  const tardias = classificacoes.map(tardiaDa);
+  const comTardia = tardias.flatMap((t, i) => (t === 'true' ? [i + 1] : []));
+  const motivo =
+    `${conclusao.motivo}; assinatura tardia: ` +
+    (comTardia.length > 0
+      ? `SIM, na(s) tentativa(s) ${comTardia.join(', ')}`
+      : 'não') +
+    ` (${tardias.join(',')})`;
+  expect({ agregado: conclusao.agregado, motivo }).toEqual({
+    agregado: 'aprova',
+    motivo,
+  });
 }
 
 describe('SPEC-083/FIT-057 (c) AC-045 — o prazo da importação é absoluto nas turmas', () => {
@@ -1068,7 +1136,7 @@ describe('SPEC-083/FIT-057 (c) AC-045 — o prazo da importação é absoluto na
       registrar('FIT057_AC045', t);
       tentativas.push(t);
     }
-    julgar(tentativas, {
+    julgar('AC045', tentativas, {
       status: 409,
       code: 'MATRICULA_EM_ANDAMENTO',
       message: I4,
@@ -1115,7 +1183,7 @@ describe('SPEC-083/FIT-057 (d) AC-050 — o prazo absoluto dentro da escrita em 
       registrar('FIT057_AC050', t);
       tentativas.push(t);
     }
-    julgar(tentativas, {
+    julgar('AC050', tentativas, {
       status: 409,
       code: 'MATRICULA_EM_ANDAMENTO',
       message: I6,
@@ -1167,8 +1235,16 @@ describe('SPEC-083/FIT-057 AC-013 — a corrida: a conferência passa, e a impor
         status: 422,
         code: 'PLANILHA_COM_ERROS',
       });
+      // A mensagem inteira, e não só linha e coluna: um erro na mesma célula
+      // por outro motivo (a turma que "deixou de estar ativa depois da
+      // conferência", por exemplo) passaria por `linha` e `coluna`, e não é
+      // a corrida da vaga.
       expect(relatorioDo422(r).erros).toEqual([
-        expect.objectContaining({ linha: 2, coluna: 'turma' }),
+        {
+          linha: 2,
+          coluna: 'turma',
+          mensagem: `A turma "${A.nome}" já está cheia (capacidade 2).`,
+        },
       ]);
     } finally {
       await w.soltar('commit');
