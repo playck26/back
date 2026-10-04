@@ -2,6 +2,18 @@
 
 **Fonte: análise direta do código.** Data: **2026-10-04** (era 2026-09-28).
 
+**SPEC-081, na branch `spec081/o-custo-de-cada-requisicao` (sobre o `main` em
+`994a091`, que já tem a 082 e a 083), 2026-10-04 — nenhum número estrutural
+mudou.** Conferidos por comando no worktree da branch: **59 migrations**
+(`ls -d prisma/migrations/*/`), **43 modelos e 19 enums** (`^model`/`^enum` no
+`schema.prisma`), **124 caminhos / 172 operações** (`openapi.json`, lido por
+`node`) — os mesmos do bloco abaixo; `git diff --stat 994a091..HEAD -- prisma
+openapi.json` sai vazio. O que mudou é de **forma do custo**, e está na seção
+"O custo de cada requisição (SPEC-081)", no fim da seção 10: o refresh token
+em SHA-256 (com o bcrypt aceito só para linha legada, por 7 dias), o portão do
+`JwtAuthGuard` em uma ida ao banco, o pool registrado na subida e as presenças
+contadas por ocorrência.
+
 **Números de 2026-10-04, na branch da SPEC-083 (`spec083/convite-por-email`,
 `e3b178b`, 18 commits sobre o `main` em `ff0c9f5`). Conferidos por comando:**
 **59 migrations**, **124 caminhos / 172 operações** no `openapi.json`, **43
@@ -672,7 +684,7 @@ conta `pg_tables` (43).*
 |---|---|---|
 | `empresas` | MOD-002 | tenant. `slug` único alimenta o link público de cadastro; `permite_auto_cadastro` liga/desliga esse link. `logo_key` (SPEC-018) é o upload real e **convive** com `logo_url`, que não migra (AC-012) |
 | `usuarios` | MOD-001 | identidade. E-mail único **global** (INV-004). `senha_temporaria` tranca a conta até a troca (INV-008). `foto_key` (SPEC-018) é a foto de quem **tem conta**; CHECK exige empresa, então `super_admin` não tem foto |
-| `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira |
+| `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira. `token_hash` é **SHA-256** desde a SPEC-081 (a linha é achada pelo `jti`, e o hash só é conferido depois); linha legada em bcrypt (`$2…`) ainda confere, uma vez, até a spec de limpeza (LIM-081a) |
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
 | `convites_de_acesso` | MOD-001 (dados), `AcessoModule` | **SPEC-083.** O link de ativação do convite por e-mail. Mesmo `token_hash` sha256 de `convites_aluno`, mais **`impressao_credencial`** (sha256 de `usuarios.senha_hash` na emissão): a ativação a compara sob `FOR UPDATE` no usuário, e senha trocada por qualquer caminho mata o link (INV-083c). `company_id NOT NULL` + FK composta para `usuarios (company_id, id)`: `super_admin` não tem convite (INV-083d). `email_resultado`/`email_motivo`/`email_em` gravados **depois** do `COMMIT`; os dois nulos querem dizer `sem_confirmacao`. Também escrita pela **importação** (MOD-003), no SQL cru dela, com linhas que o `AcessoService` prepara |
 | `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload. **SPEC-054/D9:** pedido sem adicional (ou com lista vazia) grava `quadraId\|data\|slots` byte a byte como antes; com adicional, ganha `\|adicionais=<id>:<q>,…` em ordem de id — a comparação é `!==`, e mudar o formato de todo pedido quebraria o replay de chaves já gravadas |
@@ -1678,6 +1690,9 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 
 - **Access token** JWT (~15 min) no header; **refresh token** em cookie
   `httpOnly`, `SameSite=Strict`, path `/api/v1/auth`, rotacionado a cada uso.
+  **Guardado em SHA-256 desde a SPEC-081** (`src/auth/hash-do-refresh.ts`),
+  conferido em tempo constante; bcrypt só para linha legada (ver seção 10, "O
+  custo de cada requisição").
 - **`JwtAuthGuard` faz duas coisas**: autentica **e** aplica INV-008 (conta
   com senha temporária só alcança trocar senha, `/auth/me` e logout). A trava
   mora aqui, e não num `APP_GUARD`, porque guard global roda antes do guard de
@@ -1696,6 +1711,9 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
   EMPRESA_INATIVA`** — código próprio, porque a conta da pessoa está em ordem e
   quem resolve suspensão de clube é o `super_admin` — e custa **zero consulta a
   mais**: `empresa` já vinha no `select` por causa do `contratoVersaoVigente`.
+  *(SPEC-081/D2: aquele `select` aninhado eram, na verdade, **duas** idas — o
+  Prisma 6.19 roda sem `relationJoins`. Desde a SPEC-081 a leitura do portão é
+  **uma** consulta com `LEFT JOIN empresas`, em `lerPortaoDoUsuario`.)*
   O `super_admin` não é barrado (`companyId` nulo): é ele quem reativa.
   Guards: `RolesGuard`, `CompanyAdminGuard`, `SuperAdminGuard`, `TenantGuard`.
 - **Escopo por empresa vem sempre do token**, nunca de parâmetro do cliente.
@@ -2432,6 +2450,45 @@ etapa: só na de `usuarios` a conferência é refeita, e só erro de e-mail vira
 não em `test/acesso.e2e-spec.ts`, que a TASK-004 da spec listava e não existe.*
 **Nenhum destes gates rodou no CI ainda**: a branch não foi enviada, e o
 `evd.json` e o `CLI_AUDIT.md` da SPEC-083 não existem em 2026-10-04.
+
+### O custo de cada requisição (SPEC-081)
+
+*Escrita em 2026-10-04 sobre a branch `spec081/o-custo-de-cada-requisicao`
+(sobre o `main` em `994a091`). **Nada disto está em produção**: a branch não
+foi enviada. Nenhuma migration, nenhuma rota, nenhum contrato mudou; o que muda
+é quanto CPU e quantas idas ao banco cada requisição custa. Medições no
+`CLI_AUDIT.md` da spec.*
+
+| Mudança | Onde | Antes | Agora |
+|---|---|---|---|
+| **refresh token em SHA-256** (D1) | `src/auth/hash-do-refresh.ts`, chamado por `AuthService.refresh` e pela emissão | `bcrypt.hash`/`bcrypt.compare`: ~267 ms de CPU cada, duas por refresh — e o bcrypt só lê 72 bytes, onde dois refresh do mesmo usuário são iguais | `hashDoRefresh` = SHA-256 hex; `confereHashDoRefresh` compara em tempo constante (`timingSafeEqual`). Hash `$2…` é **legado**: confere por bcrypt uma última vez e a rotação o troca por SHA-256 — o ramo sai numa spec de limpeza depois de **7 dias** do deploy (LIM-081a). Formato desconhecido recusa **antes** de comparar (401, e não 500). A unicidade da rotação continua no `UPDATE … WHERE revoked_at IS NULL`, inalterada |
+| **portão do guard em uma ida** (D2) | `src/common/guards/portao-do-usuario.ts`, usado pelo `JwtAuthGuard` | `usuario.findUnique` com `empresa` aninhada = **2** consultas (sem `relationJoins`) | `lerPortaoDoUsuario`: um `$queryRaw` com `LEFT JOIN empresas` (o `super_admin` não tem empresa), devolvendo o mesmo formato. Medido: `GET /me/avisos/nao-lidos` de 3 idas no `main` para 2. O texto abre com o marcador `/* portao-do-usuario */`, por onde os dublês o roteiam (`test/utils/portao-no-duble.ts`), nunca pelo `WHERE` |
+| **pool registrado na subida** (D3) | `src/prisma/pool-do-banco.ts`, chamado em `PrismaService.onModuleInit` | o tamanho do pool em produção era palpite (`núcleos × 2 + 1` sem `connection_limit`) | registra `{ evento: 'pool_do_banco', connectionLimit, poolTimeout }` — **só esses dois números** da URL, nunca usuário, host ou banco — e avisa `pool_do_banco_sem_limite` quando a URL não traz `connection_limit`. O Back não reescreve a URL. O canário `FIT-001/002 Neon` do `db-migrate.yml` ganhou a entrada `connection_limit`, para rodar com o valor de produção antes de ele ir |
+| **presenças contadas por ocorrência** (D4) | `FrequenciaService.presencasPorOcorrencia` (`daTurma`, `doAluno`, `evasao`) e `PresencaService.marcadosPorOcorrencia` (lista do professor) | `_count: { presencas }` no `select`: o Prisma gera `LEFT JOIN (SELECT … FROM presencas GROUP BY …)` sobre a tabela da plataforma inteira | `$queryRaw` que conta por `p.ocupacao_id`, com o recorte das ocorrências feito no banco (frequência: `o.company_id`, `p.company_id`, `TURMA`, janela, e a turma no `daTurma`) ou `ANY` dos ids da página (lista do professor, ≤ 100 pelo `@Max(100)`); resultado em `Map<ocupacaoId, number>`. Medido no banco local: **9,6 ms** no clube da avaliação (era 80,5 ms, Seq Scan), **32,6 ms** no cenário de referência, **5,2%** entre o clube sozinho e com os outros. Acima de **7.800** ocorrências o Back registra `relatorio_acima_da_referencia` (`src/frequencia/aviso-de-referencia.ts`) |
+
+**A precondição que a contagem assume, e de quem ela é** (v9, achado
+081-V8-01; LIM-081f). O `p.company_id` entrou pela medição (sem ele o índice
+`presencas_company_id_ocupacao_id_idx` não é usável), e não muda o número
+**se** toda presença tem o `company_id` do clube da sua ocorrência. **Isso é
+invariante de aplicação, não de constraint**: a PK global de
+`ocupacoes_quadra` identifica a ocorrência, mas `presencas_ocupacao_fkey` não
+leva `company_id`, e a FK composta da DEF-024 amarra a presença ao **aluno**.
+Sustentam-na os escritores — o único `INSERT`
+(`gravarPresencasDoFechamento`), cujos dois chamadores tiram o `company_id` da
+ocorrência, e o único `UPDATE` (`aplicarD9`), que não toca `company_id` nem
+`aluno_id`. Com a precondição quebrada por escrita manual, a linha divergente
+**não conta** para o clube da ocorrência, nas duas contagens. **Escritor novo
+de `presencas` tem de tirar o `company_id` da ocorrência.** O endurecimento
+(FK composta `presencas (ocupacao_id, company_id)`) é decisão futura.
+
+| Gate | O que prende |
+|---|---|
+| `src/auth/hash-do-refresh.spec.ts`, `src/auth/auth.service.spec.ts`, `test/banco/spec-081-refresh.db-spec.ts` | SHA-256 gravado, legado bcrypt aceito, formato desconhecido recusado antes da claim |
+| `src/common/guards/jwt-auth.guard.spec.ts`, `test/utils/portao-no-duble.e2e-spec.ts`, `test/banco/spec-081-guard.db-spec.ts`, `scripts/conferir-diff-do-portao.mjs` | o portão em uma ida, com os mesmos portões; o script reprova se uma expectativa dos testes do guard ou dos 30 e2e foi enfraquecida (AC-009) |
+| `src/prisma/pool-do-banco.spec.ts` | só os dois números saem no log |
+| `src/frequencia/frequencia.service.spec.ts` (bloco "SPEC-081 AC-015") | contrato do SQL da contagem; o valor ligado ao `p.company_id` e ao `o.company_id` conferido **por posição** (AC-019) |
+| `test/banco/spec-081-contagem.db-spec.ts` (**7 casos**: 5 do AC-014/015, 2 do AC-018) | a contagem por ocorrência (por turma daria Y lançada) e a presença divergente fora da conta — **1** em vez de 2 com uma presença de outro clube; `temPresenca` falso e `marcados` 0 com as duas |
+| `src/frequencia/aviso-de-referencia.spec.ts` | o aviso acima do limiar, uma vez por chamada |
 
 ## 11. Patterns observados
 
