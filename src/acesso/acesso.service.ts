@@ -208,7 +208,10 @@ export function derivarSituacao(
       situacao: 'falhou',
       em: vivo.emailEm,
       expiraEm: vivo.expiraEm,
-      // Só este serviço grava a coluna, e só com o vocabulário da porta.
+      // Dois lugares gravam a coluna, os dois com o vocabulário da porta
+      // (`MotivoDaFalha`, D8): `enviarDepoisDoCommit`, aqui, no envio avulso
+      // (ficha do aluno e do professor), e `enviarConvites`, em
+      // `importacao-de-alunos.service.ts`, no lote da importação.
       motivo: vivo.emailMotivo as MotivoDaFalha,
     };
   }

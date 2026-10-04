@@ -14,7 +14,9 @@ import { ResendProvedorDeEmail } from './resend-provedor-de-email';
 
 /**
  * SPEC-083/D12 — MOD-015 (Email): porta, adaptadores e modelos. Sem controller
- * e sem tabela; quem grava o resultado do envio é o `AcessoModule`.
+ * e sem tabela; quem grava o resultado do envio no convite é quem enviou: o
+ * `AcessoService` (`enviarDepoisDoCommit`, a ficha) e a importação em lote
+ * (`ImportacaoDeAlunosService.enviarConvites`).
  *
  * Os provedores são fábricas pela razão do `StorageModule`: a configuração é
  * validada quando o app sobe, e não quando o primeiro convite sai (AC-030).

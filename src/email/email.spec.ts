@@ -37,7 +37,6 @@ import {
   chaveDoBloco,
   motivoDoErroDoResend,
   ResendProvedorDeEmail,
-  TEMPO_MAXIMO_POR_CHAMADA_MS,
   type ClienteDoResend,
 } from './resend-provedor-de-email';
 
@@ -730,6 +729,26 @@ describe('AC-032 — o lote em blocos de 100, cada um com a sua chave', () => {
   });
 });
 
+/**
+ * D8: "tempo máximo de **10 s** por chamada" — em LITERAIS, e não pela
+ * constante do adaptador (IMP-083-01, validação R1). O oráculo que importa a
+ * constante se move junto com ela: com o teto trocado para `30_000`, a prova
+ * antiga seguia verde. Estes dois instantes são da norma; se o adaptador
+ * mudar o teto, é aqui que alguém tem de discordar.
+ */
+const AINDA_NO_PRAZO_MS = 9_999;
+const TETO_DA_NORMA_MS = 10_000;
+
+/** Uma promessa e a pergunta "já resolveu?", sem esperar por ela. */
+function acompanhar<T>(promessa: Promise<T>) {
+  let resolveu = false;
+  const acompanhada = promessa.then((valor) => {
+    resolveu = true;
+    return valor;
+  });
+  return { promessa: acompanhada, resolveu: () => resolveu };
+}
+
 describe('o tempo máximo de 10 s por chamada', () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -738,7 +757,7 @@ describe('o tempo máximo de 10 s por chamada', () => {
     jest.useRealTimers();
   });
 
-  it('avulso que não responde vira tempo_esgotado, e o pedido é abortado', async () => {
+  it('avulso que não responde: em 9.999 ms ainda espera; em 10.000 ms desiste com tempo_esgotado, e o pedido é abortado', async () => {
     const { cliente, emails } = dubleDoResend();
     let sinal: AbortSignal | undefined;
     emails.mockImplementation((_pedido, opcoes) => {
@@ -746,18 +765,17 @@ describe('o tempo máximo de 10 s por chamada', () => {
       return new Promise(() => undefined);
     });
     const provedor = new ResendProvedorDeEmail(cliente);
-    let resolveu = false;
-    const resultado = provedor.enviar(mensagens(1)[0]).then((r) => {
-      resolveu = true;
-      return r;
-    });
+    const envio = acompanhar(provedor.enviar(mensagens(1)[0]));
 
-    await jest.advanceTimersByTimeAsync(TEMPO_MAXIMO_POR_CHAMADA_MS - 1);
-    expect(resolveu).toBe(false);
+    await jest.advanceTimersByTimeAsync(AINDA_NO_PRAZO_MS);
+    expect(envio.resolveu()).toBe(false);
     expect(sinal?.aborted).toBe(false);
 
-    await jest.advanceTimersByTimeAsync(1);
-    await expect(resultado).resolves.toEqual({
+    await jest.advanceTimersByTimeAsync(TETO_DA_NORMA_MS - AINDA_NO_PRAZO_MS);
+    // Resolvida AQUI, sem mais relógio: um teto mais tardio pararia nesta
+    // linha, e não no tempo limite do jest.
+    expect(envio.resolveu()).toBe(true);
+    await expect(envio.promessa).resolves.toEqual({
       ok: false,
       motivo: 'tempo_esgotado',
     });
@@ -780,25 +798,35 @@ describe('o tempo máximo de 10 s por chamada', () => {
         }),
     );
     const provedor = new ResendProvedorDeEmail(cliente);
-    const resultado = provedor.enviar(mensagens(1)[0]);
+    const envio = acompanhar(provedor.enviar(mensagens(1)[0]));
 
-    await jest.advanceTimersByTimeAsync(TEMPO_MAXIMO_POR_CHAMADA_MS);
-    await expect(resultado).resolves.toEqual({
+    await jest.advanceTimersByTimeAsync(AINDA_NO_PRAZO_MS);
+    expect(envio.resolveu()).toBe(false);
+
+    await jest.advanceTimersByTimeAsync(TETO_DA_NORMA_MS - AINDA_NO_PRAZO_MS);
+    expect(envio.resolveu()).toBe(true);
+    await expect(envio.promessa).resolves.toEqual({
       ok: false,
       motivo: 'tempo_esgotado',
     });
   });
 
-  it('bloco que não responde: as mensagens dele saem tempo_esgotado, e o próximo bloco ainda sai', async () => {
+  it('bloco que não responde: em 9.999 ms o segundo bloco ainda não saiu; em 10.000 ms as mensagens do primeiro saem tempo_esgotado, e o próximo bloco sai', async () => {
     const { cliente, lote } = dubleDoResend();
     lote
       .mockImplementationOnce(() => new Promise(() => undefined))
       .mockImplementationOnce(loteAceito('segundo'));
     const provedor = new ResendProvedorDeEmail(cliente);
-    const resultado = provedor.enviarLote(mensagens(150));
+    const envio = acompanhar(provedor.enviarLote(mensagens(150)));
 
-    await jest.advanceTimersByTimeAsync(TEMPO_MAXIMO_POR_CHAMADA_MS);
-    const resultados = await resultado;
+    await jest.advanceTimersByTimeAsync(AINDA_NO_PRAZO_MS);
+    expect(envio.resolveu()).toBe(false);
+    // Em série: o segundo bloco espera o primeiro desistir.
+    expect(lote).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(TETO_DA_NORMA_MS - AINDA_NO_PRAZO_MS);
+    expect(envio.resolveu()).toBe(true);
+    const resultados = await envio.promessa;
 
     expect(lote).toHaveBeenCalledTimes(2);
     expect(resultados.slice(0, 100)).toEqual(
@@ -861,7 +889,7 @@ describe('AC-031 (parte do módulo) — nada de token, link ou corpo em log', ()
     try {
       emails.mockImplementationOnce(() => new Promise(() => undefined));
       const esgotado = provedor.enviar(mensagem);
-      await jest.advanceTimersByTimeAsync(TEMPO_MAXIMO_POR_CHAMADA_MS);
+      await jest.advanceTimersByTimeAsync(TETO_DA_NORMA_MS);
       await expect(esgotado).resolves.toEqual({
         ok: false,
         motivo: 'tempo_esgotado',

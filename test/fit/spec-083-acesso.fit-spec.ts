@@ -8,6 +8,7 @@ import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types';
+import * as senhaTemporaria from '../../src/common/utils/senha-temporaria';
 import { MemoriaProvedorDeEmail } from '../../src/email/memoria-provedor-de-email';
 import {
   PROVEDOR_DE_EMAIL,
@@ -1281,5 +1282,77 @@ describe('AC-038 (Back) — a rota do professor responde as seis situações, no
       expiraEm: null,
       motivo: null,
     });
+  });
+});
+
+/**
+ * AC-018 pela borda de verdade (desvio 2 da validação R1). A db-spec da
+ * importação prova o mecanismo com `bcrypt.compare` contra o hash gravado;
+ * aqui a prova é a que o aluno faria: a rota de login, com o app inteiro e o
+ * banco. A sonda do validador (`VAL083_AC018 rejected=401,401 positive=200`)
+ * virou este teste.
+ *
+ * "A `pck-` que ela teria" é qualquer senha que o gerador da importação
+ * produziu nesta chamada: o espião deixa a função real rodar e guarda o que
+ * ela devolveu. Se a convidada ganhasse o hash de uma `pck-` gerada (em vez do
+ * segredo descartado), essa `pck-` estaria entre as guardadas — e entraria.
+ */
+describe('AC-018 — pela rota de login: a convidada da importação não entra com senha nenhuma; a não convidada entra com a dela', () => {
+  it('importa uma convidada e uma não convidada: 401 para as senhas conhecidas da convidada, 200 para a temporária da outra', async () => {
+    const convidada = 'spec083-acesso-imp-convidada@teste.local';
+    const naoConvidada = 'spec083-acesso-imp-com-senha@teste.local';
+    const planilha = [
+      'nome;email',
+      `Convidada Importada;${convidada}`,
+      `Comsenha Importada;${naoConvidada}`,
+    ].join('\r\n');
+
+    const gerador = jest.spyOn(senhaTemporaria, 'gerarSenhaTemporaria');
+    let res: Response;
+    let geradas: string[];
+    try {
+      res = await http()
+        .post('/api/v1/students/importar')
+        .set('Authorization', `Bearer ${tokenDoGestor}`)
+        .field('convidar', '2')
+        .attach('arquivo', Buffer.from(planilha, 'utf8'), 'alunos.csv');
+      geradas = gerador.mock.results.map((r) => r.value as string);
+    } finally {
+      gerador.mockRestore();
+    }
+
+    expect(res.status).toBe(201);
+    const { criados } = bodyOf<{
+      criados: {
+        linha: number;
+        email: string;
+        senhaTemporaria?: string;
+        convite?: { email: string };
+      }[];
+    }>(res);
+    const daConvidada = criados.find((c) => c.email === convidada);
+    const daOutra = criados.find((c) => c.email === naoConvidada);
+    expect(daConvidada?.linha).toBe(2);
+    expect(daOutra?.linha).toBe(3);
+    // A resposta não traz senha para a convidada — nem o campo.
+    expect(daConvidada).not.toHaveProperty('senhaTemporaria');
+    expect(daConvidada?.convite).toEqual({ email: 'enviado' });
+    expect(daOutra).not.toHaveProperty('convite');
+    const senhaDaOutra = daOutra?.senhaTemporaria as string;
+    expect(senhaDaOutra).toMatch(/^pck-/);
+    // Não é vacuidade: o espião viu o gerador da importação rodar.
+    expect(geradas).toContain(senhaDaOutra);
+
+    const tentativas = [...new Set([...geradas, 'uma-senha-qualquer-083'])];
+    expect(tentativas.length).toBeGreaterThanOrEqual(2);
+    const respostas: number[] = [];
+    for (const senha of tentativas) {
+      respostas.push((await login(convidada, senha)).status);
+    }
+    expect(respostas).toEqual(tentativas.map(() => 401));
+
+    // O positivo, pela mesma rota: a não convidada entra com a temporária que
+    // a importação lhe deu. Sem ele, o 401 podia ser a rota quebrada.
+    expect((await login(naoConvidada, senhaDaOutra)).status).toBe(200);
   });
 });
