@@ -5,11 +5,11 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import type {
-  CompletudeChamada,
-  OcupacaoQuadra,
+import {
   Prisma,
-  StatusPresenca,
+  type CompletudeChamada,
+  type OcupacaoQuadra,
+  type StatusPresenca,
 } from '@prisma/client';
 import {
   ChamadaResponseDto,
@@ -499,7 +499,8 @@ export class PresencaService {
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
-        _count: { select: { presencas: true } },
+        // SPEC-081/D4 — o `_count` de presenças saiu daqui (ele agregava a
+        // tabela inteira); a contagem é a de `marcadosDaPagina`, abaixo.
         // SPEC-030 — **isto passou a ser selecionado aqui.** Antes esta
         // lista decidia "chamada feita" contando presenças, e o calendário
         // decidia pelo cabeçalho: uma ocorrência com cabeçalho e ZERO
@@ -519,6 +520,13 @@ export class PresencaService {
       // sumir de outra.
       orderBy: [{ data: 'desc' }, { horaInicio: 'desc' }, { id: 'desc' }],
     });
+
+    // SPEC-081/D4 — as presenças SÓ das ocorrências desta página: no máximo
+    // `pageSize` ids (`@Max(100)`), agrupados por ocorrência.
+    const marcadosDaPagina = await this.marcadosPorOcorrencia(
+      companyId,
+      ocorrencias.map((o) => o.id),
+    );
 
     const hoje = this.hoje();
     const agora = new Date();
@@ -563,7 +571,7 @@ export class PresencaService {
         // mundo faltou tem cabeçalho e zero presenças — e a chamada **foi
         // feita**. A regra antiga mandava o professor lançar de novo.
         chamadaFeita: chamadaJaRegistrada(estado),
-        marcados: o._count.presencas,
+        marcados: marcadosDaPagina.get(o.id) ?? 0,
         totalAlunos: turma._count.alunos,
         // SPEC-027 — **`o.data <= hoje` não bastava.** A aula das 18h de hoje
         // satisfazia a comparação às 8h da manhã, e a tela oferecia lançar
@@ -596,6 +604,42 @@ export class PresencaService {
     });
 
     return { data, page, pageSize, total };
+  }
+
+  /**
+   * SPEC-081/D4 — **presenças por ocorrência, só das ocorrências da página.**
+   *
+   * Antes era `_count` no `include`, que o Prisma traduz para `LEFT JOIN
+   * (SELECT … FROM presencas GROUP BY …)` sobre a tabela inteira, de todos
+   * os clubes. Aqui a lista vem da própria página (no máximo `pageSize`, e o
+   * DTO limita a 100), e a chave do mapa é o id da OCORRÊNCIA (AC-015).
+   *
+   * `$queryRaw`, e não `presenca.groupBy`: é a mesma forma das contagens da
+   * frequência, e o dublê compartilhado dos e2e já responde `$queryRaw` (com
+   * `[]`, que é "ninguém marcado") — um `groupBy` exigiria mexer no dublê que
+   * a AC-009 congela.
+   *
+   * O `p.company_id` do token não é redundante com o `ocupacao_id` (SPEC-081
+   * v9, achado 081-V8-01; LIM-081f): que a presença seja do clube da
+   * ocorrência é precondição de APLICAÇÃO (os escritores tiram o
+   * `company_id` da ocorrência), não de constraint. Se uma escrita manual a
+   * quebrar, a linha divergente não conta como marcada aqui — provado em
+   * banco pelo AC-018.
+   */
+  private async marcadosPorOcorrencia(
+    companyId: string,
+    ids: string[],
+  ): Promise<Map<string, number>> {
+    if (ids.length === 0) return new Map();
+    const linhas = await this.prisma.$queryRaw<
+      { ocupacaoId: string; n: bigint }[]
+    >(Prisma.sql`
+      SELECT p.ocupacao_id AS "ocupacaoId", count(*) AS n
+        FROM presencas p
+       WHERE p.company_id = ${companyId}::uuid
+         AND p.ocupacao_id = ANY(${ids}::uuid[])
+       GROUP BY p.ocupacao_id`);
+    return new Map(linhas.map((l) => [l.ocupacaoId, Number(l.n)]));
   }
 
   async chamada(

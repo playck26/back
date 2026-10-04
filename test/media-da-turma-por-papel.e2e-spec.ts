@@ -13,6 +13,7 @@ import { AvaliacaoDeAulaService } from '../src/classes/avaliacao-de-aula.service
 import { FaltaAvisadaService } from '../src/classes/falta-avisada.service';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { comPortaoDoUsuario } from './utils/portao-no-duble';
 
 /**
  * SPEC-057/TASK-002/D12/AC-017 — **a média da turma saiu do aluno, e a rota
@@ -65,7 +66,7 @@ describe('média da turma removida do aluno (e2e) — SPEC-057/AC-017', () => {
         { provide: MatriculaDoAlunoService, useValue: {} },
         { provide: AvaliacaoDeAulaService, useValue: { avaliar } },
         { provide: FaltaAvisadaService, useValue: {} },
-        { provide: PrismaService, useValue: prisma },
+        { provide: PrismaService, useValue: comPortaoDoUsuario(prisma) },
       ],
     }).compile();
 

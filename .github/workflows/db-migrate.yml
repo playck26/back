@@ -48,6 +48,14 @@ on:
         description: "Rodar o smoke funcional e os canários FIT-001/FIT-002 contra o DEV?"
         type: boolean
         default: true
+      # SPEC-081/AC-012 — o canário roda com o `connection_limit` que vai para
+      # produção ANTES de ele ir. Vazio = a URL do secret, sem mudança (como
+      # antes desta spec); um run assim imprime `nenhum` e NÃO serve de
+      # evidência para a AC-012.
+      connection_limit:
+        description: "connection_limit a aplicar na URL dos canários FIT-001/FIT-002 (ex.: 20). Vazio = sem mudança."
+        type: string
+        default: ""
 
 jobs:
   migrate:
@@ -915,10 +923,32 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # SPEC-081/AC-012 — a URL do canário, composta a partir do secret. O
+      # secret entra por variável de ambiente (nunca no texto do script); a
+      # URL composta é mascarada ANTES de qualquer outra saída, e o log mostra
+      # só o número.
+      - name: Compor a URL do canário
+        run: |
+          node -e '
+            const limite = (process.env.CONNECTION_LIMIT || "").trim();
+            if (limite !== "" && !/^[1-9][0-9]{0,3}$/.test(limite)) {
+              console.log("connection_limit inválido: precisa ser um inteiro de 1 a 9999");
+              process.exit(1);
+            }
+            const u = new URL(process.env.DATABASE_URL);
+            if (limite !== "") u.searchParams.set("connection_limit", limite);
+            const url = u.toString();
+            console.log("::add-mask::" + url);
+            require("fs").appendFileSync(process.env.GITHUB_ENV, "DATABASE_URL_CANARIO=" + url + "\n");
+            console.log("connection_limit do canário: " + (limite || "nenhum"));
+          '
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CONNECTION_LIMIT: ${{ inputs.connection_limit }}
       - name: FIT-001
         run: pnpm run test:fit -- --testPathPattern fit-001
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.DATABASE_URL_CANARIO }}
           FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
           JWT_ACCESS_SECRET: fit-neon-access
           JWT_REFRESH_SECRET: fit-neon-refresh
@@ -942,10 +972,32 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # SPEC-081/AC-012 — a URL do canário, composta a partir do secret. O
+      # secret entra por variável de ambiente (nunca no texto do script); a
+      # URL composta é mascarada ANTES de qualquer outra saída, e o log mostra
+      # só o número.
+      - name: Compor a URL do canário
+        run: |
+          node -e '
+            const limite = (process.env.CONNECTION_LIMIT || "").trim();
+            if (limite !== "" && !/^[1-9][0-9]{0,3}$/.test(limite)) {
+              console.log("connection_limit inválido: precisa ser um inteiro de 1 a 9999");
+              process.exit(1);
+            }
+            const u = new URL(process.env.DATABASE_URL);
+            if (limite !== "") u.searchParams.set("connection_limit", limite);
+            const url = u.toString();
+            console.log("::add-mask::" + url);
+            require("fs").appendFileSync(process.env.GITHUB_ENV, "DATABASE_URL_CANARIO=" + url + "\n");
+            console.log("connection_limit do canário: " + (limite || "nenhum"));
+          '
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CONNECTION_LIMIT: ${{ inputs.connection_limit }}
       - name: FIT-002
         run: pnpm run test:fit -- --testPathPattern fit-002
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.DATABASE_URL_CANARIO }}
           FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
           JWT_ACCESS_SECRET: fit-neon-access
           JWT_REFRESH_SECRET: fit-neon-refresh

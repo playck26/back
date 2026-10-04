@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
 import { MARCADOR_DA_MATRICULA_COM_PRAZO } from '../../src/classes/matricula-com-prazo';
+import { comPortaoDoUsuario } from './portao-no-duble';
 
 /**
  * SPEC-082/AC-018 — **o `INSERT` da matrícula é roteado pelo MARCADOR fixo**
@@ -491,5 +492,5 @@ export function buildPrismaMock(): PrismaMock {
     },
   );
 
-  return mock;
+  return comPortaoDoUsuario(mock);
 }

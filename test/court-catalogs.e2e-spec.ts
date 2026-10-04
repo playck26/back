@@ -16,6 +16,7 @@ import {
 } from '../src/courts/catalogos-de-quadra';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { comPortaoDoUsuario } from './utils/portao-no-duble';
 
 /**
  * SPEC-020/TASK-002 — os catálogos por HTTP.
@@ -155,7 +156,7 @@ describe('catálogos de quadra (e2e)', () => {
         EsportesDeQuadraService,
         CategoriasDeQuadraService,
         JwtAccessStrategy,
-        { provide: PrismaService, useValue: prisma },
+        { provide: PrismaService, useValue: comPortaoDoUsuario(prisma) },
       ],
     }).compile();
 

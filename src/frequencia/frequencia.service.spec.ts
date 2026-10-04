@@ -21,6 +21,14 @@ function diaAtras(dias: number): Date {
 }
 
 /**
+ * SPEC-081/D4 — a contagem de presenças saiu do `select` e virou um
+ * `$queryRaw` à parte. As fixturas continuam dizendo quantas presenças cada
+ * ocorrência tem; `ocorrencia()` registra o número aqui, e o `$queryRaw` do
+ * dublê responde a partir dele.
+ */
+const presencasDasFixturas = new Map<string, number>();
+
+/**
  * A ocorrência como o Prisma devolve: `chamadas` é LISTA (a FK é composta),
  * e `_count.presencas` é o que separa "lançada" de "só tem cabeçalho".
  */
@@ -40,6 +48,7 @@ function ocorrencia(
   const completude =
     opts.completude === undefined ? 'completa' : opts.completude;
   const presencas = opts.presencas ?? (completude ? 1 : 0);
+  presencasDasFixturas.set(id, presencas);
   return {
     id,
     data: diaAtras(dias),
@@ -71,6 +80,13 @@ function buildMocks() {
     aluno: { findFirst: jest.fn() },
     presenca: { findMany: jest.fn().mockResolvedValue([]) },
     ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
+    $queryRaw: jest.fn(() =>
+      Promise.resolve(
+        [...presencasDasFixturas]
+          .filter(([, n]) => n > 0)
+          .map(([ocupacaoId, n]) => ({ ocupacaoId, n: BigInt(n) })),
+      ),
+    ),
   };
   return {
     prisma: prisma as unknown as PrismaService,
@@ -90,6 +106,7 @@ describe('FrequenciaService (SPEC-015)', () => {
   let service: FrequenciaService;
 
   beforeEach(() => {
+    presencasDasFixturas.clear();
     const b = buildMocks();
     prisma = b.prisma;
     service = b.service;
@@ -605,4 +622,133 @@ describe('FrequenciaService (SPEC-015)', () => {
       );
     });
   });
+});
+
+/**
+ * SPEC-081/AC-015 — **contrato do SQL da contagem, dito como tal.** Tirar a
+ * ligação `o.id = p.ocupacao_id` do `JOIN`, ou o filtro por clube, não muda
+ * o que o serviço consome (ele lê o mapa pelas chaves do recorte). É prova de
+ * forma: a IDENTIDADE da ocorrência é da PK global de `ocupacoes_quadra`, e a
+ * prova comportamental da chave por ocorrência está no teste de banco.
+ *
+ * Exceção da v9 (achado 081-V8-01): a PK não obriga a presença a ser do clube
+ * da ocorrência — é precondição de aplicação (LIM-081f). Por isso o
+ * `p.company_id` muda o resultado com uma presença divergente (AC-018, em
+ * banco), e o valor que ele liga é conferido por POSIÇÃO (AC-019, abaixo):
+ * `values` conter `'c1'` é satisfeito pelo `o.company_id` sozinho.
+ */
+describe('SPEC-081 AC-015 — a contagem de presenças, pelo contrato do SQL', () => {
+  const chamadasDaContagem = (prisma: { $queryRaw: jest.Mock }) =>
+    prisma.$queryRaw.mock.calls.map(
+      ([q]) => q as { sql: string; values: unknown[] },
+    );
+
+  it.each([
+    ['daTurma', (s: FrequenciaService) => s.daTurma('c1', 't1', 30)],
+    ['doAluno', (s: FrequenciaService) => s.doAluno('c1', 'a1', 30)],
+    ['evasao', (s: FrequenciaService) => s.evasao('c1', 30)],
+  ] as const)(
+    '%s: liga a ocorrência à presença e o clube do token',
+    async (_r, chamar) => {
+      const { prisma, service } = buildMocks();
+      const p = prisma as unknown as {
+        turma: { findFirst: jest.Mock };
+        aluno: { findFirst: jest.Mock };
+        $queryRaw: jest.Mock;
+      };
+      p.turma.findFirst.mockResolvedValue({
+        id: 't1',
+        nome: 'Turma 01',
+        alunos: [],
+        ocupacoes: [],
+      });
+      p.aluno.findFirst.mockResolvedValue({
+        id: 'a1',
+        status: 'ativo',
+        vinculo: 'aprovado',
+        usuario: { nome: 'Ana' },
+        turmaAlunos: [],
+      });
+
+      await chamar(service);
+
+      const [contagem] = chamadasDaContagem(p);
+      expect(contagem.sql).toContain('o.id = p.ocupacao_id');
+      expect(contagem.sql).toContain('o.company_id = ');
+      expect(contagem.sql).toContain('p.company_id = ');
+      expect(contagem.sql).toMatch(/GROUP BY p\.ocupacao_id/);
+      expect(contagem.values).toContain('c1');
+      expect(contagem.sql).not.toMatch(/\bIN\s*\(/i);
+    },
+  );
+
+  it('daTurma: o recorte inclui a turma', async () => {
+    const { prisma, service } = buildMocks();
+    const p = prisma as unknown as {
+      turma: { findFirst: jest.Mock };
+      $queryRaw: jest.Mock;
+    };
+    p.turma.findFirst.mockResolvedValue({
+      id: 't1',
+      nome: 'Turma 01',
+      alunos: [],
+      ocupacoes: [],
+    });
+    await service.daTurma('c1', 't1', 30);
+    const [contagem] = chamadasDaContagem(p);
+    expect(contagem.sql).toContain('o.origem_turma_id');
+    expect(contagem.values).toContain('t1');
+  });
+
+  /**
+   * SPEC-081/AC-019 — o valor ligado **logo depois** do fragmento que termina
+   * em `p.company_id = ` (e em `o.company_id = `) é o `companyId` recebido,
+   * pelo par `strings[i]` / `values[i]` do `Prisma.Sql`. Sabotagem: só o
+   * parâmetro de `p.company_id` trocado por um UUID fixo → vermelho nas três.
+   */
+  it.each([
+    ['daTurma', (s: FrequenciaService) => s.daTurma('c1', 't1', 30)],
+    ['doAluno', (s: FrequenciaService) => s.doAluno('c1', 'a1', 30)],
+    ['evasao', (s: FrequenciaService) => s.evasao('c1', 30)],
+  ] as const)(
+    '%s: p.company_id e o.company_id ligam o clube do token, por posição (AC-019)',
+    async (_r, chamar) => {
+      const { prisma, service } = buildMocks();
+      const p = prisma as unknown as {
+        turma: { findFirst: jest.Mock };
+        aluno: { findFirst: jest.Mock };
+        $queryRaw: jest.Mock;
+      };
+      p.turma.findFirst.mockResolvedValue({
+        id: 't1',
+        nome: 'Turma 01',
+        alunos: [],
+        ocupacoes: [],
+      });
+      p.aluno.findFirst.mockResolvedValue({
+        id: 'a1',
+        status: 'ativo',
+        vinculo: 'aprovado',
+        usuario: { nome: 'Ana' },
+        turmaAlunos: [],
+      });
+
+      await chamar(service);
+
+      const [contagem] = p.$queryRaw.mock.calls.map(
+        ([q]) => q as { strings: string[]; values: unknown[] },
+      );
+      const ligadoDepoisDe = (fim: string) => {
+        const posicoes = contagem.strings
+          .map((s, i) => (s.endsWith(fim) ? i : -1))
+          .filter((i) => i >= 0);
+        // Um fragmento só, e com um valor depois dele.
+        expect(posicoes).toHaveLength(1);
+        expect(posicoes[0]).toBeLessThan(contagem.values.length);
+        return contagem.values[posicoes[0]];
+      };
+      expect(ligadoDepoisDe('p.company_id = ')).toBe('c1');
+      expect(ligadoDepoisDe('o.company_id = ')).toBe('c1');
+    },
+  );
 });

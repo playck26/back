@@ -14,6 +14,7 @@ import { AvaliacaoDeAulaService } from '../src/classes/avaliacao-de-aula.service
 import { PresencaService } from '../src/classes/presenca.service';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { comPortaoDoUsuario } from './utils/portao-no-duble';
 
 /**
  * SPEC-019/TASK-002 — o contrato de turma por HTTP.
@@ -122,7 +123,7 @@ describe('turmas (e2e) — SPEC-019', () => {
           provide: AvaliacaoDeAulaService,
           useValue: { listarParaOGestor: jest.fn() },
         },
-        { provide: PrismaService, useValue: prisma },
+        { provide: PrismaService, useValue: comPortaoDoUsuario(prisma) },
       ],
     }).compile();
 

@@ -1,5 +1,6 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { comPortaoDoUsuario } from '../../../test/utils/portao-no-duble';
 
 // O comportamento sob teste é o da SPEC-009 (INV-008), não o do Passport:
 // o mixin `AuthGuard` é substituído por um stub que sempre autentica, para
@@ -40,15 +41,16 @@ describe('JwtAuthGuard — trava de senha temporária (SPEC-009/INV-008)', () =>
   const buildPrisma = (
     senhaTemporaria: boolean | undefined,
     status: 'ativo' | 'inativo' = 'ativo',
-  ) => ({
-    usuario: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue(
-          senhaTemporaria === undefined ? null : { senhaTemporaria, status },
-        ),
-    },
-  });
+  ) =>
+    comPortaoDoUsuario({
+      usuario: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(
+            senhaTemporaria === undefined ? null : { senhaTemporaria, status },
+          ),
+      },
+    });
 
   it('bloqueia rota comum quando a conta está com senha temporária', async () => {
     const guard = new JwtAuthGuard(buildReflector(false), buildPrisma(true));
@@ -97,13 +99,14 @@ describe('JwtAuthGuard — conta inativa (SPEC-013/INV-013)', () => {
       getAllAndOverride: jest.fn().mockReturnValue(permite),
     }) as unknown as Reflector;
 
-  const prismaInativo = () => ({
-    usuario: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ senhaTemporaria: false, status: 'inativo' }),
-    },
-  });
+  const prismaInativo = () =>
+    comPortaoDoUsuario({
+      usuario: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ senhaTemporaria: false, status: 'inativo' }),
+      },
+    });
 
   it('barra token ja emitido de conta inativada', async () => {
     const guard = new JwtAuthGuard(buildReflector(false), prismaInativo());
@@ -120,18 +123,19 @@ describe('JwtAuthGuard — conta inativa (SPEC-013/INV-013)', () => {
    * token seguia abrindo rotas e o refresh renovava a sessao indefinidamente.
    * `login` recusava, e so.
    */
-  const prismaEmpresaInativa = (status: string) => ({
-    usuario: {
-      findUnique: jest.fn().mockResolvedValue({
-        senhaTemporaria: false,
-        status: 'ativo',
-        role: 'company_admin',
-        termoVersaoAceita: 1,
-        contratoVersaoAceita: 1,
-        empresa: { contratoVersaoVigente: null, status },
-      }),
-    },
-  });
+  const prismaEmpresaInativa = (status: string) =>
+    comPortaoDoUsuario({
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          senhaTemporaria: false,
+          status: 'ativo',
+          role: 'company_admin',
+          termoVersaoAceita: 1,
+          contratoVersaoAceita: 1,
+          empresa: { contratoVersaoVigente: null, status },
+        }),
+      },
+    });
 
   it('**DEF-028: barra token de empresa SUSPENSA**', async () => {
     const guard = new JwtAuthGuard(
@@ -208,18 +212,19 @@ describe('JwtAuthGuard — portão do aceite (SPEC-024)', () => {
       ),
     }) as unknown as Reflector;
 
-  const prisma = (usuario: Record<string, unknown>) => ({
-    usuario: {
-      findUnique: jest.fn().mockResolvedValue({
-        senhaTemporaria: false,
-        status: 'ativo',
-        termoVersaoAceita: 1,
-        contratoVersaoAceita: null,
-        empresa: { contratoVersaoVigente: null },
-        ...usuario,
-      }),
-    },
-  });
+  const prisma = (usuario: Record<string, unknown>) =>
+    comPortaoDoUsuario({
+      usuario: {
+        findUnique: jest.fn().mockResolvedValue({
+          senhaTemporaria: false,
+          status: 'ativo',
+          termoVersaoAceita: 1,
+          contratoVersaoAceita: null,
+          empresa: { contratoVersaoVigente: null },
+          ...usuario,
+        }),
+      },
+    });
 
   const codigo = async (p: Promise<unknown>) => {
     try {

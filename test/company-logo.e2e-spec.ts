@@ -10,6 +10,7 @@ import { CompanyLogoController } from '../src/companies/company-logo.controller'
 import { LogoDaEmpresaService } from '../src/companies/logo-da-empresa.service';
 import { JwtAccessStrategy } from '../src/auth/strategies/jwt-access.strategy';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { comPortaoDoUsuario } from './utils/portao-no-duble';
 import { StorageService } from '../src/storage/storage.service';
 import { FilaDeExclusao } from '../src/storage/fila-de-exclusao.service';
 import {
@@ -112,7 +113,7 @@ describe('/companies/:id/logo (e2e)', () => {
         LogoDaEmpresaService,
         StorageService,
         JwtAccessStrategy,
-        { provide: PrismaService, useValue: prisma },
+        { provide: PrismaService, useValue: comPortaoDoUsuario(prisma) },
         { provide: STORAGE_PROVIDER, useValue: provider },
         {
           provide: FilaDeExclusao,

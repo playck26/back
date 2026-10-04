@@ -8,6 +8,7 @@ import { StudentsService } from '../people/students.service';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
+import { hashDoRefresh } from './hash-do-refresh';
 
 // TEST-001 (SPEC-001): unit tests da regra de negócio de MOD-001, com
 // PrismaService mockado — não depende de banco vivo (Neon ainda não
@@ -498,6 +499,73 @@ describe('AuthService', () => {
       );
       // Só a tentativa de claim — nunca a revogação de toda a sessão.
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    // SPEC-081/D1 — o hash do refresh passou a ser SHA-256.
+    it('SPEC-081 AC-002: hash que não confere responde 401 SEM revogar a linha', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'u1', jti: 'rt1' });
+      const certo = hashDoRefresh('token-valido');
+      // Os 16 primeiros caracteres iguais; só o último muda.
+      const tokenHash = certo.slice(0, 63) + (certo[63] === '0' ? '1' : '0');
+      (prisma.refreshToken.findUnique as jest.Mock).mockResolvedValue({
+        id: 'rt1',
+        usuarioId: 'u1',
+        tokenHash,
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 10_000),
+      });
+
+      await expect(service.refresh('token-valido')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('SPEC-081 AC-001: linha em SHA-256 rotaciona, e a nova sai em SHA-256 do token entregue', async () => {
+      await refreshValido({ status: 'ativa' });
+      (prisma.refreshToken.findUnique as jest.Mock).mockResolvedValue({
+        id: 'rt1',
+        usuarioId: 'u1',
+        tokenHash: hashDoRefresh('token-valido'),
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 10_000),
+      });
+
+      const result = await service.refresh('token-valido');
+
+      const [[args]] = (prisma.refreshToken.create as jest.Mock).mock.calls as [
+        [{ data: { tokenHash: string } }],
+      ];
+      expect(args.data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(args.data.tokenHash).toBe(hashDoRefresh(result.refreshToken));
+    });
+
+    it('SPEC-081 AC-006: linha legada (bcrypt) ainda rotaciona uma vez, e a nova sai em SHA-256', async () => {
+      // `refreshValido` guarda o hash em bcrypt, como antes do deploy.
+      await refreshValido({ status: 'ativa' });
+
+      const result = await service.refresh('token-valido');
+
+      const [[args]] = (prisma.refreshToken.create as jest.Mock).mock.calls as [
+        [{ data: { tokenHash: string } }],
+      ];
+      expect(args.data.tokenHash).toBe(hashDoRefresh(result.refreshToken));
+    });
+
+    it('SPEC-081 AC-007: hash de formato desconhecido responde 401 sem revogar', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'u1', jti: 'rt1' });
+      (prisma.refreshToken.findUnique as jest.Mock).mockResolvedValue({
+        id: 'rt1',
+        usuarioId: 'u1',
+        tokenHash: 'hash-de-sessao',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 10_000),
+      });
+
+      await expect(service.refresh('token-valido')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
     });
   });
 
