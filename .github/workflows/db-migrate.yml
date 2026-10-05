@@ -57,6 +57,20 @@ on:
         type: string
         default: ""
 
+# A trava que faltava ao aviso do cabeçalho. O texto acima existe desde
+# 2026-09-09 e descreve este defeito com a mensagem de erro exata — e ele
+# aconteceu de novo em 2026-10-05: os runs `37298305999` e `37298395794`
+# nasceram com **51 s** de diferença (dois disparos manuais), correram juntos
+# contra o mesmo Neon DEV e caíram com o mesmo `23001 eventos_ocupacao_fkey`,
+# mais um `P2028` no smoke por contenção. Aviso escrito não impede dedo rápido.
+#
+# `cancel-in-progress: false` de propósito: o segundo run **espera** o
+# primeiro. Cancelar é o que o cabeçalho descreve como pior — o `cancel` mata
+# o `migrate` no meio e deixa os `fit-*` correndo por minutos.
+concurrency:
+  group: db-migrate-neon-dev
+  cancel-in-progress: false
+
 jobs:
   migrate:
     runs-on: ubuntu-latest
