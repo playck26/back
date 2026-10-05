@@ -254,6 +254,10 @@ jobs:
           ALTER TABLE movimentos_de_credito DISABLE TRIGGER movimentos_append_only;
           -- SPEC-054: a QUINTA da familia append-only -- o item da reserva.
           ALTER TABLE adicionais_da_ocupacao DISABLE TRIGGER adicionais_da_ocupacao_append_only;
+          -- SPEC-069: a SEXTA da familia append-only -- o evento de turma.
+          -- Aponta para acao e turma com RESTRICT; sem desligar a trigger, o
+          -- DELETE dele e recusado antes de a FK ser avaliada.
+          ALTER TABLE eventos_de_turma DISABLE TRIGGER eventos_turma_append_only;
           -- SPEC-054: o item da reserva antes de TUDO que ele referencia --
           -- ocupacao e adicional, com RESTRICT. O ledger nao aponta para ele.
           DELETE FROM adicionais_da_ocupacao WHERE ocupacao_id IN (
@@ -275,6 +279,24 @@ jobs:
             SELECT id FROM ocupacoes_quadra
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'));
+          -- SPEC-064: a fila de espera antes de faltas, ocupacoes, turmas e
+          -- alunos. Aluno, turma e ocupacao sao RESTRICT; a falta e SET NULL,
+          -- e e esse o motivo de vir ANTES de faltas_avisadas: anular o
+          -- falta_id de uma linha de ocupacao ainda 'aguardando' viola o
+          -- fila_credito_chk (23514) no meio do DELETE da falta.
+          DELETE FROM lista_de_espera WHERE ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
+                OR origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %'))
+             OR turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
+          DELETE FROM lista_de_espera WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID')
+             OR aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%@playck-tests.demo' AND u.email NOT LIKE '%$RUN_ID@playck-tests.demo');
+          -- SPEC-069: o evento de turma antes da acao e da turma (as duas
+          -- RESTRICT). Hoje so a troca de professor grava um, e o smoke nao
+          -- troca -- mas sem esta linha o DELETE de acoes abaixo apagaria a
+          -- acao que ele referencia.
+          DELETE FROM eventos_de_turma WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
+          DELETE FROM eventos_de_turma WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-031/D22/2b: faltas_avisadas antes dos TRES pais dela
           -- (ocupacoes_quadra, alunos, empresas) -- as quatro FKs sao
           -- RESTRICT. E eventos_de_matricula antes de acoes, turmas e
@@ -295,9 +317,15 @@ jobs:
           -- para a acao, com RESTRICT. O disparo de 2026-09-08 quebrou
           -- exatamente aqui, e o erro nomeou a constraint:
           -- `movimentos_acao_fkey`.
+          --
+          -- **SPEC-069: QUATRO.** eventos_de_turma tambem aponta para a
+          -- acao com RESTRICT. Sem o quarto NOT EXISTS, qualquer troca de
+          -- professor feita no DEV vira acao "orfa" para este filtro, e o
+          -- DELETE morre em eventos_turma_acao_fkey.
           DELETE FROM acoes_administrativas a WHERE NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id)
                                                 AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id)
-                                                AND NOT EXISTS (SELECT 1 FROM movimentos_de_credito c WHERE c.acao_id = a.id);
+                                                AND NOT EXISTS (SELECT 1 FROM movimentos_de_credito c WHERE c.acao_id = a.id)
+                                                AND NOT EXISTS (SELECT 1 FROM eventos_de_turma t WHERE t.acao_id = a.id);
           DELETE FROM ocupacoes_quadra WHERE quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE';
           DELETE FROM turma_alunos WHERE turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
           DELETE FROM ocupacoes_quadra WHERE origem_turma_id IN (SELECT id FROM turmas WHERE nome LIKE 'Turma CI %');
@@ -314,6 +342,20 @@ jobs:
           -- latente, nao ativo** -- medido: com quadra, os DOIS blocos abortam em
           -- 23001; sem quadra, os dois chegam a COMMIT. Fica aqui para o dia em
           -- que algum passo do smoke criar quadra sob a empresa do run.
+          -- SPEC-074: a pre-reserva aponta para quadra e aluno, os dois
+          -- RESTRICT -- antes de quadras aqui e antes de alunos la embaixo.
+          DELETE FROM pre_reservas WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
+          -- SPEC-062: a caixa de saida. notificacoes_destinatario_fkey e
+          -- (company_id, destinatario_id) -> usuarios, SEM cascade (INV-062c:
+          -- apagar usuario e gesto que a 062 nao decide). As SPEC-078/082
+          -- passaram a gravar aviso para o gestor, e o run 37247120152 passou o
+          -- smoke inteiro e caiu no cleanup final exatamente nesta FK. Antes
+          -- do DELETE FROM usuarios por empresa, logo abaixo.
+          DELETE FROM notificacoes WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
+          -- SPEC-083: o convite de acesso. usuario_id e CASCADE, mas
+          -- criado_por_id e NO ACTION: o convite que o admin do run emitiu
+          -- prende o admin.
+          DELETE FROM convites_de_acesso WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM quadras WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           DELETE FROM config_pagamento_empresa WHERE company_id IN (SELECT id FROM empresas WHERE nome LIKE 'Empresa CI %' AND id <> '$COMPANY_ID');
           -- SPEC-031/D22/1b: company-scoped com FK RESTRICT. Sem esta linha o
@@ -345,6 +387,14 @@ jobs:
              OR aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%@playck-tests.demo' AND u.email NOT LIKE '%$RUN_ID@playck-tests.demo');
           DELETE FROM eventos_de_ocupacao WHERE acao_id IN (SELECT id FROM acoes_administrativas WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo'));
           DELETE FROM acoes_administrativas WHERE autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
+          -- SPEC-074: pre-reserva dos alunos residuais (RESTRICT para alunos).
+          DELETE FROM pre_reservas WHERE aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%@playck-tests.demo' AND u.email NOT LIKE '%$RUN_ID@playck-tests.demo');
+          -- SPEC-062: aviso cujo destinatario e usuario residual -- a mesma FK
+          -- sem cascade do bloco de empresas, agora pelo lado do usuario (os
+          -- alunos de teste moram na empresa semeada, que nao sai).
+          DELETE FROM notificacoes WHERE destinatario_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
+          -- SPEC-083: convite emitido por usuario residual (criado_por_id NO ACTION).
+          DELETE FROM convites_de_acesso WHERE criado_por_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
           DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email LIKE '%@playck-tests.demo' AND email NOT LIKE '%$RUN_ID@playck-tests.demo';
           ALTER TABLE eventos_de_ocupacao ENABLE TRIGGER eventos_append_only;
@@ -352,6 +402,7 @@ jobs:
           ALTER TABLE eventos_de_matricula ENABLE TRIGGER eventos_matricula_append_only;
           ALTER TABLE movimentos_de_credito ENABLE TRIGGER movimentos_append_only;
           ALTER TABLE adicionais_da_ocupacao ENABLE TRIGGER adicionais_da_ocupacao_append_only;
+          ALTER TABLE eventos_de_turma ENABLE TRIGGER eventos_turma_append_only;
           COMMIT;
           SQL
 
@@ -801,6 +852,8 @@ jobs:
           ALTER TABLE movimentos_de_credito DISABLE TRIGGER movimentos_append_only;
           -- SPEC-054: a QUINTA da familia append-only -- o item da reserva.
           ALTER TABLE adicionais_da_ocupacao DISABLE TRIGGER adicionais_da_ocupacao_append_only;
+          -- SPEC-069: a SEXTA da familia append-only, como no bloco de residuos.
+          ALTER TABLE eventos_de_turma DISABLE TRIGGER eventos_turma_append_only;
           -- SPEC-054: o item da reserva primeiro, como no bloco de residuos.
           DELETE FROM adicionais_da_ocupacao WHERE ocupacao_id IN (
             SELECT id FROM ocupacoes_quadra
@@ -822,6 +875,19 @@ jobs:
              WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
                 OR origem_turma_id = '$CLASS_ID');
           DELETE FROM eventos_de_ocupacao WHERE company_id = '$COMPANY_ID';
+          -- SPEC-064: a fila de espera antes de faltas_avisadas (o SET NULL do
+          -- falta_id viola o fila_credito_chk) e antes de ocupacoes, turma e
+          -- alunos do run (RESTRICT), como no bloco de residuos.
+          DELETE FROM lista_de_espera WHERE company_id = '$COMPANY_ID'
+             OR turma_id = '$CLASS_ID'
+             OR ocupacao_id IN (
+            SELECT id FROM ocupacoes_quadra
+             WHERE (quadra_id = '$QUADRA_ID' AND data >= '2026-08-25' AND data <= '$CLEAN_ATE')
+                OR origem_turma_id = '$CLASS_ID')
+             OR aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%-$RUN_ID@playck-tests.demo');
+          -- SPEC-069: o evento de turma antes da acao e da turma, como no
+          -- bloco de residuos.
+          DELETE FROM eventos_de_turma WHERE company_id = '$COMPANY_ID' OR turma_id = '$CLASS_ID';
           -- SPEC-031/D22/2b e D21 -- antes dos pais, como no bloco de cima.
           DELETE FROM faltas_avisadas WHERE company_id = '$COMPANY_ID';
           DELETE FROM faltas_avisadas WHERE ocupacao_id IN (
@@ -835,7 +901,27 @@ jobs:
               OR a.autor_id IN (SELECT id FROM usuarios WHERE email LIKE '%-$RUN_ID@playck-tests.demo' OR email = 'ci-$RUN_ID@playck-tests.demo')
               OR (NOT EXISTS (SELECT 1 FROM eventos_de_ocupacao e WHERE e.acao_id = a.id)
                   AND NOT EXISTS (SELECT 1 FROM eventos_de_matricula m WHERE m.acao_id = a.id)
-                  AND NOT EXISTS (SELECT 1 FROM movimentos_de_credito c WHERE c.acao_id = a.id));
+                  AND NOT EXISTS (SELECT 1 FROM movimentos_de_credito c WHERE c.acao_id = a.id)
+                  -- SPEC-069: o quarto filho da acao, como no bloco de residuos.
+                  AND NOT EXISTS (SELECT 1 FROM eventos_de_turma t WHERE t.acao_id = a.id));
+          -- SPEC-074: pre-reserva da empresa e dos alunos do run, antes de
+          -- quadras e alunos (os dois RESTRICT).
+          DELETE FROM pre_reservas WHERE company_id = '$COMPANY_ID'
+             OR aluno_id IN (SELECT a.id FROM alunos a JOIN usuarios u ON u.id = a.usuario_id WHERE u.email LIKE '%-$RUN_ID@playck-tests.demo');
+          -- SPEC-062: a caixa de saida ANTES de qualquer DELETE FROM usuarios.
+          -- notificacoes_destinatario_fkey nao tem cascade (INV-062c), e as
+          -- SPEC-078/082 passaram a gravar aviso no fluxo que o smoke exercita.
+          -- Run 37247120152: o smoke inteiro passou e o cleanup caiu AQUI --
+          -- "update or delete on table usuarios violates foreign key
+          -- constraint notificacoes_destinatario_fkey". O padrao
+          -- '%-$RUN_ID@' cobre aluno-ci-, aluno-ci-2-, aluno-app-ci- e
+          -- convite-ci-*-; o admin do run e o 'ci-$RUN_ID@' exato.
+          DELETE FROM notificacoes WHERE company_id = '$COMPANY_ID'
+             OR destinatario_id IN (SELECT id FROM usuarios WHERE email LIKE '%-$RUN_ID@playck-tests.demo' OR email = 'ci-$RUN_ID@playck-tests.demo');
+          -- SPEC-083: convite de acesso emitido pelo admin ou pelos usuarios do
+          -- run -- criado_por_id e NO ACTION (o usuario_id e CASCADE).
+          DELETE FROM convites_de_acesso WHERE company_id = '$COMPANY_ID'
+             OR criado_por_id IN (SELECT id FROM usuarios WHERE email LIKE '%-$RUN_ID@playck-tests.demo' OR email = 'ci-$RUN_ID@playck-tests.demo');
           DELETE FROM alunos WHERE usuario_id IN (SELECT id FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo');
           DELETE FROM usuarios WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
           DELETE FROM convites_aluno WHERE email LIKE 'convite-ci-%-$RUN_ID@playck-tests.demo';
@@ -874,6 +960,7 @@ jobs:
           ALTER TABLE eventos_de_matricula ENABLE TRIGGER eventos_matricula_append_only;
           ALTER TABLE movimentos_de_credito ENABLE TRIGGER movimentos_append_only;
           ALTER TABLE adicionais_da_ocupacao ENABLE TRIGGER adicionais_da_ocupacao_append_only;
+          ALTER TABLE eventos_de_turma ENABLE TRIGGER eventos_turma_append_only;
           COMMIT;
           SQL
 
