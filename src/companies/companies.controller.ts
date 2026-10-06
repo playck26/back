@@ -27,7 +27,7 @@ import {
   EmpresaResponseDto,
   SenhaDeAdminResponseDto,
 } from './dto/company-response.dto';
-import { CreateCompanyDto } from './dto/create-company.dto';
+import { AdminInicialDto, CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { UpdateCompanyStatusDto } from './dto/update-company-status.dto';
@@ -62,6 +62,16 @@ export class CompaniesController {
   @ApiOkResponse({ type: [AdminDaEmpresaResponseDto] })
   listAdmins(@Param('id', UuidCanonicoPipe) id: string) {
     return this.companiesService.listAdmins(id);
+  }
+
+  /** SPEC-085 — um gestor a mais na empresa, com senha definida aqui. */
+  @Post(':id/admins')
+  @ApiCreatedResponse({ type: AdminDaEmpresaResponseDto })
+  criarAdmin(
+    @Param('id', UuidCanonicoPipe) id: string,
+    @Body() dto: AdminInicialDto,
+  ) {
+    return this.companiesService.criarAdmin(id, dto);
   }
 
   /**

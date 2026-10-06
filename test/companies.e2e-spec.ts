@@ -482,6 +482,116 @@ describe('Companies (e2e) - TEST-002', () => {
         .expect(403);
     });
 
+    // SPEC-085 — o gestor adicional. O efeito (hash, papel, empresa da URL,
+    // tradução da corrida) está provado em unidade; aqui é a camada HTTP.
+    describe('SPEC-085 — adicionar gestor', () => {
+      const NOVO = {
+        nome: 'Segunda Gestora',
+        email: 'segunda@clube.demo',
+        senha: 'senha-forte-1',
+      };
+
+      /**
+       * O login deixa `usuario.findUnique` devolvendo o próprio super admin
+       * para qualquer consulta, e o portão do `JwtAuthGuard` depende disso.
+       * A pré-conferência de e-mail precisa ver "ninguém" — só para o e-mail
+       * novo, para não derrubar o portão.
+       */
+      function emailNovoLivre() {
+        const anterior = prisma.usuario.findUnique.getMockImplementation();
+        prisma.usuario.findUnique.mockImplementation(
+          (args: { where?: { email?: string } }) =>
+            args?.where?.email === NOVO.email
+              ? Promise.resolve(null)
+              : (anterior?.(args) as Promise<unknown>),
+        );
+      }
+
+      it('AC-001: super_admin cria e recebe 201 sem senha na resposta', async () => {
+        const accessToken = await loginSuperAdmin(app, prisma);
+        prisma.empresa.findUnique.mockResolvedValue({
+          id: OUTRA_COMPANY_ID,
+          status: 'ativa',
+          esportesQuadra: [],
+        });
+        emailNovoLivre();
+        prisma.usuario.create.mockResolvedValue({
+          id: 'u2',
+          nome: NOVO.nome,
+          email: NOVO.email,
+          status: 'ativo',
+          senhaTemporaria: false,
+        });
+
+        const res = await request(app.getHttpServer())
+          .post(`/api/v1/companies/${OUTRA_COMPANY_ID}/admins`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send(NOVO)
+          .expect(201);
+
+        expect(bodyOf<Record<string, unknown>>(res)).toEqual({
+          id: 'u2',
+          nome: NOVO.nome,
+          email: NOVO.email,
+          status: 'ativo',
+          senhaTemporaria: false,
+        });
+        const chamadas = prisma.usuario.create.mock.calls as unknown as [
+          [{ data: Record<string, unknown> }],
+        ];
+        const { data } = chamadas[0][0];
+        expect(data.role).toBe('company_admin');
+        expect(data.companyId).toBe(OUTRA_COMPANY_ID);
+      });
+
+      it('AC-002: e-mail já usado responde 409 EMAIL_EM_USO', async () => {
+        const accessToken = await loginSuperAdmin(app, prisma);
+        prisma.empresa.findUnique.mockResolvedValue({
+          id: OUTRA_COMPANY_ID,
+          status: 'ativa',
+          esportesQuadra: [],
+        });
+
+        const res = await request(app.getHttpServer())
+          .post(`/api/v1/companies/${OUTRA_COMPANY_ID}/admins`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          // O e-mail do próprio super admin logado: já existe.
+          .send({ ...NOVO, email: 'super@playck.demo' })
+          .expect(409);
+
+        expect(bodyOf<{ code: string }>(res).code).toBe('EMAIL_EM_USO');
+        expect(prisma.usuario.create).not.toHaveBeenCalled();
+      });
+
+      it('AC-005: company_admin recebe 403', async () => {
+        const accessToken = await loginCompanyAdmin(app, prisma);
+
+        await request(app.getHttpServer())
+          .post(`/api/v1/companies/${OUTRA_COMPANY_ID}/admins`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send(NOVO)
+          .expect(403);
+        expect(prisma.usuario.create).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['role', 'super_admin'],
+        ['companyId', COMPANY_ID],
+      ])(
+        'AC-005: corpo com %s responde 400 e nada é criado',
+        async (campo, valor) => {
+          const accessToken = await loginSuperAdmin(app, prisma);
+
+          await request(app.getHttpServer())
+            .post(`/api/v1/companies/${OUTRA_COMPANY_ID}/admins`)
+            .set('Authorization', `Bearer ${accessToken}`)
+            .send({ ...NOVO, [campo]: valor })
+            .expect(400);
+          expect(prisma.usuario.create).not.toHaveBeenCalled();
+        },
+      );
+    });
+
     it('gestor de outra empresa devolve 404, não 403 (AC-006)', async () => {
       const accessToken = await loginSuperAdmin(app, prisma);
       prisma.empresa.findUnique.mockResolvedValue({
