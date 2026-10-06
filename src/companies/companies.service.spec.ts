@@ -9,6 +9,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CompaniesService } from './companies.service';
 import { LevelsService } from '../people/levels.service';
 
+/**
+ * SPEC-085/AC-002 — **o bcrypt passa por um espião que ainda hasheia de
+ * verdade.** "O bcrypt nem roda" com e-mail ocupado só se prova olhando o
+ * `hash`; sem o espião, mover o hash para antes da pré-conferência ficou
+ * verde na 1ª rodada da validação (M08). O `compare` do AC-001 continua real.
+ */
+jest.mock('bcrypt', () => {
+  const real = jest.requireActual<typeof import('bcrypt')>('bcrypt');
+  return {
+    ...real,
+    hash: jest.fn((dado: string, custo: number) => real.hash(dado, custo)),
+  };
+});
+
 // TEST-002 (SPEC-002): unit tests de MOD-002 com PrismaService mockado —
 // $transaction simulado chamando o callback direto com um objeto `tx`
 // próprio, o suficiente para provar que create/create do admin só
@@ -710,6 +724,7 @@ describe('CompaniesService', () => {
     };
 
     beforeEach(() => {
+      (bcrypt.hash as jest.Mock).mockClear();
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
         id: 'e1',
         status: 'ativa',
@@ -746,6 +761,11 @@ describe('CompaniesService', () => {
       expect(await bcrypt.compare(DTO.senha, data.senhaHash as string)).toBe(
         true,
       );
+      // Controle positivo do espião do AC-002: aqui ele TEM de ver o hash,
+      // com o custo de sempre. Sem isto, um espião desligado deixaria o
+      // `not.toHaveBeenCalled` de lá verde por construção.
+      expect(bcrypt.hash).toHaveBeenCalledTimes(1);
+      expect(bcrypt.hash).toHaveBeenCalledWith(DTO.senha, 12);
       expect(select).not.toHaveProperty('senhaHash');
       expect(res).toEqual({
         id: 'u2',
@@ -766,6 +786,7 @@ describe('CompaniesService', () => {
         code: 'EMAIL_EM_USO',
       });
       expect(prisma.usuario.create).not.toHaveBeenCalled();
+      expect(bcrypt.hash).not.toHaveBeenCalled();
     });
 
     it('AC-003: P2002 em usuarios.email na corrida vira 409 EMAIL_EM_USO, não 500', async () => {
