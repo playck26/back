@@ -3,6 +3,8 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompaniesService } from './companies.service';
 import { LevelsService } from '../people/levels.service';
@@ -81,6 +83,8 @@ function buildPrismaMock() {
       // SPEC-016: a busca do gestor amarra id + empresa + papel no WHERE.
       findFirst: jest.fn(),
       findMany: jest.fn(),
+      // SPEC-085: o gestor adicional é um insert só, fora de transação.
+      create: jest.fn(),
     },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
   };
@@ -697,6 +701,107 @@ describe('CompaniesService', () => {
       expect(result.status).toBe('inativa');
     });
   });
+  describe('criarAdmin (SPEC-085)', () => {
+    const DTO = {
+      nome: 'Segunda Gestora',
+      email: 'segunda@clube.demo',
+      senha: 'senha-forte-1',
+      telefone: '11999990000',
+    };
+
+    beforeEach(() => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+        id: 'e1',
+        status: 'ativa',
+        ...SEM_CATALOGO,
+      });
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.create as jest.Mock).mockImplementation(
+        ({ data }: { data: { email: string; nome: string } }) =>
+          Promise.resolve({
+            id: 'u2',
+            nome: data.nome,
+            email: data.email,
+            status: 'ativo',
+            senhaTemporaria: false,
+          }),
+      );
+    });
+
+    it('AC-001: grava company_admin da empresa da URL com o hash da senha, e a resposta não tem senha', async () => {
+      const res = await service.criarAdmin('e1', DTO);
+
+      const chamadas = (prisma.usuario.create as jest.Mock).mock
+        .calls as unknown as [
+        [{ data: Record<string, unknown>; select: Record<string, boolean> }],
+      ];
+      const { data, select } = chamadas[0][0];
+      expect(data).toMatchObject({
+        email: DTO.email,
+        nome: DTO.nome,
+        telefone: DTO.telefone,
+        role: 'company_admin',
+        companyId: 'e1',
+      });
+      expect(await bcrypt.compare(DTO.senha, data.senhaHash as string)).toBe(
+        true,
+      );
+      expect(select).not.toHaveProperty('senhaHash');
+      expect(res).toEqual({
+        id: 'u2',
+        nome: DTO.nome,
+        email: DTO.email,
+        status: 'ativo',
+        senhaTemporaria: false,
+      });
+    });
+
+    it('AC-002: e-mail existente responde 409 EMAIL_EM_USO e não cria nada', async () => {
+      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue({ id: 'x' });
+
+      const erro = await service.criarAdmin('e1', DTO).catch((e: unknown) => e);
+
+      expect(erro).toBeInstanceOf(ConflictException);
+      expect((erro as ConflictException).getResponse()).toMatchObject({
+        code: 'EMAIL_EM_USO',
+      });
+      expect(prisma.usuario.create).not.toHaveBeenCalled();
+    });
+
+    it('AC-003: P2002 em usuarios.email na corrida vira 409 EMAIL_EM_USO, não 500', async () => {
+      (prisma.usuario.create as jest.Mock).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('unique', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'Usuario', target: ['email'] },
+        }),
+      );
+
+      const erro = await service.criarAdmin('e1', DTO).catch((e: unknown) => e);
+
+      expect(erro).toBeInstanceOf(ConflictException);
+      expect((erro as ConflictException).getResponse()).toMatchObject({
+        code: 'EMAIL_EM_USO',
+      });
+    });
+
+    it('AC-003: outro erro do create sobe sem tradução', async () => {
+      const outro = new Error('conexão caiu');
+      (prisma.usuario.create as jest.Mock).mockRejectedValue(outro);
+
+      await expect(service.criarAdmin('e1', DTO)).rejects.toBe(outro);
+    });
+
+    it('AC-004: empresa inexistente responde 404 e nada é criado', async () => {
+      (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.criarAdmin('e1', DTO)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.usuario.create).not.toHaveBeenCalled();
+    });
+  });
+
   // SPEC-016 — a fronteira é o ponto: MOD-002 valida escopo, MOD-001
   // escreve. Estes testes provam a delegação e o 404 que não confirma
   // existência.

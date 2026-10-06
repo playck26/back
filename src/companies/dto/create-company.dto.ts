@@ -11,7 +11,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-class AdminInicialDto {
+/**
+ * SPEC-085 — também é o corpo de `POST /companies/:id/admins`: o gestor
+ * adicional pede exatamente o que o inicial pede, e duas classes iguais
+ * seriam duas regras de senha para manter.
+ */
+export class AdminInicialDto {
   @ApiProperty()
   @IsString()
   @MinLength(1)

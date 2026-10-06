@@ -17,7 +17,14 @@ import {
   EmpresaResponseDto,
   SenhaDeAdminResponseDto,
 } from './dto/company-response.dto';
-import type { CreateCompanyDto } from './dto/create-company.dto';
+import type {
+  AdminInicialDto,
+  CreateCompanyDto,
+} from './dto/create-company.dto';
+import {
+  EMAIL_EM_USO,
+  traduzirViolacaoDeUnicidade,
+} from '../acesso/traduzir-violacao-de-unicidade';
 import type { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import type { UpdateCompanyDto } from './dto/update-company.dto';
 import type { UpdateCompanyStatusDto } from './dto/update-company-status.dto';
@@ -276,6 +283,53 @@ export class CompaniesService {
       },
       orderBy: { nome: 'asc' },
     });
+  }
+
+  /**
+   * SPEC-085 — um gestor a mais na empresa, com a senha definida pelo super
+   * admin, como o `adminInicial` do `create`.
+   *
+   * O papel é literal e a empresa vem da URL (INV-085a): o DTO não aceita
+   * nenhum dos dois. O bcrypt roda só depois da pré-conferência do e-mail
+   * (AC-002), e a corrida que passar por ela é decidida pelo
+   * `usuarios_email_key`, traduzido para o mesmo `409` (AC-003).
+   */
+  async criarAdmin(
+    companyId: string,
+    dto: AdminInicialDto,
+  ): Promise<AdminDaEmpresaResponseDto> {
+    await this.findOne(companyId);
+
+    const emailExistente = await this.prisma.usuario.findUnique({
+      where: { email: dto.email },
+    });
+    if (emailExistente) {
+      throw new ConflictException(EMAIL_EM_USO);
+    }
+
+    const senhaHash = await bcrypt.hash(dto.senha, BCRYPT_COST);
+
+    try {
+      return await this.prisma.usuario.create({
+        data: {
+          email: dto.email,
+          senhaHash,
+          nome: dto.nome,
+          telefone: dto.telefone,
+          role: 'company_admin',
+          companyId,
+        },
+        select: {
+          id: true,
+          nome: true,
+          email: true,
+          status: true,
+          senhaTemporaria: true,
+        },
+      });
+    } catch (erro) {
+      throw traduzirViolacaoDeUnicidade(erro);
+    }
   }
 
   /**
