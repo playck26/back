@@ -255,6 +255,15 @@ login, ficaria velha numa sessão longa.
 004 e da 005 por decisão do Israel): `PUT`/`DELETE /api/v1/companies/:id/logo`
 em `companies/company-logo.controller.ts` + `logo-da-empresa.service.ts`.
 
+**Gestor adicional (SPEC-085, 2026-10-06):** `POST /api/v1/companies/:id/admins`,
+só `super_admin`, em `CompaniesService.criarAdmin`. Repete o `adminInicial` do
+`create` fora de transação (é um `INSERT` só): papel literal, empresa da URL,
+bcrypt depois da pré-conferência do e-mail, e o `P2002` de
+`usuarios_email_key` traduzido para `409 EMAIL_EM_USO` pelo mesmo
+`traduzirViolacaoDeUnicidade` do `AcessoModule`. **Nada no banco limita
+gestores por empresa**, e nada no código supõe um só: os avisos ao gestor já
+iam para todo gestor ativo.
+
 **Aqui o escopo NÃO é estrutural, e é a diferença que importa.** Em
 `/me/foto` não havia id na URL; aqui há, porque o `super_admin` também
 alcança qualquer empresa. O `RolesGuard` decide *quem entra na rota*, o
