@@ -438,10 +438,23 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
     // é a trava, com EXATAMENTE as chaves dos e-mails que a entrada usou
     // (o lote inteiro na E6, o do convite na E2), na ordem da trava.
     const blocos: { query: string; params: string }[][] = [];
+    const perdas: string[] = [];
     let atual: { query: string; params: string }[] | null = null;
     for (const ex of executadas) {
       const sql = ex.query.trim().toUpperCase();
       if (sql === 'BEGIN') {
+        // Achado IMP-086-R5-01: um BEGIN com um bloco já aberto NÃO abre
+        // outra transação no Postgres, mas zerar o bloco aqui apagava o que
+        // veio antes (um SELECT antes da trava sumia). Os eventos do Prisma
+        // não dizem a conexão de cada instrução, então a associação não é
+        // adivinhada: um BEGIN dentro de bloco aberto é registrado como
+        // PERDA DE ASSOCIAÇÃO e reprova o caso, sem descartar nada.
+        if (atual) {
+          perdas.push(
+            `BEGIN com bloco aberto, depois de: ${atual.map((e) => e.query.slice(0, 60)).join(' | ')}`,
+          );
+          continue;
+        }
         atual = [];
         continue;
       }
@@ -452,6 +465,8 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
       }
       atual?.push(ex);
     }
+    if (atual) perdas.push('bloco aberto sem COMMIT nem ROLLBACK');
+    expect({ perdasDeAssociacao: perdas }).toEqual({ perdasDeAssociacao: [] });
     const criadoras = blocos.filter((b) =>
       b.some((ex) =>
         /INSERT\s+INTO\s+"public"\."usuarios"|INSERT\s+INTO\s+usuarios/i.test(

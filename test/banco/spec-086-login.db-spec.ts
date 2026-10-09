@@ -1383,3 +1383,64 @@ describe('SPEC-086/AC-010 — conta INATIVA de professor fica fora do 409 e do t
     );
   });
 });
+
+describe('SPEC-086/AC-010 — a matriz: {aluno, professor} × {conta inativa, empresa inativa}', () => {
+  /**
+   * Achado IMP-086-R5-02: a empresa inativa só era provada com aluno, e um
+   * filtro que poupasse o professor da empresa inativa passava. Cada célula
+   * desliga UMA condição só (a conta, com a empresa ativa; ou a empresa, com
+   * a conta ativa), confere os ids EXATOS no corpo e no token, e religa como
+   * controle positivo — corrigir um ramo não esconde o outro.
+   */
+  const CELULAS: ['aluno' | 'professor', 'conta' | 'empresa'][] = [
+    ['aluno', 'conta'],
+    ['aluno', 'empresa'],
+    ['professor', 'conta'],
+    ['professor', 'empresa'],
+  ];
+
+  it.each(CELULAS)(
+    '%s com a %s inativa: fora do corpo e do token; religado, dentro',
+    async (papel, oQue) => {
+      const email = emailNovo(`matriz-${papel}-${oQue}`);
+      const a1 = await conta(await empresa(), email, 'valida');
+      const a2 = await conta(await empresa(), email, 'valida');
+      const eAlvo = await empresa();
+      const alvo =
+        papel === 'professor'
+          ? await contaDeProfessor(eAlvo, email)
+          : await conta(eAlvo, email, 'valida');
+
+      const desligar =
+        oQue === 'conta'
+          ? `UPDATE usuarios SET status = 'inativo' WHERE id = '${alvo}'`
+          : `UPDATE empresas SET status = 'inativa' WHERE id = '${eAlvo}'`;
+      const religar =
+        oQue === 'conta'
+          ? `UPDATE usuarios SET status = 'ativo' WHERE id = '${alvo}'`
+          : `UPDATE empresas SET status = 'ativa' WHERE id = '${eAlvo}'`;
+
+      await q(desligar);
+      const fora = await loginComEscolha(email);
+      expect({
+        corpo: fora.corpo.escolha.empresas.map((e) => e.usuarioId).sort(porId),
+        token: fora.token.contas.map((c) => c.id).sort(porId),
+      }).toEqual({
+        corpo: [a1, a2].sort(porId),
+        token: [a1, a2].sort(porId),
+      });
+
+      await q(religar);
+      const dentro = await loginComEscolha(email);
+      expect({
+        corpo: dentro.corpo.escolha.empresas
+          .map((e) => e.usuarioId)
+          .sort(porId),
+        token: dentro.token.contas.map((c) => c.id).sort(porId),
+      }).toEqual({
+        corpo: [a1, a2, alvo].sort(porId),
+        token: [a1, a2, alvo].sort(porId),
+      });
+    },
+  );
+});
