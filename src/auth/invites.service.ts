@@ -176,10 +176,14 @@ export class InvitesService {
       select: { email: true },
     });
     const emailTravado = previa?.email ?? dto.email ?? null;
+    // O bcrypt FORA da transação: dentro, ele seguraria a trava do e-mail por
+    // ~1 s, e o segundo aceite do mesmo convite estouraria os 2 s esperando
+    // por ela — 503 onde a resposta certa é 410 (FIT-003).
+    const senhaHash = await this.students.hashSenha(dto.senha);
 
     return comTraducaoDaTravaDeEmail(() =>
       this.prisma.$transaction(async (tx) =>
-        this.aceitarNaTransacao(tx, dto, tokenHash, emailTravado),
+        this.aceitarNaTransacao(tx, dto, tokenHash, emailTravado, senhaHash),
       ),
     ).catch((erro: unknown) => {
       // A segunda linha: a corrida que passou da trava recebe a resposta da
@@ -196,6 +200,7 @@ export class InvitesService {
     dto: AceitarConviteDto,
     tokenHash: string,
     emailTravado: string | null,
+    senhaHash: string,
   ) {
     if (emailTravado) {
       await travarEmailsParaCriarConta(tx, [emailTravado]);
@@ -238,7 +243,6 @@ export class InvitesService {
       throw new UnprocessableEntityException(CADASTRO_NAO_CONCLUIDO);
     }
 
-    const senhaHash = await this.students.hashSenha(dto.senha);
     const usuario = await tx.usuario.create({
       data: {
         email,

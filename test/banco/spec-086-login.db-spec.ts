@@ -30,6 +30,7 @@ import { createTestApp } from '../utils/create-test-app';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { comNivelDaFixture } from './nivel-da-fixture';
+import { garantirAmbienteDeFit } from '../fit/app-real';
 
 jest.setTimeout(120_000);
 exigirBancoLocal();
@@ -431,6 +432,7 @@ async function observarBloqueio(
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
+  garantirAmbienteDeFit();
   app = await createTestApp(db);
   appPausavel = await createTestApp(prismaPausavel);
   // O token vencido é assinado com o MESMO segredo que o app usa — lido do

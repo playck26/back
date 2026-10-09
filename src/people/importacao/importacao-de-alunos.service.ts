@@ -1175,6 +1175,14 @@ export class ImportacaoDeAlunosService {
         // sucessivos, declarados: até 2 s para os e-mails (o da função), e o
         // de hoje, que `travarNivelDaEmpresa` grava em seguida, para o resto.
         await travarEmailsParaCriarConta(tx, emails);
+        const lote: LoteNovo = await naEtapa(
+          'travas',
+          travarNivelDaEmpresa(tx, companyId, 'lote-novo'),
+        );
+
+        // A conferência de conflito vem DEPOIS da trava do clube, não antes:
+        // ainda sob a trava dos e-mails (que é o que a torna correta), e sem
+        // tocar `usuarios` antes do clube (FIT-057, AC-047).
         const emConflito = new Set(
           (
             await tx.usuario.findMany({
@@ -1194,11 +1202,6 @@ export class ImportacaoDeAlunosService {
               })),
           );
         }
-
-        const lote: LoteNovo = await naEtapa(
-          'travas',
-          travarNivelDaEmpresa(tx, companyId, 'lote-novo'),
-        );
 
         if (this.ganchos.aoTravar) {
           const [sessao] = await tx.$queryRaw<

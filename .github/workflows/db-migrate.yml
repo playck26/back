@@ -1214,7 +1214,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: SPEC-086 P2 (trava por e-mail)
-        run: pnpm exec jest --config ./test/jest-banco.json --runInBand --testPathPattern spec-086-corrida -t "P2"
+        run: pnpm exec jest --config ./test/jest-banco.json --runInBand spec-086-corrida -t "P2"
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}

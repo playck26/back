@@ -22,6 +22,7 @@ import { createTestApp } from '../utils/create-test-app';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { comNivelDaFixture } from './nivel-da-fixture';
+import { garantirAmbienteDeFit } from '../fit/app-real';
 
 jest.setTimeout(120_000);
 exigirBancoLocal();
@@ -87,6 +88,7 @@ const login = (email: string, senha = SENHA) =>
     .send({ email, senha });
 
 beforeAll(async () => {
+  garantirAmbienteDeFit();
   await limparEmpresa(db, EMPRESA);
   await limparEmpresa(db, EMPRESA_INATIVA);
   await q(
