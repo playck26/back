@@ -1272,3 +1272,78 @@ describe('SPEC-086/AC-011 — escolher o PROFESSOR devolve a sessão dele, na em
     });
   });
 });
+
+describe('SPEC-086/AC-012 — senha mudada entre o login e a escolha, para PROFESSOR e para ALUNO', () => {
+  /**
+   * Achado IMP-086-R2-01: os casos de senha mudada só usavam aluno, e um
+   * `escolher` que dispensasse a impressão SÓ para professor passava. Aqui o
+   * mesmo token anterior é usado depois de cada mudança, para os dois papéis,
+   * e se confere o código (`ESCOLHA_EXPIRADA`) E o estado persistido: nenhum
+   * refresh novo da conta — uma recusa tardia, depois de gravar a sessão,
+   * também fica vermelha.
+   *
+   * - `definitiva`: senha definitiva → outra definitiva;
+   * - `reset`: o gestor gera uma senha temporária nova (ainda válida);
+   * - `ativacao`: a conta tinha senha temporária e a pessoa definiu a sua
+   *   (o que a ativação da SPEC-083 e o primeiro acesso fazem com o hash).
+   */
+  type Mudanca = 'definitiva' | 'reset' | 'ativacao';
+  const CASOS: ['aluno' | 'professor', Mudanca][] = [];
+  for (const papel of ['aluno', 'professor'] as const) {
+    for (const m of ['definitiva', 'reset', 'ativacao'] as const) {
+      CASOS.push([papel, m]);
+    }
+  }
+
+  it.each(CASOS)(
+    '%s, %s: o token anterior não abre sessão',
+    async (papel, mudanca) => {
+      const email = emailNovo(`mudou-${papel}-${mudanca}`);
+      const eA = await empresa();
+      const eB = await empresa();
+      const outra = await conta(eA, email, 'valida');
+      const alvo =
+        papel === 'professor'
+          ? await contaDeProfessor(eB, email)
+          : await conta(eB, email, 'valida');
+      if (mudanca === 'ativacao') {
+        // Começa com senha temporária ainda válida (a mesma senha do login).
+        await q(
+          `UPDATE usuarios SET senha_temporaria = true,
+                senha_temporaria_expira_em = now() + interval '1 day'
+          WHERE id = $1::uuid`,
+          alvo,
+        );
+      }
+
+      const { corpo } = await loginComEscolha(email);
+      expect(
+        corpo.escolha.empresas.map((e) => e.usuarioId).sort(porId),
+      ).toEqual([outra, alvo].sort(porId));
+
+      const novoHash = await bcrypt.hash(`outra-senha-${mudanca}-123`, 4);
+      const temporaria = mudanca === 'reset';
+      await q(
+        `UPDATE usuarios SET senha_hash = $2,
+              senha_temporaria = ${temporaria},
+              senha_temporaria_expira_em = ${temporaria ? "now() + interval '1 day'" : 'NULL'}
+        WHERE id = $1::uuid`,
+        alvo,
+        novoHash,
+      );
+
+      const antes = await refreshTotal(alvo);
+      const res = await escolher(corpo.escolha.token, alvo);
+      expect({ status: res.status, corpo: res.body as unknown }).toEqual({
+        status: 401,
+        corpo: ESCOLHA_EXPIRADA,
+      });
+      expect(res.headers['set-cookie']).toBeUndefined();
+      expect(await refreshTotal(alvo)).toBe(antes);
+
+      // Controle: a OUTRA conta da lista, cuja senha não mudou, continua
+      // abrindo — o que recusou acima foi a mudança, e não o token.
+      expect((await escolher(corpo.escolha.token, outra)).status).toBe(200);
+    },
+  );
+});

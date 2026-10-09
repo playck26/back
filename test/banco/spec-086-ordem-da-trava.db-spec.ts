@@ -369,6 +369,14 @@ const entradas: [string, number, () => Promise<Response>][] = [
   ],
 ];
 
+/**
+ * A instrução de `travarEmailsParaCriarConta`, como o registrador a vê (os
+ * pedaços do template unidos por `?`, espaços normalizados) — medida, não
+ * suposta.
+ */
+const INSTRUCAO_DA_TRAVA =
+  '$queryRaw: SELECT ordem, marcador FROM travar_emails_para_criar_conta( ?::bigint[], ?::integer )';
+
 describe('SPEC-086 — a trava é a primeira operação da transação que cria a conta (sequência registrada)', () => {
   it.each(entradas)('%s', async (_nome, status, disparar) => {
     transacoes = [];
@@ -379,10 +387,14 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
     const ops = transacaoDaConta();
     // A primeira operação, inteira na mensagem: o vermelho mostra o que veio
     // antes da trava.
-    const primeiraEaTrava =
-      /^\$queryRaw:[\s\S]*travar_emails_para_criar_conta/.test(ops[0] ?? '');
-    expect({ primeiraEaTrava, sequencia: ops.slice(0, 4) }).toMatchObject({
-      primeiraEaTrava: true,
+    // Achado IMP-086-R2-02: "contém o nome da função" aceitava o nome como
+    // DADO (`SELECT 'travar_emails_para_criar_conta' AS marcador`), feito por
+    // uma helper antes da trava. Agora a primeira operação tem de ser a
+    // instrução EXATA da trava (`trava-de-email.ts`), com os espaços
+    // normalizados: literal, comentário ou outra instrução antes não passam.
+    const primeira = (ops[0] ?? '').replace(/\s+/g, ' ').trim();
+    expect({ primeira, sequencia: ops.slice(0, 4) }).toMatchObject({
+      primeira: INSTRUCAO_DA_TRAVA,
     });
   });
 });
