@@ -1473,3 +1473,70 @@ describe('SPEC-086/AC-010 — a matriz: {aluno, professor} × {conta inativa, em
     },
   );
 });
+
+describe('SPEC-086/AC-012 — a senha temporária vence ENTRE o login e a escolha, para aluno e professor', () => {
+  /**
+   * Achado IMP-086-R7-01: o caso de vencimento entre os passos só usava
+   * aluno, e um `escolher` que dispensasse o vencimento só para professor
+   * passava. Aqui, para os dois papéis: a conta escolhida tem senha
+   * temporária AINDA VÁLIDA no login (entra na lista e no token); depois do
+   * login, e sem mexer no hash (a impressão não pode salvar o caso), só a
+   * DATA vence. O mesmo token anterior escolhe essa conta: 401
+   * SENHA_TEMPORARIA_EXPIRADA, sem cookie, nenhum refresh novo, as sessões
+   * antigas dela revogadas (estado comitado no banco) e as da outra conta
+   * intactas. Controle: a outra conta, pelo mesmo token, ainda abre.
+   */
+  it.each(['aluno', 'professor'] as const)(
+    '%s: 401 SENHA_TEMPORARIA_EXPIRADA, revoga só a escolhida, e a outra ainda abre',
+    async (papel) => {
+      const email = emailNovo(`venceu-entre-${papel}`);
+      const outra = await conta(await empresa(), email, 'valida');
+      const eAlvo = await empresa();
+      const alvo =
+        papel === 'professor'
+          ? await contaDeProfessor(eAlvo, email)
+          : await conta(eAlvo, email, 'valida');
+      await q(
+        `UPDATE usuarios SET senha_temporaria = true,
+                senha_temporaria_expira_em = now() + interval '1 day'
+          WHERE id = $1::uuid`,
+        alvo,
+      );
+
+      const { corpo, token } = await loginComEscolha(email);
+      expect(token.contas.map((c) => c.id).sort(porId)).toEqual(
+        [outra, alvo].sort(porId),
+      );
+
+      const [antes] = await db.$queryRawUnsafe<{ h: string }[]>(
+        `SELECT senha_hash AS h FROM usuarios WHERE id = $1::uuid`,
+        alvo,
+      );
+      await q(
+        `UPDATE usuarios SET senha_temporaria_expira_em = now() - interval '1 minute' WHERE id = $1::uuid`,
+        alvo,
+      );
+      const [depois] = await db.$queryRawUnsafe<{ h: string }[]>(
+        `SELECT senha_hash AS h FROM usuarios WHERE id = $1::uuid`,
+        alvo,
+      );
+      expect(depois.h).toBe(antes.h);
+
+      await sessoesVivas(alvo, 2);
+      await sessoesVivas(outra, 1);
+      const totalAntes = await refreshTotal(alvo);
+
+      const res = await escolher(corpo.escolha.token, alvo);
+      expect({ status: res.status, corpo: res.body as unknown }).toEqual({
+        status: 401,
+        corpo: SENHA_TEMPORARIA_EXPIRADA,
+      });
+      expect(res.headers['set-cookie']).toBeUndefined();
+      expect(await refreshTotal(alvo)).toBe(totalAntes);
+      expect(await refreshVivos(alvo)).toBe(0);
+      expect(await refreshVivos(outra)).toBe(1);
+
+      expect((await escolher(corpo.escolha.token, outra)).status).toBe(200);
+    },
+  );
+});
