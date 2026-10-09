@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { registrarAceiteNoCadastro } from '../aceites/registrar-aceite-no-cadastro';
 import { StudentsService } from '../people/students.service';
@@ -12,6 +13,13 @@ import { MatriculasService } from '../matriculas/matriculas.service';
 import { ConviteAceitoResponseDto } from './dto/auth-response.dto';
 import type { AceitarConviteDto } from './dto/aceitar-convite.dto';
 import type { CriarConviteDto } from './dto/criar-convite.dto';
+import {
+  comTraducaoDaTravaDeEmail,
+  conflitoDeContaDaEmpresa,
+  travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
+} from '../acesso/trava-de-email';
+import { ehViolacaoDeEmail } from '../acesso/traduzir-violacao-de-unicidade';
 
 const VALIDADE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -51,8 +59,12 @@ export class InvitesService {
 
   async criar(companyId: string, criadoPorId: string, dto: CriarConviteDto) {
     if (dto.email) {
-      const existente = await this.prisma.usuario.findUnique({
-        where: { email: dto.email },
+      // SPEC-086 — conflito é conta NESTA empresa (ou de gestão); com a chave
+      // desligada, qualquer conta. Criar convite não grava em `usuarios`, e
+      // por isso não trava: quem decide é o aceite.
+      const existente = await this.prisma.usuario.findFirst({
+        where: conflitoDeContaDaEmpresa(dto.email, companyId),
+        select: { id: true },
       });
       if (existente) {
         // Caminho autenticado: o admin tem contexto legítimo para saber
@@ -155,109 +167,154 @@ export class InvitesService {
   async aceitar(dto: AceitarConviteDto): Promise<ConviteAceitoResponseDto> {
     const tokenHash = this.hash(dto.token);
 
-    return this.prisma.$transaction(async (tx) => {
-      const claim = await tx.conviteAluno.updateMany({
-        where: { tokenHash, usadoEm: null, expiraEm: { gt: new Date() } },
-        data: { usadoEm: new Date() },
-      });
-      if (claim.count === 0) {
-        throw new GoneException(CONVITE_INVALIDO);
-      }
-
-      const convite = await tx.conviteAluno.findUniqueOrThrow({
-        where: { tokenHash },
-        include: {
-          empresa: { select: { status: true, contratoVersaoVigente: true } },
-        },
-      });
-      if (convite.empresa.status !== 'ativa') {
-        throw new GoneException(CONVITE_INVALIDO);
-      }
-
-      // O e-mail do convite manda: foi a empresa que decidiu quem está
-      // sendo convidado. Sem e-mail no convite, quem aceita informa o seu.
-      const email = convite.email ?? dto.email;
-      const nome = convite.nome ?? dto.nome;
-      if (!email || !nome) {
-        throw new UnprocessableEntityException(CADASTRO_NAO_CONCLUIDO);
-      }
-
-      const jaExiste = await tx.usuario.findUnique({ where: { email } });
-      if (jaExiste) {
-        throw new UnprocessableEntityException(CADASTRO_NAO_CONCLUIDO);
-      }
-
-      const senhaHash = await this.students.hashSenha(dto.senha);
-      const usuario = await tx.usuario.create({
-        data: {
-          email,
-          senhaHash,
-          nome,
-          telefone: convite.telefone ?? dto.telefone,
-          role: 'aluno',
-          companyId: convite.companyId,
-        },
-      });
-
-      // Convite é iniciativa da empresa: o aluno já nasce aprovado
-      // (REQ-008/AC-014). E a senha é dele desde o primeiro minuto, então
-      // não há senha temporária nem troca forçada neste caminho.
-      const aluno = await this.students.criarPerfilDeAluno(tx, {
-        usuarioId: usuario.id,
-        companyId: convite.companyId,
-        nivelId: convite.nivelId,
-        vinculo: 'aprovado',
-      });
-
-      // SPEC-024, duvida 2 da spec — **o aceite entra na MESMA transacao que
-      // cria a conta.** Fora dela existiria uma janela em que a conta existe
-      // sem aceite, e o portao mandaria a pessoa para a tela de aceite logo
-      // depois de ela ter aceitado. Falha em qualquer um dos dois nao deixa
-      // metade.
-      //
-      // As versoes vem do cliente e sao conferidas contra o vigente: aceitar
-      // "o que estiver valendo" seria concordar com um texto que nao se viu.
-      await registrarAceiteNoCadastro(tx, usuario.id, {
-        termoLido: dto.termoVersao,
-        contratoLido: dto.contratoVersao,
-        contratoVigente: convite.empresa.contratoVersaoVigente ?? null,
-      });
-
-      /**
-       * SPEC-037/AC-015 — **a matricula nasce AQUI, e a ordem importa.**
-       *
-       * Depois do aceite, e nao antes: a INV-114 (FK causal) exige o aceite
-       * do contrato daquela versao, e ele acabou de ser gravado nesta mesma
-       * transacao. Invertida, a insercao levaria `23503`.
-       *
-       * Falhar aqui desfaz a conta e o aceite. **E o certo:** uma conta sem
-       * matricula e recuperavel pelo gestor; uma matricula sem contrato
-       * aceito e o buraco juridico que a INV-114 existe para impedir.
-       *
-       * **Plano desativado entre convidar e aceitar devolve `null`** (AC-016):
-       * a conta e criada, a matricula nao, e a resposta avisa. Recusar o
-       * aceite inteiro puniria o aluno por uma mudanca do clube -- ele fez
-       * tudo certo e nao tinha como saber.
-       */
-      let matriculaCriada = true;
-      if (convite.planoId && convite.empresa.contratoVersaoVigente != null) {
-        const matricula = await this.matriculas.criarNoAceite(tx, {
-          companyId: convite.companyId,
-          alunoId: aluno.id,
-          usuarioId: usuario.id,
-          planoId: convite.planoId,
-          contratoVersao: convite.empresa.contratoVersaoVigente,
-          autorId: convite.criadoPorId,
-        });
-        matriculaCriada = matricula !== null;
-      }
-
-      return {
-        usuario: { id: usuario.id, email: usuario.email, nome },
-        // `false` so quando o convite TINHA plano e ele nao pode ser
-        // aplicado. Convite sem plano nao gera aviso nenhum.
-        planoAplicado: convite.planoId ? matriculaCriada : null,
-      };
+    // SPEC-086 — o e-mail que a conta vai ter decide a trava, e a trava é a
+    // PRIMEIRA instrução da transação: por isso ele é lido aqui, antes dela.
+    // O e-mail do convite manda; sem ele, vale o informado. Dentro, a mesma
+    // conta é refeita sobre o convite reivindicado, e um e-mail diferente
+    // (convite trocado no meio) é convite inválido.
+    const previa = await this.prisma.conviteAluno.findUnique({
+      where: { tokenHash },
+      select: { email: true },
     });
+    const emailTravado = previa?.email ?? dto.email ?? null;
+    // O bcrypt FORA da transação: dentro, ele seguraria a trava do e-mail por
+    // ~1 s, e o segundo aceite do mesmo convite estouraria os 2 s esperando
+    // por ela — 503 onde a resposta certa é 410 (FIT-003).
+    const senhaHash = await this.students.hashSenha(dto.senha);
+
+    return comTraducaoDaTravaDeEmail(() =>
+      this.prisma.$transaction(
+        async (tx) =>
+          this.aceitarNaTransacao(tx, dto, tokenHash, emailTravado, senhaHash),
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+      ),
+    ).catch((erro: unknown) => {
+      // A segunda linha: a corrida que passou da trava recebe a resposta da
+      // pré-conferência. Fora da transação — o rollback já devolveu o convite.
+      if (ehViolacaoDeEmail(erro)) {
+        throw new UnprocessableEntityException(CADASTRO_NAO_CONCLUIDO);
+      }
+      throw erro;
+    });
+  }
+
+  private async aceitarNaTransacao(
+    tx: Prisma.TransactionClient,
+    dto: AceitarConviteDto,
+    tokenHash: string,
+    emailTravado: string | null,
+    senhaHash: string,
+  ) {
+    if (emailTravado) {
+      await travarEmailsParaCriarConta(tx, [emailTravado]);
+    }
+
+    const claim = await tx.conviteAluno.updateMany({
+      where: { tokenHash, usadoEm: null, expiraEm: { gt: new Date() } },
+      data: { usadoEm: new Date() },
+    });
+    if (claim.count === 0) {
+      throw new GoneException(CONVITE_INVALIDO);
+    }
+
+    const convite = await tx.conviteAluno.findUniqueOrThrow({
+      where: { tokenHash },
+      include: {
+        empresa: { select: { status: true, contratoVersaoVigente: true } },
+      },
+    });
+    if (convite.empresa.status !== 'ativa') {
+      throw new GoneException(CONVITE_INVALIDO);
+    }
+
+    // O e-mail do convite manda: foi a empresa que decidiu quem está
+    // sendo convidado. Sem e-mail no convite, quem aceita informa o seu.
+    const email = convite.email ?? dto.email;
+    const nome = convite.nome ?? dto.nome;
+    if (!email || !nome) {
+      throw new UnprocessableEntityException(CADASTRO_NAO_CONCLUIDO);
+    }
+    if (email !== emailTravado) {
+      throw new GoneException(CONVITE_INVALIDO);
+    }
+
+    const jaExiste = await tx.usuario.findFirst({
+      where: conflitoDeContaDaEmpresa(email, convite.companyId),
+      select: { id: true },
+    });
+    if (jaExiste) {
+      throw new UnprocessableEntityException(CADASTRO_NAO_CONCLUIDO);
+    }
+
+    const usuario = await tx.usuario.create({
+      data: {
+        email,
+        senhaHash,
+        nome,
+        telefone: convite.telefone ?? dto.telefone,
+        role: 'aluno',
+        companyId: convite.companyId,
+      },
+    });
+
+    // Convite é iniciativa da empresa: o aluno já nasce aprovado
+    // (REQ-008/AC-014). E a senha é dele desde o primeiro minuto, então
+    // não há senha temporária nem troca forçada neste caminho.
+    const aluno = await this.students.criarPerfilDeAluno(tx, {
+      usuarioId: usuario.id,
+      companyId: convite.companyId,
+      nivelId: convite.nivelId,
+      vinculo: 'aprovado',
+    });
+
+    // SPEC-024, duvida 2 da spec — **o aceite entra na MESMA transacao que
+    // cria a conta.** Fora dela existiria uma janela em que a conta existe
+    // sem aceite, e o portao mandaria a pessoa para a tela de aceite logo
+    // depois de ela ter aceitado. Falha em qualquer um dos dois nao deixa
+    // metade.
+    //
+    // As versoes vem do cliente e sao conferidas contra o vigente: aceitar
+    // "o que estiver valendo" seria concordar com um texto que nao se viu.
+    await registrarAceiteNoCadastro(tx, usuario.id, {
+      termoLido: dto.termoVersao,
+      contratoLido: dto.contratoVersao,
+      contratoVigente: convite.empresa.contratoVersaoVigente ?? null,
+    });
+
+    /**
+     * SPEC-037/AC-015 — **a matricula nasce AQUI, e a ordem importa.**
+     *
+     * Depois do aceite, e nao antes: a INV-114 (FK causal) exige o aceite
+     * do contrato daquela versao, e ele acabou de ser gravado nesta mesma
+     * transacao. Invertida, a insercao levaria `23503`.
+     *
+     * Falhar aqui desfaz a conta e o aceite. **E o certo:** uma conta sem
+     * matricula e recuperavel pelo gestor; uma matricula sem contrato
+     * aceito e o buraco juridico que a INV-114 existe para impedir.
+     *
+     * **Plano desativado entre convidar e aceitar devolve `null`** (AC-016):
+     * a conta e criada, a matricula nao, e a resposta avisa. Recusar o
+     * aceite inteiro puniria o aluno por uma mudanca do clube -- ele fez
+     * tudo certo e nao tinha como saber.
+     */
+    let matriculaCriada = true;
+    if (convite.planoId && convite.empresa.contratoVersaoVigente != null) {
+      const matricula = await this.matriculas.criarNoAceite(tx, {
+        companyId: convite.companyId,
+        alunoId: aluno.id,
+        usuarioId: usuario.id,
+        planoId: convite.planoId,
+        contratoVersao: convite.empresa.contratoVersaoVigente,
+        autorId: convite.criadoPorId,
+      });
+      matriculaCriada = matricula !== null;
+    }
+
+    return {
+      usuario: { id: usuario.id, email: usuario.email, nome },
+      // `false` so quando o convite TINHA plano e ele nao pode ser
+      // aplicado. Convite sem plano nao gera aviso nenhum.
+      planoAplicado: convite.planoId ? matriculaCriada : null,
+    };
   }
 }

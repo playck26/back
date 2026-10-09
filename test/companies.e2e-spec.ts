@@ -515,6 +515,11 @@ describe('Companies (e2e) - TEST-002', () => {
           esportesQuadra: [],
         });
         emailNovoLivre();
+        // SPEC-086 — o insert agora é feito dentro da transação da trava do
+        // e-mail; o `tx` do dublê delega ao `usuario.create` de sempre.
+        prisma.tx.usuario.create.mockImplementation((args: unknown): unknown =>
+          prisma.usuario.create(args),
+        );
         prisma.usuario.create.mockResolvedValue({
           id: 'u2',
           nome: NOVO.nome,

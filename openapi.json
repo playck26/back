@@ -46,6 +46,47 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EscolhaDeEmpresaRespostaDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login/escolher": {
+      "post": {
+        "operationId": "AuthController_escolherEmpresa",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscolherEmpresaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponseDto"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -6641,6 +6682,107 @@
           "accessToken",
           "refreshToken",
           "usuario"
+        ]
+      },
+      "OpcaoDeEmpresaDto": {
+        "type": "object",
+        "properties": {
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "empresaNome": {
+            "type": "string",
+            "example": "Smart Tennis"
+          },
+          "logoUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "papel": {
+            "type": "string",
+            "enum": [
+              "super_admin",
+              "company_admin",
+              "aluno",
+              "professor"
+            ]
+          },
+          "situacao": {
+            "type": "string",
+            "enum": [
+              "disponivel",
+              "senha_expirada"
+            ]
+          }
+        },
+        "required": [
+          "usuarioId",
+          "empresaNome",
+          "logoUrl",
+          "papel",
+          "situacao"
+        ]
+      },
+      "EscolhaDeEmpresaDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "empresas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpcaoDeEmpresaDto"
+            }
+          }
+        },
+        "required": [
+          "token",
+          "empresas"
+        ]
+      },
+      "EscolhaDeEmpresaRespostaDto": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 409
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "ESCOLHA_DE_EMPRESA"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "escolha": {
+            "$ref": "#/components/schemas/EscolhaDeEmpresaDto"
+          }
+        },
+        "required": [
+          "statusCode",
+          "code",
+          "message",
+          "escolha"
+        ]
+      },
+      "EscolherEmpresaDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "token",
+          "usuarioId"
         ]
       },
       "AccessTokenResponseDto": {

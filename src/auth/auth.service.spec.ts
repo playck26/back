@@ -8,7 +8,16 @@ import { StudentsService } from '../people/students.service';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
+import type { LogoDaEmpresaService } from '../companies/logo-da-empresa.service';
 import { hashDoRefresh } from './hash-do-refresh';
+import {
+  cenariosDeAlunoOuProfessor,
+  contaCasaComFiltro,
+  filtroDaEmpresa,
+  findFirstSobre,
+  restaurarChaveDoEmailACadaTeste,
+  wheresDasChamadas,
+} from '../../test/utils/spec-086-contas-no-duble';
 
 // TEST-001 (SPEC-001): unit tests da regra de negócio de MOD-001, com
 // PrismaService mockado — não depende de banco vivo (Neon ainda não
@@ -16,26 +25,47 @@ import { hashDoRefresh } from './hash-do-refresh';
 // para quando a spec 001 fechar DoD com Neon disponível.
 
 interface TxMock {
-  usuario: { create: jest.Mock; update: jest.Mock };
+  usuario: { create: jest.Mock; update: jest.Mock; findFirst: jest.Mock };
   aluno: { create: jest.Mock };
+  $queryRaw: jest.Mock;
   refreshToken: { updateMany: jest.Mock };
 }
 
 function buildPrismaMock() {
   const tx: TxMock = {
-    usuario: { create: jest.fn(), update: jest.fn() },
+    // SPEC-086 — a trava do e-mail (`$queryRaw`) e a conferência sob ela.
+    usuario: {
+      create: jest.fn(),
+      update: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     aluno: { create: jest.fn() },
+    $queryRaw: jest.fn().mockResolvedValue([]),
     refreshToken: { updateMany: jest.fn() },
   };
+  const findUnique = jest.fn();
+  const empresaFindUnique = jest.fn();
   const prisma = {
     usuario: {
-      findUnique: jest.fn(),
+      findUnique,
+      // SPEC-086 — o login lê TODAS as contas do e-mail, e o cadastro confere
+      // conflito com `findFirst`. Os casos abaixo descrevem uma conta só pelo
+      // `findUnique`; estes dois a devolvem, para a semântica não mudar.
+      findMany: jest.fn(async (args: unknown) => {
+        const u: unknown = await findUnique(args);
+        return u ? [u] : [];
+      }),
+      findFirst: jest.fn((args: unknown): unknown => findUnique(args)),
       findUniqueOrThrow: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
     empresa: {
-      findUnique: jest.fn(),
+      findUnique: empresaFindUnique,
+      findMany: jest.fn(async () => {
+        const e: unknown = await empresaFindUnique();
+        return e ? [e] : [];
+      }),
     },
     refreshToken: {
       create: jest.fn(),
@@ -82,6 +112,7 @@ describe('AuthService', () => {
   let jwt: JwtService;
   let students: StudentsService;
   let service: AuthService;
+  let logos: LogoDaEmpresaService;
 
   beforeEach(() => {
     const built = buildPrismaMock();
@@ -95,7 +126,13 @@ describe('AuthService', () => {
     students = {
       criarPerfilDeAluno: jest.fn().mockResolvedValue({ id: 'a1' }),
     } as unknown as StudentsService;
-    service = new AuthService(prisma, students, jwt, config);
+    // SPEC-086 — a logo da tela de escolha; o dublê devolve a URL legada.
+    logos = {
+      resolver: jest.fn((e: { logoUrl: string | null }) => ({
+        logoUrl: e.logoUrl,
+      })),
+    } as unknown as LogoDaEmpresaService;
+    service = new AuthService(prisma, students, jwt, config, logos);
   });
 
   describe('login', () => {
@@ -308,6 +345,83 @@ describe('AuthService', () => {
         // Auto-cadastro público nasce pendente de aprovação (REQ-008).
         vinculo: 'pendente',
       });
+    });
+  });
+
+  /**
+   * SPEC-086/E1 — `register-aluno` pelo FILTRO que passa ao Prisma (AC-003,
+   * AC-017). A empresa alvo é a do slug; o dublê avalia o filtro sobre contas
+   * reais, com a conta de outra empresa criada antes (S1).
+   */
+  describe('registerAluno — o e-mail por empresa (SPEC-086/E1)', () => {
+    const chave = restaurarChaveDoEmailACadaTeste();
+    const EMAIL = 'spec086-e1@x.com';
+    const dto = {
+      email: EMAIL,
+      senha: 'senha-forte',
+      nome: 'Aluno',
+      empresaSlug: 'smart-tennis',
+    };
+
+    it.each(cenariosDeAlunoOuProfessor(EMAIL, 'c1').map((c) => [c.nome, c]))(
+      '%s',
+      async (_nome, cenario) => {
+        if (cenario.chave === 'ligada') chave.ligar();
+        else chave.desligar();
+        (prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+          id: 'c1',
+          status: 'ativa',
+          permiteAutoCadastro: true,
+        });
+        const fora = findFirstSobre(cenario.contas);
+        const dentro = findFirstSobre(cenario.contas);
+        (prisma.usuario.findFirst as jest.Mock).mockImplementation(fora);
+        tx.usuario.findFirst.mockImplementation(dentro);
+        tx.usuario.create.mockResolvedValue({
+          id: 'u-novo',
+          email: EMAIL,
+          nome: 'Aluno',
+          role: 'aluno',
+          companyId: 'c1',
+        });
+
+        const r = await service.registerAluno(dto).catch((e: Error) => e);
+
+        const esperado =
+          cenario.chave === 'ligada'
+            ? filtroDaEmpresa(EMAIL, 'c1')
+            : { email: EMAIL };
+        const wheres = wheresDasChamadas(fora, dentro);
+        expect(wheres.length).toBeGreaterThan(0);
+        for (const w of wheres) expect(w).toEqual(esperado);
+        if (cenario.aceita) {
+          expect(r).not.toBeInstanceOf(Error);
+          // A conferência de dentro da transação (sob a trava) também rodou.
+          expect(dentro).toHaveBeenCalledTimes(1);
+          expect(tx.usuario.create).toHaveBeenCalledTimes(1);
+        } else {
+          expect(r).toBeInstanceOf(UnprocessableEntityException);
+          expect((r as Error).message).toBe(
+            'Não foi possível concluir o cadastro com esses dados.',
+          );
+          expect(tx.usuario.create).not.toHaveBeenCalled();
+        }
+      },
+    );
+
+    it('S1: com a chave ligada, um filtro só por e-mail acharia a conta de OUTRA empresa — o caso positivo ficaria vermelho', () => {
+      const [positivo] = cenariosDeAlunoOuProfessor(EMAIL, 'c1');
+      expect(positivo.aceita).toBe(true);
+      // A fixture distingue: o filtro sem empresa casa a conta de fora (e a
+      // entrada recusaria), o filtro da spec não casa nenhuma (e ela aceita).
+      expect(
+        positivo.contas.find((c) => contaCasaComFiltro(c, { email: EMAIL })),
+      ).toMatchObject({ companyId: 'empresa-de-fora' });
+      expect(
+        positivo.contas.find((c) =>
+          contaCasaComFiltro(c, filtroDaEmpresa(EMAIL, 'c1')),
+        ),
+      ).toBeUndefined();
     });
   });
 
@@ -632,8 +746,10 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'aluno@x.com', senha: 'pck-ABC123' }),
       ).rejects.toBeInstanceOf(UnauthorizedException);
+      // SPEC-086 — a revogação é por `usuarioId`, agora em lista (toda conta
+      // vencida que a senha abriu); com uma conta, é a mesma conta.
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
-        where: { usuarioId: 'u1', revokedAt: null },
+        where: { usuarioId: { in: ['u1'] }, revokedAt: null },
         data: { revokedAt: expect.any(Date) },
       });
       expect(prisma.refreshToken.create).not.toHaveBeenCalled();

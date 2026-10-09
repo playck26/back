@@ -14,6 +14,7 @@ import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthService } from '../../src/auth/auth.service';
 import type { StudentsService } from '../../src/people/students.service';
+import type { LogoDaEmpresaService } from '../../src/companies/logo-da-empresa.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
@@ -47,6 +48,7 @@ const service = new AuthService(
   {} as StudentsService,
   jwt,
   config,
+  {} as LogoDaEmpresaService,
 );
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');

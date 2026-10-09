@@ -1145,8 +1145,9 @@ describe('AC-037 — professor sem conta: enviar cria a conta e o convite', () =
     expect(bodyOf<object>(res)).toEqual({
       statusCode: 409,
       code: 'EMAIL_EM_USO',
+      // SPEC-086: o conflito agora é por empresa (ou com gestor), não global.
       message:
-        'Este e-mail já pertence a outra conta. Uma pessoa não pode ter duas contas na plataforma (LIM-001).',
+        'Este e-mail já tem conta nesta empresa ou pertence a um gestor.',
     });
     expect(await vinculoDe(professor.professorId)).toBeNull();
     const [{ n }] = await ler<{ n: number }>(

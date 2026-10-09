@@ -426,7 +426,11 @@ describe('Auth (e2e) - TEST-001', () => {
         ...CONVITE_VALIDO,
         nivelId: null,
       });
-      prisma.tx.usuario.findUnique.mockResolvedValue(null);
+      // SPEC-086 — a prévia do convite diz qual e-mail travar; a conferência
+      // sob a trava (`tx.usuario.findFirst`) não acha ninguém, por padrão.
+      prisma.conviteAluno.findUnique.mockResolvedValue({
+        email: CONVITE_VALIDO.email,
+      });
       prisma.tx.usuario.create.mockResolvedValue({
         id: 'u9',
         email: CONVITE_VALIDO.email,

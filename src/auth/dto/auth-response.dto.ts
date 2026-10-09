@@ -131,3 +131,53 @@ export class ConviteAceitoResponseDto {
   @ApiProperty({ type: ContaDeConviteResponseDto })
   usuario!: ContaDeConviteResponseDto;
 }
+
+/** SPEC-086 — uma empresa da tela de escolha. */
+export class OpcaoDeEmpresaDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  usuarioId!: string;
+
+  @ApiProperty({ type: String, example: 'Smart Tennis' })
+  empresaNome!: string;
+
+  /** A logo resolvida (`LogoDaEmpresaService.resolver`); `null` sem logo. */
+  @ApiProperty({ type: String, nullable: true })
+  logoUrl!: string | null;
+
+  @ApiProperty({ type: String, enum: PAPEIS })
+  papel!: UsuarioRole;
+
+  /**
+   * `senha_expirada`: a senha abre a conta, mas a senha temporária venceu
+   * (I6). O card aparece bloqueado, e o `usuarioId` dela NÃO está no token.
+   */
+  @ApiProperty({ type: String, enum: ['disponivel', 'senha_expirada'] })
+  situacao!: 'disponivel' | 'senha_expirada';
+}
+
+export class EscolhaDeEmpresaDto {
+  /** JWT de 5 minutos, só para `POST /auth/login/escolher`. */
+  @ApiProperty({ type: String })
+  token!: string;
+
+  @ApiProperty({ type: [OpcaoDeEmpresaDto] })
+  empresas!: OpcaoDeEmpresaDto[];
+}
+
+/**
+ * SPEC-086 — o corpo do `409 ESCOLHA_DE_EMPRESA` do login: a senha abriu mais
+ * de uma conta (ou uma válida e outra com a senha temporária vencida).
+ */
+export class EscolhaDeEmpresaRespostaDto {
+  @ApiProperty({ type: Number, example: 409 })
+  statusCode!: number;
+
+  @ApiProperty({ type: String, enum: ['ESCOLHA_DE_EMPRESA'] })
+  code!: 'ESCOLHA_DE_EMPRESA';
+
+  @ApiProperty({ type: String })
+  message!: string;
+
+  @ApiProperty({ type: EscolhaDeEmpresaDto })
+  escolha!: EscolhaDeEmpresaDto;
+}

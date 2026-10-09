@@ -123,8 +123,8 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
     );
     // O telefone vazio vai NULO, e não texto vazio: o lote passa '' no
     // arranjo, e o `nullif` do SQL é quem o desfaz.
-    const beto = await db.usuario.findUniqueOrThrow({
-      where: { email: 'beto038@teste.local' },
+    const beto = await db.usuario.findFirstOrThrow({
+      where: { email: 'beto038@teste.local', companyId: EMPRESA },
     });
     expect(beto.telefone).toBeNull();
 

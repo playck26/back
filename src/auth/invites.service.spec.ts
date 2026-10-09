@@ -8,22 +8,34 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../people/students.service';
 import type { MatriculasService } from '../matriculas/matriculas.service';
 import { InvitesService } from './invites.service';
+import { ChaveDeLock } from '../common/lock/chave-de-lock';
+import {
+  cenariosDeAlunoOuProfessor,
+  contaCasaComFiltro,
+  filtroDaEmpresa,
+  findFirstSobre,
+  restaurarChaveDoEmailACadaTeste,
+  wheresDasChamadas,
+} from '../../test/utils/spec-086-contas-no-duble';
 
 // TEST-009 (SPEC-009/REQ-002): convite de uso único, com a claim atômica
 // de INV-009 e as respostas públicas indistinguíveis de REQ-011.
 
 interface TxMock {
   conviteAluno: { updateMany: jest.Mock; findUniqueOrThrow: jest.Mock };
-  usuario: { findUnique: jest.Mock; create: jest.Mock };
+  usuario: { findFirst: jest.Mock; create: jest.Mock };
+  $queryRaw: jest.Mock;
 }
 
 function build() {
   const tx: TxMock = {
     conviteAluno: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
-    usuario: { findUnique: jest.fn(), create: jest.fn() },
+    // SPEC-086 — a trava do e-mail (`$queryRaw`) e a conferência sob ela.
+    usuario: { findFirst: jest.fn(), create: jest.fn() },
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const prisma = {
-    usuario: { findUnique: jest.fn() },
+    usuario: { findFirst: jest.fn() },
     conviteAluno: { create: jest.fn(), findUnique: jest.fn() },
     $transaction: jest.fn((cb: (tx: TxMock) => unknown) => cb(tx)),
   };
@@ -90,7 +102,7 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
     });
 
     it('recusa convite para e-mail já cadastrado, com mensagem explícita (caminho autenticado)', async () => {
-      ctx.prismaRaw.usuario.findUnique.mockResolvedValue({
+      ctx.prismaRaw.usuario.findFirst.mockResolvedValue({
         id: 'u1',
       });
 
@@ -181,10 +193,56 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
       empresa: { status: 'ativa' },
     };
 
+    beforeEach(() => {
+      // SPEC-086 — a prévia do convite, lida antes da transação para saber
+      // qual e-mail travar.
+      ctx.prismaRaw.conviteAluno.findUnique.mockResolvedValue({
+        email: conviteNoBanco.email,
+      });
+    });
+
+    it('SPEC-086: trava o e-mail do CONVITE (não o do corpo) como primeira instrução, antes da claim', async () => {
+      ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
+      ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
+      ctx.tx.usuario.findFirst.mockResolvedValue(null);
+      ctx.tx.usuario.create.mockResolvedValue({ id: 'u1', email: 'f@x.com' });
+
+      await ctx.service.aceitar({
+        token: 't',
+        senha: 'senha-forte-123',
+        email: 'outro@x.com',
+      });
+
+      const [sql] = ctx.tx.$queryRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        ...unknown[],
+      ];
+      expect(sql.join('?')).toContain('travar_emails_para_criar_conta');
+      const [, chaves] = ctx.tx.$queryRaw.mock.calls[0] as [unknown, unknown];
+      expect(chaves).toEqual([ChaveDeLock.deTexto('usuarios.email:f@x.com')]);
+      expect(ctx.tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        ctx.tx.conviteAluno.updateMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('SPEC-086/S26: o e-mail do convite reivindicado difere do travado → convite inválido, sem conta', async () => {
+      ctx.prismaRaw.conviteAluno.findUnique.mockResolvedValue({
+        email: 'antigo@x.com',
+      });
+      ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
+      ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
+      ctx.tx.usuario.findFirst.mockResolvedValue(null);
+
+      await expect(
+        ctx.service.aceitar({ token: 't', senha: 'senha-forte-123' }),
+      ).rejects.toBeInstanceOf(GoneException);
+      expect(ctx.tx.usuario.create).not.toHaveBeenCalled();
+    });
+
     it('AC-004: reivindica o convite ANTES de criar a conta', async () => {
       ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
       ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
-      ctx.tx.usuario.findUnique.mockResolvedValue(null);
+      ctx.tx.usuario.findFirst.mockResolvedValue(null);
       ctx.tx.usuario.create.mockResolvedValue({ id: 'u1', email: 'f@x.com' });
 
       await ctx.service.aceitar({ token: 't', senha: 'senha-forte-123' });
@@ -216,7 +274,7 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
     it('aluno de convite nasce aprovado — a iniciativa foi da empresa (AC-014)', async () => {
       ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
       ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
-      ctx.tx.usuario.findUnique.mockResolvedValue(null);
+      ctx.tx.usuario.findFirst.mockResolvedValue(null);
       ctx.tx.usuario.create.mockResolvedValue({ id: 'u1', email: 'f@x.com' });
 
       await ctx.service.aceitar({ token: 't', senha: 'senha-forte-123' });
@@ -230,7 +288,7 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
     it('conta com senha própria não nasce com senha temporária', async () => {
       ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
       ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
-      ctx.tx.usuario.findUnique.mockResolvedValue(null);
+      ctx.tx.usuario.findFirst.mockResolvedValue(null);
       ctx.tx.usuario.create.mockResolvedValue({ id: 'u1', email: 'f@x.com' });
 
       await ctx.service.aceitar({ token: 't', senha: 'senha-forte-123' });
@@ -244,7 +302,7 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
     it('e-mail já cadastrado devolve 422 genérico e desfaz a claim pela transação', async () => {
       ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
       ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue(conviteNoBanco);
-      ctx.tx.usuario.findUnique.mockResolvedValue({ id: 'outro' });
+      ctx.tx.usuario.findFirst.mockResolvedValue({ id: 'outro' });
 
       const erro = (await ctx.service
         .aceitar({ token: 't', senha: 'senha-forte-123' })
@@ -258,5 +316,110 @@ describe('InvitesService (SPEC-009/REQ-002)', () => {
       );
       expect(ctx.tx.usuario.create).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * SPEC-086/E2 e E3 — o convite de aluno pelo FILTRO que passa ao Prisma
+ * (AC-003, AC-017). A empresa alvo é a do CONVITE (`convite.companyId`), não
+ * a de quem chama; o dublê avalia o filtro sobre contas, com a conta de outra
+ * empresa criada antes (S1).
+ */
+describe('InvitesService — o e-mail por empresa (SPEC-086/E2, E3)', () => {
+  const chave = restaurarChaveDoEmailACadaTeste();
+  const EMAIL = 'spec086-e2@x.com';
+  let ctx: ReturnType<typeof build>;
+
+  beforeEach(() => {
+    ctx = build();
+  });
+
+  const cenarios = cenariosDeAlunoOuProfessor(EMAIL, 'emp-do-convite').map(
+    (c) => [c.nome, c] as const,
+  );
+
+  it.each(cenarios)('E2 (aceitar): %s', async (_nome, cenario) => {
+    if (cenario.chave === 'ligada') chave.ligar();
+    else chave.desligar();
+    ctx.prismaRaw.conviteAluno.findUnique.mockResolvedValue({ email: EMAIL });
+    ctx.tx.conviteAluno.updateMany.mockResolvedValue({ count: 1 });
+    ctx.tx.conviteAluno.findUniqueOrThrow.mockResolvedValue({
+      companyId: 'emp-do-convite',
+      email: EMAIL,
+      nome: 'Fulano',
+      telefone: null,
+      nivelId: null,
+      planoId: null,
+      criadoPorId: 'admin1',
+      empresa: { status: 'ativa', contratoVersaoVigente: null },
+    });
+    const dentro = findFirstSobre(cenario.contas);
+    ctx.tx.usuario.findFirst.mockImplementation(dentro);
+    ctx.tx.usuario.create.mockResolvedValue({ id: 'u-novo', email: EMAIL });
+
+    const r = await ctx.service
+      .aceitar({ token: 't', senha: 'senha-forte-123' })
+      .catch((e: Error) => e);
+
+    const esperado =
+      cenario.chave === 'ligada'
+        ? filtroDaEmpresa(EMAIL, 'emp-do-convite')
+        : { email: EMAIL };
+    const wheres = wheresDasChamadas(dentro, ctx.prismaRaw.usuario.findFirst);
+    expect(wheres).toHaveLength(1);
+    expect(wheres[0]).toEqual(esperado);
+    if (cenario.aceita) {
+      expect(r).not.toBeInstanceOf(Error);
+      expect(ctx.tx.usuario.create).toHaveBeenCalledTimes(1);
+    } else {
+      expect(r).toBeInstanceOf(UnprocessableEntityException);
+      expect((r as Error).message).toBe(
+        'Não foi possível concluir o cadastro com esses dados.',
+      );
+      expect(ctx.tx.usuario.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(cenarios)('E3 (criar convite): %s', async (_nome, cenario) => {
+    if (cenario.chave === 'ligada') chave.ligar();
+    else chave.desligar();
+    const fora = findFirstSobre(cenario.contas);
+    ctx.prismaRaw.usuario.findFirst.mockImplementation(fora);
+    ctx.prismaRaw.conviteAluno.create.mockResolvedValue({
+      id: 'cv1',
+      expiraEm: new Date(),
+    });
+
+    const r = await ctx.service
+      .criar('emp-do-convite', 'admin1', { email: EMAIL })
+      .catch((e: Error) => e);
+
+    const esperado =
+      cenario.chave === 'ligada'
+        ? filtroDaEmpresa(EMAIL, 'emp-do-convite')
+        : { email: EMAIL };
+    const wheres = wheresDasChamadas(fora);
+    expect(wheres).toEqual([esperado]);
+    if (cenario.aceita) {
+      expect(r).not.toBeInstanceOf(Error);
+      expect(ctx.prismaRaw.conviteAluno.create).toHaveBeenCalledTimes(1);
+    } else {
+      expect(r).toBeInstanceOf(UnprocessableEntityException);
+      expect((r as Error).message).toBe('Email já cadastrado');
+      expect(ctx.prismaRaw.conviteAluno.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('S1: com a chave ligada, um filtro só por e-mail acharia a conta de OUTRA empresa — o caso positivo ficaria vermelho', () => {
+    const [positivo] = cenariosDeAlunoOuProfessor(EMAIL, 'emp-do-convite');
+    expect(positivo.aceita).toBe(true);
+    expect(
+      positivo.contas.find((c) => contaCasaComFiltro(c, { email: EMAIL })),
+    ).toBeDefined();
+    expect(
+      positivo.contas.find((c) =>
+        contaCasaComFiltro(c, filtroDaEmpresa(EMAIL, 'emp-do-convite')),
+      ),
+    ).toBeUndefined();
   });
 });

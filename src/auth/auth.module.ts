@@ -14,6 +14,7 @@ import { InvitesService } from './invites.service';
 import { FotoDePerfilService } from './foto-de-perfil.service';
 import { MeFotoController } from './me-foto.controller';
 import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
+import { LogoDaEmpresaService } from '../companies/logo-da-empresa.service';
 
 @Module({
   // `StorageModule` entra por causa da foto de perfil (SPEC-018/TASK-003):
@@ -38,6 +39,10 @@ import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
     InvitesService,
     JwtAccessStrategy,
     FotoDePerfilService,
+    // SPEC-086 — a logo de cada empresa da tela de escolha do login. As
+    // dependências dele vêm do `StorageModule`, já importado; registrá-lo
+    // aqui evita importar o `CompaniesModule`, que importa este (ciclo).
+    LogoDaEmpresaService,
   ],
   exports: [AuthService],
 })

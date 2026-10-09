@@ -13,6 +13,13 @@ import {
 import * as bcrypt from 'bcrypt';
 import type { Prisma, UsuarioStatus, VinculoAluno } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  comTraducaoDaTravaDeEmail,
+  conflitoDeContaDaEmpresa,
+  travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
+} from '../acesso/trava-de-email';
+import { ehViolacaoDeEmail } from '../acesso/traduzir-violacao-de-unicidade';
 import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import {
   AlunoComSenhaTemporariaResponseDto,
@@ -80,6 +87,9 @@ function filtroDeNivel(nivelId?: string, semNivel?: boolean) {
   if (!nivelId) return {};
   return { nivelId };
 }
+
+/** A recusa de e-mail repetido do cadastro pelo gestor (E4 da SPEC-086). */
+const EMAIL_JA_CADASTRADO = 'Email já cadastrado';
 
 @Injectable()
 export class StudentsService {
@@ -179,11 +189,14 @@ export class StudentsService {
     companyId: string,
     dto: CreateStudentDto,
   ): Promise<AlunoComSenhaTemporariaResponseDto> {
-    const emailExistente = await this.prisma.usuario.findUnique({
-      where: { email: dto.email },
+    // SPEC-086 — atalho (evita o bcrypt à toa); a garantia é a conferência
+    // de dentro da transação, sob a trava do e-mail.
+    const emailExistente = await this.prisma.usuario.findFirst({
+      where: conflitoDeContaDaEmpresa(dto.email, companyId),
+      select: { id: true },
     });
     if (emailExistente) {
-      throw new ConflictException('Email já cadastrado');
+      throw new ConflictException(EMAIL_JA_CADASTRADO);
     }
 
     if (dto.nivelId) {
@@ -198,28 +211,47 @@ export class StudentsService {
     const senhaTemporaria = gerarSenhaTemporaria();
     const senhaHash = await bcrypt.hash(senhaTemporaria, BCRYPT_COST);
 
-    const aluno = await this.prisma.$transaction(async (tx) => {
-      const usuario = await tx.usuario.create({
-        data: {
-          email: dto.email,
-          senhaHash,
-          nome: dto.nome,
-          telefone: dto.telefone,
-          role: 'aluno',
-          companyId,
-          senhaTemporaria: true,
-          senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
-        },
-      });
+    const aluno = await comTraducaoDaTravaDeEmail(() =>
+      this.prisma.$transaction(
+        async (tx) => {
+          await travarEmailsParaCriarConta(tx, [dto.email]);
+          const conflito = await tx.usuario.findFirst({
+            where: conflitoDeContaDaEmpresa(dto.email, companyId),
+            select: { id: true },
+          });
+          if (conflito) throw new ConflictException(EMAIL_JA_CADASTRADO);
 
-      // Cadastro pelo admin (C3): a iniciativa é da empresa, então o
-      // aluno já nasce aprovado (REQ-008/AC-014).
-      return this.criarPerfilDeAluno(tx, {
-        usuarioId: usuario.id,
-        companyId,
-        nivelId: dto.nivelId,
-        vinculo: 'aprovado',
-      });
+          const usuario = await tx.usuario.create({
+            data: {
+              email: dto.email,
+              senhaHash,
+              nome: dto.nome,
+              telefone: dto.telefone,
+              role: 'aluno',
+              companyId,
+              senhaTemporaria: true,
+              senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
+            },
+          });
+
+          // Cadastro pelo admin (C3): a iniciativa é da empresa, então o
+          // aluno já nasce aprovado (REQ-008/AC-014).
+          return this.criarPerfilDeAluno(tx, {
+            usuarioId: usuario.id,
+            companyId,
+            nivelId: dto.nivelId,
+            vinculo: 'aprovado',
+          });
+        },
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+      ),
+    ).catch((erro: unknown) => {
+      // SPEC-086 — a segunda linha, fora da transação (o rollback já
+      // aconteceu): a corrida recebe a mesma resposta da pré-conferência.
+      if (ehViolacaoDeEmail(erro)) {
+        throw new ConflictException(EMAIL_JA_CADASTRADO);
+      }
+      throw erro;
     });
 
     // AC-006/AC-007: `senhaTemporaria` sai daqui e **de mais nenhum lugar**

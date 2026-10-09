@@ -1191,9 +1191,45 @@ jobs:
 
   # SPEC-043/AC-010 — badge verde com FIT pulado foi a causa raiz de 26 dias
   # sem gate. Disparo sem smoke/FITs falha de propósito.
+  # SPEC-086/TASK-007 — **a trava por e-mail contra o pooler real.**
+  #
+  # Os FIT-001/FIT-002 Neon não passam por ela: o cenário deles cria usuários
+  # por SQL direto, sem os escritores de conta. A 086 serializa o e-mail com
+  # `pg_advisory_xact_lock` (de transação, como a trava de nível já usa sob o
+  # pooler); aqui a P2 da matriz de pares — duas requisições, empresas
+  # diferentes, chave desligada, uma conta só — roda contra o DEV, pela mesma
+  # `exigirBancoLocal`, que libera só o host de `FIT_CANARIO_HOST` e recusa a
+  # produção sempre.
+  spec-086-neon:
+    name: SPEC-086 Neon
+    needs: migrate
+    if: ${{ always() && inputs.run_smoke && needs.migrate.outputs.migrado == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: SPEC-086 P2 (trava por e-mail)
+        run: pnpm exec jest --config ./test/jest-banco.json --runInBand spec-086-corrida -t "P2"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIT_CANARIO_HOST: ${{ vars.FIT_CANARIO_HOST }}
+          JWT_ACCESS_SECRET: fit-neon-access
+          JWT_REFRESH_SECRET: fit-neon-refresh
+          SPACES_REGION: nyc3
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+          SPACES_BUCKET: playck-ci
+          SPACES_CDN_URL: https://playck-ci.nyc3.cdn.digitaloceanspaces.com
+          SPACES_KEY: ci-spaces-key
+          SPACES_SECRET: ci-spaces-secret
+
   gate:
     name: gate (smoke e FITs rodaram?)
-    needs: [migrate, fit-001-neon, fit-002-neon, fit-025-neon, evd-033-033-neon]
+    needs: [migrate, fit-001-neon, fit-002-neon, fit-025-neon, evd-033-033-neon, spec-086-neon]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -1217,7 +1253,7 @@ jobs:
             echo "::error title=migrate nao passou::o job migrate (migration + smoke) concluiu ${{ needs.migrate.result }} - o gate nao pode ficar verde sem ele"
             exit 1
           }
-          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}" "${{ needs.fit-025-neon.result }}" "${{ needs.evd-033-033-neon.result }}"; do
+          for r in "${{ needs.fit-001-neon.result }}" "${{ needs.fit-002-neon.result }}" "${{ needs.fit-025-neon.result }}" "${{ needs.evd-033-033-neon.result }}" "${{ needs.spec-086-neon.result }}"; do
             [ "$r" = "success" ] || { echo "::error::um canario nao concluiu success ($r)"; exit 1; }
           done
-          echo "migrate (migration + smoke), FIT-001, FIT-002, FIT-025 e EVD-033-033 Neon: success"
+          echo "migrate (migration + smoke), FIT-001, FIT-002, FIT-025, EVD-033-033 e SPEC-086 Neon: success"

@@ -8,6 +8,12 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompaniesService } from './companies.service';
 import { LevelsService } from '../people/levels.service';
+import {
+  type ContaNoDuble,
+  findFirstSobre,
+  restaurarChaveDoEmailACadaTeste,
+  wheresDasChamadas,
+} from '../../test/utils/spec-086-contas-no-duble';
 
 /**
  * SPEC-085/AC-002 — **o bcrypt passa por um espião que ainda hasheia de
@@ -32,7 +38,10 @@ interface TxMock {
   // `findUnique` entrou em SPEC-009:TASK-000: a criação de empresa agora
   // gera `slug` único e consulta colisão dentro da própria transação.
   empresa: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
-  usuario: { create: jest.Mock };
+  // SPEC-086 — a trava do e-mail (`$queryRaw`) e a conferência sob ela
+  // (`findFirst`), as duas primeiras instruções da transação.
+  usuario: { create: jest.Mock; findFirst: jest.Mock };
+  $queryRaw: jest.Mock;
   // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias.
   horarioFuncionamento: { createMany: jest.Mock };
   // SPEC-075/D7: empresa nova nasce com os três níveis padrão.
@@ -67,7 +76,11 @@ function buildPrismaMock() {
       findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue(SEM_CATALOGO),
     },
-    usuario: { create: jest.fn() },
+    usuario: {
+      create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    $queryRaw: jest.fn().mockResolvedValue([]),
     // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias, na
     // mesma transação.
     horarioFuncionamento: {
@@ -93,11 +106,12 @@ function buildPrismaMock() {
       update: jest.fn(),
     },
     usuario: {
-      findUnique: jest.fn(),
       // SPEC-016: a busca do gestor amarra id + empresa + papel no WHERE.
       findFirst: jest.fn(),
       findMany: jest.fn(),
-      // SPEC-085: o gestor adicional é um insert só, fora de transação.
+      // SPEC-085: o gestor adicional. Desde a SPEC-086 o insert é feito
+      // dentro de uma transação (a da trava do e-mail); o dublê de `tx`
+      // delega a este, para os testes da 085 continuarem olhando aqui.
       create: jest.fn(),
     },
     $transaction: jest.fn((callback: (tx: TxMock) => unknown) => callback(tx)),
@@ -188,7 +202,7 @@ describe('CompaniesService', () => {
     // nome e único.
     it('deriva slug do nome, sem acento nem símbolo (SPEC-009)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       tx.empresa.create.mockResolvedValue({ id: 'e1', ...SEM_CATALOGO });
       tx.usuario.create.mockResolvedValue({ id: 'u1' });
 
@@ -203,7 +217,7 @@ describe('CompaniesService', () => {
 
     it('desempata slug quando dois nomes geram o mesmo (SPEC-009)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       // Primeira consulta acha colisão; a seguinte (com sufixo) não.
       tx.empresa.findUnique
         .mockResolvedValueOnce({ id: 'outra-empresa' })
@@ -234,7 +248,7 @@ describe('CompaniesService', () => {
 
     it('rejeita email do admin já cadastrado com 422 e nunca abre transação (AC-001)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue({
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue({
         id: 'existing',
       });
 
@@ -246,7 +260,7 @@ describe('CompaniesService', () => {
 
     it('cria empresa + admin numa transação e não expõe senhaHash (REQ-002, NFR-002)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       // DEF-015 — o dublê passou a trazer a relação porque a consulta real
       // passou a trazê-la. `comEsportes` **não tolera a relação ausente** de
       // propósito (ver o topo deste arquivo): tolerar esconderia o `include`
@@ -303,7 +317,7 @@ describe('CompaniesService', () => {
 
     it('se a criação do admin falhar dentro da transação, a chamada inteira rejeita (rollback, NFR-002)', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       tx.empresa.create.mockResolvedValue({ id: 'e1', nome: dto.nome });
       tx.usuario.create.mockRejectedValue(new Error('falha simulada'));
 
@@ -435,7 +449,7 @@ describe('CompaniesService', () => {
      */
     it('DEF-015: create não devolve logoKey e DEVOLVE esportes', async () => {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       tx.empresa.create.mockResolvedValue({
         id: 'e1',
         nome: 'Clube',
@@ -537,7 +551,7 @@ describe('CompaniesService', () => {
 
     function prontoParaCriar() {
       (prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       tx.empresa.create.mockResolvedValue({ id: 'e1', ...SEM_CATALOGO });
       tx.usuario.create.mockResolvedValue({ id: 'u1' });
     }
@@ -730,7 +744,10 @@ describe('CompaniesService', () => {
         status: 'ativa',
         ...SEM_CATALOGO,
       });
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
+      tx.usuario.create.mockImplementation((args: unknown): unknown =>
+        (prisma.usuario.create as jest.Mock)(args),
+      );
       (prisma.usuario.create as jest.Mock).mockImplementation(
         ({ data }: { data: { email: string; nome: string } }) =>
           Promise.resolve({
@@ -777,7 +794,7 @@ describe('CompaniesService', () => {
     });
 
     it('AC-002: e-mail existente responde 409 EMAIL_EM_USO e não cria nada', async () => {
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue({ id: 'x' });
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue({ id: 'x' });
 
       const erro = await service.criarAdmin('e1', DTO).catch((e: unknown) => e);
 
@@ -891,4 +908,145 @@ describe('CompaniesService', () => {
       );
     });
   });
+});
+
+/**
+ * SPEC-086/E7 e E8 — as entradas de GESTOR pelo FILTRO que passam ao Prisma
+ * (AC-004). E-mail de gestor é único na plataforma (I5): com a chave ligada
+ * ou desligada, o filtro é só o e-mail, e qualquer conta com ele — inclusive
+ * um aluno de OUTRA empresa, que a chave ligada libera para E1 a E6 — recusa
+ * com a resposta de hoje. O dublê avalia o filtro sobre as contas: um filtro
+ * com empresa (o de aluno/professor, trocado por engano) acharia nada e
+ * deixaria passar.
+ */
+describe('CompaniesService — o e-mail do gestor (SPEC-086/E7, E8)', () => {
+  const chave = restaurarChaveDoEmailACadaTeste();
+  const EMAIL = 'spec086-e7@x.com';
+  const conta = (
+    role: ContaNoDuble['role'],
+    companyId: string | null,
+  ): ContaNoDuble => ({ id: `c-${role}`, email: EMAIL, companyId, role });
+
+  const casos: [string, ContaNoDuble[], boolean][] = [
+    ['aluno de OUTRA empresa', [conta('aluno', 'outra')], false],
+    ['professor de OUTRA empresa', [conta('professor', 'outra')], false],
+    ['aluno da própria empresa', [conta('aluno', 'e1')], false],
+    ['gestor de outra empresa', [conta('company_admin', 'outra')], false],
+    ['super admin', [conta('super_admin', null)], false],
+    ['nenhuma conta', [], true],
+  ];
+  const cenarios = (['ligada', 'desligada'] as const).flatMap((estado) =>
+    casos.map(
+      ([nome, contas, aceita]) =>
+        [`chave ${estado}, ${nome}`, estado, contas, aceita] as const,
+    ),
+  );
+
+  function montar(estado: 'ligada' | 'desligada', contas: ContaNoDuble[]) {
+    if (estado === 'ligada') chave.ligar();
+    else chave.desligar();
+    const { prisma, tx } = buildPrismaMock();
+    const service = new CompaniesService(
+      prisma,
+      {} as ConstructorParameters<typeof CompaniesService>[1],
+      {
+        resolver: (empresa: { logoUrl: string | null }) => ({
+          logoUrl: empresa.logoUrl,
+        }),
+      } as unknown as ConstructorParameters<typeof CompaniesService>[2],
+      new LevelsService(prisma),
+    );
+    const fora = findFirstSobre(contas);
+    const dentro = findFirstSobre(contas);
+    (prisma.usuario.findFirst as jest.Mock).mockImplementation(fora);
+    tx.usuario.findFirst.mockImplementation(dentro);
+    return { prisma, tx, service, fora, dentro };
+  }
+
+  it.each(cenarios)(
+    'E7 (empresa nova): %s',
+    async (_nome, estado, contas, aceita) => {
+      const m = montar(estado, contas);
+      (m.prisma.empresa.findUnique as jest.Mock).mockResolvedValue(null);
+      m.tx.empresa.create.mockResolvedValue({
+        id: 'e-nova',
+        nome: 'Clube',
+        ...SEM_CATALOGO,
+      });
+      m.tx.usuario.create.mockResolvedValue({
+        id: 'u-novo',
+        nome: 'Admin',
+        email: EMAIL,
+        role: 'company_admin',
+        companyId: 'e-nova',
+      });
+
+      const r = await m.service
+        .create({
+          nome: 'Clube',
+          esportes: ['tenis'],
+          adminInicial: { nome: 'Admin', email: EMAIL, senha: 'senha-forte' },
+        })
+        .catch((e: Error) => e);
+
+      const wheres = wheresDasChamadas(m.fora, m.dentro);
+      expect(wheres.length).toBeGreaterThan(0);
+      for (const w of wheres) expect(w).toEqual({ email: EMAIL });
+      if (aceita) {
+        expect(r).not.toBeInstanceOf(Error);
+        expect(m.dentro).toHaveBeenCalledTimes(1);
+        expect(m.tx.usuario.create).toHaveBeenCalledTimes(1);
+      } else {
+        expect(r).toBeInstanceOf(UnprocessableEntityException);
+        expect((r as Error).message).toBe(
+          'Email do admin inicial já cadastrado',
+        );
+        expect(m.tx.empresa.create).not.toHaveBeenCalled();
+        expect(m.tx.usuario.create).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each(cenarios)(
+    'E8 (gestor adicional): %s',
+    async (_nome, estado, contas, aceita) => {
+      const m = montar(estado, contas);
+      (m.prisma.empresa.findUnique as jest.Mock).mockResolvedValue({
+        id: 'e1',
+        status: 'ativa',
+        ...SEM_CATALOGO,
+      });
+      m.tx.usuario.create.mockResolvedValue({
+        id: 'u-novo',
+        nome: 'Gestora',
+        email: EMAIL,
+        status: 'ativo',
+        senhaTemporaria: false,
+      });
+
+      const r = await m.service
+        .criarAdmin('e1', {
+          nome: 'Gestora',
+          email: EMAIL,
+          senha: 'senha-forte-1',
+        })
+        .catch((e: Error) => e);
+
+      const wheres = wheresDasChamadas(m.fora, m.dentro);
+      expect(wheres.length).toBeGreaterThan(0);
+      for (const w of wheres) expect(w).toEqual({ email: EMAIL });
+      if (aceita) {
+        expect(r).not.toBeInstanceOf(Error);
+        expect(m.dentro).toHaveBeenCalledTimes(1);
+        expect(m.tx.usuario.create).toHaveBeenCalledTimes(1);
+      } else {
+        expect(r).toBeInstanceOf(ConflictException);
+        expect((r as ConflictException).getResponse()).toMatchObject({
+          statusCode: 409,
+          code: 'EMAIL_EM_USO',
+        });
+        expect(m.tx.usuario.create).not.toHaveBeenCalled();
+      }
+    },
+  );
 });

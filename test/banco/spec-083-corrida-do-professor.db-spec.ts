@@ -5,30 +5,41 @@
  * ## AC-042 — a corrida, com barreira
  *
  * Dois `POST /teachers/:id/convite-de-acesso` ao mesmo tempo, para o mesmo
- * professor sem conta, ou para dois professores com o mesmo e-mail. Quem
- * decide é o `UNIQUE` de `usuarios.email` (D9): conta, vínculo e convite estão
- * numa transação só, e a perdedora recebe o `P2002`, que o tradutor faz
+ * professor sem conta, ou para dois professores com o mesmo e-mail. Conta,
+ * vínculo e convite estão numa transação só, e a perdedora recebe
  * `409 EMAIL_EM_USO`.
+ *
+ * **Quem decide mudou com a SPEC-086.** Antes era o `UNIQUE` de
+ * `usuarios.email` (D9), e a perdedora chegava ao tradutor com o `P2002`.
+ * Hoje toda transação que cria conta toma primeiro a trava do e-mail
+ * (`pg_advisory_xact_lock` pela chave `usuarios.email:<email>`, na função SQL
+ * `travar_emails_para_criar_conta`) e só depois confere, sob ela, se o e-mail
+ * já tem conta (`criarContaNaTransacao`). A segunda requisição para **na
+ * trava**, antes de qualquer `INSERT`, e quando entra já vê a conta commitada:
+ * perde na pré-conferência de dentro da transação, com o mesmo corpo. As
+ * constraints e o tradutor viraram a **segunda linha**, provada à parte na
+ * SPEC-086 (AC-020, trava desligada por gancho).
  *
  * **Sem barreira, este teste provaria a coisa errada.** Se a segunda
  * requisição chegasse depois do commit da primeira, ela perderia na
- * conferência de antes da transação (o `findUnique` do e-mail), com o mesmo
- * `409` — e o `UNIQUE` e o tradutor nunca entrariam em julgamento. A barreira
- * garante que as duas passaram da conferência e estão **as duas** dentro do
- * `INSERT` de `usuarios`:
+ * conferência de ANTES da transação (`recusarEmailEmUso`), com o mesmo `409`
+ * — e a trava nunca entraria em julgamento. A barreira garante que as duas
+ * passaram dessa conferência e estão **as duas** dentro da transação:
  *
  * 1. uma terceira conexão segura `FOR UPDATE` a linha da empresa;
- * 2. o `INSERT` que chega primeiro grava a entrada do índice único e para na
- *    checagem da FK `usuarios.company_id` (`FOR KEY SHARE` na empresa, que o
- *    `FOR UPDATE` bloqueia). No Postgres, a unicidade é conferida ao inserir
- *    no índice, e a FK só no fim da instrução — por isso a ordem é esta;
- * 3. o segundo `INSERT`, com o mesmo e-mail, acha a entrada do primeiro e
- *    espera a transação dele terminar.
+ * 2. a primeira toma a trava do e-mail, confere "ausente", e o `INSERT` de
+ *    `usuarios` para na checagem da FK `usuarios.company_id` (`FOR KEY SHARE`
+ *    na empresa, que o `FOR UPDATE` bloqueia) — com a trava na mão;
+ * 3. a segunda chega à trava do mesmo e-mail e espera a transação da
+ *    primeira terminar.
  *
  * A precondição é lida em `pg_blocking_pids`, pelos pids: um `INSERT` de
- * `usuarios` bloqueado pela barreira, e o outro bloqueado **pelo primeiro**.
- * Só então a barreira solta. Sem a precondição, o caso reprova por ela, e
- * nunca com um resultado aparentemente bom.
+ * `usuarios` bloqueado pela barreira, e uma chamada de
+ * `travar_emails_para_criar_conta` bloqueada **pelo primeiro**. Só então a
+ * barreira solta — e logo: a trava tem orçamento de 2 s, e a segunda,
+ * esgotado, responderia `503 SERVIDOR_OCUPADO` em vez de perder. Sem a
+ * precondição, o caso reprova por ela, e nunca com um resultado
+ * aparentemente bom.
  *
  * Cada requisição do par vai para um app diferente, cada um com a própria
  * pool (o motivo está em `test/fit/app-real.ts`).
@@ -63,6 +74,13 @@
  * que leia um campo só: `professores_usuario_id_key` tem a coluna do índice de
  * convite, e `usuarios_pkey` e `convites_de_acesso_token_hash_key` têm o
  * modelo de uma das traduzidas.
+ *
+ * **Desde a SPEC-086, `usuarios_email_key` não existe.** O e-mail tem três
+ * regras, e a tabela mede as de hoje: `usuarios_company_id_email_key` (duas
+ * contas na mesma empresa), `usuarios_email_gestao_key` (dois gestores em
+ * empresas diferentes) e o `EXCLUDE` `usuarios_email_gestao_excl` (gestor ×
+ * aluno/professor), que pela API de modelo nem é `P2002`: chega como
+ * `PrismaClientUnknownRequestError`, e por isso tem caso próprio.
  *
  * ## Por que em `test/banco`
  *
@@ -102,6 +120,12 @@ process.env.URL_CLIENTE = 'https://cliente.teste.local';
 
 const base = 'c0830042-0000-4000-8000-0000000000';
 const EMPRESA = `${base}0a`;
+/**
+ * SPEC-086 — a segunda empresa, só para o AC-043: `usuarios_email_gestao_key`
+ * só morde entre EMPRESAS diferentes (na mesma, o índice por empresa vem
+ * antes).
+ */
+const EMPRESA_B = `${base}0b`;
 const GESTOR = `${base}1a`;
 const GESTOR_EMAIL = 'spec083-corrida-gestor@teste.local';
 const GESTOR_SENHA = 'senha-do-gestor-083-corrida';
@@ -149,16 +173,25 @@ async function novoProfessor(email: string): Promise<string> {
 interface Bloqueado {
   pid: number;
   por: number[];
+  /** `insert` (o `INSERT` de `usuarios`) ou `trava` (a trava do e-mail). */
+  onde: 'insert' | 'trava';
 }
 
-/** Os `INSERT` de `usuarios` parados numa trava, e quem os bloqueia. */
-function insertsEsperando(): Promise<Bloqueado[]> {
+/**
+ * Quem está parado esperando um lock, entre os dois pontos que interessam: o
+ * `INSERT` de `usuarios` e a trava do e-mail (SPEC-086). E quem os bloqueia.
+ */
+function quemEspera(): Promise<Bloqueado[]> {
   return observador.$queryRawUnsafe<Bloqueado[]>(
-    `SELECT a.pid, pg_blocking_pids(a.pid) AS por
+    `SELECT a.pid, pg_blocking_pids(a.pid) AS por,
+            CASE WHEN a.query LIKE 'INSERT INTO "public"."usuarios"%'
+                 THEN 'insert' ELSE 'trava' END AS onde
        FROM pg_stat_activity a
       WHERE a.datname = current_database()
         AND a.wait_event_type = 'Lock'
-        AND a.query LIKE 'INSERT INTO "public"."usuarios"%'
+        AND (a.query LIKE 'INSERT INTO "public"."usuarios"%'
+             OR a.query LIKE '%travar_emails_para_criar_conta%')
+        AND a.pid <> pg_backend_pid()
       ORDER BY a.pid`,
   );
 }
@@ -192,22 +225,24 @@ async function comBarreira(
   const respostas = Promise.all(disparar());
   let vista = 'nada visto';
   try {
+    // O limite é para a precondição APARECER (o boot das requisições, numa
+    // máquina disputada). Vista, o laço solta na hora: a segunda tem só os
+    // 2 s da trava, e o intervalo curto da sondagem não come esse orçamento.
     const limite = Date.now() + 20_000;
     while (Date.now() < limite) {
-      const esperando = await insertsEsperando();
+      const esperando = await quemEspera();
       vista = JSON.stringify(esperando);
-      const [x, y] = esperando;
-      const primeiro = [x, y].find((b) => b?.por.includes(pidDaBarreira));
-      const segundo = [x, y].find((b) => b && b !== primeiro);
-      if (
-        esperando.length === 2 &&
-        primeiro &&
-        segundo?.por.includes(primeiro.pid)
-      ) {
-        vista = `precondição: o INSERT ${primeiro.pid} parado na barreira ${pidDaBarreira}, e o INSERT ${segundo.pid} parado nele`;
+      const primeiro = esperando.find(
+        (b) => b.onde === 'insert' && b.por.includes(pidDaBarreira),
+      );
+      const segundo = esperando.find(
+        (b) => b.onde === 'trava' && primeiro && b.por.includes(primeiro.pid),
+      );
+      if (esperando.length === 2 && primeiro && segundo) {
+        vista = `precondição: o INSERT ${primeiro.pid} parado na barreira ${pidDaBarreira}, e a trava do e-mail ${segundo.pid} parada nele`;
         break;
       }
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 20));
     }
   } finally {
     // Solta sempre: uma precondição falha não pode deixar as requisições
@@ -261,6 +296,7 @@ function confereUmSucessoUmEmailEmUso(respostas: Response[]): void {
 
 beforeAll(async () => {
   await limparEmpresa(db, EMPRESA);
+  await limparEmpresa(db, EMPRESA_B);
   await q(
     comNivelDaFixture(
       `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube SPEC-083 Corrida','spec-083-corrida-${EMPRESA}',now())`,
@@ -294,6 +330,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await Promise.all([appA?.close(), appB?.close()]);
   await limparEmpresa(db, EMPRESA);
+  await limparEmpresa(db, EMPRESA_B);
   await Promise.all([
     db.$disconnect(),
     barreira.$disconnect(),
@@ -461,7 +498,10 @@ describe('AC-043 — o tradutor distingue a constraint, com erros reais da API d
    * texto (o molde de `spec-083-convites-de-acesso.db-spec.ts`): o SQLSTATE e
    * o nome da constraint, que o `P2002` não traz.
    */
-  async function constraintDe(sql: string): Promise<string> {
+  async function constraintDe(
+    sql: string,
+    sqlstate = '23505',
+  ): Promise<string> {
     const erro: unknown = await q(
       `DO $diag$
 DECLARE s text; k text;
@@ -479,7 +519,7 @@ END $diag$`,
       (erro as { meta?: { message?: string } } | null)?.meta?.message ?? '';
     const achado = /recusado sqlstate=(\w+) constraint=(\S+)/.exec(mensagem);
     expect(achado === null ? `sem diagnóstico: ${mensagem}` : achado[1]).toBe(
-      '23505',
+      sqlstate,
     );
     return (achado as RegExpExecArray)[2];
   }
@@ -494,6 +534,11 @@ END $diag$`,
   });
 
   beforeAll(async () => {
+    await q(
+      comNivelDaFixture(
+        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA_B}','Clube SPEC-083 Corrida B','spec-083-corrida-${EMPRESA_B}',now())`,
+      ),
+    );
     await q(
       `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,senha_temporaria,updated_at)
        VALUES ($1::uuid,$2,'x','Professor U1','professor',$3::uuid,true,now())`,
@@ -515,8 +560,9 @@ END $diag$`,
   });
 
   /**
-   * As cinco violações, cada uma: a operação pela API de modelo, o mesmo
-   * conflito em SQL (para ler o nome da constraint), e o que o tradutor faz.
+   * As seis violações que chegam como `P2002`, cada uma: a operação pela API
+   * de modelo, o mesmo conflito em SQL (para ler o nome da constraint), e o
+   * que o tradutor faz. O `EXCLUDE` da SPEC-086 fica fora: não é `P2002`.
    */
   const casos: {
     nome: string;
@@ -524,7 +570,7 @@ END $diag$`,
     emSql: string;
   }[] = [
     {
-      nome: 'e-mail de outra conta',
+      nome: 'e-mail de outra conta da mesma empresa',
       pelaApi: () =>
         db.usuario.create({
           data: {
@@ -537,6 +583,23 @@ END $diag$`,
         }),
       emSql: `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
               VALUES (gen_random_uuid(),'${EMAIL_U1}','x','Outra','professor','${EMPRESA}',now())`,
+    },
+    {
+      // Noutra empresa, para o índice por empresa não morder antes: só o
+      // índice parcial de gestão recusa (o `EXCLUDE` aceita gestor × gestor).
+      nome: 'gestor com o e-mail de um gestor de outra empresa',
+      pelaApi: () =>
+        db.usuario.create({
+          data: {
+            email: GESTOR_EMAIL,
+            senhaHash: 'x',
+            nome: 'Outro gestor',
+            role: 'company_admin',
+            companyId: EMPRESA_B,
+          },
+        }),
+      emSql: `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
+              VALUES (gen_random_uuid(),'${GESTOR_EMAIL}','x','Outro gestor','company_admin','${EMPRESA_B}',now())`,
     },
     {
       nome: 'segundo convite vivo',
@@ -608,7 +671,12 @@ END $diag$`,
     // de qualquer tradução errada chegar à ficha.
     expect(medido).toEqual([
       {
-        constraint: 'usuarios_email_key',
+        constraint: 'usuarios_company_id_email_key',
+        meta: { modelName: 'Usuario', target: ['company_id', 'email'] },
+        traduzidoPara: 'EMAIL_EM_USO',
+      },
+      {
+        constraint: 'usuarios_email_gestao_key',
         meta: { modelName: 'Usuario', target: ['email'] },
         traduzidoPara: 'EMAIL_EM_USO',
       },
@@ -635,7 +703,44 @@ END $diag$`,
     ]);
   });
 
-  it('usuarios_email_key → 409 com o corpo EMAIL_EM_USO, e nada gravado', async () => {
+  it('o EXCLUDE usuarios_email_gestao_excl (aluno com o e-mail de um gestor): Unknown pela API de modelo, 23P01 em SQL, e o tradutor faz EMAIL_EM_USO', async () => {
+    const pelaApi = () =>
+      db.usuario.create({
+        data: {
+          email: GESTOR_EMAIL,
+          senhaHash: 'x',
+          nome: 'Aluno com e-mail de gestor',
+          role: 'aluno',
+          companyId: EMPRESA_B,
+        },
+      });
+    const erro: unknown = await pelaApi().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    // Sem `code` nem `meta`: o nome da constraint só existe na mensagem
+    // (LIM-086-03 — um upgrade do Prisma reabre esta linha, e é aqui que ela
+    // fica vermelha).
+    expect(erro).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
+    expect((erro as Error).message).toContain('usuarios_email_gestao_excl');
+    expect(
+      await constraintDe(
+        `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at)
+         VALUES (gen_random_uuid(),'${GESTOR_EMAIL}','x','Aluno','aluno','${EMPRESA_B}',now())`,
+        '23P01',
+      ),
+    ).toBe('usuarios_email_gestao_excl');
+    const traduzido = traduzirViolacaoDeUnicidade(erro);
+    expect(traduzido).toBeInstanceOf(ConflictException);
+    expect((traduzido as ConflictException).getResponse()).toBe(EMAIL_EM_USO);
+    const [{ n }] = await ler<{ n: number }>(
+      `SELECT count(*)::int AS n FROM usuarios WHERE email = $1`,
+      GESTOR_EMAIL,
+    );
+    expect(n).toBe(1);
+  });
+
+  it('usuarios_company_id_email_key → 409 com o corpo EMAIL_EM_USO, e nada gravado', async () => {
     const traduzido = traduzirViolacaoDeUnicidade(
       await p2002De(casos[0].pelaApi),
     );
@@ -650,7 +755,7 @@ END $diag$`,
 
   it('convites_de_acesso_um_vivo_por_usuario → 409 com o corpo CONVITE_EM_EMISSAO, e o vivo continua um', async () => {
     const traduzido = traduzirViolacaoDeUnicidade(
-      await p2002De(casos[1].pelaApi),
+      await p2002De(casos[2].pelaApi),
     );
     expect(traduzido).toBeInstanceOf(ConflictException);
     expect((traduzido as ConflictException).getResponse()).toBe(
@@ -664,7 +769,7 @@ END $diag$`,
     expect(n).toBe(1);
   });
 
-  it.each(casos.slice(2).map((caso) => [caso.nome, caso] as const))(
+  it.each(casos.slice(3).map((caso) => [caso.nome, caso] as const))(
     'fora da tabela (%s) → sobe sem tradução: o tradutor devolve o PRÓPRIO erro',
     async (_nome, caso) => {
       const erro = await p2002De(caso.pelaApi);

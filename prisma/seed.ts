@@ -113,35 +113,47 @@ async function seedEtapa1() {
   });
 
   const senhaHash = await bcrypt.hash(senhaObrigatoria('SEED_ADMIN_SENHA'), 12);
-  await prisma.usuario.upsert({
+  // SPEC-086 — sem `@unique` em `email`, o Prisma não aceita mais `upsert`
+  // por e-mail (o índice parcial de gestão não vira chave do Prisma). E-mail
+  // de gestor é único na plataforma: qualquer conta com ele é "já existe",
+  // e o `update: {}` de antes continua valendo — não se toca nela.
+  const adminExistente = await prisma.usuario.findFirst({
     where: { email: ADMIN_DEMO_EMAIL },
-    update: {},
-    create: {
-      email: ADMIN_DEMO_EMAIL,
-      senhaHash,
-      nome: 'Admin Demo',
-      role: 'company_admin',
-      companyId: empresa.id,
-      status: 'ativo',
-    },
+    select: { id: true },
   });
+  if (!adminExistente) {
+    await prisma.usuario.create({
+      data: {
+        email: ADMIN_DEMO_EMAIL,
+        senhaHash,
+        nome: 'Admin Demo',
+        role: 'company_admin',
+        companyId: empresa.id,
+        status: 'ativo',
+      },
+    });
+  }
 
   const superAdminSenhaHash = await bcrypt.hash(
     senhaObrigatoria('SEED_SUPER_ADMIN_SENHA'),
     12,
   );
-  await prisma.usuario.upsert({
+  const superAdminExistente = await prisma.usuario.findFirst({
     where: { email: SUPER_ADMIN_EMAIL },
-    update: {},
-    create: {
-      email: SUPER_ADMIN_EMAIL,
-      senhaHash: superAdminSenhaHash,
-      nome: 'Super Admin Demo',
-      role: 'super_admin',
-      companyId: null,
-      status: 'ativo',
-    },
+    select: { id: true },
   });
+  if (!superAdminExistente) {
+    await prisma.usuario.create({
+      data: {
+        email: SUPER_ADMIN_EMAIL,
+        senhaHash: superAdminSenhaHash,
+        nome: 'Super Admin Demo',
+        role: 'super_admin',
+        companyId: null,
+        status: 'ativo',
+      },
+    });
+  }
 
   console.log(
     `[seed] etapa 1 ok — empresa "${empresa.nome}" (${empresa.id}), admin ${ADMIN_DEMO_EMAIL}, super admin ${SUPER_ADMIN_EMAIL}`,
@@ -257,8 +269,10 @@ async function seedEtapa3(companyId: string) {
   ];
   const alunosIds: string[] = [];
   for (const dadosAluno of alunosDemo) {
-    const usuarioExistente = await prisma.usuario.findUnique({
-      where: { email: dadosAluno.email },
+    // SPEC-086 — o mesmo e-mail pode ter conta de aluno em outra empresa:
+    // o aluno demo é o DESTA empresa de QA (AC-005).
+    const usuarioExistente = await prisma.usuario.findFirst({
+      where: { email: dadosAluno.email, companyId },
     });
     if (usuarioExistente) {
       const alunoExistente = await prisma.aluno.findUnique({

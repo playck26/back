@@ -11,6 +11,7 @@ import {
 import {
   etapaDaImportacao,
   ImportacaoDeAlunosService,
+  MENSAGEM_EMAIL_JA_EXISTE,
   type EtapaDaImportacao,
 } from './importacao-de-alunos.service';
 import {
@@ -23,6 +24,16 @@ import { MemoriaProvedorDeEmail } from '../../email/memoria-provedor-de-email';
 import { LoteNovo } from '../nivel-efetivo';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { AccessTokenPayload } from '../../common/types/jwt-payload.type';
+import {
+  type CenarioDaEntrada,
+  type ContaNoDuble,
+  cenariosDeAlunoOuProfessor,
+  contaCasaComFiltro,
+  filtroDaEmpresa,
+  findManySobre,
+  restaurarChaveDoEmailACadaTeste,
+  wheresDasChamadas,
+} from '../../../test/utils/spec-086-contas-no-duble';
 
 /**
  * SPEC-038/REQ-002 — a validação linha a linha.
@@ -127,6 +138,9 @@ function montar(
 
   const tx = {
     ...leitorDeTurma,
+    // SPEC-086 — a conferência dos e-mails sob a trava, dentro da transação.
+    // Vazia: o conflito de e-mail destes casos é o da conferência de fora.
+    usuario: { findMany: jest.fn().mockResolvedValue([]) },
     $queryRaw: jest.fn((primeiro: unknown, ...resto: unknown[]) => {
       const i = montarSql(primeiro, resto);
       instrucoes.push(i);
@@ -1154,5 +1168,116 @@ describe('SPEC-083/AC-048 — a tradução da importação, por etapa', () => {
     const e = await falharNa('alunos', erro);
     expect(e).toBe(erro);
     expect(etapaDaImportacao(e)).toBe('alunos');
+  });
+});
+
+/**
+ * SPEC-086/E6 — a importação pelo FILTRO que passa ao Prisma (AC-003,
+ * AC-017). Em lote: uma `findMany` com `email: { in: [...] }` e, com a chave
+ * ligada, o `OR` da empresa da importação (o `companyId` do gestor) — nunca
+ * uma consulta por linha. As duas conferências usam o mesmo filtro: a de fora
+ * (a do relatório) e a de dentro da transação, sob a trava. O dublê avalia o
+ * filtro sobre contas, com a de outra empresa criada antes (S1).
+ */
+describe('SPEC-086/E6 — o e-mail por empresa na importação', () => {
+  const chave = restaurarChaveDoEmailACadaTeste();
+  const EMAIL = 'spec086-e6@x.com';
+  const LIVRE = 'spec086-e6-livre@x.com';
+  const ARQUIVO = `nome;email\r\nAna;${EMAIL}\r\nBeto;${LIVRE}\r\n`;
+  const cenarios = cenariosDeAlunoOuProfessor(EMAIL, 'c1').map(
+    (c) => [c.nome, c] as const,
+  );
+
+  const esperado = (c: CenarioDaEntrada) =>
+    c.chave === 'ligada'
+      ? filtroDaEmpresa({ in: [EMAIL, LIVRE] }, 'c1')
+      : { email: { in: [EMAIL, LIVRE] } };
+
+  async function importar(
+    cenario: CenarioDaEntrada,
+    contasDeFora: readonly ContaNoDuble[],
+  ) {
+    if (cenario.chave === 'ligada') chave.ligar();
+    else chave.desligar();
+    const m = montar();
+    const fora = findManySobre(contasDeFora);
+    const dentro = findManySobre(cenario.contas);
+    m.prisma.usuario.findMany.mockImplementation(fora);
+    m.tx.usuario.findMany.mockImplementation(dentro);
+    const r = await m.servico
+      .importar('c1', ARQUIVO, { gestorId: GESTOR })
+      .catch((e: Error) => e);
+    return { r, fora, dentro };
+  }
+
+  function conferirRecusa(r: unknown) {
+    expect(r).toBeInstanceOf(HttpException);
+    const corpo = (r as HttpException).getResponse() as {
+      statusCode: number;
+      code: string;
+      erros: { linha: number; coluna: string; mensagem: string }[];
+    };
+    expect(corpo.statusCode).toBe(422);
+    expect(corpo.code).toBe('PLANILHA_COM_ERROS');
+    // Só a linha do e-mail repetido; a do e-mail livre não é recusada.
+    expect(corpo.erros).toEqual([
+      { linha: 2, coluna: 'email', mensagem: MENSAGEM_EMAIL_JA_EXISTE },
+    ]);
+  }
+
+  it.each(cenarios)(
+    'na conferência de fora (o relatório): %s',
+    async (_nome, cenario) => {
+      const { r, fora, dentro } = await importar(cenario, cenario.contas);
+
+      for (const w of wheresDasChamadas(fora, dentro)) {
+        expect(w).toEqual(esperado(cenario));
+      }
+      expect(fora).toHaveBeenCalledTimes(1);
+      if (cenario.aceita) {
+        expect(r).not.toBeInstanceOf(Error);
+        expect(dentro).toHaveBeenCalledTimes(1);
+        expect(
+          (r as { criados: { email: string }[] }).criados.map((c) => c.email),
+        ).toEqual([EMAIL, LIVRE]);
+      } else {
+        conferirRecusa(r);
+        expect(dentro).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each(cenarios)(
+    'sob a trava (a conta nasceu entre a conferência e a transação): %s',
+    async (_nome, cenario) => {
+      // A conferência de fora não vê conta nenhuma; a de dentro vê as do
+      // cenário. É o caminho da corrida, decidido pelo filtro de dentro.
+      const { r, fora, dentro } = await importar(cenario, []);
+
+      const wheres = wheresDasChamadas(fora, dentro);
+      expect(wheres.length).toBeGreaterThan(1);
+      for (const w of wheres) expect(w).toEqual(esperado(cenario));
+      expect(dentro).toHaveBeenCalledTimes(1);
+      if (cenario.aceita) {
+        expect(r).not.toBeInstanceOf(Error);
+      } else {
+        conferirRecusa(r);
+      }
+    },
+  );
+
+  it('S1: com a chave ligada, um filtro só por e-mail acharia a conta de OUTRA empresa — o caso positivo ficaria vermelho', () => {
+    const [positivo] = cenariosDeAlunoOuProfessor(EMAIL, 'c1');
+    expect(positivo.aceita).toBe(true);
+    expect(
+      positivo.contas.filter((c) =>
+        contaCasaComFiltro(c, { email: { in: [EMAIL, LIVRE] } }),
+      ),
+    ).toHaveLength(1);
+    expect(
+      positivo.contas.filter((c) =>
+        contaCasaComFiltro(c, filtroDaEmpresa({ in: [EMAIL, LIVRE] }, 'c1')),
+      ),
+    ).toHaveLength(0);
   });
 });
