@@ -85,10 +85,9 @@ describe('SPEC-086/AC-026 — a chave da trava é montada num lugar só', () => 
   );
 
   /**
-   * O orçamento e o `timeout` amarrados à mesma conta da matrícula (D3), e
-   * cada transação que cria conta com o `timeout` explícito. Sem ele vale o
-   * padrão de 5 s do Prisma — menor que o orçamento de 5 s mais o trabalho
-   * do vencedor —, e o E2 respondia 500 (`P2028`) na Neon (run 37958329679).
+   * O orçamento e o `timeout` amarrados à mesma conta da matrícula (D3). Só
+   * a ARITMÉTICA das constantes: que cada transação use o `timeout` é provado
+   * pelo valor efetivo, no teste da ordem (ver o fim deste arquivo).
    */
   it('orçamento = 2 s + idas × 250 ms; timeout = orçamento + idas × 250 ms + 1 s', () => {
     expect(PRAZO_DA_TRAVA_DE_EMAIL_MS).toBe(
@@ -105,22 +104,8 @@ describe('SPEC-086/AC-026 — a chave da trava é montada num lugar só', () => 
     expect(TIMEOUT_DA_IMPORTACAO_MS).toBe(15_000 + PRAZO_DA_TRAVA_DE_EMAIL_MS);
   });
 
-  const TIMEOUTS: [string, string, number][] = [
-    ['E1', 'auth/auth.service.ts', 1],
-    ['E2', 'auth/invites.service.ts', 1],
-    ['E4', 'people/students.service.ts', 1],
-    ['E5b', 'people/teachers.service.ts', 1],
-    ['E5a', 'acesso/acesso.service.ts', 1],
-    ['E7/E8', 'companies/companies.service.ts', 2],
-  ];
-
-  it.each(TIMEOUTS)(
-    '%s (%s): a transação que cria conta declara o timeout da trava',
-    (_e, arquivo, vezes) => {
-      const texto = readFileSync(join(SRC, arquivo), 'utf8');
-      expect(
-        texto.split('timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS').length - 1,
-      ).toBe(vezes);
-    },
-  );
+  // O `timeout` de cada escritor NÃO é provado aqui: contar o texto aceitava
+  // um comentário ou um `Object.assign` que o anula (IMP-086-R9-01). A prova
+  // é do valor que chega ao Prisma, na transação que cria a conta:
+  // `test/banco/spec-086-ordem-da-trava.db-spec.ts`.
 });

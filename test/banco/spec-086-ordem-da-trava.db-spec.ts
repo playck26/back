@@ -31,10 +31,12 @@ import * as bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types';
 import { garantirAmbienteDeFit } from '../fit/app-real';
+import { TIMEOUT_DA_TRAVA_DE_EMAIL_MS } from '../../src/acesso/trava-de-email';
 import {
   ChaveDeLock,
   ordenarChavesParaLock,
 } from '../../src/common/lock/chave-de-lock';
+import { TIMEOUT_DA_IMPORTACAO_MS } from '../../src/people/importacao/importacao-de-alunos.service';
 import { createTestApp } from '../utils/create-test-app';
 import { bodyOf } from '../utils/http';
 import { exigirBancoLocal } from './exigir-banco-local';
@@ -112,6 +114,15 @@ let transacoes: string[][] = [];
  */
 const valoresDe = new WeakMap<string[], unknown[][]>();
 
+/**
+ * As OPÇÕES que cada `$transaction(fn, opções)` entregou ao Prisma real
+ * (achados IMP-086-R9-01 e R10-01): uma cópia congelada, lida uma vez no
+ * momento da chamada, e é ESSA cópia que o Prisma recebe. Não vale o que está
+ * escrito no código (R9: contagem de texto), nem o objeto do código lido
+ * depois (R10: mutado no callback, ou getter que muda a cada leitura).
+ */
+const opcoesDe = new WeakMap<string[], unknown>();
+
 /** Os e-mails que a entrada em teste usou, na ordem em que foram gerados. */
 let emailsUsados: string[] = [];
 
@@ -178,10 +189,23 @@ const proxy = new Proxy(real, {
         const log: string[] = [];
         transacoes.push(log);
         valoresDe.set(log, []);
+        // As opções são LIDAS UMA VEZ, aqui, no momento da chamada — quando o
+        // Prisma também as lê —, e o Prisma recebe ESTA cópia, não o objeto
+        // do código (IMP-086-R10-01). Guardar a referência e ler depois da
+        // resposta aceitava um objeto alterado dentro do callback ou um
+        // getter que muda a cada leitura: o Prisma via `undefined` (5 s) e a
+        // asserção, 9000. Agora o valor conferido é, por construção, o que o
+        // Prisma recebeu.
+        const [opcoes, ...depois] = resto;
+        const lidas: unknown =
+          opcoes && typeof opcoes === 'object'
+            ? Object.freeze({ ...(opcoes as Record<string, unknown>) })
+            : opcoes;
+        opcoesDe.set(log, lidas);
         return chamar(valor, alvo, [
           (tx: object) =>
             (arg as (t: object) => unknown)(txRegistrador(tx, log)),
-          ...resto,
+          ...(resto.length > 0 ? [lidas, ...depois] : []),
         ]);
       };
     }
@@ -429,7 +453,7 @@ const INSTRUCAO_DA_TRAVA =
   '$queryRaw: SELECT ordem, marcador FROM travar_emails_para_criar_conta( ?::bigint[], ?::integer )';
 
 describe('SPEC-086 — a trava é a primeira operação da transação que cria a conta (sequência registrada)', () => {
-  it.each(entradas)('%s', async (_nome, status, disparar) => {
+  it.each(entradas)('%s', async (nome, status, disparar) => {
     transacoes = [];
     emailsUsados = [];
     executadas = [];
@@ -438,6 +462,18 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
       status,
     });
     const ops = transacaoDaConta();
+
+    // O `timeout` EFETIVO da transação que cria a conta (IMP-086-R9-01): o
+    // valor que o Prisma recebeu, nesta transação e não em outra. Sem ele vale
+    // o padrão de 5 s, que o E2 estourou na Neon (`P2028`). 9 s nos sete
+    // escritores; a importação tem o seu, 15 s + o orçamento do e-mail.
+    const esperado = nome.startsWith('E6')
+      ? TIMEOUT_DA_IMPORTACAO_MS
+      : TIMEOUT_DA_TRAVA_DE_EMAIL_MS;
+    const opcoes = opcoesDe.get(ops) as { timeout?: unknown } | undefined;
+    expect({ timeoutEfetivo: opcoes?.timeout }).toEqual({
+      timeoutEfetivo: esperado,
+    });
     // A primeira operação, inteira na mensagem: o vermelho mostra o que veio
     // antes da trava.
     // Achado IMP-086-R2-02: "contém o nome da função" aceitava o nome como
