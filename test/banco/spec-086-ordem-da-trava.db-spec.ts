@@ -64,7 +64,21 @@ const GESTOR_EMAIL = 'spec086-ordem-gestor@teste.local';
 const SENHA = 'senha-da-ordem-086';
 const PREFIXO_E7 = 'SPEC-086 Ordem E7';
 
-const real = new PrismaClient();
+/**
+ * Achados IMP-086-R4-01 e R4-02: um registrador no lado do JavaScript vê a
+ * CRIAÇÃO da promessa (o `$queryRaw` é preguiçoso: pode ser criado primeiro e
+ * executado depois de outra instrução) e guarda a REFERÊNCIA das chaves (que
+ * o escritor pode mudar depois de executar a chave errada). A fonte da
+ * verdade passa a ser o evento `query` do Prisma: o SQL e os parâmetros como o
+ * banco os recebeu, no momento da execução, já serializados em texto.
+ */
+const real = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+
+/** Cada instrução que o banco executou, em ordem: o SQL e os parâmetros. */
+let executadas: { query: string; params: string }[] = [];
+real.$on('query', (e) => {
+  executadas.push({ query: e.query, params: e.params });
+});
 const q = (sql: string, ...v: unknown[]) => real.$executeRawUnsafe(sql, ...v);
 
 // ============================================================================
@@ -401,6 +415,7 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
   it.each(entradas)('%s', async (_nome, status, disparar) => {
     transacoes = [];
     emailsUsados = [];
+    executadas = [];
     const r = await disparar();
     expect({ status: r.status, corpo: r.text.slice(0, 400) }).toMatchObject({
       status,
@@ -418,19 +433,56 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
       primeira: INSTRUCAO_DA_TRAVA,
     });
 
-    // E as CHAVES dessa primeira operação são exatamente as dos e-mails que
-    // a entrada usou — todas as da linha da planilha na E6, o do convite na
-    // E2 —, ordenadas como a trava ordena (IMP-086-R3-02). Lista vazia, chave
-    // de outro e-mail ou só parte do lote ficam vermelhas aqui.
-    const [chaves] = (valoresDe.get(ops) ?? [])[0] ?? [];
+    // O que o BANCO executou (R4-01, R4-02): na transação — de BEGIN a
+    // COMMIT — que faz o INSERT em `usuarios`, a PRIMEIRA instrução executada
+    // é a trava, com EXATAMENTE as chaves dos e-mails que a entrada usou
+    // (o lote inteiro na E6, o do convite na E2), na ordem da trava.
+    const blocos: { query: string; params: string }[][] = [];
+    let atual: { query: string; params: string }[] | null = null;
+    for (const ex of executadas) {
+      const sql = ex.query.trim().toUpperCase();
+      if (sql === 'BEGIN') {
+        atual = [];
+        continue;
+      }
+      if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+        if (atual) blocos.push(atual);
+        atual = null;
+        continue;
+      }
+      atual?.push(ex);
+    }
+    const criadoras = blocos.filter((b) =>
+      b.some((ex) =>
+        /INSERT\s+INTO\s+"public"\."usuarios"|INSERT\s+INTO\s+usuarios/i.test(
+          ex.query,
+        ),
+      ),
+    );
+    expect({ transacoesCriadoras: criadoras.length }).toEqual({
+      transacoesCriadoras: 1,
+    });
+    const [noBanco] = criadoras[0];
     const esperadas = ordenarChavesParaLock(
       emailsUsados.map((e) => `usuarios.email:${e}`),
     ).map((k) => ChaveDeLock.deTexto(k).toString());
-    expect({
-      chaves: Array.isArray(chaves)
-        ? (chaves as unknown[]).map((c) => String(c))
-        : chaves,
-    }).toEqual({ chaves: esperadas });
     expect(esperadas.length).toBeGreaterThan(0);
+    // Os parâmetros chegam como TEXTO (`[[k1,k2],2000]`); as chaves são
+    // inteiros de 64 bits, e o `JSON.parse` os arredondaria — por isso o
+    // primeiro arranjo é lido do texto, sem virar `number`.
+    const arranjo = /^\[\[([^\]]*)\]/.exec(noBanco.params.trim());
+    expect({
+      primeiraExecutada: noBanco.query.replace(/\s+/g, ' ').trim(),
+      chaves: arranjo
+        ? arranjo[1]
+            .split(',')
+            .map((c) => c.trim().replace(/^"|"$/g, ''))
+            .filter((c) => c !== '')
+        : noBanco.params,
+    }).toEqual({
+      primeiraExecutada:
+        'SELECT ordem, marcador FROM travar_emails_para_criar_conta( $1::bigint[], $2::integer )',
+      chaves: esperadas,
+    });
   });
 });
