@@ -1,6 +1,19 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-10-04** (era 2026-09-28).
+**Fonte: análise direta do código.** Data: **2026-10-08** (era 2026-10-04).
+
+**SPEC-086, na branch `spec-086/mesmo-email` (sobre o `main` em `b748fa8`, com a
+SPEC-085), 2026-10-08.** Conferidos por comando: **60 migrations**
+(`ls -d prisma/migrations/*/`; +1, `20261008120000_spec086_email_por_empresa`),
+**43 modelos e 19 enums** (sem mudança), **125 caminhos / 174 operações** no
+`openapi.json` (+1 caminho, `POST /api/v1/auth/login/escolher`; o `main` tinha
+124 / 173). A migration troca `usuarios_email_key` por três regras —
+`usuarios_company_id_email_key`, o índice parcial `usuarios_email_gestao_key` e o
+`EXCLUDE` `usuarios_email_gestao_excl` — e cria a **função**
+`travar_emails_para_criar_conta(bigint[], integer)`. **O Prisma não expressa o
+índice parcial nem o `EXCLUDE`**: a migration é a fonte de verdade deles (como os
+índices parciais da 074 e da 083). Ver a seção "O mesmo e-mail em mais de uma
+empresa (SPEC-086)", no fim da seção 10.
 
 **SPEC-081, na branch `spec081/o-custo-de-cada-requisicao` (sobre o `main` em
 `994a091`, que já tem a 082 e a 083), 2026-10-04 — nenhum número estrutural
@@ -258,9 +271,10 @@ em `companies/company-logo.controller.ts` + `logo-da-empresa.service.ts`.
 **Gestor adicional (SPEC-085, 2026-10-06):** `POST /api/v1/companies/:id/admins`,
 só `super_admin`, em `CompaniesService.criarAdmin`. Repete o `adminInicial` do
 `create` fora de transação (é um `INSERT` só): papel literal, empresa da URL,
-bcrypt depois da pré-conferência do e-mail, e o `P2002` de
-`usuarios_email_key` traduzido para `409 EMAIL_EM_USO` pelo mesmo
-`traduzirViolacaoDeUnicidade` do `AcessoModule`. **Nada no banco limita
+bcrypt depois da pré-conferência do e-mail, e a violação de e-mail traduzida
+para `409 EMAIL_EM_USO` pelo mesmo `traduzirViolacaoDeUnicidade` do
+`AcessoModule`. *Desde a SPEC-086, o `INSERT` roda numa transação curta, depois
+da trava por e-mail.* **Nada no banco limita
 gestores por empresa**, e nada no código supõe um só: os avisos ao gestor já
 iam para todo gestor ativo.
 
@@ -692,7 +706,7 @@ conta `pg_tables` (43).*
 | Tabela | Dono | Papel / quirk |
 |---|---|---|
 | `empresas` | MOD-002 | tenant. `slug` único alimenta o link público de cadastro; `permite_auto_cadastro` liga/desliga esse link. `logo_key` (SPEC-018) é o upload real e **convive** com `logo_url`, que não migra (AC-012) |
-| `usuarios` | MOD-001 | identidade. E-mail único **global** (INV-004). `senha_temporaria` tranca a conta até a troca (INV-008). `foto_key` (SPEC-018) é a foto de quem **tem conta**; CHECK exige empresa, então `super_admin` não tem foto |
+| `usuarios` | MOD-001 | identidade. E-mail único **por empresa**; o de `company_admin`/`super_admin`, único na plataforma (INV-004 reescrita pela ADR-031, SPEC-086 — três regras na migration, mais a trava por e-mail). `senha_temporaria` tranca a conta até a troca (INV-008). `foto_key` (SPEC-018) é a foto de quem **tem conta**; CHECK exige empresa, então `super_admin` não tem foto |
 | `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira. `token_hash` é **SHA-256** desde a SPEC-081 (a linha é achada pelo `jti`, e o hash só é conferido depois); linha legada em bcrypt (`$2…`) ainda confere, uma vez, até a spec de limpeza (LIM-081a) |
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
 | `convites_de_acesso` | MOD-001 (dados), `AcessoModule` | **SPEC-083.** O link de ativação do convite por e-mail. Mesmo `token_hash` sha256 de `convites_aluno`, mais **`impressao_credencial`** (sha256 de `usuarios.senha_hash` na emissão): a ativação a compara sob `FOR UPDATE` no usuário, e senha trocada por qualquer caminho mata o link (INV-083c). `company_id NOT NULL` + FK composta para `usuarios (company_id, id)`: `super_admin` não tem convite (INV-083d). `email_resultado`/`email_motivo`/`email_em` gravados **depois** do `COMMIT`; os dois nulos querem dizer `sem_confirmacao`. Também escrita pela **importação** (MOD-003), no SQL cru dela, com linhas que o `AcessoService` prepara |
@@ -2498,6 +2512,36 @@ de `presencas` tem de tirar o `company_id` da ocorrência.** O endurecimento
 | `src/frequencia/frequencia.service.spec.ts` (bloco "SPEC-081 AC-015") | contrato do SQL da contagem; o valor ligado ao `p.company_id` e ao `o.company_id` conferido **por posição** (AC-019) |
 | `test/banco/spec-081-contagem.db-spec.ts` (**7 casos**: 5 do AC-014/015, 2 do AC-018) | a contagem por ocorrência (por turma daria Y lançada) e a presença divergente fora da conta — **1** em vez de 2 com uma presença de outro clube; `temPresenca` falso e `marcados` 0 com as duas |
 | `src/frequencia/aviso-de-referencia.spec.ts` | o aviso acima do limiar, uma vez por chamada |
+
+
+### O mesmo e-mail em mais de uma empresa (SPEC-086, ADR-031)
+
+- **A regra:** aluno e professor podem ter o mesmo e-mail em empresas
+  diferentes; na mesma empresa, não; gestor e super admin, nunca. Três
+  constraints na migration `20261008120000_spec086_email_por_empresa`, que
+  `src/acesso/traduzir-violacao-de-unicidade.ts` reconhece pela forma real do
+  erro (`ehViolacaoDeEmail`: `P2002` com `[company_id, email]` ou `[email]`; o
+  `EXCLUDE` como `PrismaClientUnknownRequestError` pelo nome exato — LIM-086-03).
+- **A trava por e-mail** (`src/acesso/trava-de-email.ts`, o único lugar com o
+  prefixo `usuarios.email:`): toda transação que cria conta (register-aluno,
+  aceite de convite, gestor cria aluno, acesso do professor pelos dois caminhos,
+  importação, empresa nova, novo gestor) chama `travarEmailsParaCriarConta`
+  como **primeira** instrução — a função SQL toma `pg_advisory_xact_lock` por
+  e-mail, em ordem, com **um** orçamento de 2 s (`playck.prazo_email`) e devolve
+  o `lock_timeout` anterior no fim. A pré-conferência roda sob ela. Esgotado o
+  prazo, `EsperaPorEmailEsgotada` → `503 SERVIDOR_OCUPADO`
+  (`comTraducaoDaTravaDeEmail`, fora da transação). Na importação vêm dois
+  orçamentos sucessivos: o do e-mail e o de hoje (clube, linhas, turmas).
+- **A chave** `EMAIL_EM_VARIAS_EMPRESAS` (env do Back, padrão desligada): só as
+  pré-conferências a leem. O login não.
+- **O login** (`AuthService.login`) lê todas as contas do e-mail, confere a
+  senha em paralelo, e com mais de uma conta aberta responde `409
+  ESCOLHA_DE_EMPRESA` com um JWT de 5 min (`typ: 'escolha-de-empresa'`,
+  impressões `sha256(senha_hash)`); `escolherEmpresa` abre a sessão sob `FOR
+  UPDATE` da conta, com o refresh na mesma transação. A `JwtAccessStrategy`
+  recusa qualquer payload com `typ`. O `AuthModule` registra o
+  `LogoDaEmpresaService` (as dependências vêm do `StorageModule`), para não
+  importar o `CompaniesModule`, que o importa.
 
 ## 11. Patterns observados
 

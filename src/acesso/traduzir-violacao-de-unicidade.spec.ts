@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   CONVITE_EM_EMISSAO,
   EMAIL_EM_USO,
+  ehViolacaoDeEmail,
   traduzirViolacaoDeUnicidade,
 } from './traduzir-violacao-de-unicidade';
 
@@ -41,7 +42,10 @@ function corpoDe(traduzido: unknown): unknown {
 }
 
 const MEDIDOS = {
+  // SPEC-086 — o `['email']` agora é o índice parcial de gestão
+  // (`usuarios_email_gestao_key`), e o por empresa tem as duas colunas.
   emailDaConta: { modelName: 'Usuario', target: ['email'] },
+  emailNaEmpresa: { modelName: 'Usuario', target: ['company_id', 'email'] },
   conviteVivo: { modelName: 'ConviteDeAcesso', target: ['usuario_id'] },
   pkDaConta: { modelName: 'Usuario', target: ['id'] },
   vinculoDoProfessor: { modelName: 'Professor', target: ['usuario_id'] },
@@ -49,16 +53,51 @@ const MEDIDOS = {
 } as const;
 
 describe('SPEC-083 — traduzirViolacaoDeUnicidade (D9)', () => {
-  it('usuarios_email_key (Usuario, [email]) → 409 EMAIL_EM_USO', () => {
-    const traduzido = traduzirViolacaoDeUnicidade(p2002(MEDIDOS.emailDaConta));
+  it.each([
+    ['usuarios_email_gestao_key (Usuario, [email])', MEDIDOS.emailDaConta],
+    [
+      'usuarios_company_id_email_key (Usuario, [company_id, email])',
+      MEDIDOS.emailNaEmpresa,
+    ],
+  ])('SPEC-086: %s → 409 EMAIL_EM_USO', (_nome, meta) => {
+    const traduzido = traduzirViolacaoDeUnicidade(p2002(meta));
     expect((traduzido as ConflictException).getStatus()).toBe(409);
     expect(corpoDe(traduzido)).toEqual({
       statusCode: 409,
       code: 'EMAIL_EM_USO',
       message:
-        'Este e-mail já pertence a outra conta. Uma pessoa não pode ter duas contas na plataforma (LIM-001).',
+        'Este e-mail já tem conta nesta empresa ou pertence a um gestor.',
     });
   });
+
+  it('SPEC-086: o EXCLUDE de gestão × aluno (Unknown, com o nome da constraint) → 409 EMAIL_EM_USO', () => {
+    const erro = new Prisma.PrismaClientUnknownRequestError(
+      'Error occurred during query execution: ConnectorError(... conflicting key value violates exclusion constraint "usuarios_email_gestao_excl" ...)',
+      { clientVersion: Prisma.prismaVersion.client },
+    );
+    expect(corpoDe(traduzirViolacaoDeUnicidade(erro))).toMatchObject({
+      code: 'EMAIL_EM_USO',
+    });
+    expect(ehViolacaoDeEmail(erro)).toBe(true);
+  });
+
+  it.each([
+    ['um CHECK', 'violates check constraint "usuarios_company_id_role_check"'],
+    ['outro EXCLUDE', 'violates exclusion constraint "outro_excl"'],
+    [
+      'nome parecido',
+      'violates exclusion constraint "usuarios_email_gestao_excl_v2"',
+    ],
+  ])(
+    'SPEC-086/S4: Unknown de %s NÃO é violação de e-mail, e sobe intacto',
+    (_nome, mensagem) => {
+      const erro = new Prisma.PrismaClientUnknownRequestError(mensagem, {
+        clientVersion: Prisma.prismaVersion.client,
+      });
+      expect(ehViolacaoDeEmail(erro)).toBe(false);
+      expect(traduzirViolacaoDeUnicidade(erro)).toBe(erro);
+    },
+  );
 
   it('convites_de_acesso_um_vivo_por_usuario (ConviteDeAcesso, [usuario_id]) → 409 CONVITE_EM_EMISSAO', () => {
     const traduzido = traduzirViolacaoDeUnicidade(p2002(MEDIDOS.conviteVivo));

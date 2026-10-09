@@ -65,6 +65,8 @@ function gravador() {
     ocupacaoQuadra: { findMany: jest.fn().mockResolvedValue([]) },
     faltaAvisada: { findMany: jest.fn().mockResolvedValue([]) },
     reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
+    // SPEC-086 — a conferência dos e-mails sob a trava, dentro da transação.
+    usuario: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const gravar = (primeiro: unknown, resto: unknown[]): Instrucao => {
     const montado = Array.isArray(primeiro)

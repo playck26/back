@@ -132,7 +132,12 @@ model Empresa {
 
 model Usuario {
   id                      String        @id @default(uuid()) @db.Uuid
-  email                   String        @unique
+  /// SPEC-086 — único POR EMPRESA (`usuarios_company_id_email_key`, abaixo).
+  /// Gestor e super admin seguem únicos na plataforma por dois mecanismos que
+  /// o Prisma não expressa — o índice parcial `usuarios_email_gestao_key` e o
+  /// `EXCLUDE` `usuarios_email_gestao_excl` —, cuja fonte de verdade é a
+  /// migration `20261008120000_spec086_email_por_empresa`.
+  email                   String
   senhaHash               String        @map("senha_hash")
   nome                    String
   telefone                String?
@@ -185,6 +190,7 @@ model Usuario {
   /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
   /// e legitimo; como `id` e PK, ele nunca falha por duplicata.
   @@unique([companyId, id], map: "usuarios_company_id_id_key")
+  @@unique([companyId, email], map: "usuarios_company_id_email_key")
   @@index([companyId])
   @@map("usuarios")
 }

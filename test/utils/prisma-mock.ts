@@ -39,7 +39,13 @@ export interface TxMock {
   // `findUnique` entrou com SPEC-009: o aceite de convite checa e-mail
   // duplicado **dentro** da transação, para a claim do convite voltar
   // atrás junto se o cadastro não puder ser concluído.
-  usuario: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
+  usuario: {
+    create: jest.Mock;
+    update: jest.Mock;
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+  };
   // SPEC-036: `update` do aluno passou a escrever os sete campos do cadastro,
   // e o `PATCH /me/cadastro` reusa o mesmo caminho transacional do gestor.
   aluno: { create: jest.Mock; update: jest.Mock };
@@ -217,7 +223,16 @@ export interface PrismaMock {
 
 export function buildPrismaMock(): PrismaMock {
   const tx: TxMock = {
-    usuario: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
+    // SPEC-086 — `findFirst`: a conferência do e-mail sob a trava. Padrão:
+    // nenhum conflito (o conflito dos casos vem da conferência de fora).
+    usuario: {
+      create: jest.fn(),
+      update: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+      // SPEC-086 — a importação confere os e-mails do lote sob a trava.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     aluno: { create: jest.fn(), update: jest.fn() },
     acaoAdministrativa: {
       create: jest.fn().mockResolvedValue({ id: 'acao-credito' }),
@@ -271,12 +286,31 @@ export function buildPrismaMock(): PrismaMock {
     },
   };
 
+  /**
+   * SPEC-086 — o login lê TODAS as contas do e-mail (`findMany`), e as
+   * entradas de cadastro conferem conflito com `findFirst` por e-mail. As
+   * suítes descrevem "a conta deste e-mail" pelo `findUnique`, desde sempre;
+   * as consultas por e-mail delegam a ele, para essa descrição continuar
+   * valendo. Quem configurar `findMany`/`findFirst` direto sobrescreve isto.
+   */
+  const usuarioFindUnique = jest.fn();
+  const porEmail = (args: unknown): boolean =>
+    typeof (args as { where?: { email?: unknown } } | undefined)?.where
+      ?.email === 'string';
+  const empresaFindUnique = jest.fn();
+
   const mock: PrismaMock = {
     usuario: {
-      findUnique: jest.fn(),
+      findUnique: usuarioFindUnique,
       findUniqueOrThrow: jest.fn(),
-      findFirst: jest.fn(),
-      findMany: jest.fn(),
+      findFirst: jest.fn((args: unknown): unknown =>
+        porEmail(args) ? usuarioFindUnique(args) : undefined,
+      ),
+      findMany: jest.fn(async (args: unknown): Promise<unknown> => {
+        if (!porEmail(args)) return undefined;
+        const u: unknown = await usuarioFindUnique(args);
+        return u ? [u] : [];
+      }),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -287,11 +321,18 @@ export function buildPrismaMock(): PrismaMock {
       upsert: jest.fn(),
     },
     empresa: {
-      findUnique: jest.fn(),
+      findUnique: empresaFindUnique,
       findUniqueOrThrow: jest.fn().mockResolvedValue({
         contratoVersaoVigente: null,
       }),
-      findMany: jest.fn(),
+      // SPEC-086 — o login lê as empresas das contas abertas por `id in`.
+      findMany: jest.fn(async (args: unknown): Promise<unknown> => {
+        const ids = (args as { where?: { id?: { in?: unknown } } } | undefined)
+          ?.where?.id?.in;
+        if (!Array.isArray(ids)) return undefined;
+        const e: unknown = await empresaFindUnique(args);
+        return e ? [e] : [];
+      }),
       count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),

@@ -1,3 +1,8 @@
+import {
+  comTraducaoDaTravaDeEmail,
+  conflitoDeContasDaEmpresa,
+  travarEmailsParaCriarConta,
+} from '../../acesso/trava-de-email';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
@@ -817,7 +822,9 @@ export class ImportacaoDeAlunosService {
     const jaExistem = new Set(
       (
         await this.prisma.usuario.findMany({
-          where: { email: { in: emailsDoArquivo } },
+          // SPEC-086 — conflito é conta NESTA empresa ou de gestão (com a
+          // chave desligada, qualquer conta). Em lote, como antes.
+          where: conflitoDeContasDaEmpresa(emailsDoArquivo, companyId),
           select: { email: true },
         })
       ).map((u) => u.email.toLowerCase()),
@@ -997,7 +1004,11 @@ export class ImportacaoDeAlunosService {
       );
     } catch (erro) {
       await this.ganchos.depoisDoRollback?.(erro);
-      return this.decidirFalha(companyId, conteudo, erro);
+      // SPEC-086 — a espera pela trava dos e-mails vira `503`; o `55P03` das
+      // travas de clube e turma continua no tradutor da borda (`409`).
+      return comTraducaoDaTravaDeEmail(() =>
+        this.decidirFalha(companyId, conteudo, erro),
+      );
     }
 
     const resultados = await this.enviarConvites(
@@ -1154,8 +1165,36 @@ export class ImportacaoDeAlunosService {
     // ciclo entre si.
     const turmaIds = [...new Set(naTurma.map((l) => l.turmaId))].sort();
 
+    const emails = linhas.map((l) => l.linha.email);
+
     return this.prisma.$transaction(
       async (tx) => {
+        // SPEC-086 — **os e-mails primeiro, antes de qualquer outra trava**:
+        // nenhum caminho toma trava de e-mail depois de clube ou turma, e por
+        // isso não há ciclo (spec, "Ordem das travas"). São dois orçamentos
+        // sucessivos, declarados: até 2 s para os e-mails (o da função), e o
+        // de hoje, que `travarNivelDaEmpresa` grava em seguida, para o resto.
+        await travarEmailsParaCriarConta(tx, emails);
+        const emConflito = new Set(
+          (
+            await tx.usuario.findMany({
+              where: conflitoDeContasDaEmpresa(emails, companyId),
+              select: { email: true },
+            })
+          ).map((u) => u.email.toLowerCase()),
+        );
+        if (emConflito.size > 0) {
+          throw new RecusaSobATrava(
+            linhas
+              .filter((l) => emConflito.has(l.linha.email.toLowerCase()))
+              .map((l) => ({
+                linha: l.linha.linha,
+                coluna: 'email',
+                mensagem: MENSAGEM_EMAIL_JA_EXISTE,
+              })),
+          );
+        }
+
         const lote: LoteNovo = await naEtapa(
           'travas',
           travarNivelDaEmpresa(tx, companyId, 'lote-novo'),
@@ -1568,8 +1607,11 @@ export class ImportacaoDeAlunosService {
         validas: linhas.length,
       });
     }
+    // SPEC-086 — o `EXCLUDE` de gestão × aluno chega pelo SQL cru como
+    // `23P01`, na mesma etapa: a mesma decisão do `23505`.
+    const sqlstate = sqlstateDoErro(erro);
     if (
-      sqlstateDoErro(erro) === '23505' &&
+      (sqlstate === '23505' || sqlstate === '23P01') &&
       etapaDaImportacao(erro) === 'usuarios'
     ) {
       const refeita = await this.conferir(companyId, conteudo);

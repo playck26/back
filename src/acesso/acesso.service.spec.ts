@@ -81,7 +81,7 @@ interface Tx {
     updateMany: jest.Mock;
     create: jest.Mock;
   };
-  usuario: { update: jest.Mock; create: jest.Mock };
+  usuario: { update: jest.Mock; create: jest.Mock; findFirst: jest.Mock };
   professor: { update: jest.Mock };
   refreshToken: { updateMany: jest.Mock };
 }
@@ -106,6 +106,8 @@ function montar() {
     },
     usuario: {
       update: jest.fn(() => Promise.resolve({})),
+      // SPEC-086 — a conferência do e-mail sob a trava: nenhum conflito.
+      findFirst: jest.fn(() => Promise.resolve(null)),
       create: jest.fn(() => {
         ordem.push('cria-conta');
         return Promise.resolve({ id: 'usuario-novo' });
@@ -934,10 +936,19 @@ describe('SPEC-083 — o professor sem conta, TeachersService + AcessoService (D
         empresa_nome: 'Clube Exemplo',
       },
     ]);
-    ctx.prisma.usuario.findFirst.mockResolvedValue({
-      senhaTemporaria: true,
-      senhaHash: '$2b$12$senha-nova-do-link',
-    });
+    // SPEC-086 — o mesmo `findFirst` atende a conferência do e-mail (por
+    // `email`, sem conflito aqui) e a leitura da conta na emissão.
+    ctx.prisma.usuario.findFirst.mockImplementation(
+      (args: { where?: { email?: unknown } }) =>
+        Promise.resolve(
+          args?.where?.email !== undefined
+            ? null
+            : {
+                senhaTemporaria: true,
+                senhaHash: '$2b$12$senha-nova-do-link',
+              },
+        ),
+    );
     const enviar = async () =>
       ctx.service.enviarParaConta(
         'empresa-1',
@@ -977,15 +988,18 @@ describe('SPEC-083 — o professor sem conta, TeachersService + AcessoService (D
         data: { usuarioId: 'usuario-novo' },
       }),
     );
-    // O vínculo antes da trava da emissão, e a trava antes do convite.
-    const [criar, vincular, travar, inserir] = [
+    // SPEC-086 — a trava do e-mail é a PRIMEIRA instrução da transação, antes
+    // da conta. Depois: o vínculo antes da trava da emissão, e a trava antes
+    // do convite.
+    const travaDoEmail = tx.$queryRaw.mock.invocationCallOrder[0];
+    const [criar, vincular, inserir] = [
       tx.usuario.create,
       tx.professor.update,
-      tx.$queryRaw,
       tx.conviteDeAcesso.create,
     ].map((m) => m.mock.invocationCallOrder[0]);
-    expect([criar, vincular, travar, inserir]).toEqual(
-      [criar, vincular, travar, inserir].sort((a, b) => a - b),
+    const travar = tx.$queryRaw.mock.invocationCallOrder[1];
+    expect([travaDoEmail, criar, vincular, travar, inserir]).toEqual(
+      [travaDoEmail, criar, vincular, travar, inserir].sort((a, b) => a - b),
     );
     // O segredo é o de 32 bytes, e não uma `pck-` mostrada a alguém.
     const [[segredo]] = hashDoBcrypt.mock.calls as [[string, number]];
@@ -1016,7 +1030,13 @@ describe('SPEC-083 — o professor sem conta, TeachersService + AcessoService (D
 
   it('e-mail de outra conta (a conferência de antes) → 409 EMAIL_EM_USO, com o mesmo corpo do tradutor', async () => {
     const { enviar, prisma, ordem } = pronto();
-    prisma.usuario.findUnique.mockResolvedValue({ id: 'outra-conta' });
+    // SPEC-086 — a conferência de antes é um `findFirst` pelo e-mail.
+    prisma.usuario.findFirst.mockImplementation(
+      (args: { where?: { email?: unknown } }) =>
+        Promise.resolve(
+          args?.where?.email !== undefined ? { id: 'outra-conta' } : null,
+        ),
+    );
     const erro = await recusa(enviar());
     expect((erro as ConflictException).getResponse()).toBe(EMAIL_EM_USO);
     expect(ordem).toEqual([]);

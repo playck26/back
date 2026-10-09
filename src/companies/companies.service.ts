@@ -7,6 +7,11 @@ import {
 import * as bcrypt from 'bcrypt';
 import { parseTimeOnly } from '../courts/date-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  comTraducaoDaTravaDeEmail,
+  conflitoDeContaDeGestao,
+  travarEmailsParaCriarConta,
+} from '../acesso/trava-de-email';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { AuthService } from '../auth/auth.service';
 import { LevelsService } from '../people/levels.service';
@@ -23,6 +28,7 @@ import type {
 } from './dto/create-company.dto';
 import {
   EMAIL_EM_USO,
+  ehViolacaoDeEmail,
   traduzirViolacaoDeUnicidade,
 } from '../acesso/traduzir-violacao-de-unicidade';
 import type { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
@@ -78,6 +84,9 @@ export interface PublicAdminUsuario {
   role: 'company_admin';
   companyId: string;
 }
+
+/** A recusa do e-mail do gestor inicial (E7 da SPEC-086), a mesma de antes. */
+const EMAIL_DO_ADMIN_INICIAL_EM_USO = 'Email do admin inicial já cadastrado';
 
 @Injectable()
 export class CompaniesService {
@@ -139,21 +148,34 @@ export class CompaniesService {
       throw new ConflictException('Empresa já cadastrada com esse nome');
     }
 
-    const emailExistente = await this.prisma.usuario.findUnique({
-      where: { email: dto.adminInicial.email },
+    // SPEC-086 — atalho (evita o bcrypt à toa). E-mail de gestor é único na
+    // plataforma inteira (I5): qualquer conta é conflito. A garantia é a
+    // conferência de dentro da transação, sob a trava do e-mail.
+    const emailExistente = await this.prisma.usuario.findFirst({
+      where: conflitoDeContaDeGestao(dto.adminInicial.email),
+      select: { id: true },
     });
     if (emailExistente) {
-      throw new UnprocessableEntityException(
-        'Email do admin inicial já cadastrado',
-      );
+      throw new UnprocessableEntityException(EMAIL_DO_ADMIN_INICIAL_EM_USO);
     }
 
     const senhaHash = await bcrypt.hash(dto.adminInicial.senha, BCRYPT_COST);
 
     // Transação: empresa + admin inicial nascem juntos ou nenhum dos dois
     // (NFR-002, AC-001) — nenhuma criação acontece fora do $transaction.
-    const { empresa, adminUsuario } = await this.prisma.$transaction(
-      async (tx) => {
+    const { empresa, adminUsuario } = await comTraducaoDaTravaDeEmail(() =>
+      this.prisma.$transaction(async (tx) => {
+        // SPEC-086 — a PRIMEIRA instrução, antes da empresa: uma recusa aqui
+        // não deixa empresa, catálogo, horário nem nível para trás.
+        await travarEmailsParaCriarConta(tx, [dto.adminInicial.email]);
+        const conflito = await tx.usuario.findFirst({
+          where: conflitoDeContaDeGestao(dto.adminInicial.email),
+          select: { id: true },
+        });
+        if (conflito) {
+          throw new UnprocessableEntityException(EMAIL_DO_ADMIN_INICIAL_EM_USO);
+        }
+
         const empresaCriada = await tx.empresa.create({
           // DEF-015 (SPEC-021/TASK-005) — **o catálogo vem junto na
           // criação.** Sem este `include`, a resposta saía sem `esportes`, e
@@ -220,8 +242,15 @@ export class CompaniesService {
         });
 
         return { empresa: empresaCriada, adminUsuario: adminCriado };
-      },
-    );
+      }),
+    ).catch((erro: unknown) => {
+      // A segunda linha, FORA da transação: quando ela roda, o rollback já
+      // desfez a empresa e tudo o que nasceu com ela.
+      if (ehViolacaoDeEmail(erro)) {
+        throw new UnprocessableEntityException(EMAIL_DO_ADMIN_INICIAL_EM_USO);
+      }
+      throw erro;
+    });
 
     // DEF-015 — a empresa criada sai pelo MESMO caminho de toda leitura:
     // `comLogo` tira a `logoKey` (INV-037) e `comEsportes` projeta o
@@ -300,8 +329,9 @@ export class CompaniesService {
   ): Promise<AdminDaEmpresaResponseDto> {
     await this.findOne(companyId);
 
-    const emailExistente = await this.prisma.usuario.findUnique({
-      where: { email: dto.email },
+    const emailExistente = await this.prisma.usuario.findFirst({
+      where: conflitoDeContaDeGestao(dto.email),
+      select: { id: true },
     });
     if (emailExistente) {
       throw new ConflictException(EMAIL_EM_USO);
@@ -310,23 +340,35 @@ export class CompaniesService {
     const senhaHash = await bcrypt.hash(dto.senha, BCRYPT_COST);
 
     try {
-      return await this.prisma.usuario.create({
-        data: {
-          email: dto.email,
-          senhaHash,
-          nome: dto.nome,
-          telefone: dto.telefone,
-          role: 'company_admin',
-          companyId,
-        },
-        select: {
-          id: true,
-          nome: true,
-          email: true,
-          status: true,
-          senhaTemporaria: true,
-        },
-      });
+      return await comTraducaoDaTravaDeEmail(() =>
+        this.prisma.$transaction(async (tx) => {
+          // SPEC-086 — a trava do e-mail e a conferência sob ela.
+          await travarEmailsParaCriarConta(tx, [dto.email]);
+          const conflito = await tx.usuario.findFirst({
+            where: conflitoDeContaDeGestao(dto.email),
+            select: { id: true },
+          });
+          if (conflito) throw new ConflictException(EMAIL_EM_USO);
+
+          return tx.usuario.create({
+            data: {
+              email: dto.email,
+              senhaHash,
+              nome: dto.nome,
+              telefone: dto.telefone,
+              role: 'company_admin',
+              companyId,
+            },
+            select: {
+              id: true,
+              nome: true,
+              email: true,
+              status: true,
+              senhaTemporaria: true,
+            },
+          });
+        }),
+      );
     } catch (erro) {
       throw traduzirViolacaoDeUnicidade(erro);
     }

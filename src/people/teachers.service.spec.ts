@@ -6,16 +6,32 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import type { FotoDeProfessorService } from './foto-de-professor.service';
 import { TeachersService } from './teachers.service';
+import {
+  type CenarioDaEntrada,
+  cenariosDeAlunoOuProfessor,
+  contaCasaComFiltro,
+  filtroDaEmpresa,
+  findFirstSobre,
+  restaurarChaveDoEmailACadaTeste,
+  wheresDasChamadas,
+} from '../../test/utils/spec-086-contas-no-duble';
 
 interface TxMock {
-  usuario: { create: jest.Mock; update: jest.Mock };
+  usuario: { create: jest.Mock; update: jest.Mock; findFirst: jest.Mock };
+  $queryRaw: jest.Mock;
   professor: { update: jest.Mock };
   refreshToken: { updateMany: jest.Mock };
 }
 
 function buildPrismaMock() {
   const tx: TxMock = {
-    usuario: { create: jest.fn(), update: jest.fn() },
+    // SPEC-086 — a trava do e-mail (`$queryRaw`) e a conferência sob ela.
+    usuario: {
+      create: jest.fn(),
+      update: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    $queryRaw: jest.fn().mockResolvedValue([]),
     professor: { update: jest.fn() },
     refreshToken: { updateMany: jest.fn() },
   };
@@ -27,7 +43,7 @@ function buildPrismaMock() {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
-    usuario: { findUnique: jest.fn() },
+    usuario: { findFirst: jest.fn() },
     $transaction: jest.fn((cb: (tx: TxMock) => unknown) => cb(tx)),
   };
   return { prisma: prisma as unknown as PrismaService, tx };
@@ -119,7 +135,7 @@ describe('TeachersService', () => {
 
     it('cria a conta com senha temporaria e devolve a senha uma vez', async () => {
       (prisma.professor.findFirst as jest.Mock).mockResolvedValue(ficha);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue(null);
       tx.usuario.create.mockResolvedValue({ id: 'u9' });
       tx.professor.update.mockResolvedValue({ ...ficha, usuarioId: 'u9' });
 
@@ -177,7 +193,7 @@ describe('TeachersService', () => {
     // AC-004 / LIM-001 — uma pessoa, uma conta, um papel.
     it('recusa com 409 quando o e-mail ja e de outra conta', async () => {
       (prisma.professor.findFirst as jest.Mock).mockResolvedValue(ficha);
-      (prisma.usuario.findUnique as jest.Mock).mockResolvedValue({ id: 'u1' });
+      (prisma.usuario.findFirst as jest.Mock).mockResolvedValue({ id: 'u1' });
 
       await expect(service.gerarAcesso('c1', 'p1')).rejects.toBeInstanceOf(
         ConflictException,
@@ -275,5 +291,117 @@ describe('TeachersService', () => {
       expect(res).not.toHaveProperty('usuario');
       expect(res).toHaveProperty('fotoUrl');
     });
+  });
+});
+
+/**
+ * SPEC-086/E5a e E5b — o acesso do professor pelo FILTRO que passa ao Prisma
+ * (AC-003, AC-017). A empresa alvo é a da ficha (`companyId` do gestor). As
+ * duas portas usam a mesma conferência: o atalho de fora (`recusarEmailEmUso`)
+ * e a de dentro da transação, sob a trava (`criarContaNaTransacao`).
+ */
+describe('TeachersService — o e-mail por empresa (SPEC-086/E5a, E5b)', () => {
+  const chave = restaurarChaveDoEmailACadaTeste();
+  const EMAIL = 'spec086-e5@x.com';
+  const ficha = {
+    id: 'p1',
+    companyId: 'c-do-gestor',
+    nome: 'Professor Um',
+    telefone: null,
+    email: EMAIL,
+    status: 'ativo',
+    usuarioId: null,
+  };
+  const cenarios = cenariosDeAlunoOuProfessor(EMAIL, 'c-do-gestor').map(
+    (c) => [c.nome, c] as const,
+  );
+
+  function montar(cenario: CenarioDaEntrada) {
+    if (cenario.chave === 'ligada') chave.ligar();
+    else chave.desligar();
+    const { prisma, tx } = buildPrismaMock();
+    const fotos = {
+      resolver: jest.fn(() => Promise.resolve({ fotoUrl: null })),
+    } as unknown as FotoDeProfessorService;
+    const fora = findFirstSobre(cenario.contas);
+    const dentro = findFirstSobre(cenario.contas);
+    (prisma.professor.findFirst as jest.Mock).mockResolvedValue(ficha);
+    (prisma.usuario.findFirst as jest.Mock).mockImplementation(fora);
+    tx.usuario.findFirst.mockImplementation(dentro);
+    tx.usuario.create.mockResolvedValue({ id: 'u-novo' });
+    tx.professor.update.mockResolvedValue({ ...ficha, usuarioId: 'u-novo' });
+    return {
+      service: new TeachersService(prisma, fotos),
+      tx,
+      fora,
+      dentro,
+    };
+  }
+
+  function conferir(
+    cenario: CenarioDaEntrada,
+    r: unknown,
+    m: ReturnType<typeof montar>,
+  ) {
+    const esperado =
+      cenario.chave === 'ligada'
+        ? filtroDaEmpresa(EMAIL, 'c-do-gestor')
+        : { email: EMAIL };
+    const wheres = wheresDasChamadas(m.fora, m.dentro);
+    expect(wheres.length).toBeGreaterThan(0);
+    for (const w of wheres) expect(w).toEqual(esperado);
+    if (cenario.aceita) {
+      expect(r).not.toBeInstanceOf(Error);
+      expect(m.dentro).toHaveBeenCalledTimes(1);
+      expect(m.tx.usuario.create).toHaveBeenCalledTimes(1);
+    } else {
+      expect(r).toBeInstanceOf(ConflictException);
+      expect((r as ConflictException).getResponse()).toMatchObject({
+        statusCode: 409,
+        code: 'EMAIL_EM_USO',
+      });
+      expect(m.tx.usuario.create).not.toHaveBeenCalled();
+    }
+  }
+
+  it.each(cenarios)('E5b (gerarAcesso): %s', async (_nome, cenario) => {
+    const m = montar(cenario);
+    const r = await m.service
+      .gerarAcesso('c-do-gestor', 'p1')
+      .catch((e: Error) => e);
+    conferir(cenario, r, m);
+  });
+
+  it.each(cenarios)(
+    'E5a (conta do convite por e-mail): %s',
+    async (_nome, cenario) => {
+      const m = montar(cenario);
+      // A conta nasce dentro da transação de quem emite o convite: o teste
+      // faz esse papel e chama `criarConta` com o `tx`.
+      const r = await m.service
+        .contaParaConvite('c-do-gestor', 'p1')
+        .then((conta): Promise<string> => {
+          // A ficha não tem conta: o serviço tem de devolver como criá-la.
+          if (!('criarConta' in conta)) {
+            throw new Error('a ficha sem conta devolveu uma conta pronta');
+          }
+          return conta.criarConta(m.tx as never);
+        })
+        .catch((e: Error) => e);
+      conferir(cenario, r, m);
+    },
+  );
+
+  it('S1: com a chave ligada, um filtro só por e-mail acharia a conta de OUTRA empresa — o caso positivo ficaria vermelho', () => {
+    const [positivo] = cenariosDeAlunoOuProfessor(EMAIL, 'c-do-gestor');
+    expect(positivo.aceita).toBe(true);
+    expect(
+      positivo.contas.find((c) => contaCasaComFiltro(c, { email: EMAIL })),
+    ).toBeDefined();
+    expect(
+      positivo.contas.find((c) =>
+        contaCasaComFiltro(c, filtroDaEmpresa(EMAIL, 'c-do-gestor')),
+      ),
+    ).toBeUndefined();
   });
 });

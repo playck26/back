@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -17,7 +17,18 @@ export class JwtAccessStrategy extends PassportStrategy(
     });
   }
 
-  validate(payload: AccessTokenPayload): AccessTokenPayload {
+  /**
+   * SPEC-086/INV-086b — **o token de escolha de empresa é assinado com o
+   * mesmo segredo, e não é sessão.** Ele não tem `sub`, e o `JwtAuthGuard`
+   * deixa passar um payload sem `sub`: a recusa tem de ser aqui. Qualquer
+   * payload com `typ` é recusado.
+   */
+  validate(
+    payload: AccessTokenPayload & { typ?: unknown },
+  ): AccessTokenPayload {
+    if (payload.typ !== undefined) {
+      throw new UnauthorizedException();
+    }
     return payload;
   }
 }

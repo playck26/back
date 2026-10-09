@@ -10,7 +10,15 @@ import {
   hashDeSegredoDescartado,
   type ContaDoConvite,
 } from '../acesso/acesso.service';
-import { EMAIL_EM_USO } from '../acesso/traduzir-violacao-de-unicidade';
+import {
+  EMAIL_EM_USO,
+  ehViolacaoDeEmail,
+} from '../acesso/traduzir-violacao-de-unicidade';
+import {
+  comTraducaoDaTravaDeEmail,
+  conflitoDeContaDaEmpresa,
+  travarEmailsParaCriarConta,
+} from '../acesso/trava-de-email';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   gerarSenhaTemporaria,
@@ -273,11 +281,18 @@ export class TeachersService {
       return { ...(await this.comFoto(professor)), senhaTemporaria };
     }
 
-    await this.recusarEmailEmUso(email);
+    await this.recusarEmailEmUso(email, companyId);
 
-    const { vinculado } = await this.prisma.$transaction((tx) =>
-      this.criarContaNaTransacao(tx, companyId, professor, email, senhaHash),
-    );
+    // SPEC-086/E5b — o `catch` fica FORA da transação: quando a corrida chega
+    // aqui (só por SQL de fora da trava), o rollback já desfez conta e vínculo.
+    const { vinculado } = await comTraducaoDaTravaDeEmail(() =>
+      this.prisma.$transaction((tx) =>
+        this.criarContaNaTransacao(tx, companyId, professor, email, senhaHash),
+      ),
+    ).catch((erro: unknown) => {
+      if (ehViolacaoDeEmail(erro)) throw new ConflictException(EMAIL_EM_USO);
+      throw erro;
+    });
 
     return { ...(await this.comFoto(vinculado)), senhaTemporaria };
   }
@@ -304,7 +319,7 @@ export class TeachersService {
     }
 
     const email = exigirEmail(professor);
-    await this.recusarEmailEmUso(email);
+    await this.recusarEmailEmUso(email, companyId);
     const senhaHash = await hashDeSegredoDescartado();
 
     return {
@@ -322,14 +337,19 @@ export class TeachersService {
   }
 
   /**
-   * AC-004 (SPEC-013) — o e-mail já é de outra pessoa. Conferido antes da
-   * transação para dar mensagem útil, e de novo pelo UNIQUE do banco, que é
-   * quem de fato garante sob concorrência. O corpo é o mesmo que o tradutor
-   * da SPEC-083 dá a quem perde a corrida no UNIQUE.
+   * AC-004 (SPEC-013) — o e-mail já é de outra conta. Conferido antes da
+   * transação para dar mensagem útil e evitar o bcrypt à toa. **A garantia é
+   * a conferência de dentro da transação, sob a trava do e-mail** (SPEC-086),
+   * em `criarContaNaTransacao`. O corpo é o mesmo que o tradutor da SPEC-083
+   * dá a quem perde a corrida no banco.
    */
-  private async recusarEmailEmUso(email: string): Promise<void> {
-    const emailEmUso = await this.prisma.usuario.findUnique({
-      where: { email },
+  private async recusarEmailEmUso(
+    email: string,
+    companyId: string,
+  ): Promise<void> {
+    const emailEmUso = await this.prisma.usuario.findFirst({
+      where: conflitoDeContaDaEmpresa(email, companyId),
+      select: { id: true },
     });
     if (emailEmUso) {
       throw new ConflictException(EMAIL_EM_USO);
@@ -352,6 +372,16 @@ export class TeachersService {
     email: string,
     senhaHash: string,
   ) {
+    // SPEC-086 — a PRIMEIRA instrução das duas transações que chegam aqui
+    // (a do `gerarAcesso` e a da emissão do convite, em que a conta nasce
+    // antes de tudo): a trava do e-mail, e a conferência sob ela.
+    await travarEmailsParaCriarConta(tx, [email]);
+    const conflito = await tx.usuario.findFirst({
+      where: conflitoDeContaDaEmpresa(email, companyId),
+      select: { id: true },
+    });
+    if (conflito) throw new ConflictException(EMAIL_EM_USO);
+
     const usuario = await tx.usuario.create({
       data: {
         email,

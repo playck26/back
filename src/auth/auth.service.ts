@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   ConflictException,
   Injectable,
@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import type { Prisma, UsuarioRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../people/students.service';
 import { parseDurationToMs } from '../common/utils/parse-duration';
@@ -21,11 +22,21 @@ import type {
   RefreshTokenPayload,
 } from '../common/types/jwt-payload.type';
 import {
+  EscolhaDeEmpresaRespostaDto,
   LoginResponseDto,
+  OpcaoDeEmpresaDto,
   RegistroDeAlunoResponseDto,
   UsuarioPublicoResponseDto,
 } from './dto/auth-response.dto';
 import type { LoginDto } from './dto/login.dto';
+import type { EscolherEmpresaDto } from './dto/escolher-empresa.dto';
+import { LogoDaEmpresaService } from '../companies/logo-da-empresa.service';
+import {
+  comTraducaoDaTravaDeEmail,
+  conflitoDeContaDaEmpresa,
+  travarEmailsParaCriarConta,
+} from '../acesso/trava-de-email';
+import { ehViolacaoDeEmail } from '../acesso/traduzir-violacao-de-unicidade';
 import type { RegisterAlunoDto } from './dto/register-aluno.dto';
 import type { TrocarSenhaDto } from './dto/trocar-senha.dto';
 
@@ -34,6 +45,57 @@ const BCRYPT_COST = 12;
 const CADASTRO_PUBLICO_RECUSADO =
   'Não foi possível concluir o cadastro com esses dados.';
 const CREDENCIAIS_INVALIDAS = 'Credenciais inválidas';
+
+/** SPEC-009 — a senha temporária venceu; a pessoa acertou a senha. */
+const SENHA_TEMPORARIA_EXPIRADA = {
+  statusCode: 401,
+  code: 'SENHA_TEMPORARIA_EXPIRADA',
+  message:
+    'Senha temporária expirada. Peça ao administrador da sua empresa uma nova.',
+};
+
+/** SPEC-086 — o token de escolha venceu, foi adulterado, ou a senha mudou. */
+const ESCOLHA_EXPIRADA = {
+  statusCode: 401,
+  code: 'ESCOLHA_EXPIRADA',
+  message: 'A escolha de empresa expirou. Entre de novo.',
+};
+
+const MENSAGEM_ESCOLHA_DE_EMPRESA =
+  'Este e-mail tem acesso a mais de uma empresa. Entre pelo app do aluno para escolher.';
+
+/**
+ * SPEC-086 — o token de escolha: assinado com o segredo do access token, mas
+ * com um `typ` que a strategy de sessão recusa (INV-086b), e sem `sub`.
+ * `impressao` é o sha256 do `senha_hash` no momento do login: troca, reset ou
+ * ativação mudam o hash e matam o token (a técnica da SPEC-083, D6).
+ */
+export const TIPO_DO_TOKEN_DE_ESCOLHA = 'escolha-de-empresa';
+const VALIDADE_DO_TOKEN_DE_ESCOLHA = '5m';
+
+interface ConteudoDoTokenDeEscolha {
+  typ: typeof TIPO_DO_TOKEN_DE_ESCOLHA;
+  contas: { id: string; impressao: string }[];
+}
+
+interface ContaDaEscolha {
+  id: string;
+  companyId: string | null;
+  role: UsuarioRole;
+  senhaHash: string;
+}
+
+interface EmpresaDaEscolha {
+  id: string;
+  nome: string;
+  status: string;
+  logoKey: string | null;
+  logoUrl: string | null;
+}
+
+function impressaoDaSenha(senhaHash: string): string {
+  return createHash('sha256').update(senhaHash, 'utf8').digest('hex');
+}
 
 interface IssuedTokens {
   accessToken: string;
@@ -59,70 +121,261 @@ export class AuthService {
     private readonly students: StudentsService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    /** SPEC-086 — a logo de cada empresa da tela de escolha. */
+    private readonly logos: LogoDaEmpresaService,
   ) {}
 
+  /**
+   * SPEC-086 — **o login quando o mesmo e-mail pode ter conta em mais de uma
+   * empresa.**
+   *
+   * 1. Contas = todas as linhas do e-mail. Nenhuma: `401`, sem bcrypt.
+   * 2. A senha é conferida em TODAS ao mesmo tempo (I7): as promessas nascem
+   *    juntas, no `map`, antes de qualquer `await` — o tempo da senha errada
+   *    não cresce com o número de contas enquanto houver CPU (LIM-086-01).
+   * 3. Abertas = as que a senha abre. Nenhuma: `401`.
+   * 4. Cada aberta cai numa categoria, na ordem de hoje: inativa (conta ou
+   *    empresa) → vencida (senha temporária vencida) → válida.
+   * 5. Toda vencida aberta tem os seus refresh revogados, POR `usuarioId`, em
+   *    qualquer resultado — como o login de uma conta sempre fez.
+   * 6. Uma válida e nenhuma vencida: a sessão, igual a hoje. Nenhuma válida:
+   *    o `401` de hoje (o específico, se houver vencida). O resto: `409
+   *    ESCOLHA_DE_EMPRESA`, com as válidas e as vencidas (bloqueadas, I6).
+   *
+   * Com uma conta só, as cinco saídas reproduzem exatamente o login de antes
+   * — a régua é `spec-086-caracterizacao-login.db-spec.ts`.
+   */
   async login(dto: LoginDto): Promise<LoginResponseDto> {
-    const usuario = await this.prisma.usuario.findUnique({
+    const contas = await this.prisma.usuario.findMany({
       where: { email: dto.email },
+      orderBy: { id: 'asc' },
     });
-    if (!usuario) {
+    if (contas.length === 0) {
       throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
     }
 
-    const senhaValida = await bcrypt.compare(dto.senha, usuario.senhaHash);
-    if (!senhaValida) {
+    const confere = contas.map((c) => bcrypt.compare(dto.senha, c.senhaHash));
+    const resultados = await Promise.all(confere);
+    const abertas = contas.filter((_, i) => resultados[i]);
+    if (abertas.length === 0) {
       throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
     }
 
-    // SPEC-013/INV-013 (DEF-001) — conta inativa nao autentica. Erro
-    // generico de propósito, ao contrario do de senha temporaria vencida
-    // logo abaixo: la a pessoa provou posse da credencial e so precisa de
-    // uma nova; aqui o acesso foi **revogado**, e dizer isso confirmaria a
-    // existencia da conta para quem esta testando e-mails.
-    if (usuario.status === 'inativo') {
-      throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
-    }
+    const empresas = await this.empresasDe(abertas);
+    // SPEC-013/INV-013 (DEF-001) — conta inativa não autentica, e a de
+    // empresa inativa também. Somem em silêncio: dizer o motivo confirmaria
+    // a existência da conta para quem está testando e-mails.
+    const ativas = abertas.filter((c) => {
+      if (c.status === 'inativo') return false;
+      if (!c.companyId) return true;
+      return empresas.get(c.companyId)?.status === 'ativa';
+    });
+    // SPEC-009: senha temporária vencida não autentica.
+    const vencidas = ativas.filter((c) => this.senhaTemporariaVencida(c));
+    const validas = ativas.filter((c) => !this.senhaTemporariaVencida(c));
 
-    if (usuario.companyId) {
-      const empresa = await this.prisma.empresa.findUnique({
-        where: { id: usuario.companyId },
-      });
-      if (!empresa || empresa.status !== 'ativa') {
-        throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
-      }
-    }
-
-    // SPEC-009: senha temporária vencida não autentica. Mensagem específica
-    // (e não a genérica de credencial) porque aqui a pessoa **acertou** a
-    // senha: esconder o motivo faria ela tentar de novo para sempre, e não
-    // há enumeração de conta a proteger — quem chegou aqui já provou posse
-    // da credencial.
-    if (this.senhaTemporariaVencida(usuario)) {
+    if (vencidas.length > 0) {
       await this.prisma.refreshToken.updateMany({
-        where: { usuarioId: usuario.id, revokedAt: null },
+        where: {
+          usuarioId: { in: vencidas.map((c) => c.id) },
+          revokedAt: null,
+        },
         data: { revokedAt: new Date() },
       });
-      throw new UnauthorizedException({
-        statusCode: 401,
-        code: 'SENHA_TEMPORARIA_EXPIRADA',
-        message:
-          'Senha temporária expirada. Peça ao administrador da sua empresa uma nova.',
-      });
     }
 
-    const tokens = await this.issueTokens(usuario.id, {
-      sub: usuario.id,
-      email: usuario.email,
-      nome: usuario.nome,
-      role: usuario.role,
-      companyId: usuario.companyId,
+    if (validas.length === 0) {
+      if (vencidas.length > 0) {
+        // Mensagem específica (e não a genérica de credencial) porque aqui a
+        // pessoa **acertou** a senha: esconder o motivo faria ela tentar de
+        // novo para sempre.
+        throw new UnauthorizedException(SENHA_TEMPORARIA_EXPIRADA);
+      }
+      throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
+    }
+
+    if (validas.length === 1 && vencidas.length === 0) {
+      const usuario = validas[0];
+      const tokens = await this.issueTokens(this.prisma, usuario.id, {
+        sub: usuario.id,
+        email: usuario.email,
+        nome: usuario.nome,
+        role: usuario.role,
+        companyId: usuario.companyId,
+      });
+      return {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        usuario: this.toPublicUsuario(usuario),
+      };
+    }
+
+    throw new ConflictException(
+      await this.escolhaDeEmpresa(validas, vencidas, empresas),
+    );
+  }
+
+  /**
+   * SPEC-086 — troca a escolha da tela pela sessão da conta escolhida.
+   *
+   * A conta é lida com `FOR UPDATE`, e o refresh nasce **na mesma
+   * transação**: troca de senha, reset e ativação escrevem a linha da conta,
+   * então ou vêm antes (a impressão não bate → `ESCOLHA_EXPIRADA`) ou vêm
+   * depois (e revogam o refresh que nasceu aqui). Nenhuma ordem deixa uma
+   * sessão viva emitida sob a senha antiga (AC-021).
+   */
+  async escolherEmpresa(dto: EscolherEmpresaDto): Promise<LoginResponseDto> {
+    const contas = this.lerTokenDeEscolha(dto.token);
+    const daLista = contas.find((c) => c.id === dto.usuarioId);
+    if (!daLista) {
+      throw new UnauthorizedException(ESCOLHA_EXPIRADA);
+    }
+
+    const resultado = await this.prisma.$transaction(async (tx) => {
+      const [conta] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM usuarios WHERE id = ${daLista.id}::uuid FOR UPDATE`;
+      if (!conta) throw new UnauthorizedException(ESCOLHA_EXPIRADA);
+
+      const usuario = await tx.usuario.findUniqueOrThrow({
+        where: { id: daLista.id },
+        include: { empresa: { select: { status: true } } },
+      });
+      if (impressaoDaSenha(usuario.senhaHash) !== daLista.impressao) {
+        throw new UnauthorizedException(ESCOLHA_EXPIRADA);
+      }
+      if (
+        usuario.status === 'inativo' ||
+        (usuario.companyId !== null && usuario.empresa?.status !== 'ativa')
+      ) {
+        throw new UnauthorizedException(CREDENCIAIS_INVALIDAS);
+      }
+      if (this.senhaTemporariaVencida(usuario)) {
+        await tx.refreshToken.updateMany({
+          where: { usuarioId: usuario.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        return { vencida: true as const };
+      }
+
+      const tokens = await this.issueTokens(tx, usuario.id, {
+        sub: usuario.id,
+        email: usuario.email,
+        nome: usuario.nome,
+        role: usuario.role,
+        companyId: usuario.companyId,
+      });
+      return { vencida: false as const, usuario, tokens };
     });
 
+    // A revogação da vencida tem de COMITAR antes do `401`: lançado dentro
+    // da transação, ele a desfaria.
+    if (resultado.vencida) {
+      throw new UnauthorizedException(SENHA_TEMPORARIA_EXPIRADA);
+    }
     return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      usuario: this.toPublicUsuario(usuario),
+      accessToken: resultado.tokens.accessToken,
+      refreshToken: resultado.tokens.refreshToken,
+      usuario: this.toPublicUsuario(resultado.usuario),
     };
+  }
+
+  private async empresasDe(
+    contas: readonly { companyId: string | null }[],
+  ): Promise<Map<string, EmpresaDaEscolha>> {
+    const ids = [
+      ...new Set(contas.flatMap((c) => (c.companyId ? [c.companyId] : []))),
+    ];
+    if (ids.length === 0) return new Map();
+    const linhas = await this.prisma.empresa.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        nome: true,
+        status: true,
+        logoKey: true,
+        logoUrl: true,
+      },
+    });
+    return new Map(linhas.map((e) => [e.id, e]));
+  }
+
+  private async escolhaDeEmpresa(
+    validas: readonly ContaDaEscolha[],
+    vencidas: readonly ContaDaEscolha[],
+    empresas: ReadonlyMap<string, EmpresaDaEscolha>,
+  ): Promise<EscolhaDeEmpresaRespostaDto> {
+    const opcao = (
+      c: ContaDaEscolha,
+      situacao: OpcaoDeEmpresaDto['situacao'],
+    ): OpcaoDeEmpresaDto => {
+      const empresa = c.companyId ? empresas.get(c.companyId) : undefined;
+      return {
+        usuarioId: c.id,
+        empresaNome: empresa?.nome ?? '',
+        logoUrl: empresa ? this.logos.resolver(empresa).logoUrl : null,
+        papel: c.role,
+        situacao,
+      };
+    };
+    const conteudo: ConteudoDoTokenDeEscolha = {
+      typ: TIPO_DO_TOKEN_DE_ESCOLHA,
+      contas: validas.map((c) => ({
+        id: c.id,
+        impressao: impressaoDaSenha(c.senhaHash),
+      })),
+    };
+    const token = await this.jwt.signAsync(conteudo, {
+      secret: this.segredoDaEscolha(),
+      expiresIn: VALIDADE_DO_TOKEN_DE_ESCOLHA as unknown as number,
+    });
+    return {
+      statusCode: 409,
+      code: 'ESCOLHA_DE_EMPRESA',
+      message: MENSAGEM_ESCOLHA_DE_EMPRESA,
+      escolha: {
+        token,
+        empresas: [
+          ...validas.map((c) => opcao(c, 'disponivel')),
+          ...vencidas.map((c) => opcao(c, 'senha_expirada')),
+        ],
+      },
+    };
+  }
+
+  /**
+   * O segredo do token de escolha: **derivado** do do access token, e nunca
+   * igual a ele.
+   *
+   * A validação da implementação achou o defeito que um segredo comum abre: o
+   * `POST /auth/logout`, público, confere o Bearer só pela assinatura e revoga
+   * os refresh de `payload.sub` — e o token de escolha, sem `sub`, virava um
+   * `where` vazio que revogava as sessões de TODO MUNDO. Com o segredo
+   * derivado, o token de escolha não verifica em nenhum lugar que confere
+   * access token (a strategy, o logout, o limite de upload), e o defeito deixa
+   * de existir como classe, não só neste caminho. A recusa por `typ` na
+   * strategy e a exigência de `sub` no logout continuam, como segunda linha.
+   */
+  private segredoDaEscolha(): string {
+    return `${this.config.getOrThrow<string>('JWT_ACCESS_SECRET')}:${TIPO_DO_TOKEN_DE_ESCOLHA}`;
+  }
+
+  /** Tudo o que não for um token de escolha válido é `ESCOLHA_EXPIRADA`. */
+  private lerTokenDeEscolha(token: string): ConteudoDoTokenDeEscolha['contas'] {
+    let conteudo: Partial<ConteudoDoTokenDeEscolha>;
+    try {
+      conteudo = this.jwt.verify<Partial<ConteudoDoTokenDeEscolha>>(token, {
+        secret: this.segredoDaEscolha(),
+      });
+    } catch {
+      throw new UnauthorizedException(ESCOLHA_EXPIRADA);
+    }
+    if (
+      conteudo.typ !== TIPO_DO_TOKEN_DE_ESCOLHA ||
+      !Array.isArray(conteudo.contas)
+    ) {
+      throw new UnauthorizedException(ESCOLHA_EXPIRADA);
+    }
+    return conteudo.contas;
   }
 
   async refresh(
@@ -240,7 +493,7 @@ export class AuthService {
       });
     }
 
-    const tokens = await this.issueTokens(usuario.id, {
+    const tokens = await this.issueTokens(this.prisma, usuario.id, {
       sub: usuario.id,
       email: usuario.email,
       nome: usuario.nome,
@@ -286,10 +539,22 @@ export class AuthService {
 
     if (entrada.accessTokenRaw) {
       try {
-        const payload = await this.jwt.verifyAsync<AccessTokenPayload>(
-          entrada.accessTokenRaw,
-          { secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET') },
-        );
+        const payload = await this.jwt.verifyAsync<
+          AccessTokenPayload & { typ?: unknown }
+        >(entrada.accessTokenRaw, {
+          secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+        });
+        // SPEC-086 — só um access token de SESSÃO revoga: com `sub` de
+        // verdade e sem `typ`. Um payload sem `sub` viraria
+        // `usuarioId: undefined`, que o Prisma ignora — e o `updateMany`
+        // revogaria o refresh de todos os usuários.
+        if (
+          typeof payload.sub !== 'string' ||
+          payload.sub.length === 0 ||
+          payload.typ !== undefined
+        ) {
+          return;
+        }
         await this.prisma.refreshToken.updateMany({
           where: { usuarioId: payload.sub, revokedAt: null },
           data: { revokedAt: new Date() },
@@ -317,11 +582,17 @@ export class AuthService {
     const empresaAceitaCadastro =
       empresa?.status === 'ativa' && empresa.permiteAutoCadastro;
 
-    const existente = await this.prisma.usuario.findUnique({
-      where: { email: dto.email },
-    });
+    if (!empresa || !empresaAceitaCadastro) {
+      throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
+    }
 
-    if (!empresa || !empresaAceitaCadastro || existente) {
+    // SPEC-086 — esta conferência é só atalho (evita o bcrypt à toa). A
+    // garantia é a de dentro da transação, sob a trava do e-mail.
+    const existente = await this.prisma.usuario.findFirst({
+      where: conflitoDeContaDaEmpresa(dto.email, empresa.id),
+      select: { id: true },
+    });
+    if (existente) {
       throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
     }
 
@@ -330,28 +601,47 @@ export class AuthService {
     // juntos — mesmo padrão de MOD-002 (empresa + admin numa transação):
     // é uma única operação de provisionamento de conta, não duas escritas
     // independentes disputando a tabela `alunos` ao longo do tempo.
-    const usuario = await this.prisma.$transaction(async (tx) => {
-      const usuarioCriado = await tx.usuario.create({
-        data: {
-          email: dto.email,
-          senhaHash,
-          nome: dto.nome,
-          telefone: dto.telefone,
-          role: 'aluno',
+    const usuario = await comTraducaoDaTravaDeEmail(() =>
+      this.prisma.$transaction(async (tx) => {
+        await travarEmailsParaCriarConta(tx, [dto.email]);
+        const conflito = await tx.usuario.findFirst({
+          where: conflitoDeContaDaEmpresa(dto.email, empresa.id),
+          select: { id: true },
+        });
+        if (conflito) {
+          throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
+        }
+
+        const usuarioCriado = await tx.usuario.create({
+          data: {
+            email: dto.email,
+            senhaHash,
+            nome: dto.nome,
+            telefone: dto.telefone,
+            role: 'aluno',
+            companyId: empresa.id,
+          },
+        });
+
+        // Auto-cadastro público (C1): a iniciativa é de quem chegou pelo
+        // link, não da empresa — nasce `pendente` até um admin aprovar
+        // (REQ-008/AC-014, INV-010).
+        await this.students.criarPerfilDeAluno(tx, {
+          usuarioId: usuarioCriado.id,
           companyId: empresa.id,
-        },
-      });
+          vinculo: 'pendente',
+        });
 
-      // Auto-cadastro público (C1): a iniciativa é de quem chegou pelo
-      // link, não da empresa — nasce `pendente` até um admin aprovar
-      // (REQ-008/AC-014, INV-010).
-      await this.students.criarPerfilDeAluno(tx, {
-        usuarioId: usuarioCriado.id,
-        companyId: empresa.id,
-        vinculo: 'pendente',
-      });
-
-      return usuarioCriado;
+        return usuarioCriado;
+      }),
+    ).catch((erro: unknown) => {
+      // SPEC-086 — a segunda linha: a corrida que passou da trava (só por SQL
+      // de fora dela) recebe a mesma resposta da pré-conferência. O `catch`
+      // fica FORA da transação: quando ele roda, o rollback já aconteceu.
+      if (ehViolacaoDeEmail(erro)) {
+        throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
+      }
+      throw erro;
     });
 
     return { usuario: this.toPublicUsuario(usuario) };
@@ -364,7 +654,12 @@ export class AuthService {
     return this.toPublicUsuario(usuario);
   }
 
+  /**
+   * SPEC-086 — recebe o cliente onde o refresh é gravado: o `escolher` passa
+   * a transação, para o refresh nascer sob o `FOR UPDATE` da conta (S22).
+   */
   private async issueTokens(
+    db: Pick<Prisma.TransactionClient, 'refreshToken'>,
     usuarioId: string,
     payload: AccessTokenPayload,
   ): Promise<IssuedTokens> {
@@ -395,7 +690,7 @@ export class AuthService {
     });
     const tokenHash = hashDoRefresh(refreshToken);
 
-    await this.prisma.refreshToken.create({
+    await db.refreshToken.create({
       data: {
         id: jti,
         usuarioId,
@@ -566,7 +861,7 @@ export class AuthService {
     // Emite um par novo para quem trocou: revogar tudo sem devolver sessão
     // jogaria a pessoa para a tela de login logo depois de ela ter feito
     // exatamente o que o sistema exigiu.
-    return this.issueTokens(usuarioId, {
+    return this.issueTokens(this.prisma, usuarioId, {
       sub: usuario.id,
       email: usuario.email,
       nome: usuario.nome,

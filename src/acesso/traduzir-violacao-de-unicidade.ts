@@ -10,7 +10,7 @@ import { Prisma } from '@prisma/client';
  *
  * | o que o banco recusou | vira |
  * |---|---|
- * | `usuarios_email_key` (o e-mail já é de outra conta) | `409 EMAIL_EM_USO` |
+ * | as três regras de e-mail da SPEC-086 (`ehViolacaoDeEmail`) | `409 EMAIL_EM_USO` |
  * | `convites_de_acesso_um_vivo_por_usuario` (dois convites vivos) | `409 CONVITE_EM_EMISSAO` |
  *
  * **Qualquer outra violação sobe sem tradução** e vira `500`: um `UNIQUE` que
@@ -20,12 +20,14 @@ import { Prisma } from '@prisma/client';
  *
  * O `P2002` não traz o nome da constraint (achado DOR-083-R2-04), só o modelo
  * e as colunas. **Medido em 2026-10-03 contra o Postgres local, pela API de
- * modelo, dentro e fora de transação interativa** — e é o
+ * modelo, dentro e fora de transação interativa** (as duas linhas de
+ * `usuarios` remedidas em 2026-10-08, depois da SPEC-086) — e é o
  * `spec-083-corrida-do-professor.db-spec.ts` que mantém a medição viva:
  *
  * | constraint | `meta` |
  * |---|---|
- * | `usuarios_email_key` | `{modelName: 'Usuario', target: ['email']}` |
+ * | `usuarios_company_id_email_key` (SPEC-086) | `{modelName: 'Usuario', target: ['company_id', 'email']}` |
+ * | `usuarios_email_gestao_key` (SPEC-086, índice parcial) | `{modelName: 'Usuario', target: ['email']}` |
  * | `convites_de_acesso_um_vivo_por_usuario` (índice parcial da migration) | `{modelName: 'ConviteDeAcesso', target: ['usuario_id']}` |
  * | `usuarios_pkey` | `{modelName: 'Usuario', target: ['id']}` |
  * | `professores_usuario_id_key` | `{modelName: 'Professor', target: ['usuario_id']}` |
@@ -53,9 +55,43 @@ import { Prisma } from '@prisma/client';
 export const EMAIL_EM_USO = Object.freeze({
   statusCode: 409,
   code: 'EMAIL_EM_USO',
-  message:
-    'Este e-mail já pertence a outra conta. Uma pessoa não pode ter duas contas na plataforma (LIM-001).',
+  message: 'Este e-mail já tem conta nesta empresa ou pertence a um gestor.',
 });
+
+/**
+ * SPEC-086 — **a violação de alguma das três regras de e-mail**, pela forma
+ * real do erro (medida na validação da spec, e mantida viva pelo
+ * `spec-086-unicidade.db-spec.ts`):
+ *
+ * | constraint | pela API de modelo |
+ * |---|---|
+ * | `usuarios_company_id_email_key` | `P2002`, `{modelName: 'Usuario', target: ['company_id', 'email']}` |
+ * | `usuarios_email_gestao_key` (índice parcial) | `P2002`, `{modelName: 'Usuario', target: ['email']}` |
+ * | `usuarios_email_gestao_excl` (`EXCLUDE`) | `PrismaClientUnknownRequestError`, **sem** `code`/`meta`: o nome da constraint só existe na mensagem |
+ *
+ * O `EXCLUDE` é reconhecido pela **classe e pelo nome exato** da constraint —
+ * casar texto é o último recurso, e fica contido (LIM-086-03: um upgrade do
+ * Prisma reabre esta linha, e o db-spec avisa). Um CHECK ou outro `EXCLUDE`
+ * também chegam como `Unknown`, e por isso NÃO casam.
+ *
+ * A importação escreve em SQL cru (`P2010`) e decide pelo SQLSTATE da etapa;
+ * ela não passa por aqui.
+ */
+export function ehViolacaoDeEmail(erro: unknown): boolean {
+  if (erro instanceof Prisma.PrismaClientKnownRequestError) {
+    if (erro.code !== 'P2002') return false;
+    const meta = erro.meta as
+      { modelName?: unknown; target?: unknown } | undefined;
+    const alvo = meta?.target;
+    if (meta?.modelName !== 'Usuario' || !Array.isArray(alvo)) return false;
+    const colunas = alvo.join(',');
+    return colunas === 'company_id,email' || colunas === 'email';
+  }
+  if (erro instanceof Prisma.PrismaClientUnknownRequestError) {
+    return /\busuarios_email_gestao_excl\b/.test(erro.message);
+  }
+  return false;
+}
 
 /** Só acontece numa corrida que a trava já deveria ter serializado (D9). */
 export const CONVITE_EM_EMISSAO = Object.freeze({
@@ -70,7 +106,6 @@ const TRADUCOES: readonly {
   readonly colunas: readonly string[];
   readonly corpo: object;
 }[] = [
-  { modelo: 'Usuario', colunas: ['email'], corpo: EMAIL_EM_USO },
   {
     modelo: 'ConviteDeAcesso',
     colunas: ['usuario_id'],
@@ -84,6 +119,9 @@ const TRADUCOES: readonly {
  * `catch (erro) { throw traduzirViolacaoDeUnicidade(erro); }`.
  */
 export function traduzirViolacaoDeUnicidade(erro: unknown): unknown {
+  if (ehViolacaoDeEmail(erro)) {
+    return new ConflictException(EMAIL_EM_USO);
+  }
   if (
     !(erro instanceof Prisma.PrismaClientKnownRequestError) ||
     erro.code !== 'P2002'

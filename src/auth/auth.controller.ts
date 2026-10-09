@@ -13,6 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
   ApiOkResponse,
@@ -30,11 +31,13 @@ import { InvitesService } from './invites.service';
 import {
   AccessTokenResponseDto,
   ConviteAceitoResponseDto,
+  EscolhaDeEmpresaRespostaDto,
   LoginResponseDto,
   RegistroDeAlunoResponseDto,
   UsuarioPublicoResponseDto,
 } from './dto/auth-response.dto';
 import { LoginDto } from './dto/login.dto';
+import { EscolherEmpresaDto } from './dto/escolher-empresa.dto';
 import { AceitarConviteDto } from './dto/aceitar-convite.dto';
 import { RegisterAlunoDto } from './dto/register-aluno.dto';
 import { TrocarSenhaDto } from './dto/trocar-senha.dto';
@@ -55,11 +58,31 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @LimiteDeLogin()
   @ApiOkResponse({ type: LoginResponseDto })
+  // SPEC-086 — a senha abriu mais de uma conta: a escolha da empresa.
+  @ApiConflictResponse({ type: EscolhaDeEmpresaRespostaDto })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.login(dto);
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
+  }
+
+  /**
+   * SPEC-086 — troca a escolha da tela pela sessão da conta escolhida. Mesmo
+   * limite por IP do login: o token é de quem já provou a senha, mas a rota é
+   * pública.
+   */
+  @Post('login/escolher')
+  @HttpCode(HttpStatus.OK)
+  @LimiteDeLogin()
+  @ApiOkResponse({ type: LoginResponseDto })
+  async escolherEmpresa(
+    @Body() dto: EscolherEmpresaDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.escolherEmpresa(dto);
     this.setRefreshCookie(res, result.refreshToken);
     return result;
   }
