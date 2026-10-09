@@ -116,10 +116,10 @@ const valoresDe = new WeakMap<string[], unknown[][]>();
 
 /**
  * As OPÇÕES que cada `$transaction(fn, opções)` entregou ao Prisma real
- * (achado IMP-086-R9-01): o teste estrutural contava o texto
- * `timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS`, e um comentário ou um
- * `Object.assign(..., { timeout: undefined })` passava verde. Aqui vale o
- * objeto que chegou, não o que está escrito.
+ * (achados IMP-086-R9-01 e R10-01): uma cópia congelada, lida uma vez no
+ * momento da chamada, e é ESSA cópia que o Prisma recebe. Não vale o que está
+ * escrito no código (R9: contagem de texto), nem o objeto do código lido
+ * depois (R10: mutado no callback, ou getter que muda a cada leitura).
  */
 const opcoesDe = new WeakMap<string[], unknown>();
 
@@ -189,11 +189,23 @@ const proxy = new Proxy(real, {
         const log: string[] = [];
         transacoes.push(log);
         valoresDe.set(log, []);
-        opcoesDe.set(log, resto[0]);
+        // As opções são LIDAS UMA VEZ, aqui, no momento da chamada — quando o
+        // Prisma também as lê —, e o Prisma recebe ESTA cópia, não o objeto
+        // do código (IMP-086-R10-01). Guardar a referência e ler depois da
+        // resposta aceitava um objeto alterado dentro do callback ou um
+        // getter que muda a cada leitura: o Prisma via `undefined` (5 s) e a
+        // asserção, 9000. Agora o valor conferido é, por construção, o que o
+        // Prisma recebeu.
+        const [opcoes, ...depois] = resto;
+        const lidas: unknown =
+          opcoes && typeof opcoes === 'object'
+            ? Object.freeze({ ...(opcoes as Record<string, unknown>) })
+            : opcoes;
+        opcoesDe.set(log, lidas);
         return chamar(valor, alvo, [
           (tx: object) =>
             (arg as (t: object) => unknown)(txRegistrador(tx, log)),
-          ...resto,
+          ...(resto.length > 0 ? [lidas, ...depois] : []),
         ]);
       };
     }
