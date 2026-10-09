@@ -1347,3 +1347,39 @@ describe('SPEC-086/AC-012 — senha mudada entre o login e a escolha, para PROFE
     },
   );
 });
+
+describe('SPEC-086/AC-010 — conta INATIVA de professor fica fora do 409 e do token', () => {
+  /**
+   * Achado IMP-086-R3-01: a prova do AC-010 com várias contas só usava
+   * alunos, e um filtro que deixasse passar professor inativo passava. Aqui:
+   * dois alunos ativos e um professor INATIVO (a conta, com a empresa dele
+   * ATIVA — inativar a empresa testaria outro ramo), todos com a mesma senha,
+   * em empresas distintas. Os ids conferidos são EXPLÍCITOS, no corpo e nas
+   * contas do token: só a quantidade deixaria passar uma troca. Controle
+   * positivo: reativado, o professor aparece nos dois.
+   */
+  it('dois alunos ativos e um professor inativo: corpo e token com os dois alunos, por id; reativado, os três', async () => {
+    const email = emailNovo('prof-inativo');
+    const a1 = await conta(await empresa(), email, 'valida');
+    const a2 = await conta(await empresa(), email, 'valida');
+    const prof = await contaDeProfessor(await empresa(), email);
+    await q(`UPDATE usuarios SET status = 'inativo' WHERE id = $1::uuid`, prof);
+
+    const { corpo, token } = await loginComEscolha(email);
+    expect(corpo.escolha.empresas.map((e) => e.usuarioId).sort(porId)).toEqual(
+      [a1, a2].sort(porId),
+    );
+    expect(token.contas.map((c) => c.id).sort(porId)).toEqual(
+      [a1, a2].sort(porId),
+    );
+
+    await q(`UPDATE usuarios SET status = 'ativo' WHERE id = $1::uuid`, prof);
+    const depois = await loginComEscolha(email);
+    expect(
+      depois.corpo.escolha.empresas.map((e) => e.usuarioId).sort(porId),
+    ).toEqual([a1, a2, prof].sort(porId));
+    expect(depois.token.contas.map((c) => c.id).sort(porId)).toEqual(
+      [a1, a2, prof].sort(porId),
+    );
+  });
+});

@@ -31,6 +31,10 @@ import * as bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types';
 import { garantirAmbienteDeFit } from '../fit/app-real';
+import {
+  ChaveDeLock,
+  ordenarChavesParaLock,
+} from '../../src/common/lock/chave-de-lock';
 import { createTestApp } from '../utils/create-test-app';
 import { bodyOf } from '../utils/http';
 import { exigirBancoLocal } from './exigir-banco-local';
@@ -70,6 +74,16 @@ const q = (sql: string, ...v: unknown[]) => real.$executeRawUnsafe(sql, ...v);
 /** As operações de cada `$transaction(fn)`, na ordem em que foram chamadas. */
 let transacoes: string[][] = [];
 
+/**
+ * Os VALORES de cada operação, paralelos ao texto (achado IMP-086-R3-02): o
+ * texto troca cada valor por `?`, e uma trava chamada com a lista de chaves
+ * VAZIA — que não trava nada — passava pela igualdade exata do texto.
+ */
+const valoresDe = new WeakMap<string[], unknown[][]>();
+
+/** Os e-mails que a entrada em teste usou, na ordem em que foram gerados. */
+let emailsUsados: string[] = [];
+
 /** O texto SQL de um `$queryRaw`/`$executeRaw` (tagged, `Prisma.Sql` ou Unsafe). */
 function textoSql(args: unknown[]): string {
   const a = args[0] as
@@ -97,6 +111,7 @@ function txRegistrador(tx: object, log: string[]): object {
               ? `${prop}:${textoSql(args)}`
               : prop,
           );
+          valoresDe.get(log)?.push(args.slice(1));
           return chamar(valor, alvo, args);
         };
       }
@@ -109,6 +124,7 @@ function txRegistrador(tx: object, log: string[]): object {
             if (typeof f !== 'function' || typeof metodo !== 'string') return f;
             return (...args: unknown[]) => {
               log.push(`${prop}.${metodo}`);
+              valoresDe.get(log)?.push(args);
               return chamar(f, m, args);
             };
           },
@@ -130,6 +146,7 @@ const proxy = new Proxy(real, {
         }
         const log: string[] = [];
         transacoes.push(log);
+        valoresDe.set(log, []);
         return chamar(valor, alvo, [
           (tx: object) =>
             (arg as (t: object) => unknown)(txRegistrador(tx, log)),
@@ -167,8 +184,11 @@ let tokenSuper = '';
 let ipSeq = 0;
 const ip = () => `10.87.0.${(ipSeq += 1)}`;
 let seq = 0;
-const novoEmail = (r: string) =>
-  `spec086-ordem-${r.toLowerCase()}-${(seq += 1)}@teste.local`;
+const novoEmail = (r: string) => {
+  const email = `spec086-ordem-${r.toLowerCase()}-${(seq += 1)}@teste.local`;
+  emailsUsados.push(email);
+  return email;
+};
 
 async function limparTudo(): Promise<void> {
   const daE7 = await real.$queryRawUnsafe<{ id: string }[]>(
@@ -380,6 +400,7 @@ const INSTRUCAO_DA_TRAVA =
 describe('SPEC-086 — a trava é a primeira operação da transação que cria a conta (sequência registrada)', () => {
   it.each(entradas)('%s', async (_nome, status, disparar) => {
     transacoes = [];
+    emailsUsados = [];
     const r = await disparar();
     expect({ status: r.status, corpo: r.text.slice(0, 400) }).toMatchObject({
       status,
@@ -396,5 +417,20 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
     expect({ primeira, sequencia: ops.slice(0, 4) }).toMatchObject({
       primeira: INSTRUCAO_DA_TRAVA,
     });
+
+    // E as CHAVES dessa primeira operação são exatamente as dos e-mails que
+    // a entrada usou — todas as da linha da planilha na E6, o do convite na
+    // E2 —, ordenadas como a trava ordena (IMP-086-R3-02). Lista vazia, chave
+    // de outro e-mail ou só parte do lote ficam vermelhas aqui.
+    const [chaves] = (valoresDe.get(ops) ?? [])[0] ?? [];
+    const esperadas = ordenarChavesParaLock(
+      emailsUsados.map((e) => `usuarios.email:${e}`),
+    ).map((k) => ChaveDeLock.deTexto(k).toString());
+    expect({
+      chaves: Array.isArray(chaves)
+        ? (chaves as unknown[]).map((c) => String(c))
+        : chaves,
+    }).toEqual({ chaves: esperadas });
+    expect(esperadas.length).toBeGreaterThan(0);
   });
 });
