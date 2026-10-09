@@ -31,10 +31,12 @@ import * as bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types';
 import { garantirAmbienteDeFit } from '../fit/app-real';
+import { TIMEOUT_DA_TRAVA_DE_EMAIL_MS } from '../../src/acesso/trava-de-email';
 import {
   ChaveDeLock,
   ordenarChavesParaLock,
 } from '../../src/common/lock/chave-de-lock';
+import { TIMEOUT_DA_IMPORTACAO_MS } from '../../src/people/importacao/importacao-de-alunos.service';
 import { createTestApp } from '../utils/create-test-app';
 import { bodyOf } from '../utils/http';
 import { exigirBancoLocal } from './exigir-banco-local';
@@ -112,6 +114,15 @@ let transacoes: string[][] = [];
  */
 const valoresDe = new WeakMap<string[], unknown[][]>();
 
+/**
+ * As OPÇÕES que cada `$transaction(fn, opções)` entregou ao Prisma real
+ * (achado IMP-086-R9-01): o teste estrutural contava o texto
+ * `timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS`, e um comentário ou um
+ * `Object.assign(..., { timeout: undefined })` passava verde. Aqui vale o
+ * objeto que chegou, não o que está escrito.
+ */
+const opcoesDe = new WeakMap<string[], unknown>();
+
 /** Os e-mails que a entrada em teste usou, na ordem em que foram gerados. */
 let emailsUsados: string[] = [];
 
@@ -178,6 +189,7 @@ const proxy = new Proxy(real, {
         const log: string[] = [];
         transacoes.push(log);
         valoresDe.set(log, []);
+        opcoesDe.set(log, resto[0]);
         return chamar(valor, alvo, [
           (tx: object) =>
             (arg as (t: object) => unknown)(txRegistrador(tx, log)),
@@ -429,7 +441,7 @@ const INSTRUCAO_DA_TRAVA =
   '$queryRaw: SELECT ordem, marcador FROM travar_emails_para_criar_conta( ?::bigint[], ?::integer )';
 
 describe('SPEC-086 — a trava é a primeira operação da transação que cria a conta (sequência registrada)', () => {
-  it.each(entradas)('%s', async (_nome, status, disparar) => {
+  it.each(entradas)('%s', async (nome, status, disparar) => {
     transacoes = [];
     emailsUsados = [];
     executadas = [];
@@ -438,6 +450,18 @@ describe('SPEC-086 — a trava é a primeira operação da transação que cria 
       status,
     });
     const ops = transacaoDaConta();
+
+    // O `timeout` EFETIVO da transação que cria a conta (IMP-086-R9-01): o
+    // valor que o Prisma recebeu, nesta transação e não em outra. Sem ele vale
+    // o padrão de 5 s, que o E2 estourou na Neon (`P2028`). 9 s nos sete
+    // escritores; a importação tem o seu, 15 s + o orçamento do e-mail.
+    const esperado = nome.startsWith('E6')
+      ? TIMEOUT_DA_IMPORTACAO_MS
+      : TIMEOUT_DA_TRAVA_DE_EMAIL_MS;
+    const opcoes = opcoesDe.get(ops) as { timeout?: unknown } | undefined;
+    expect({ timeoutEfetivo: opcoes?.timeout }).toEqual({
+      timeoutEfetivo: esperado,
+    });
     // A primeira operação, inteira na mensagem: o vermelho mostra o que veio
     // antes da trava.
     // Achado IMP-086-R2-02: "contém o nome da função" aceitava o nome como
