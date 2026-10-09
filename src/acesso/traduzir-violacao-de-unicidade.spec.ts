@@ -72,7 +72,7 @@ describe('SPEC-083 — traduzirViolacaoDeUnicidade (D9)', () => {
 
   it('SPEC-086: o EXCLUDE de gestão × aluno (Unknown, com o nome da constraint) → 409 EMAIL_EM_USO', () => {
     const erro = new Prisma.PrismaClientUnknownRequestError(
-      'Error occurred during query execution: ConnectorError(... conflicting key value violates exclusion constraint "usuarios_email_gestao_excl" ...)',
+      String.raw`Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23P01", message: "conflicting key value violates exclusion constraint \"usuarios_email_gestao_excl\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
       { clientVersion: Prisma.prismaVersion.client },
     );
     expect(corpoDe(traduzirViolacaoDeUnicidade(erro))).toMatchObject({
@@ -80,6 +80,57 @@ describe('SPEC-083 — traduzirViolacaoDeUnicidade (D9)', () => {
     });
     expect(ehViolacaoDeEmail(erro)).toBe(true);
   });
+
+  /**
+   * IMP-086-R1-01 — mensagens na forma REAL medida em 2026-10-08
+   * (`errorFormat: 'minimal'`; o padrão só acrescenta o trecho de código antes
+   * de "Error occurred"). O `detail` traz o dado da linha, com as aspas
+   * escapadas pelo `Debug` do Rust.
+   */
+  const unknownMedido = (constraint: string, detail: string) =>
+    new Prisma.PrismaClientUnknownRequestError(
+      '\nInvalid `prisma.usuario.create()` invocation:\n\n\nError occurred during query execution:\n' +
+        String.raw`ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23P01", message: "conflicting key value violates exclusion constraint \"` +
+        constraint +
+        String.raw`\"", severity: "ERROR", detail: Some("` +
+        detail +
+        String.raw`"), column: None, hint: None }), transient: false })`,
+      { clientVersion: Prisma.prismaVersion.client },
+    );
+
+  it('IMP-086-R1-01: o EXCLUDE de e-mail na forma real medida → 409', () => {
+    const erro = unknownMedido(
+      'usuarios_email_gestao_excl',
+      String.raw`Key (email, (role = ANY (ARRAY['super_admin'::usuario_role, 'company_admin'::usuario_role])))=(x@t.local, f) conflicts with existing key (email, (role = ANY (ARRAY['super_admin'::usuario_role, 'company_admin'::usuario_role])))=(x@t.local, t).`,
+    );
+    expect(ehViolacaoDeEmail(erro)).toBe(true);
+    expect(corpoDe(traduzirViolacaoDeUnicidade(erro))).toMatchObject({
+      code: 'EMAIL_EM_USO',
+    });
+  });
+
+  it.each([
+    [
+      'o nome exato no dado',
+      'Key (nome)=(usuarios_email_gestao_excl) conflicts with existing key (nome)=(usuarios_email_gestao_excl).',
+    ],
+    [
+      'a frase inteira com aspas no dado',
+      String.raw`Key (nome)=(violates exclusion constraint \"usuarios_email_gestao_excl\") conflicts with existing key (nome)=(violates exclusion constraint \"usuarios_email_gestao_excl\").`,
+    ],
+    [
+      'o trecho do campo message inteiro no dado',
+      String.raw`Key (nome)=(PostgresError { code: \"23P01\", message: \"conflicting key value violates exclusion constraint \\\"usuarios_email_gestao_excl\\\"\", severity: \"ERROR\") conflicts with existing key (nome)=(x).`,
+    ],
+  ])(
+    'IMP-086-R1-01: EXCLUDE alheio com %s NÃO vira 409, sobe intacto',
+    (_nome, detail) => {
+      const erro = unknownMedido('review086_exclude_alheio', detail);
+      expect(erro.message).toContain('usuarios_email_gestao_excl');
+      expect(ehViolacaoDeEmail(erro)).toBe(false);
+      expect(traduzirViolacaoDeUnicidade(erro)).toBe(erro);
+    },
+  );
 
   it.each([
     ['um CHECK', 'violates check constraint "usuarios_company_id_role_check"'],

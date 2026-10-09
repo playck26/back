@@ -1479,6 +1479,11 @@ describe('SPEC-086/AC-020 — a segunda linha: conta gravada por fora depois da 
       ).toBe(true);
 
       const naCorrida = comoHttp(erro);
+      // Nada da transação perdedora sobra — conferido LOGO depois da corrida,
+      // antes da segunda chamada: uma empresa órfã da E7 (S18) faria a
+      // segunda chamada falhar por nome repetido, e o vermelho viria pelo
+      // motivo errado (achado da validação da implementação, ressalva S18).
+      expect(await preparado.residuo()).toEqual(preparado.residuoEsperado);
       // A pré-conferência da mesma rota, com a conta já comitada.
       const naPreconferencia = comoHttp(await falhaDe(preparado.executar));
       expect(naCorrida).toEqual(naPreconferencia);
@@ -1588,6 +1593,78 @@ describe('SPEC-086/AC-020 — a segunda linha: conta gravada por fora depois da 
         expect(comoHttp(erro)).toContain(CHECK_ALHEIO);
         expect(await contasDoEmail(email)).toEqual([]);
         expect(await preparado.residuo()).toEqual(preparado.residuoEsperado);
+      },
+    );
+
+    /**
+     * IMP-086-R1-01 — a fixture do validador: um EXCLUDE alheio em
+     * `usuarios.nome` restrito a UM nome, e duas contas de e-mails diferentes
+     * com esse nome. O nome da constraint de e-mail (e depois a frase inteira
+     * com aspas) vai no DADO, que o `detail` repete. O regex antigo
+     * (`/\busuarios_email_gestao_excl\b/` na mensagem inteira) traduzia isso
+     * para `409`; o certo é o erro subir cru. Nos dois `errorFormat` medidos.
+     */
+    describe.each([
+      ['o nome exato', 'usuarios_email_gestao_excl'],
+      [
+        'a frase com aspas',
+        'violates exclusion constraint "usuarios_email_gestao_excl"',
+      ],
+    ])(
+      'IMP-086-R1-01: %s no dado de um EXCLUDE alheio',
+      (_rotulo, nomeNoDado) => {
+        const FIXTURE = 'spec086_trava_r1_excl';
+        const literal = nomeNoDado.replace(/'/g, "''");
+        beforeAll(async () => {
+          await q(`ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS ${FIXTURE}`);
+          await q(
+            `ALTER TABLE usuarios ADD CONSTRAINT ${FIXTURE}
+             EXCLUDE USING gist (nome WITH =) WHERE (nome = '${literal}')`,
+          );
+        });
+        afterAll(async () => {
+          await q(`ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS ${FIXTURE}`);
+          await q(`DELETE FROM usuarios WHERE nome = '${literal}'`);
+        });
+
+        it.each([
+          ['padrão', undefined],
+          ['minimal', 'minimal'],
+        ] as const)(
+          'errorFormat %s: sobe cru, não 409',
+          async (_f, errorFormat) => {
+            const cliente = new PrismaClient(
+              errorFormat ? { errorFormat } : undefined,
+            );
+            try {
+              const criar = (email: string) =>
+                cliente.usuario.create({
+                  data: {
+                    email,
+                    nome: nomeNoDado,
+                    senhaHash: 'h',
+                    role: 'super_admin',
+                  },
+                });
+              await criar(emailNovo('r1-alheio-1'));
+              const erro = await falhaDe(() => criar(emailNovo('r1-alheio-2')));
+              expect(erro).toBeInstanceOf(
+                Prisma.PrismaClientUnknownRequestError,
+              );
+              const msg = String((erro as Error).message);
+              // A violada é a fixture; o nome de e-mail só está no dado.
+              expect(msg).toContain(FIXTURE);
+              expect(msg).toContain('usuarios_email_gestao_excl');
+              expect(ehViolacaoDeEmail(erro)).toBe(false);
+              expect(traduzirViolacaoDeUnicidade(erro)).toBe(erro);
+            } finally {
+              await cliente.$executeRawUnsafe(
+                `DELETE FROM usuarios WHERE nome = '${literal}'`,
+              );
+              await cliente.$disconnect();
+            }
+          },
+        );
       },
     );
   });

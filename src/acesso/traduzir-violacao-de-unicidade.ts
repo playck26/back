@@ -69,7 +69,8 @@ export const EMAIL_EM_USO = Object.freeze({
  * | `usuarios_email_gestao_key` (índice parcial) | `P2002`, `{modelName: 'Usuario', target: ['email']}` |
  * | `usuarios_email_gestao_excl` (`EXCLUDE`) | `PrismaClientUnknownRequestError`, **sem** `code`/`meta`: o nome da constraint só existe na mensagem |
  *
- * O `EXCLUDE` é reconhecido pela **classe e pelo nome exato** da constraint —
+ * O `EXCLUDE` é reconhecido pela **classe e pelo campo `message` do erro**
+ * nomeando a constraint (`EXCLUDE_DE_EMAIL_VIOLADO`, IMP-086-R1-01) —
  * casar texto é o último recurso, e fica contido (LIM-086-03: um upgrade do
  * Prisma reabre esta linha, e o db-spec avisa). Um CHECK ou outro `EXCLUDE`
  * também chegam como `Unknown`, e por isso NÃO casam.
@@ -88,10 +89,36 @@ export function ehViolacaoDeEmail(erro: unknown): boolean {
     return colunas === 'company_id,email' || colunas === 'email';
   }
   if (erro instanceof Prisma.PrismaClientUnknownRequestError) {
-    return /\busuarios_email_gestao_excl\b/.test(erro.message);
+    return EXCLUDE_DE_EMAIL_VIOLADO.test(erro.message);
   }
   return false;
 }
+
+/**
+ * IMP-086-R1-01 — **o EXCLUDE de e-mail como a constraint EFETIVAMENTE
+ * violada**, e não como um texto qualquer da mensagem.
+ *
+ * Procurar o nome na mensagem inteira traduzia para `409` um `EXCLUDE` ou
+ * `CHECK` alheio cujo DADO trazia esse nome: o `detail` do Postgres repete os
+ * valores da linha. Forma medida em 2026-10-08 (Postgres local, este Prisma),
+ * igual com `errorFormat` padrão e `'minimal'` — só muda o cabeçalho antes:
+ *
+ * ```text
+ * ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError {
+ *   code: "23P01", message: "conflicting key value violates exclusion constraint \"<constraint>\"",
+ *   severity: "ERROR", detail: Some("Key (nome)=(<dado>) conflicts with ..."), ... }) })
+ * ```
+ *
+ * A mensagem é o `Debug` do Rust: **toda aspa de um valor sai escapada
+ * (`\"`)**, e a barra também (`\\`). Então `code: "23P01", message: "` com
+ * aspas NUAS, a frase, o nome entre `\"` e o fechamento `", severity:` só
+ * podem vir dos campos do próprio erro — um dado com a frase inteira entre
+ * aspas aparece no `detail` como `\"…\"` e não casa (medido, e mantido vivo
+ * pelo controle negativo do AC-020 em `spec-086-trava.db-spec.ts`).
+ * Conferir só o `23P01` não bastaria: um EXCLUDE alheio tem o mesmo SQLSTATE.
+ */
+const EXCLUDE_DE_EMAIL_VIOLADO =
+  /PostgresError \{ code: "23P01", message: "conflicting key value violates exclusion constraint \\"usuarios_email_gestao_excl\\"", severity: "ERROR"/;
 
 /** Só acontece numa corrida que a trava já deveria ter serializado (D9). */
 export const CONVITE_EM_EMISSAO = Object.freeze({

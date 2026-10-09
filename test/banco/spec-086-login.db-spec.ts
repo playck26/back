@@ -1161,3 +1161,114 @@ describe('SPEC-086/AC-021 — escolher × troca de senha sobrepostos, com o bloq
     expect(await refreshVivos(a)).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-011 — o PROFESSOR escolhido (IMP-086-R1-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Uma conta de PROFESSOR, com a ficha em `professores` ligada a ela — o
+ * caminho que o sistema cria quando o gestor dá acesso ao professor
+ * (SPEC-013/INV-014).
+ */
+async function contaDeProfessor(
+  companyId: string,
+  email: string,
+): Promise<string> {
+  const id = randomUUID();
+  const hash = await bcrypt.hash(SENHA, 4);
+  await q(
+    `INSERT INTO usuarios (id,email,senha_hash,nome,telefone,role,company_id,status,
+                           senha_temporaria,senha_temporaria_expira_em,updated_at)
+     VALUES ($1::uuid,$2,$3,'Professor 086 login','11999990001','professor',$4::uuid,
+             'ativo',false,NULL,now())`,
+    id,
+    email,
+    hash,
+    companyId,
+  );
+  await q(
+    `INSERT INTO professores (id,company_id,nome,email,status,usuario_id)
+     VALUES (gen_random_uuid(),$1::uuid,'Professor 086 login',$2,'ativo',$3::uuid)`,
+    companyId,
+    email,
+    id,
+  );
+  return id;
+}
+
+describe('SPEC-086/AC-011 — escolher o PROFESSOR devolve a sessão dele, na empresa dele', () => {
+  // Achado IMP-086-R1-02: o AC-011 só provava contas de aluno. Um emissor que
+  // zerasse o companyId do professor, ou que pusesse o da OUTRA conta da
+  // lista, passava. Por isso duas empresas DISTINTAS, e cada camada da
+  // sessão conferida em separado.
+  it('aluno em A e professor em B, mesma senha: 409 → escolher o professor → 200 com companyId B em corpo, JWT, refresh e /me', async () => {
+    const email = emailNovo('prof');
+    const eA = await empresa();
+    const eB = await empresa();
+    expect(eA).not.toBe(eB);
+    const aluno = await conta(eA, email, 'valida');
+    const prof = await contaDeProfessor(eB, email);
+
+    const { corpo, token } = await loginComEscolha(email);
+    expect(token.contas.map((c) => c.id).sort(porId)).toEqual(
+      [aluno, prof].sort(porId),
+    );
+    const opProf = corpo.escolha.empresas.find((e) => e.usuarioId === prof);
+    expect(opProf?.situacao).toBe('disponivel');
+
+    const antes = await refreshTotal(prof);
+    const antesDoAluno = await refreshTotal(aluno);
+    const res = await escolher(corpo.escolha.token, prof);
+    expect(res.status).toBe(200);
+    const sessao = res.body as {
+      accessToken: string;
+      refreshToken: string;
+      usuario: Record<string, unknown>;
+    };
+
+    // 1. Corpo.
+    expect(sessao.usuario).toEqual({
+      id: prof,
+      email,
+      nome: 'Professor 086 login',
+      role: 'professor',
+      companyId: eB,
+      senhaTemporaria: false,
+    });
+
+    // 2. JWT decodificado — é ele que as rotas da empresa leem.
+    const claims = jwt.verify<Record<string, unknown>>(sessao.accessToken, {
+      secret: segredoDoAccess,
+    });
+    expect(claims.sub).toBe(prof);
+    expect(claims.role).toBe('professor');
+    expect(claims.companyId).toBe(eB);
+    expect(claims.companyId).not.toBe(eA);
+
+    // 3. Cookie.
+    const c = cookies(res);
+    expect(c).toHaveLength(1);
+    expect(c[0].startsWith(`refresh_token=${sessao.refreshToken};`)).toBe(true);
+    expect(c[0]).toMatch(/; HttpOnly(;|$)/);
+
+    // 4. Linha em refresh_tokens, do professor e só dele.
+    const { jti } = jwt.decode<{ jti: string }>(sessao.refreshToken);
+    const linha = await refreshPorJti(jti);
+    expect(linha?.usuarioId).toBe(prof);
+    expect(linha?.revokedAt).toBeNull();
+    expect(await refreshTotal(prof)).toBe(antes + 1);
+    expect(await refreshTotal(aluno)).toBe(antesDoAluno);
+
+    // 5. O uso efetivo da sessão.
+    const me = await request(app.getHttpServer())
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${sessao.accessToken}`);
+    expect(me.status).toBe(200);
+    expect(me.body).toMatchObject({
+      id: prof,
+      role: 'professor',
+      companyId: eB,
+    });
+  });
+});
