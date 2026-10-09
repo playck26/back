@@ -1,4 +1,7 @@
-import { comTraducaoDaTravaDeEmail } from './trava-de-email';
+import {
+  comTraducaoDaTravaDeEmail,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
+} from './trava-de-email';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   ConflictException,
@@ -450,17 +453,20 @@ export class AcessoService {
       // SPEC-086 — a espera pela trava do e-mail (da conta do professor que
       // nasce aqui) vira `503 SERVIDOR_OCUPADO` antes do tradutor da D9.
       convite = await comTraducaoDaTravaDeEmail(() =>
-        this.prisma.$transaction(async (tx) => {
-          const usuarioId =
-            'criarConta' in conta
-              ? await conta.criarConta(tx)
-              : conta.usuarioId;
-          return this.emitirNaTransacao(tx, {
-            companyId,
-            usuarioId,
-            criadoPorId,
-          });
-        }),
+        this.prisma.$transaction(
+          async (tx) => {
+            const usuarioId =
+              'criarConta' in conta
+                ? await conta.criarConta(tx)
+                : conta.usuarioId;
+            return this.emitirNaTransacao(tx, {
+              companyId,
+              usuarioId,
+              criadoPorId,
+            });
+          },
+          { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+        ),
       );
     } catch (erro) {
       throw traduzirViolacaoDeUnicidade(erro);

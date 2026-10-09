@@ -35,7 +35,7 @@
  * 4. o adversário solta. A fila da trava é FIFO: a primeira a chegar ganha a
  *    trava e grava; a segunda confere **sob a trava** e decide.
  *
- * O orçamento da trava é 2 s (`PRAZO_DA_TRAVA_DE_EMAIL_MS`), contado de quando
+ * O orçamento da trava é 5 s (`PRAZO_DA_TRAVA_DE_EMAIL_MS`), contado de quando
  * a primeira começou a esperar. A segunda tem até `JANELA_DA_SEGUNDA_MS` para
  * chegar; se não chegar (bcrypt de custo 12 antes da transação, CPU
  * disputada), a rodada é descartada sem julgamento e refeita com outro e-mail
@@ -96,7 +96,7 @@ const PREFIXO_E7 = 'SPEC-086 Matriz E7';
 
 /**
  * Quanto a segunda requisição tem para chegar à trava, contado de quando a
- * primeira foi vista esperando. Abaixo dos 2 s do orçamento, com folga para a
+ * primeira foi vista esperando. Bem abaixo do orçamento da trava, com folga para a
  * primeira ainda pegar a trava viva depois de o adversário soltar.
  */
 const JANELA_DA_SEGUNDA_MS = 1_300;

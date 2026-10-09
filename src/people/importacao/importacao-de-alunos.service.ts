@@ -1,6 +1,7 @@
 import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContasDaEmpresa,
+  PRAZO_DA_TRAVA_DE_EMAIL_MS,
   travarEmailsParaCriarConta,
 } from '../../acesso/trava-de-email';
 import { randomUUID } from 'node:crypto';
@@ -134,8 +135,13 @@ export const MENSAGEM_EMAIL_JA_EXISTE = 'Já existe uma conta com este e-mail.';
 /** Até quantas turmas ativas a recusa de turma inexistente lista (D3). */
 const TETO_DE_TURMAS_NA_MENSAGEM = 10;
 
-/** D4 — o `timeout` da transação da importação. Ver a D3, passo 6. */
-export const TIMEOUT_DA_IMPORTACAO_MS = 15_000;
+/**
+ * D4 — o `timeout` da transação da importação. Ver a D3, passo 6.
+ *
+ * SPEC-086: os 15 s de antes **mais** o orçamento da trava de e-mail, que
+ * agora vem antes de tudo e pode consumir até 5 s esperando outro cadastro.
+ */
+export const TIMEOUT_DA_IMPORTACAO_MS = 15_000 + PRAZO_DA_TRAVA_DE_EMAIL_MS;
 
 /**
  * O nome da variável de transação onde a primeira instrução de ajuste guarda o

@@ -45,8 +45,12 @@ import { AcessoService } from '../../src/acesso/acesso.service';
 import {
   chaveDoEmail,
   EsperaPorEmailEsgotada,
+  PRAZO_DA_TRAVA_DE_EMAIL_MS,
   travarEmailsParaCriarConta,
 } from '../../src/acesso/trava-de-email';
+
+/** O orçamento da trava (5 s desde 2026-10-09); os tempos daqui derivam dele. */
+const PRAZO = PRAZO_DA_TRAVA_DE_EMAIL_MS;
 import {
   ehViolacaoDeEmail,
   traduzirViolacaoDeUnicidade,
@@ -532,7 +536,7 @@ describe('SPEC-086/AC-027 — o orçamento do e-mail não vaza', () => {
         convite.id,
       ),
     );
-    const soltura = dormir(3_000).then(() => adv.soltar());
+    const soltura = dormir(PRAZO + 1_000).then(() => adv.soltar());
     const t0 = Date.now();
     try {
       await db.$transaction(
@@ -549,8 +553,8 @@ describe('SPEC-086/AC-027 — o orçamento do e-mail não vaza', () => {
       await soltura;
     }
     const decorrido = Date.now() - t0;
-    // Esperou o adversário (3 s), e não desistiu aos 2 s.
-    expect(decorrido).toBeGreaterThanOrEqual(2_700);
+    // Esperou o adversário (prazo + 1 s), e não desistiu no prazo.
+    expect(decorrido).toBeGreaterThanOrEqual(PRAZO + 700);
     expect(await conviteUsado(convite.id)).toBe(true);
   });
 
@@ -574,12 +578,12 @@ describe('SPEC-086/AC-027 — o orçamento do e-mail não vaza', () => {
       .set('do-connecting-ip', ipNovo())
       .send({ token: convite.token, senha: SENHA })
       .then((x) => x);
-    await dormir(3_000);
+    await dormir(PRAZO + 1_000);
     await adv.soltar();
     const r = await pedido;
     const detalhe = `${r.status} ${r.text.slice(0, 300)}`;
     expect({ status: r.status, detalhe }).toEqual({ status: 201, detalhe });
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(2_700);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(PRAZO + 700);
     expect(await contasDoEmail(email)).toHaveLength(1);
     expect(await conviteUsado(convite.id)).toBe(true);
   });
@@ -643,7 +647,7 @@ describe('SPEC-086/AC-024 — um orçamento de 2 s para todos os e-mails juntos'
     })();
     const t0 = Date.now();
     const soltaA = dormir(1_200).then(() => advA.soltar());
-    const soltaB = dormir(3_000).then(() => advB.soltar());
+    const soltaB = dormir(PRAZO + 1_000).then(() => advB.soltar());
     let erro: unknown = null;
     try {
       await db.$transaction((tx) => travarEmailsParaCriarConta(tx, [b, a]), {
@@ -660,8 +664,8 @@ describe('SPEC-086/AC-024 — um orçamento de 2 s para todos os e-mails juntos'
       `AC-024 (direto): desistiu em ${decorrido} ms; chaves vistas em espera: ${[...vistas].join(', ')}`,
     );
     expect(erro).toBeInstanceOf(EsperaPorEmailEsgotada);
-    expect(decorrido).toBeGreaterThanOrEqual(1_500);
-    expect(decorrido).toBeLessThanOrEqual(2_500);
+    expect(decorrido).toBeGreaterThanOrEqual(PRAZO - 500);
+    expect(decorrido).toBeLessThanOrEqual(PRAZO + 500);
     expect(vistas.has(chaveEmPgLocks(a))).toBe(true);
     expect(vistas.has(chaveEmPgLocks(b))).toBe(true);
   });
@@ -700,7 +704,7 @@ describe('SPEC-086/AC-024 — um orçamento de 2 s para todos os e-mails juntos'
       const r = await pedido;
       const fim = Date.now();
       await soltaA;
-      await dormir((inicio ?? fim) + 3_000 - Date.now());
+      await dormir((inicio ?? fim) + PRAZO + 1_000 - Date.now());
 
       expect(inicio).not.toBeNull();
       const espera = fim - (inicio as number);
@@ -709,8 +713,8 @@ describe('SPEC-086/AC-024 — um orçamento de 2 s para todos os e-mails juntos'
         status: 503,
         corpo: SERVIDOR_OCUPADO,
       });
-      expect(espera).toBeGreaterThanOrEqual(1_500);
-      expect(espera).toBeLessThanOrEqual(2_500);
+      expect(espera).toBeGreaterThanOrEqual(PRAZO - 500);
+      expect(espera).toBeLessThanOrEqual(PRAZO + 500);
     } finally {
       await advA.soltar();
       await advB.soltar();
@@ -757,7 +761,7 @@ async function comEmailSeguro(
     }
     const r = await pedido;
     const fim = Date.now();
-    await dormir((inicio ?? fim) + 3_000 - Date.now());
+    await dormir((inicio ?? fim) + PRAZO + 1_000 - Date.now());
     return { r, espera: inicio === null ? null : fim - inicio, vista };
   } finally {
     await adv.soltar();
@@ -776,8 +780,8 @@ function confereOcupado(
     detalhe,
   });
   expect(espera).not.toBeNull();
-  expect(espera).toBeGreaterThanOrEqual(1_500);
-  expect(espera).toBeLessThanOrEqual(2_500);
+  expect(espera).toBeGreaterThanOrEqual(PRAZO - 500);
+  expect(espera).toBeLessThanOrEqual(PRAZO + 500);
 }
 
 /**
@@ -787,7 +791,7 @@ function confereOcupado(
  * ex.: E7) faz aquela entrada responder `500` — o `toEqual` do status fica
  * vermelho.
  */
-describe('SPEC-086/AC-023 — espera esgotada: 503 SERVIDOR_OCUPADO em 2 s ± 0,5 s, sem resíduo', () => {
+describe('SPEC-086/AC-023 — espera esgotada: 503 SERVIDOR_OCUPADO no prazo ± 0,5 s, sem resíduo', () => {
   it('E1 — POST /auth/register-aluno', async () => {
     const email = emailNovo('e1-503');
     const res = await comEmailSeguro(email, () =>
@@ -1017,7 +1021,7 @@ async function ensaioSemCiclo(
   const maisAntiga = esperas[0];
   const restanteNaSoltura =
     maisAntiga && vistasEm !== null
-      ? 2_000 - maisAntiga.ha_ms - (soltaEm - vistasEm)
+      ? PRAZO - maisAntiga.ha_ms - (soltaEm - vistasEm)
       : null;
   const registro = {
     tentativa,
@@ -1085,8 +1089,8 @@ describe('SPEC-086/AC-025 — duas importações com [a, b] e [b, a]: sem ciclo'
       `SELECT setting::int * CASE unit WHEN 's' THEN 1000 ELSE 1 END AS dt
          FROM pg_settings WHERE name = 'deadlock_timeout'`,
     );
-    // A precondição da spec: o detector age antes do orçamento de 2 s.
-    expect(dt).toBeLessThan(2_000);
+    // A precondição da spec: o detector age antes do orçamento da trava.
+    expect(dt).toBeLessThan(PRAZO);
 
     let ensaio: Ensaio | null = null;
     const registros: Record<string, unknown>[] = [];

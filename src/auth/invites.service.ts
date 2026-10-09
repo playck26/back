@@ -17,6 +17,7 @@ import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContaDaEmpresa,
   travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
 } from '../acesso/trava-de-email';
 import { ehViolacaoDeEmail } from '../acesso/traduzir-violacao-de-unicidade';
 
@@ -182,8 +183,10 @@ export class InvitesService {
     const senhaHash = await this.students.hashSenha(dto.senha);
 
     return comTraducaoDaTravaDeEmail(() =>
-      this.prisma.$transaction(async (tx) =>
-        this.aceitarNaTransacao(tx, dto, tokenHash, emailTravado, senhaHash),
+      this.prisma.$transaction(
+        async (tx) =>
+          this.aceitarNaTransacao(tx, dto, tokenHash, emailTravado, senhaHash),
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
       ),
     ).catch((erro: unknown) => {
       // A segunda linha: a corrida que passou da trava recebe a resposta da

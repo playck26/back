@@ -1,5 +1,15 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import {
+  FOLGA_DO_TIMEOUT_MS,
+  LATENCIA_DE_ORCAMENTO_MS,
+} from '../common/lock/prazo-de-espera';
+import { TIMEOUT_DA_IMPORTACAO_MS } from '../people/importacao/importacao-de-alunos.service';
+import {
+  MAX_IDAS_SOB_A_TRAVA_DE_EMAIL,
+  PRAZO_DA_TRAVA_DE_EMAIL_MS,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
+} from './trava-de-email';
 
 /**
  * SPEC-086/AC-026 — **a prova estrutural da chave da trava por e-mail.**
@@ -71,6 +81,46 @@ describe('SPEC-086/AC-026 — a chave da trava é montada num lugar só', () => 
       expect(trava).toBeGreaterThan(inicio);
       // Da âncora até a trava: nenhuma instrução no cliente da transação.
       expect(texto.slice(inicio, trava)).not.toMatch(/await tx\./);
+    },
+  );
+
+  /**
+   * O orçamento e o `timeout` amarrados à mesma conta da matrícula (D3), e
+   * cada transação que cria conta com o `timeout` explícito. Sem ele vale o
+   * padrão de 5 s do Prisma — menor que o orçamento de 5 s mais o trabalho
+   * do vencedor —, e o E2 respondia 500 (`P2028`) na Neon (run 37958329679).
+   */
+  it('orçamento = 2 s + idas × 250 ms; timeout = orçamento + idas × 250 ms + 1 s', () => {
+    expect(PRAZO_DA_TRAVA_DE_EMAIL_MS).toBe(
+      2_000 + MAX_IDAS_SOB_A_TRAVA_DE_EMAIL * LATENCIA_DE_ORCAMENTO_MS,
+    );
+    expect(TIMEOUT_DA_TRAVA_DE_EMAIL_MS).toBe(
+      PRAZO_DA_TRAVA_DE_EMAIL_MS +
+        MAX_IDAS_SOB_A_TRAVA_DE_EMAIL * LATENCIA_DE_ORCAMENTO_MS +
+        FOLGA_DO_TIMEOUT_MS,
+    );
+    expect([PRAZO_DA_TRAVA_DE_EMAIL_MS, TIMEOUT_DA_TRAVA_DE_EMAIL_MS]).toEqual([
+      5_000, 9_000,
+    ]);
+    expect(TIMEOUT_DA_IMPORTACAO_MS).toBe(15_000 + PRAZO_DA_TRAVA_DE_EMAIL_MS);
+  });
+
+  const TIMEOUTS: [string, string, number][] = [
+    ['E1', 'auth/auth.service.ts', 1],
+    ['E2', 'auth/invites.service.ts', 1],
+    ['E4', 'people/students.service.ts', 1],
+    ['E5b', 'people/teachers.service.ts', 1],
+    ['E5a', 'acesso/acesso.service.ts', 1],
+    ['E7/E8', 'companies/companies.service.ts', 2],
+  ];
+
+  it.each(TIMEOUTS)(
+    '%s (%s): a transação que cria conta declara o timeout da trava',
+    (_e, arquivo, vezes) => {
+      const texto = readFileSync(join(SRC, arquivo), 'utf8');
+      expect(
+        texto.split('timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS').length - 1,
+      ).toBe(vezes);
     },
   );
 });

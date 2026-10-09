@@ -18,6 +18,7 @@ import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContaDaEmpresa,
   travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
 } from '../acesso/trava-de-email';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -286,8 +287,16 @@ export class TeachersService {
     // SPEC-086/E5b — o `catch` fica FORA da transação: quando a corrida chega
     // aqui (só por SQL de fora da trava), o rollback já desfez conta e vínculo.
     const { vinculado } = await comTraducaoDaTravaDeEmail(() =>
-      this.prisma.$transaction((tx) =>
-        this.criarContaNaTransacao(tx, companyId, professor, email, senhaHash),
+      this.prisma.$transaction(
+        (tx) =>
+          this.criarContaNaTransacao(
+            tx,
+            companyId,
+            professor,
+            email,
+            senhaHash,
+          ),
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
       ),
     ).catch((erro: unknown) => {
       if (ehViolacaoDeEmail(erro)) throw new ConflictException(EMAIL_EM_USO);

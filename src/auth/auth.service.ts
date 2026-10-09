@@ -35,6 +35,7 @@ import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContaDaEmpresa,
   travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
 } from '../acesso/trava-de-email';
 import { ehViolacaoDeEmail } from '../acesso/traduzir-violacao-de-unicidade';
 import type { RegisterAlunoDto } from './dto/register-aluno.dto';
@@ -602,38 +603,41 @@ export class AuthService {
     // é uma única operação de provisionamento de conta, não duas escritas
     // independentes disputando a tabela `alunos` ao longo do tempo.
     const usuario = await comTraducaoDaTravaDeEmail(() =>
-      this.prisma.$transaction(async (tx) => {
-        await travarEmailsParaCriarConta(tx, [dto.email]);
-        const conflito = await tx.usuario.findFirst({
-          where: conflitoDeContaDaEmpresa(dto.email, empresa.id),
-          select: { id: true },
-        });
-        if (conflito) {
-          throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
-        }
+      this.prisma.$transaction(
+        async (tx) => {
+          await travarEmailsParaCriarConta(tx, [dto.email]);
+          const conflito = await tx.usuario.findFirst({
+            where: conflitoDeContaDaEmpresa(dto.email, empresa.id),
+            select: { id: true },
+          });
+          if (conflito) {
+            throw new UnprocessableEntityException(CADASTRO_PUBLICO_RECUSADO);
+          }
 
-        const usuarioCriado = await tx.usuario.create({
-          data: {
-            email: dto.email,
-            senhaHash,
-            nome: dto.nome,
-            telefone: dto.telefone,
-            role: 'aluno',
+          const usuarioCriado = await tx.usuario.create({
+            data: {
+              email: dto.email,
+              senhaHash,
+              nome: dto.nome,
+              telefone: dto.telefone,
+              role: 'aluno',
+              companyId: empresa.id,
+            },
+          });
+
+          // Auto-cadastro público (C1): a iniciativa é de quem chegou pelo
+          // link, não da empresa — nasce `pendente` até um admin aprovar
+          // (REQ-008/AC-014, INV-010).
+          await this.students.criarPerfilDeAluno(tx, {
+            usuarioId: usuarioCriado.id,
             companyId: empresa.id,
-          },
-        });
+            vinculo: 'pendente',
+          });
 
-        // Auto-cadastro público (C1): a iniciativa é de quem chegou pelo
-        // link, não da empresa — nasce `pendente` até um admin aprovar
-        // (REQ-008/AC-014, INV-010).
-        await this.students.criarPerfilDeAluno(tx, {
-          usuarioId: usuarioCriado.id,
-          companyId: empresa.id,
-          vinculo: 'pendente',
-        });
-
-        return usuarioCriado;
-      }),
+          return usuarioCriado;
+        },
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+      ),
     ).catch((erro: unknown) => {
       // SPEC-086 — a segunda linha: a corrida que passou da trava (só por SQL
       // de fora dela) recebe a mesma resposta da pré-conferência. O `catch`

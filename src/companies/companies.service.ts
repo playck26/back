@@ -11,6 +11,7 @@ import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContaDeGestao,
   travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
 } from '../acesso/trava-de-email';
 import { LogoDaEmpresaService } from './logo-da-empresa.service';
 import { AuthService } from '../auth/auth.service';
@@ -164,85 +165,90 @@ export class CompaniesService {
     // Transação: empresa + admin inicial nascem juntos ou nenhum dos dois
     // (NFR-002, AC-001) — nenhuma criação acontece fora do $transaction.
     const { empresa, adminUsuario } = await comTraducaoDaTravaDeEmail(() =>
-      this.prisma.$transaction(async (tx) => {
-        // SPEC-086 — a PRIMEIRA instrução, antes da empresa: uma recusa aqui
-        // não deixa empresa, catálogo, horário nem nível para trás.
-        await travarEmailsParaCriarConta(tx, [dto.adminInicial.email]);
-        const conflito = await tx.usuario.findFirst({
-          where: conflitoDeContaDeGestao(dto.adminInicial.email),
-          select: { id: true },
-        });
-        if (conflito) {
-          throw new UnprocessableEntityException(EMAIL_DO_ADMIN_INICIAL_EM_USO);
-        }
+      this.prisma.$transaction(
+        async (tx) => {
+          // SPEC-086 — a PRIMEIRA instrução, antes da empresa: uma recusa aqui
+          // não deixa empresa, catálogo, horário nem nível para trás.
+          await travarEmailsParaCriarConta(tx, [dto.adminInicial.email]);
+          const conflito = await tx.usuario.findFirst({
+            where: conflitoDeContaDeGestao(dto.adminInicial.email),
+            select: { id: true },
+          });
+          if (conflito) {
+            throw new UnprocessableEntityException(
+              EMAIL_DO_ADMIN_INICIAL_EM_USO,
+            );
+          }
 
-        const empresaCriada = await tx.empresa.create({
-          // DEF-015 (SPEC-021/TASK-005) — **o catálogo vem junto na
-          // criação.** Sem este `include`, a resposta saía sem `esportes`, e
-          // o tipo do SAdmin declara `esportes: string[]` e a lista faz
-          // `.join(", ")`. Não quebrou porque o formulário descarta o
-          // resultado; no dia em que alguém mostrar a empresa recém criada,
-          // é `undefined.join()` — a forma exata do DEF-012.
-          include: COM_CATALOGO,
-          data: {
-            nome: dto.nome,
-            slug: await gerarSlugUnico(tx, dto.nome),
-            logoUrl: dto.logoUrl,
-            // A escrita dupla em `empresas.esportes` viveu entre a TASK-008 e
-            // a TASK-004, e acabou: a coluna não existe mais. O campo do
-            // SAdmin continua chegando aqui como `dto.esportes` — o que mudou
-            // é para onde ele vai.
-            //
-            // SPEC-020/TASK-008 — o campo do SAdmin passa a SEMEAR o
-            // catálogo. Antes, um clube nascia com a lista de esportes numa
-            // coluna que nenhuma quadra consultava, e o gestor tinha de
-            // cadastrar tudo de novo em `/quadras/catalogos`. Duas listas que
-            // não se falam era o estado que a INV-057 condena.
-            esportesQuadra: {
-              create: nomesDeCatalogo(dto.esportes).map((nome, ordem) => ({
-                nome,
-                ordem,
-              })),
+          const empresaCriada = await tx.empresa.create({
+            // DEF-015 (SPEC-021/TASK-005) — **o catálogo vem junto na
+            // criação.** Sem este `include`, a resposta saía sem `esportes`, e
+            // o tipo do SAdmin declara `esportes: string[]` e a lista faz
+            // `.join(", ")`. Não quebrou porque o formulário descarta o
+            // resultado; no dia em que alguém mostrar a empresa recém criada,
+            // é `undefined.join()` — a forma exata do DEF-012.
+            include: COM_CATALOGO,
+            data: {
+              nome: dto.nome,
+              slug: await gerarSlugUnico(tx, dto.nome),
+              logoUrl: dto.logoUrl,
+              // A escrita dupla em `empresas.esportes` viveu entre a TASK-008 e
+              // a TASK-004, e acabou: a coluna não existe mais. O campo do
+              // SAdmin continua chegando aqui como `dto.esportes` — o que mudou
+              // é para onde ele vai.
+              //
+              // SPEC-020/TASK-008 — o campo do SAdmin passa a SEMEAR o
+              // catálogo. Antes, um clube nascia com a lista de esportes numa
+              // coluna que nenhuma quadra consultava, e o gestor tinha de
+              // cadastrar tudo de novo em `/quadras/catalogos`. Duas listas que
+              // não se falam era o estado que a INV-057 condena.
+              esportesQuadra: {
+                create: nomesDeCatalogo(dto.esportes).map((nome, ordem) => ({
+                  nome,
+                  ordem,
+                })),
+              },
             },
-          },
-        });
+          });
 
-        // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias.
-        // Sem isto, uma empresa criada depois da migration não teria
-        // configuração nenhuma e cairia na rede de segurança do resolver —
-        // funcionaria, mas o admin abriria a tela de configuração vazia e
-        // não entenderia de onde vêm os horários que o aluno enxerga.
-        await tx.horarioFuncionamento.createMany({
-          data: Array.from({ length: 7 }, (_, diaSemana) => ({
-            companyId: empresaCriada.id,
-            quadraId: null,
-            diaSemana,
-            horaInicio: parseTimeOnly('06:00'),
-            horaFim: parseTimeOnly('22:00'),
-            fechado: false,
-          })),
-        });
+          // SPEC-010: empresa nova nasce com o horário padrão dos 7 dias.
+          // Sem isto, uma empresa criada depois da migration não teria
+          // configuração nenhuma e cairia na rede de segurança do resolver —
+          // funcionaria, mas o admin abriria a tela de configuração vazia e
+          // não entenderia de onde vêm os horários que o aluno enxerga.
+          await tx.horarioFuncionamento.createMany({
+            data: Array.from({ length: 7 }, (_, diaSemana) => ({
+              companyId: empresaCriada.id,
+              quadraId: null,
+              diaSemana,
+              horaInicio: parseTimeOnly('06:00'),
+              horaFim: parseTimeOnly('22:00'),
+              fechado: false,
+            })),
+          });
 
-        // SPEC-075/D7 (decisões 4 e 7): empresa nova nasce com Iniciante,
-        // Intermediário e Avançado — **na mesma transação** (INV-075f: nunca
-        // empresa sem nível, nem nível sem empresa) e **antes do admin
-        // inicial** (a sonda (b) da AC-013 prende esta ordem). Quem escreve é
-        // MOD-003; aqui só se delega.
-        await this.niveis.semearNiveisPadrao(tx, empresaCriada.id);
+          // SPEC-075/D7 (decisões 4 e 7): empresa nova nasce com Iniciante,
+          // Intermediário e Avançado — **na mesma transação** (INV-075f: nunca
+          // empresa sem nível, nem nível sem empresa) e **antes do admin
+          // inicial** (a sonda (b) da AC-013 prende esta ordem). Quem escreve é
+          // MOD-003; aqui só se delega.
+          await this.niveis.semearNiveisPadrao(tx, empresaCriada.id);
 
-        const adminCriado = await tx.usuario.create({
-          data: {
-            email: dto.adminInicial.email,
-            senhaHash,
-            nome: dto.adminInicial.nome,
-            telefone: dto.adminInicial.telefone,
-            role: 'company_admin',
-            companyId: empresaCriada.id,
-          },
-        });
+          const adminCriado = await tx.usuario.create({
+            data: {
+              email: dto.adminInicial.email,
+              senhaHash,
+              nome: dto.adminInicial.nome,
+              telefone: dto.adminInicial.telefone,
+              role: 'company_admin',
+              companyId: empresaCriada.id,
+            },
+          });
 
-        return { empresa: empresaCriada, adminUsuario: adminCriado };
-      }),
+          return { empresa: empresaCriada, adminUsuario: adminCriado };
+        },
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+      ),
     ).catch((erro: unknown) => {
       // A segunda linha, FORA da transação: quando ela roda, o rollback já
       // desfez a empresa e tudo o que nasceu com ela.
@@ -341,33 +347,36 @@ export class CompaniesService {
 
     try {
       return await comTraducaoDaTravaDeEmail(() =>
-        this.prisma.$transaction(async (tx) => {
-          // SPEC-086 — a trava do e-mail e a conferência sob ela.
-          await travarEmailsParaCriarConta(tx, [dto.email]);
-          const conflito = await tx.usuario.findFirst({
-            where: conflitoDeContaDeGestao(dto.email),
-            select: { id: true },
-          });
-          if (conflito) throw new ConflictException(EMAIL_EM_USO);
+        this.prisma.$transaction(
+          async (tx) => {
+            // SPEC-086 — a trava do e-mail e a conferência sob ela.
+            await travarEmailsParaCriarConta(tx, [dto.email]);
+            const conflito = await tx.usuario.findFirst({
+              where: conflitoDeContaDeGestao(dto.email),
+              select: { id: true },
+            });
+            if (conflito) throw new ConflictException(EMAIL_EM_USO);
 
-          return tx.usuario.create({
-            data: {
-              email: dto.email,
-              senhaHash,
-              nome: dto.nome,
-              telefone: dto.telefone,
-              role: 'company_admin',
-              companyId,
-            },
-            select: {
-              id: true,
-              nome: true,
-              email: true,
-              status: true,
-              senhaTemporaria: true,
-            },
-          });
-        }),
+            return tx.usuario.create({
+              data: {
+                email: dto.email,
+                senhaHash,
+                nome: dto.nome,
+                telefone: dto.telefone,
+                role: 'company_admin',
+                companyId,
+              },
+              select: {
+                id: true,
+                nome: true,
+                email: true,
+                status: true,
+                senhaTemporaria: true,
+              },
+            });
+          },
+          { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+        ),
       );
     } catch (erro) {
       throw traduzirViolacaoDeUnicidade(erro);

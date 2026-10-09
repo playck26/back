@@ -2527,7 +2527,8 @@ de `presencas` tem de tirar o `company_id` da ocorrência.** O endurecimento
   aceite de convite, gestor cria aluno, acesso do professor pelos dois caminhos,
   importação, empresa nova, novo gestor) chama `travarEmailsParaCriarConta`
   como **primeira** instrução — a função SQL toma `pg_advisory_xact_lock` por
-  e-mail, em ordem, com **um** orçamento de 2 s (`playck.prazo_email`) e devolve
+  e-mail, em ordem, com **um** orçamento de 5 s (`PRAZO_DA_TRAVA_DE_EMAIL_MS`, 2 s + 12 idas ×
+  250 ms; `playck.prazo_email`), dentro de um `timeout` explícito de 9 s e devolve
   o `lock_timeout` anterior no fim. A pré-conferência roda sob ela. Esgotado o
   prazo, `EsperaPorEmailEsgotada` → `503 SERVIDOR_OCUPADO`
   (`comTraducaoDaTravaDeEmail`, fora da transação). Na importação vêm dois

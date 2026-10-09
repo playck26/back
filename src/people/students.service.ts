@@ -17,6 +17,7 @@ import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContaDaEmpresa,
   travarEmailsParaCriarConta,
+  TIMEOUT_DA_TRAVA_DE_EMAIL_MS,
 } from '../acesso/trava-de-email';
 import { ehViolacaoDeEmail } from '../acesso/traduzir-violacao-de-unicidade';
 import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
@@ -211,36 +212,39 @@ export class StudentsService {
     const senhaHash = await bcrypt.hash(senhaTemporaria, BCRYPT_COST);
 
     const aluno = await comTraducaoDaTravaDeEmail(() =>
-      this.prisma.$transaction(async (tx) => {
-        await travarEmailsParaCriarConta(tx, [dto.email]);
-        const conflito = await tx.usuario.findFirst({
-          where: conflitoDeContaDaEmpresa(dto.email, companyId),
-          select: { id: true },
-        });
-        if (conflito) throw new ConflictException(EMAIL_JA_CADASTRADO);
+      this.prisma.$transaction(
+        async (tx) => {
+          await travarEmailsParaCriarConta(tx, [dto.email]);
+          const conflito = await tx.usuario.findFirst({
+            where: conflitoDeContaDaEmpresa(dto.email, companyId),
+            select: { id: true },
+          });
+          if (conflito) throw new ConflictException(EMAIL_JA_CADASTRADO);
 
-        const usuario = await tx.usuario.create({
-          data: {
-            email: dto.email,
-            senhaHash,
-            nome: dto.nome,
-            telefone: dto.telefone,
-            role: 'aluno',
+          const usuario = await tx.usuario.create({
+            data: {
+              email: dto.email,
+              senhaHash,
+              nome: dto.nome,
+              telefone: dto.telefone,
+              role: 'aluno',
+              companyId,
+              senhaTemporaria: true,
+              senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
+            },
+          });
+
+          // Cadastro pelo admin (C3): a iniciativa é da empresa, então o
+          // aluno já nasce aprovado (REQ-008/AC-014).
+          return this.criarPerfilDeAluno(tx, {
+            usuarioId: usuario.id,
             companyId,
-            senhaTemporaria: true,
-            senhaTemporariaExpiraEm: senhaTemporariaExpiraEm(),
-          },
-        });
-
-        // Cadastro pelo admin (C3): a iniciativa é da empresa, então o
-        // aluno já nasce aprovado (REQ-008/AC-014).
-        return this.criarPerfilDeAluno(tx, {
-          usuarioId: usuario.id,
-          companyId,
-          nivelId: dto.nivelId,
-          vinculo: 'aprovado',
-        });
-      }),
+            nivelId: dto.nivelId,
+            vinculo: 'aprovado',
+          });
+        },
+        { timeout: TIMEOUT_DA_TRAVA_DE_EMAIL_MS },
+      ),
     ).catch((erro: unknown) => {
       // SPEC-086 — a segunda linha, fora da transação (o rollback já
       // aconteceu): a corrida recebe a mesma resposta da pré-conferência.
