@@ -72,7 +72,24 @@ const PREFIXO_E7 = 'SPEC-086 Ordem E7';
  * verdade passa a ser o evento `query` do Prisma: o SQL e os parâmetros como o
  * banco os recebeu, no momento da execução, já serializados em texto.
  */
-const real = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+/**
+ * Achado IMP-086-R6-01: os eventos do Prisma não dizem de qual CONEXÃO veio
+ * cada instrução, e um COMMIT/BEGIN feito por outra conexão (o `PrismaService`
+ * fora do `tx`) enganava o leitor de blocos. Em vez de adivinhar a conexão, o
+ * app roda com UMA conexão só (`connection_limit=1`, `pool_timeout` curto):
+ * todos os eventos são da mesma sessão, e uma segunda conexão aberta com a
+ * transação viva nem consegue começar — o caso falha por esgotar o pool.
+ */
+function urlDeUmaConexao(): string {
+  const u = new URL(process.env.DATABASE_URL as string);
+  u.searchParams.set('connection_limit', '1');
+  u.searchParams.set('pool_timeout', '5');
+  return u.toString();
+}
+const real = new PrismaClient({
+  datasources: { db: { url: urlDeUmaConexao() } },
+  log: [{ emit: 'event', level: 'query' }],
+});
 
 /** Cada instrução que o banco executou, em ordem: o SQL e os parâmetros. */
 let executadas: { query: string; params: string }[] = [];

@@ -1392,11 +1392,16 @@ describe('SPEC-086/AC-010 — a matriz: {aluno, professor} × {conta inativa, em
    * a conta ativa), confere os ids EXATOS no corpo e no token, e religa como
    * controle positivo — corrigir um ramo não esconde o outro.
    */
-  const CELULAS: ['aluno' | 'professor', 'conta' | 'empresa'][] = [
+  // Achado IMP-086-R6-02: a terceira coluna é a SENHA — a conta, ativa e de
+  // empresa ativa, com outra senha. Um filtro que aceitasse o bcrypt falso de
+  // um papel passava, porque toda a matriz usava a mesma senha.
+  const CELULAS: ['aluno' | 'professor', 'conta' | 'empresa' | 'senha'][] = [
     ['aluno', 'conta'],
     ['aluno', 'empresa'],
+    ['aluno', 'senha'],
     ['professor', 'conta'],
     ['professor', 'empresa'],
+    ['professor', 'senha'],
   ];
 
   it.each(CELULAS)(
@@ -1411,16 +1416,40 @@ describe('SPEC-086/AC-010 — a matriz: {aluno, professor} × {conta inativa, em
           ? await contaDeProfessor(eAlvo, email)
           : await conta(eAlvo, email, 'valida');
 
-      const desligar =
-        oQue === 'conta'
-          ? `UPDATE usuarios SET status = 'inativo' WHERE id = '${alvo}'`
-          : `UPDATE empresas SET status = 'inativa' WHERE id = '${eAlvo}'`;
-      const religar =
-        oQue === 'conta'
-          ? `UPDATE usuarios SET status = 'ativo' WHERE id = '${alvo}'`
-          : `UPDATE empresas SET status = 'ativa' WHERE id = '${eAlvo}'`;
+      const desligar = async () => {
+        if (oQue === 'conta') {
+          await q(
+            `UPDATE usuarios SET status = 'inativo' WHERE id = '${alvo}'`,
+          );
+        } else if (oQue === 'empresa') {
+          await q(
+            `UPDATE empresas SET status = 'inativa' WHERE id = '${eAlvo}'`,
+          );
+        } else {
+          const outra = await bcrypt.hash('outra-senha-da-matriz-123', 4);
+          await q(
+            `UPDATE usuarios SET senha_hash = $1 WHERE id = $2::uuid`,
+            outra,
+            alvo,
+          );
+        }
+      };
+      const religar = async () => {
+        if (oQue === 'conta') {
+          await q(`UPDATE usuarios SET status = 'ativo' WHERE id = '${alvo}'`);
+        } else if (oQue === 'empresa') {
+          await q(`UPDATE empresas SET status = 'ativa' WHERE id = '${eAlvo}'`);
+        } else {
+          const certa = await bcrypt.hash(SENHA, 4);
+          await q(
+            `UPDATE usuarios SET senha_hash = $1 WHERE id = $2::uuid`,
+            certa,
+            alvo,
+          );
+        }
+      };
 
-      await q(desligar);
+      await desligar();
       const fora = await loginComEscolha(email);
       expect({
         corpo: fora.corpo.escolha.empresas.map((e) => e.usuarioId).sort(porId),
@@ -1430,7 +1459,7 @@ describe('SPEC-086/AC-010 — a matriz: {aluno, professor} × {conta inativa, em
         token: [a1, a2].sort(porId),
       });
 
-      await q(religar);
+      await religar();
       const dentro = await loginComEscolha(email);
       expect({
         corpo: dentro.corpo.escolha.empresas
