@@ -7,6 +7,10 @@ import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompaniesService } from './companies.service';
+
+/** O texto exato que o super admin lê (literal: o teste prende a frase). */
+const MSG_GESTOR =
+  'Este e-mail já está em uso na plataforma. Um gestor precisa de um e-mail que nenhuma outra conta use.';
 import { LevelsService } from '../people/levels.service';
 import {
   type ContaNoDuble,
@@ -799,8 +803,10 @@ describe('CompaniesService', () => {
       const erro = await service.criarAdmin('e1', DTO).catch((e: unknown) => e);
 
       expect(erro).toBeInstanceOf(ConflictException);
-      expect((erro as ConflictException).getResponse()).toMatchObject({
+      expect((erro as ConflictException).getResponse()).toEqual({
+        statusCode: 409,
         code: 'EMAIL_EM_USO',
+        message: MSG_GESTOR,
       });
       expect(prisma.usuario.create).not.toHaveBeenCalled();
       expect(bcrypt.hash).not.toHaveBeenCalled();
@@ -818,8 +824,12 @@ describe('CompaniesService', () => {
       const erro = await service.criarAdmin('e1', DTO).catch((e: unknown) => e);
 
       expect(erro).toBeInstanceOf(ConflictException);
-      expect((erro as ConflictException).getResponse()).toMatchObject({
+      // A frase do gestor também na corrida, e não a de aluno/professor que o
+      // tradutor compartilhado devolve.
+      expect((erro as ConflictException).getResponse()).toEqual({
+        statusCode: 409,
         code: 'EMAIL_EM_USO',
+        message: MSG_GESTOR,
       });
     });
 
@@ -998,9 +1008,7 @@ describe('CompaniesService — o e-mail do gestor (SPEC-086/E7, E8)', () => {
         expect(m.tx.usuario.create).toHaveBeenCalledTimes(1);
       } else {
         expect(r).toBeInstanceOf(UnprocessableEntityException);
-        expect((r as Error).message).toBe(
-          'Email do admin inicial já cadastrado',
-        );
+        expect((r as Error).message).toBe(MSG_GESTOR);
         expect(m.tx.empresa.create).not.toHaveBeenCalled();
         expect(m.tx.usuario.create).not.toHaveBeenCalled();
       }
@@ -1041,9 +1049,10 @@ describe('CompaniesService — o e-mail do gestor (SPEC-086/E7, E8)', () => {
         expect(m.tx.usuario.create).toHaveBeenCalledTimes(1);
       } else {
         expect(r).toBeInstanceOf(ConflictException);
-        expect((r as ConflictException).getResponse()).toMatchObject({
+        expect((r as ConflictException).getResponse()).toEqual({
           statusCode: 409,
           code: 'EMAIL_EM_USO',
+          message: MSG_GESTOR,
         });
         expect(m.tx.usuario.create).not.toHaveBeenCalled();
       }
