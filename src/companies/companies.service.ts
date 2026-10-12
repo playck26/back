@@ -86,8 +86,24 @@ export interface PublicAdminUsuario {
   companyId: string;
 }
 
-/** A recusa do e-mail do gestor inicial (E7 da SPEC-086), a mesma de antes. */
-const EMAIL_DO_ADMIN_INICIAL_EM_USO = 'Email do admin inicial já cadastrado';
+/**
+ * A recusa do e-mail de um gestor, **a mesma frase** na empresa nova (E7) e no
+ * gestor adicional (E8). Gestor tem e-mail único na plataforma inteira (I5 da
+ * SPEC-086): o conflito é QUALQUER conta com o e-mail — outro gestor, mas
+ * também aluno ou professor —, por isso a frase não diz "já é gestor".
+ * Só o super admin a vê.
+ */
+export const MENSAGEM_EMAIL_DE_GESTOR_EM_USO =
+  'Este e-mail já está em uso na plataforma. Um gestor precisa de um e-mail que nenhuma outra conta use.';
+
+/** E8: o mesmo `409 EMAIL_EM_USO` de sempre, com a frase do gestor. */
+export const EMAIL_DE_GESTOR_EM_USO = Object.freeze({
+  ...EMAIL_EM_USO,
+  message: MENSAGEM_EMAIL_DE_GESTOR_EM_USO,
+});
+
+/** E7: o mesmo `422` de antes, com a frase do gestor. */
+const EMAIL_DO_ADMIN_INICIAL_EM_USO = MENSAGEM_EMAIL_DE_GESTOR_EM_USO;
 
 @Injectable()
 export class CompaniesService {
@@ -340,7 +356,7 @@ export class CompaniesService {
       select: { id: true },
     });
     if (emailExistente) {
-      throw new ConflictException(EMAIL_EM_USO);
+      throw new ConflictException(EMAIL_DE_GESTOR_EM_USO);
     }
 
     const senhaHash = await bcrypt.hash(dto.senha, BCRYPT_COST);
@@ -355,7 +371,7 @@ export class CompaniesService {
               where: conflitoDeContaDeGestao(dto.email),
               select: { id: true },
             });
-            if (conflito) throw new ConflictException(EMAIL_EM_USO);
+            if (conflito) throw new ConflictException(EMAIL_DE_GESTOR_EM_USO);
 
             return tx.usuario.create({
               data: {
@@ -379,7 +395,16 @@ export class CompaniesService {
         ),
       );
     } catch (erro) {
-      throw traduzirViolacaoDeUnicidade(erro);
+      // A corrida que passou da trava: o tradutor compartilhado devolve o
+      // `EMAIL_EM_USO` com a frase de aluno/professor; aqui vale a do gestor.
+      const traduzido = traduzirViolacaoDeUnicidade(erro);
+      if (
+        traduzido instanceof ConflictException &&
+        (traduzido.getResponse() as { code?: unknown }).code === 'EMAIL_EM_USO'
+      ) {
+        throw new ConflictException(EMAIL_DE_GESTOR_EM_USO);
+      }
+      throw traduzido;
     }
   }
 

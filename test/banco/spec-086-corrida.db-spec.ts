@@ -461,7 +461,8 @@ async function montar(
             status: 422,
             corpo: {
               statusCode: 422,
-              message: 'Email do admin inicial já cadastrado',
+              message:
+                'Este e-mail já está em uso na plataforma. Um gestor precisa de um e-mail que nenhuma outra conta use.',
               error: 'Unprocessable Entity',
             },
           }),
@@ -509,8 +510,17 @@ async function montar(
           confereStatus(r, 201);
           expect(bodyOf<{ email: string }>(r).email).toBe(email);
         },
+        // A frase do gestor, a mesma da E7 (não a de aluno/professor).
         confereRecusa: (r) =>
-          expect(statusECorpo(r)).toEqual({ status: 409, corpo: EMAIL_EM_USO }),
+          expect(statusECorpo(r)).toEqual({
+            status: 409,
+            corpo: {
+              statusCode: 409,
+              code: 'EMAIL_EM_USO',
+              message:
+                'Este e-mail já está em uso na plataforma. Um gestor precisa de um e-mail que nenhuma outra conta use.',
+            },
+          }),
         confereDepois: () => Promise.resolve(),
       };
   }
