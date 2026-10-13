@@ -645,6 +645,77 @@ describe('ClassesService', () => {
       expect(courtsServiceMock.registerClassOccupancy).not.toHaveBeenCalled();
     });
 
+    /**
+     * **O renomear que estourava os 5 s da transação em produção (2026-10-13).**
+     *
+     * O teste de cima manda só `{ nome }` — e o Admin nunca manda isso: o
+     * salvar do formulário envia `nome`, `quadraId`, `encontros` e o resto,
+     * mesmo quando só o nome mudou. Bastava a chave existir para o `update`
+     * tratar como mudança de horário, cancelar e regerar a grade inteira
+     * (com a devolução das reposições), e a transação passava de 5 s numa
+     * turma grande: `P2028`, e o nome não mudava.
+     *
+     * Este caso usa o corpo do formulário, com quadra e encontros IGUAIS aos
+     * gravados — e em outra ordem, porque igualdade
+     * de recorrência é de conjunto, não de lista.
+     */
+    it('salvar o formulário inteiro com a MESMA grade só renomeia — não cancela nem regera', async () => {
+      (prisma.turma.findFirst as unknown as jest.Mock)
+        .mockResolvedValueOnce({
+          ...existente,
+          encontros: [
+            {
+              diaSemana: 1,
+              horaInicio: new Date('1970-01-01T07:00:00.000Z'),
+              horaFim: new Date('1970-01-01T08:00:00.000Z'),
+            },
+            {
+              diaSemana: 3,
+              horaInicio: new Date('1970-01-01T18:00:00.000Z'),
+              horaFim: new Date('1970-01-01T19:00:00.000Z'),
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          ...existente,
+          nome: 'Nome novo',
+          nivelId: null,
+          professorId: null,
+          capacidade: 4,
+          alunos: [],
+          encontros: [],
+          _count: { alunos: 0 },
+        });
+      tx.turma.update.mockResolvedValue({ id: 't1' });
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+
+      await service.update(
+        'c1',
+        't1',
+        {
+          nome: 'Nome novo',
+          quadraId: 'q1',
+          capacidade: 4,
+          encontros: [
+            { diaSemana: 3, horaInicio: '18:00', horaFim: '19:00' },
+            { diaSemana: 1, horaInicio: '07:00', horaFim: '08:00' },
+          ],
+        },
+        'autor-1',
+      );
+
+      expect(
+        courtsServiceMock.cancelFutureClassOccupancies,
+      ).not.toHaveBeenCalled();
+      expect(courtsServiceMock.registerClassOccupancy).not.toHaveBeenCalled();
+      // E a lista de encontros não é reescrita: apagar e recriar as mesmas
+      // linhas é trabalho na transação sem efeito nenhum.
+      const data = (tx.turma.update.mock.calls[0] as [{ data: object }])[0]
+        .data;
+      expect(data).not.toHaveProperty('encontros');
+      expect(data).toHaveProperty('nome', 'Nome novo');
+    });
+
     it('mudança de horário cancela ocupações futuras e gera novas (NFR-001)', async () => {
       (prisma.turma.findFirst as unknown as jest.Mock)
         .mockResolvedValueOnce(existente)

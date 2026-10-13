@@ -99,3 +99,24 @@ export function validarEncontros(encontros: EncontroDaTurma[]): void {
     }
   }
 }
+
+/**
+ * As duas listas descrevem a MESMA recorrência? Compara como conjunto: a
+ * ordem em que o formulário manda os encontros não é mudança de grade, e
+ * tratá-la como mudança cancelaria e regeraria a grade inteira à toa.
+ *
+ * Duas listas com o mesmo encontro repetido um número diferente de vezes
+ * não são iguais — e a validação recusa repetição antes de qualquer
+ * gravação, de qualquer forma.
+ */
+export function mesmaRecorrencia(
+  a: EncontroDaTurma[],
+  b: EncontroDaTurma[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const chave = (e: EncontroDaTurma) =>
+    `${e.diaSemana}|${e.horaInicio}|${e.horaFim}`;
+  const ordenadas = (l: EncontroDaTurma[]) => l.map(chave).sort();
+  const [x, y] = [ordenadas(a), ordenadas(b)];
+  return x.every((k, i) => k === y[i]);
+}
