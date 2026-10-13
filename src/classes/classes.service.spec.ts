@@ -714,6 +714,55 @@ describe('ClassesService', () => {
         .data;
       expect(data).not.toHaveProperty('encontros');
       expect(data).toHaveProperty('nome', 'Nome novo');
+      // Validação independente da back#172, achado 1 — **a quadra igual
+      // também não é gravada.** Se fosse, um formulário obsoleto (lido antes
+      // de outra edição mover a turma para `q2`) regravaria `q1` sem regerar:
+      // turma em `q1`, ocupações em `q2`. Sem gravar, a turma fica onde a
+      // outra edição a deixou, junto com a grade dela.
+      expect(data).toHaveProperty('quadraId', undefined);
+    });
+
+    it('mesmo dia e início, só o FIM mudou: é mudança de grade, e regera', async () => {
+      // Validação independente da back#172, achado 2 — o caso de cima usa
+      // dias distintos e passaria com uma comparação que ignorasse `horaFim`.
+      (prisma.turma.findFirst as unknown as jest.Mock)
+        .mockResolvedValueOnce({
+          ...existente,
+          encontros: [
+            {
+              diaSemana: 2,
+              horaInicio: new Date('1970-01-01T14:00:00.000Z'),
+              horaFim: new Date('1970-01-01T15:00:00.000Z'),
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          ...existente,
+          nome: 'T',
+          nivelId: null,
+          professorId: null,
+          capacidade: 4,
+          alunos: [],
+          encontros: [],
+          _count: { alunos: 0 },
+        });
+      tx.turma.update.mockResolvedValue({ id: 't1' });
+      (prisma.quadra.findFirst as jest.Mock).mockResolvedValue(QUADRA_ATIVA);
+
+      await service.update(
+        'c1',
+        't1',
+        {
+          quadraId: 'q1',
+          encontros: [{ diaSemana: 2, horaInicio: '14:00', horaFim: '15:30' }],
+        },
+        'autor-1',
+      );
+
+      expect(
+        courtsServiceMock.cancelFutureClassOccupancies,
+      ).toHaveBeenCalledTimes(1);
+      expect(courtsServiceMock.registerClassOccupancy).toHaveBeenCalledTimes(1);
     });
 
     it('mudança de horário cancela ocupações futuras e gera novas (NFR-001)', async () => {

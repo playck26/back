@@ -650,7 +650,10 @@ export class ClassesService {
             nome: dto.nome,
             nivelId: dto.nivelId,
             professorId: dto.professorId,
-            quadraId: dto.quadraId,
+            // Igual à lida não é gravada, como os encontros abaixo: um
+            // formulário obsoleto regravaria a quadra antiga sem regerar a
+            // grade, e a turma apontaria para uma quadra sem as aulas dela.
+            quadraId: mudouQuadra ? dto.quadraId : undefined,
             capacidade: dto.capacidade,
             status: dto.status,
             ...(dto.encontros === undefined || !mudouEncontros
