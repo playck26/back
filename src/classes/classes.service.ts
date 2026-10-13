@@ -55,7 +55,11 @@ import { PAGINA_PADRAO } from './dto/proximas-aulas-query.dto';
 import type { CreateClassDto } from './dto/create-class.dto';
 import type { PaginationQueryDto } from '../people/dto/pagination-query.dto';
 import type { UpdateClassDto } from './dto/update-class.dto';
-import { validarEncontros, type EncontroDaTurma } from './encontros';
+import {
+  mesmaRecorrencia,
+  validarEncontros,
+  type EncontroDaTurma,
+} from './encontros';
 import type {
   TurmaDoProfessorDetalheResponseDto,
   TurmaDoProfessorResponseDto,
@@ -499,6 +503,7 @@ export class ClassesService {
   ) {
     const existente = await this.prisma.turma.findFirst({
       where: { id, companyId },
+      include: { encontros: true },
     });
     if (!existente) {
       throw new NotFoundException();
@@ -507,8 +512,26 @@ export class ClassesService {
     // **`encontros` ausente NÃO mexe na recorrência.** Renomear a turma ou
     // mudar a capacidade não pode cancelar e regerar oito ocupações — e,
     // pior, apagar as que já têm chamada marcada.
-    const mudouHorario =
-      dto.quadraId !== undefined || dto.encontros !== undefined;
+    //
+    // **E presente mas IGUAL ao gravado também não** (2026-10-13). O Admin
+    // salva o formulário inteiro — `quadraId` e `encontros` vão junto com o
+    // nome novo —, e comparar só a presença da chave fazia todo renomear
+    // cancelar e regerar a grade: numa turma grande a transação passava dos
+    // 5 s do Prisma (`P2028`) e o nome não mudava. Igualdade de recorrência
+    // é de conjunto, não de lista: a ordem do formulário não é mudança.
+    const mudouQuadra =
+      dto.quadraId !== undefined && dto.quadraId !== existente.quadraId;
+    const mudouEncontros =
+      dto.encontros !== undefined &&
+      !mesmaRecorrencia(
+        dto.encontros,
+        (existente.encontros ?? []).map((e) => ({
+          diaSemana: e.diaSemana,
+          horaInicio: formatTimeOnly(e.horaInicio),
+          horaFim: formatTimeOnly(e.horaFim),
+        })),
+      );
+    const mudouHorario = mudouQuadra || mudouEncontros;
 
     /**
      * SPEC-035 — **o `status` passa a AGIR, e até aqui ele não agia.**
@@ -630,7 +653,7 @@ export class ClassesService {
             quadraId: dto.quadraId,
             capacidade: dto.capacidade,
             status: dto.status,
-            ...(dto.encontros === undefined
+            ...(dto.encontros === undefined || !mudouEncontros
               ? {}
               : {
                   // **Substitui a lista inteira**, na mesma transação. Não há
