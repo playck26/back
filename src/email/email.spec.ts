@@ -403,15 +403,15 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
       expect(imagens).toHaveLength(1);
       const banner = imagens[0] ?? '';
       expect(atributo(banner, 'src')).toBe(
-        'https://app.playck.com.br/email/playck-banner.jpg',
+        'https://app.playck.com.br/email/playck-banner-v2.jpg',
       );
       expect(atributo(banner, 'src')).not.toContain('?');
       expect(atributo(banner, 'width')).toBe('600');
       expect(atributo(banner, 'height')).toBe('213');
       expect(atributo(banner, 'alt')).toBe(
-        'PlayCK — Mais que tênis, é conexão.',
+        'PlayCK — Mais que esporte, é conexão.',
       );
-      expect(BANNER_DO_EMAIL.alt).toBe('PlayCK — Mais que tênis, é conexão.');
+      expect(BANNER_DO_EMAIL.alt).toBe('PlayCK — Mais que esporte, é conexão.');
 
       // Nenhum pixel nem outra imagem por outro caminho.
       expect(html).not.toMatch(/url\(|background=|<picture|<svg|<iframe/i);
@@ -454,7 +454,7 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f5;">
 <tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;">
-<tr><td style="padding:0;"><img src="https://app.playck.com.br/email/playck-banner.jpg" width="600" height="213" alt="PlayCK — Mais que tênis, é conexão." style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr>
+<tr><td style="padding:0;"><img src="https://app.playck.com.br/email/playck-banner-v2.jpg" width="600" height="213" alt="PlayCK — Mais que esporte, é conexão." style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr>
 <tr><td style="padding:32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;color:#18181b;">
 <p style="margin:0 0 16px;">Olá, Maria Souza.</p>
 <p style="margin:0 0 24px;"><strong>Clube Exemplo</strong> convidou você para o PlayCK. Crie a sua senha para entrar:</p>

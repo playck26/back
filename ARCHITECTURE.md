@@ -2415,7 +2415,9 @@ chave fica dentro dele, como o `STORAGE_CONFIG`.
 `montarLinkDeAtivacao` monta `URL_CLIENTE/ativar/<token>` e não recebe
 `Request`. O modelo escapa todo valor de pessoa (`escaparHtml`), higieniza o
 nome do clube no remetente (`"<clube> via PlayCK" <EMAIL_REMETENTE>`) e tem
-uma imagem só, o banner, servido pelo Cliente em `/email/playck-banner.jpg`.
+uma imagem só, o banner, servido pelo Cliente em `/email/playck-banner-v2.jpg`
+(delta D-2026-10-14); o `/email/playck-banner.jpg` anterior continua servido
+para os e-mails já enviados.
 
 **Ativar é uma transação com o usuário travado primeiro** (D7): o bcrypt da
 senha nova é calculado **antes**; dentro, localiza o convite pelo `sha256` do
