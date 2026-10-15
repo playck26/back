@@ -20,16 +20,18 @@ export const VALIDADE_DO_CONVITE_EM_DIAS = 7;
 
 /**
  * I15 — o banner da PlayCK, **a única imagem** do e-mail. O arquivo é servido
- * pelo Cliente (`public/email/playck-banner.jpg`, 1200 × 427, conferido pelo
- * teste de lá, AC-044); aqui ficam o endereço e as medidas do HTML.
+ * pelo Cliente (`public/email/playck-banner-v2.jpg`, 1200 × 427, conferido pelo
+ * teste de lá, AC-044); aqui ficam o endereço e as medidas do HTML. A arte
+ * multiesporte entrou no delta D-2026-10-14; o `playck-banner.jpg` anterior
+ * continua servido para os e-mails já enviados.
  *
  * A URL é a mesma para todo mundo e não leva parâmetro: não diz quem abriu.
  */
 export const BANNER_DO_EMAIL = {
-  caminho: '/email/playck-banner.jpg',
+  caminho: '/email/playck-banner-v2.jpg',
   largura: 600,
   altura: 213,
-  alt: 'PlayCK — Mais que tênis, é conexão.',
+  alt: 'PlayCK — Mais que esporte, é conexão.',
 } as const;
 
 /**
