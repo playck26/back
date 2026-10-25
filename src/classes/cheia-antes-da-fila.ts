@@ -40,11 +40,12 @@ export async function cheiaAntesDaFila(
              OR e.limite_turmas_por_aluno IS NULL
              OR (SELECT count(*) FROM turma_alunos minhas
                   WHERE minhas.aluno_id = a.id) < e.limite_turmas_por_aluno)
-        AND t.nivel_id IS NOT DISTINCT FROM COALESCE(
+        AND (NOT e.nivel_restringe_acesso  -- SPEC-089/D5 (P12)
+             OR t.nivel_id IS NOT DISTINCT FROM COALESCE(
               a.nivel_id,
               (SELECT n.id FROM niveis n
                 WHERE n.company_id = t.company_id
-                ORDER BY n.ordem, n.created_at, n.id LIMIT 1))
+                ORDER BY n.ordem, n.created_at, n.id LIMIT 1)))
         AND (SELECT count(*) FROM turma_alunos z WHERE z.turma_id = t.id)
             >= t.capacidade
       ) AS cheia

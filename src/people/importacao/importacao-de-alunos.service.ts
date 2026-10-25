@@ -63,6 +63,7 @@ import {
   travarNivelDaEmpresa,
   type LoteNovo,
   type NivelEfetivo,
+  nivelRestringe,
 } from '../nivel-efetivo';
 import { linhasComNumero } from './csv';
 import type {
@@ -346,7 +347,12 @@ export interface GanchosDaImportacao {
 /** O que as conferências de turma leem, pelo cliente de quem chama. */
 type LeitorDaTurma = Pick<
   Prisma.TransactionClient,
-  'nivel' | 'turmaAluno' | 'faltaAvisada' | 'reposicaoDeAula' | 'ocupacaoQuadra'
+  | 'nivel'
+  | 'empresa'
+  | 'turmaAluno'
+  | 'faltaAvisada'
+  | 'reposicaoDeAula'
+  | 'ocupacaoQuadra'
 >;
 
 interface TurmaConferida {
@@ -487,6 +493,9 @@ async function errosDeTurma(
   const primeiro = linhas.some((l) => l.nivelId === null)
     ? await primeiroNivel(db, companyId)
     : null;
+  // SPEC-089 (P8) — clube que não restringe por nível não recusa linha por
+  // nível. Lido uma vez: a importação toda vê o mesmo interruptor.
+  const restringe = await nivelRestringe(db, companyId);
 
   /** Por turma, as linhas que passaram no nível, na ordem do arquivo. */
   const candidatas = new Map<string, number[]>();
@@ -508,7 +517,7 @@ async function errosDeTurma(
       : primeiro
         ? { ...primeiro, doPrimeiro: true }
         : null;
-    if (!podeEntrarPorNivel(turma.nivelId, efetivo)) {
+    if (restringe && !podeEntrarPorNivel(turma.nivelId, efetivo)) {
       erro(
         l.linha,
         mensagemDeNivelIncompativel(

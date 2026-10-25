@@ -25,6 +25,7 @@ import {
   conferirEdicaoDeNivel,
   recusaPorNivel,
   travarNivelDaEmpresa,
+  nivelRestringe,
 } from '../people/nivel-efetivo';
 import {
   CTE_DO_PRAZO,
@@ -869,6 +870,11 @@ export class ClassesService {
     ) {
       throw new ConflictException(MENSAGEM_DE_CAPACIDADE_EXCEDIDA);
     }
+    // SPEC-089 — a chave do nível, lida FORA da transação: dentro, ela seria
+    // uma ida a mais no teto da SPEC-082 (AC-011). Trocar a chave não toma
+    // trava (D3), e as duas leituras possíveis numa corrida são estados
+    // válidos (D2) — ler antes ou dentro dá a mesma garantia.
+    const restringe = await nivelRestringe(this.prisma, companyId);
     return this.prisma.$transaction(
       async (tx) => {
         // SPEC-075/D13 + SPEC-082/D1-D2 — a instrução inicial, PRIMEIRA da
@@ -936,6 +942,7 @@ export class ClassesService {
           turma.nivel_id,
           aluno.nivelId,
           'gestor',
+          restringe,
         );
         if (recusa) throw new UnprocessableEntityException(recusa);
 

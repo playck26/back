@@ -130,9 +130,10 @@ function montar(opcoes?: {
       ),
     },
     empresa: {
-      findUniqueOrThrow: jest
-        .fn()
-        .mockResolvedValue({ limiteTurmasPorAluno: o.limite }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        limiteTurmasPorAluno: o.limite,
+        nivelRestringeAcesso: true,
+      }),
     },
     turmaAluno: {
       findFirst: jest
@@ -407,9 +408,10 @@ describe('disponíveis — o nível (SPEC-057/TASK-004, card 5350)', () => {
           .mockResolvedValue({ id: 'nivel-1', nome: 'Iniciante' }),
       },
       empresa: {
-        findUniqueOrThrow: jest
-          .fn()
-          .mockResolvedValue({ limiteTurmasPorAluno: null }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          limiteTurmasPorAluno: null,
+          nivelRestringeAcesso: true,
+        }),
       },
       turma: { findMany: jest.fn().mockResolvedValue(turmas) },
       turmaAluno: { findMany: jest.fn().mockResolvedValue([]) },
@@ -467,9 +469,10 @@ describe('disponíveis', () => {
           .mockResolvedValue({ id: 'aluno-1', vinculo: 'aprovado' }),
       },
       empresa: {
-        findUniqueOrThrow: jest
-          .fn()
-          .mockResolvedValue({ limiteTurmasPorAluno: null }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          limiteTurmasPorAluno: null,
+          nivelRestringeAcesso: true,
+        }),
       },
       turma: {
         findMany: jest.fn().mockResolvedValue([
@@ -518,9 +521,10 @@ describe('disponíveis', () => {
           .mockResolvedValue({ id: 'aluno-1', vinculo: 'pendente' }),
       },
       empresa: {
-        findUniqueOrThrow: jest
-          .fn()
-          .mockResolvedValue({ limiteTurmasPorAluno: null }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          limiteTurmasPorAluno: null,
+          nivelRestringeAcesso: true,
+        }),
       },
       turma: {
         findMany: jest.fn().mockResolvedValue([

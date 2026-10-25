@@ -18,7 +18,7 @@ import {
   diaEMes,
 } from './ocupacao-da-ocorrencia';
 import {
-  nivelEfetivoDoAluno,
+  acessoPorNivelDoAluno,
   podeEntrarPorNivel,
   recusaPorNivel,
   travarNivelDaEmpresa,
@@ -92,7 +92,7 @@ export class MatriculaDoAlunoService {
     const [empresa, turmas, minhas] = await Promise.all([
       this.prisma.empresa.findUniqueOrThrow({
         where: { id: companyId },
-        select: { limiteTurmasPorAluno: true },
+        select: { limiteTurmasPorAluno: true, nivelRestringeAcesso: true },
       }),
       this.prisma.turma.findMany({
         where: { companyId },
@@ -130,10 +130,12 @@ export class MatriculaDoAlunoService {
     // está: a turma em que ele já está (de antes da regra, D6) continua,
     // porque é por ela que ele sai. O recorte não vira `motivo` — um motivo
     // novo apareceria como texto que o Cliente no ar não conhece.
-    const efetivo = await nivelEfetivoDoAluno(
+    // SPEC-089 — `acessoPorNivelDoAluno`: sem restrição no clube, não corta.
+    const efetivo = await acessoPorNivelDoAluno(
       this.prisma,
       companyId,
       aluno.nivelId,
+      empresa.nivelRestringeAcesso,
     );
 
     const visiveis = turmas.filter(
@@ -323,7 +325,8 @@ export class MatriculaDoAlunoService {
 
     const empresa = await tx.empresa.findUniqueOrThrow({
       where: { id: companyId },
-      select: { limiteTurmasPorAluno: true },
+      // SPEC-089 — a chave do nível vem nesta mesma ida (teto da SPEC-082).
+      select: { limiteTurmasPorAluno: true, nivelRestringeAcesso: true },
     });
     if (empresa.limiteTurmasPorAluno !== null) {
       const minhas = await tx.turmaAluno.count({
@@ -355,6 +358,7 @@ export class MatriculaDoAlunoService {
       turma.nivel_id,
       doAluno.nivelId,
       'aluno',
+      empresa.nivelRestringeAcesso,
     );
     if (recusa) throw new UnprocessableEntityException(recusa);
 

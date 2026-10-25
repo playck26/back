@@ -12,7 +12,7 @@ import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import { antecedenciaEmMinutos } from './ocorrencia-relevante';
 import {
   filtroDeTurmaPorNivel,
-  nivelEfetivoDoAluno,
+  acessoPorNivelDoAluno,
   recusaPorNivel,
 } from '../people/nivel-efetivo';
 import { calcularOcupacao, carregarConjuntos } from './ocupacao-da-ocorrencia';
@@ -254,7 +254,8 @@ export class ReposicaoService {
     // `take: 200`: cortar depois devolveria lista vazia a quem tem 200
     // ocorrências de outro nível antes da primeira do seu. É o mesmo predicado
     // de `podeEntrarPorNivel`, escrito para o banco (`nivel-efetivo.ts`).
-    const efetivo = await nivelEfetivoDoAluno(
+    // SPEC-089 — `acessoPorNivelDoAluno`: sem restrição no clube, não corta.
+    const efetivo = await acessoPorNivelDoAluno(
       this.prisma,
       companyId,
       aluno.nivelId,

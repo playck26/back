@@ -72,6 +72,10 @@ function montar(ganchos: GanchosDaImportacao = {}) {
     { id: 't-terca', nome: 'Terça', capacidade: 10, nivelId: 'n1' },
   ];
   const leitores = {
+    // SPEC-089 — a chave do nível do clube; ligada, como toda empresa.
+    empresa: {
+      findUnique: jest.fn().mockResolvedValue({ nivelRestringeAcesso: true }),
+    },
     nivel: {
       findMany: jest.fn().mockResolvedValue([{ id: 'n1', nome: 'Iniciante' }]),
       findFirst: jest.fn().mockResolvedValue({ id: 'n1', nome: 'Iniciante' }),

@@ -85,6 +85,10 @@ function buildMocks() {
     },
   };
   const prisma = {
+    // SPEC-089 — a chave do nível que o `allocateStudent` lê antes da transação.
+    empresa: {
+      findUnique: jest.fn().mockResolvedValue({ nivelRestringeAcesso: true }),
+    },
     turma: {
       findMany: jest.fn(),
       count: jest.fn(),

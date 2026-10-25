@@ -47,9 +47,11 @@ export type NivelEfetivo = {
  */
 export function podeEntrarPorNivel(
   nivelDaTurma: string | null,
-  nivelEfetivo: { id: string } | null,
+  nivelEfetivo: { id: string } | SemRestricao | null,
 ): boolean {
   if (nivelDaTurma === null) return true;
+  // SPEC-089 — o clube não restringe por nível.
+  if (nivelEfetivo !== null && 'semRestricao' in nivelEfetivo) return true;
   return nivelEfetivo !== null && nivelEfetivo.id === nivelDaTurma;
 }
 
@@ -63,9 +65,11 @@ export function podeEntrarPorNivel(
  * Sem nível efetivo (empresa sem nível), não corta nada.
  */
 export function filtroDeTurmaPorNivel(
-  nivelEfetivo: { id: string } | null,
+  nivelEfetivo: { id: string } | SemRestricao | null,
 ): Prisma.TurmaWhereInput {
   if (nivelEfetivo === null) return {};
+  // SPEC-089 — o clube não restringe por nível: não corta nada.
+  if ('semRestricao' in nivelEfetivo) return {};
   // SPEC-079 (ADR-029) — saiu o `{ nivelId: null }` do `OR`: toda turma tem
   // nível, o banco garante (`NOT NULL`), e o tipo do Prisma não aceita mais o
   // nulo. O ramo "turma sem nível" do `podeEntrarPorNivel` continua, só que
@@ -111,6 +115,51 @@ export async function nivelEfetivoDoAluno(
   }
   const primeiro = await primeiroNivel(db, companyId);
   return primeiro ? { ...primeiro, doPrimeiro: true } : null;
+}
+
+// ==========================================================================
+// SPEC-089 — o interruptor do clube
+// ==========================================================================
+
+/**
+ * SPEC-089/D1 — **o clube decide se o nível restringe o acesso.** A única
+ * leitura de `empresas.nivel_restringe_acesso` do servidor: os pontos que
+ * aplicam a regra (P1 a P12 da spec) não leem a coluna, perguntam aqui —
+ * direto, ou pelas peças abaixo que já perguntam (`recusaPorNivel`,
+ * `acessoPorNivelDoAluno`, `conferirEdicaoDeNivel`).
+ *
+ * Empresa inexistente responde `true`: na dúvida, a regra da SPEC-075.
+ */
+export async function nivelRestringe(
+  db: Pick<Prisma.TransactionClient, 'empresa'>,
+  companyId: string,
+): Promise<boolean> {
+  const empresa = await db.empresa.findUnique({
+    where: { id: companyId },
+    select: { nivelRestringeAcesso: true },
+  });
+  return empresa?.nivelRestringeAcesso ?? true;
+}
+
+/** SPEC-089 — o aluno de um clube que não restringe por nível: entra em tudo. */
+export const SEM_RESTRICAO = { semRestricao: true } as const;
+export type SemRestricao = typeof SEM_RESTRICAO;
+
+/**
+ * SPEC-089 — **o que as listas e a importação usam no lugar do efetivo**: o
+ * nível efetivo do aluno quando o clube restringe, e `SEM_RESTRICAO` quando
+ * não. `podeEntrarPorNivel` e `filtroDeTurmaPorNivel` aceitam os dois.
+ */
+export async function acessoPorNivelDoAluno(
+  db: Pick<Prisma.TransactionClient, 'nivel' | 'empresa'>,
+  companyId: string,
+  nivelIdDoAluno: string | null,
+  restringe?: boolean,
+): Promise<NivelEfetivo | SemRestricao | null> {
+  if (!(restringe ?? (await nivelRestringe(db, companyId)))) {
+    return SEM_RESTRICAO;
+  }
+  return nivelEfetivoDoAluno(db, companyId, nivelIdDoAluno);
 }
 
 /** Para quem a mensagem é escrita (D4). */
@@ -162,15 +211,24 @@ export type RecusaDeNivel = {
  * este corpo, **depois de leituras e antes de qualquer escrita** — é o que faz
  * a confirmação da fila encerrar a linha em vez de abortar a transação (fato 5
  * da spec).
+ *
+ * **SPEC-089 — `restringe`, quando quem chama já leu a empresa.** As
+ * transações de matrícula têm teto de idas ao banco (SPEC-082/AC-011), e
+ * `entrar`/`confirmar`/`allocateStudent` já leem a linha da empresa ou da
+ * turma: elas trazem a coluna nessa mesma leitura e passam aqui. Sem o
+ * parâmetro, a peça lê sozinha. Quem decide continua sendo esta função.
  */
 export async function recusaPorNivel(
-  db: LeitorDeNivel,
+  db: Pick<Prisma.TransactionClient, 'nivel' | 'empresa'>,
   companyId: string,
   nivelIdDaTurma: string | null,
   nivelIdDoAluno: string | null,
   para: LeitorDaRecusa,
+  restringe?: boolean,
 ): Promise<RecusaDeNivel | null> {
   if (nivelIdDaTurma === null) return null;
+  // SPEC-089 — clube que não restringe por nível não recusa por nível.
+  if (!(restringe ?? (await nivelRestringe(db, companyId)))) return null;
   const efetivo = await nivelEfetivoDoAluno(db, companyId, nivelIdDoAluno);
   if (podeEntrarPorNivel(nivelIdDaTurma, efetivo)) return null;
   const daTurma = await db.nivel.findFirst({
@@ -377,12 +435,18 @@ export type RecusaDeEdicao = {
  * efetivo, sem uma segunda cópia da regra para "como ficaria".
  */
 export async function conferirEdicaoDeNivel<T>(
-  db: Pick<Prisma.TransactionClient, 'nivel' | 'turmaAluno'>,
+  db: Pick<Prisma.TransactionClient, 'nivel' | 'turmaAluno' | 'empresa'>,
   companyId: string,
   afetados: ParesAfetados,
   edicao: EdicaoDeNivel,
   escrever: () => Promise<T>,
 ): Promise<{ resultado: T; recusa: RecusaDeEdicao | null }> {
+  // SPEC-089 — sem restrição por nível, nenhum par é "incompatível": a
+  // edição grava sem conferir. Com a restrição religada, os pares que
+  // nasceram no período livre são ANTIGOS para a próxima edição (D2).
+  if (!(await nivelRestringe(db, companyId))) {
+    return { resultado: await escrever(), recusa: null };
+  }
   const antes = await paresIncompativeis(db, companyId, afetados);
   const resultado = await escrever();
   const depois = await paresIncompativeis(db, companyId, afetados);

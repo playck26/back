@@ -8,6 +8,10 @@ import { LevelsService } from './levels.service';
 
 function buildPrismaMock() {
   const mock = {
+    // SPEC-089 — a chave do nível do clube; ligada, como toda empresa.
+    empresa: {
+      findUnique: jest.fn().mockResolvedValue({ nivelRestringeAcesso: true }),
+    },
     nivel: {
       findMany: jest.fn(),
       findUnique: jest.fn(),

@@ -92,6 +92,7 @@ export class MeCompanyController {
         // no campo. Rota que só escreve obriga a tela a adivinhar o que está
         // salvo — e ela adivinharia "sem limite" para todo mundo.
         limiteTurmasPorAluno: true,
+        nivelRestringeAcesso: true,
       },
     });
 
@@ -111,6 +112,7 @@ export class MeCompanyController {
       status: empresa.status,
       permiteAutoCadastro: empresa.permiteAutoCadastro,
       limiteTurmasPorAluno: empresa.limiteTurmasPorAluno,
+      nivelRestringeAcesso: empresa.nivelRestringeAcesso,
       logoUrl: this.logos.resolver(empresa).logoUrl,
     };
   }
