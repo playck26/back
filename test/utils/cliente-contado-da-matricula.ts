@@ -174,7 +174,11 @@ export function clienteContado(
     faltaAvisada: { findMany: () => [] },
     reposicaoDeAula: { findMany: () => [] },
     empresa: {
-      findUniqueOrThrow: () => ({ limiteTurmasPorAluno: cenario.limite }),
+      findUniqueOrThrow: () => ({
+        limiteTurmasPorAluno: cenario.limite,
+        // SPEC-089 — a chave vem nesta mesma ida; ligada, o ramo mais caro.
+        nivelRestringeAcesso: true,
+      }),
     },
     aluno: {
       findUniqueOrThrow: () => ({
@@ -256,6 +260,11 @@ export function clienteContado(
         ocupacaoId: null,
         faltaId: null,
       }),
+    },
+    // SPEC-089 — a chave do nível que o `allocateStudent` lê antes da
+    // transação. Ligada: o ramo mais caro passa pela recusa por nível.
+    empresa: {
+      findUnique: jest.fn().mockResolvedValue({ nivelRestringeAcesso: true }),
     },
     // A leitura de fora do D5: "não sei dizer que está cheia".
     $queryRaw: jest.fn().mockResolvedValue([{ cheia: false }]),

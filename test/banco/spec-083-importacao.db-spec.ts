@@ -456,6 +456,30 @@ describe('SPEC-083/AC-010 — o nível da linha contra o da turma', () => {
   });
 });
 
+describe('SPEC-089/AC-007 — clube que não restringe por nível: a importação não recusa por nível', () => {
+  it('as mesmas linhas do AC-010, com a chave desligada, entram as três', async () => {
+    const ini = await turma('Iniciantes', { nivel: INICIANTE });
+    const int = await turma('Intermediários', { nivel: INTERMEDIARIO });
+    await q(
+      `UPDATE empresas SET nivel_restringe_acesso = false WHERE id = '${EMPRESA}'`,
+    );
+
+    const { r } = await pelaRota(
+      [
+        'nome;email;nivel;turma',
+        `Ana;${email('ana')};Intermediário;Iniciantes`,
+        `Beto;${email('beto')};;Intermediários`,
+        `Cris;${email('cris')};;Iniciantes`,
+      ].join('\r\n'),
+    );
+
+    expect(r.status).toBe(200);
+    expect(corpoDe<ImportacaoConcluidaDto>(r).criados).toHaveLength(3);
+    expect(await db.turmaAluno.count({ where: { turmaId: ini } })).toBe(2);
+    expect(await db.turmaAluno.count({ where: { turmaId: int } })).toBe(1);
+  });
+});
+
 describe('SPEC-083/AC-011 — a capacidade, pela ordem do arquivo', () => {
   async function turmaComTresVagas(): Promise<string> {
     const t = await turma('Cinco lugares', { capacidade: 5 });

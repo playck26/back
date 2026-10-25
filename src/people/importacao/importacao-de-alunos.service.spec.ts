@@ -101,6 +101,10 @@ function montar(
       findMany: jest.fn().mockResolvedValue([]),
     },
     // O primeiro nível é o primeiro da lista (o dublê já vem em ordem).
+    // SPEC-089 — a chave do nível do clube; ligada, como toda empresa.
+    empresa: {
+      findUnique: jest.fn().mockResolvedValue({ nivelRestringeAcesso: true }),
+    },
     nivel: {
       findMany: jest.fn().mockResolvedValue(niveis),
       findFirst: jest.fn().mockResolvedValue(niveis[0] ?? null),

@@ -482,6 +482,14 @@ export class MinhaEmpresaResponseDto {
   @ApiProperty({ type: Number, nullable: true, minimum: 1, example: 2 })
   limiteTurmasPorAluno!: number | null;
 
+  /**
+   * SPEC-089 — **o nível do aluno restringe as turmas em que ele entra?**
+   * `true` é a regra da SPEC-075 e o padrão de toda empresa. Com `false`, o
+   * Cliente mostra todas as turmas, e o servidor não recusa por nível.
+   */
+  @ApiProperty({ type: Boolean })
+  nivelRestringeAcesso!: boolean;
+
   @ApiProperty({ type: String, nullable: true })
   logoUrl!: string | null;
 }
