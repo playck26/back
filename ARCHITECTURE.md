@@ -1,6 +1,15 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-10-08** (era 2026-10-04).
+**Fonte: análise direta do código.** Data: **2026-10-25** (era 2026-10-08).
+
+**SPEC-089, na branch `spec089/nivel-opcional` (sobre o `main` em `7074aea`),
+2026-10-25.** Conferidos por comando: **61 migrations** (`ls -d
+prisma/migrations/*/`; +1, `20261025120000_spec089_nivel_restringe_acesso`),
+**43 modelos e 19 enums** (sem mudança), **125 caminhos / 174 operações** no
+`openapi.json` (sem mudança: só um campo novo em `MinhaEmpresaResponseDto`). A
+migration cria **uma coluna** (`empresas.nivel_restringe_acesso`, `boolean NOT
+NULL DEFAULT true`). Ver "O clube escolhe (SPEC-089)" dentro da seção "O nível
+decide o acesso".
 
 **SPEC-086, na branch `spec-086/mesmo-email` (sobre o `main` em `b748fa8`, com a
 SPEC-085), 2026-10-08.** Conferidos por comando: **60 migrations**
@@ -1069,6 +1078,27 @@ recusado pelo `forbidNonWhitelisted`. O banco recusa o que passar por fora:
 > serializada pelo lock da ocupação.*
 
 ### O nível decide o acesso (SPEC-075, ADR-026)
+
+> **O clube escolhe (SPEC-089).** `empresas.nivel_restringe_acesso` (padrão
+> `true`) liga e desliga tudo o que esta seção descreve. **Quem lê a coluna é
+> `nivelRestringe` (`nivel-efetivo.ts`), e mais ninguém**: `recusaPorNivel` e
+> `conferirEdicaoDeNivel` perguntam a ela; as listas usam
+> `acessoPorNivelDoAluno`, que devolve `SEM_RESTRICAO` (aceito por
+> `podeEntrarPorNivel` e `filtroDeTurmaPorNivel`); a importação lê uma vez por
+> lote; o SQL do `cheiaAntesDaFila` ganhou `NOT e.nivel_restringe_acesso OR`.
+>
+> **Teto de idas da SPEC-082:** `entrar` e `confirmar` trazem a coluna na leitura
+> de `empresas` que já faziam (do limite de turmas) e a passam ao
+> `recusaPorNivel` pelo parâmetro `restringe`; o `allocateStudent` a lê **antes**
+> da transação (uma ida fora do teto). Trocar a chave não toma trava (D3), e
+> nenhuma das duas leituras de uma corrida é estado inválido (D2: vale para
+> entrar, nunca para expulsar). **O `marcarNaTransacao` (reposição) ganhou uma
+> ida dentro da transação** — ele não tem teto de idas contado; se um dia tiver,
+> a coluna entra numa leitura que ele já faz.
+>
+> Religar a chave não tira ninguém de turma, e o par (aluno, turma) que nasceu
+> com ela desligada é **antigo** para a D12: a próxima edição só é recusada se
+> criar um par incompatível **novo**.
 
 **Até a SPEC-075 o nível era recorte de tela** (INV-072a): o servidor não
 recusava nada por nível. Agora ele recusa, e **a regra mora num arquivo só**,
