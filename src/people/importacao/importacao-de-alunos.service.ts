@@ -58,12 +58,11 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   mensagemDeNivelIncompativel,
-  podeEntrarPorNivel,
+  regraDeNivelDoLote,
   primeiroNivel,
   travarNivelDaEmpresa,
   type LoteNovo,
   type NivelEfetivo,
-  nivelRestringe,
 } from '../nivel-efetivo';
 import { linhasComNumero } from './csv';
 import type {
@@ -466,7 +465,7 @@ async function primeiraLinhaQueLotaAula(
  * `FOR UPDATE` das turmas). **A conferência é aviso; a garantia é esta mesma
  * conta refeita sob as travas.**
  *
- * - **nível**: `podeEntrarPorNivel(turma, efetivo)`, com o efetivo da linha
+ * - **nível**: o predicado de `regraDeNivelDoLote` (SPEC-089), com o efetivo da linha
  *   ou, vazio, o primeiro nível da empresa — o que inclui a linha sem nível
  *   numa turma que não é do primeiro (I4). A recusa é o texto do gestor da
  *   SPEC-075;
@@ -493,9 +492,10 @@ async function errosDeTurma(
   const primeiro = linhas.some((l) => l.nivelId === null)
     ? await primeiroNivel(db, companyId)
     : null;
-  // SPEC-089 (P8) — clube que não restringe por nível não recusa linha por
-  // nível. Lido uma vez: a importação toda vê o mesmo interruptor.
-  const restringe = await nivelRestringe(db, companyId);
+  // SPEC-089 (P8) — a regra do lote vem pronta de `nivel-efetivo.ts` (D1):
+  // clube que não restringe recebe um predicado que deixa entrar em tudo.
+  // Lida uma vez: a importação toda vê o mesmo interruptor.
+  const podeEntrar = await regraDeNivelDoLote(db, companyId);
 
   /** Por turma, as linhas que passaram no nível, na ordem do arquivo. */
   const candidatas = new Map<string, number[]>();
@@ -517,7 +517,7 @@ async function errosDeTurma(
       : primeiro
         ? { ...primeiro, doPrimeiro: true }
         : null;
-    if (restringe && !podeEntrarPorNivel(turma.nivelId, efetivo)) {
+    if (!podeEntrar(turma.nivelId, efetivo)) {
       erro(
         l.linha,
         mensagemDeNivelIncompativel(

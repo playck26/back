@@ -14,8 +14,6 @@
  * O AC-007 (importação) mora em `spec-083-importacao.db-spec.ts`, ao lado do
  * caso de nível da importação, que monta o que ela precisa.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { HttpException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
@@ -25,6 +23,7 @@ import { ClassesService } from '../../src/classes/classes.service';
 import { MatriculaDoAlunoService } from '../../src/classes/matricula-do-aluno.service';
 import { ReposicaoService } from '../../src/classes/reposicao.service';
 import type { AccessTokenPayload } from '../../src/common/types/jwt-payload.type';
+import { CompaniesService } from '../../src/companies/companies.service';
 import type { LogoDaEmpresaService } from '../../src/companies/logo-da-empresa.service';
 import { MeCompanyController } from '../../src/companies/me-company.controller';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
@@ -247,7 +246,7 @@ describe('AC-001 — o padrão é `true`, observado sem gravar a coluna', () => 
     expect(await ler(EMPRESA)).toBe(true);
   });
 
-  it('pelo Prisma, sem informar o campo (o que a criação de empresa faz)', async () => {
+  it('pelo Prisma, sem informar o campo', async () => {
     await db.empresa.create({
       data: {
         id: EMPRESA_NOVA,
@@ -258,37 +257,38 @@ describe('AC-001 — o padrão é `true`, observado sem gravar a coluna', () => 
     expect(await ler(EMPRESA_NOVA)).toBe(true);
   });
 
-  it('empresa que já existia ANTES da migration: o ALTER da 089 a deixa `true`', async () => {
-    // Uma cópia de `empresas` sem a coluna é o banco de antes; nela entra uma
-    // linha, e só DEPOIS roda o SQL da migration, lido do arquivo (S1: um
-    // DEFAULT false no arquivo deixa esta linha `false`).
-    const sql = readFileSync(
-      join(
-        __dirname,
-        '../../prisma/migrations/20261025120000_spec089_nivel_restringe_acesso/migration.sql',
-      ),
-      'utf8',
+  it('pelo serviço de criação de empresa (`CompaniesService.create`), o valor persistido', async () => {
+    // IMPL-089-02 — o serviço de verdade, e a coluna lida do banco depois:
+    // um `nivelRestringeAcesso: false` no `data` da criação (N1) fica
+    // vermelho aqui.
+    const servico = new CompaniesService(
+      p,
+      // `create` não usa o AuthService (gera o hash com bcrypt direto).
+      {} as ConstructorParameters<typeof CompaniesService>[1],
+      {
+        resolver: (e: { logoUrl: string | null }) => ({ logoUrl: e.logoUrl }),
+      } as unknown as ConstructorParameters<typeof CompaniesService>[2],
+      new LevelsService(p),
     );
-    expect(sql).toMatch(/ALTER TABLE "empresas"/);
-    await db.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `CREATE TEMP TABLE empresas_089 (LIKE empresas INCLUDING DEFAULTS) ON COMMIT DROP`,
-      );
-      await tx.$executeRawUnsafe(
-        `ALTER TABLE empresas_089 DROP COLUMN nivel_restringe_acesso`,
-      );
-      await tx.$executeRawUnsafe(
-        `INSERT INTO empresas_089 (id,nome,slug,updated_at) VALUES (gen_random_uuid(),'antiga','antiga',now())`,
-      );
-      await tx.$executeRawUnsafe(
-        sql.replace(/"empresas"/g, 'empresas_089').replace(/^--.*$/gm, ''),
-      );
-      const [linha] = await tx.$queryRawUnsafe<{ v: boolean }[]>(
-        `SELECT nivel_restringe_acesso AS v FROM empresas_089`,
-      );
-      expect(linha.v).toBe(true);
+    const criada = await servico.create({
+      nome: 'SPEC-089 pelo servico',
+      esportes: ['Tênis'],
+      adminInicial: {
+        nome: 'Admin',
+        email: 'spec089.servico@teste.local',
+        senha: 'senha-de-teste-089',
+      },
     });
+    try {
+      expect(await ler(criada.empresa.id)).toBe(true);
+    } finally {
+      await limparEmpresa(db, criada.empresa.id);
+    }
   });
+
+  // A empresa que já existia ANTES da migration: a sequência literal (banco
+  // até a migration anterior, a empresa, e só então a da 089) mora em
+  // `spec-089-migracao.db-spec.ts`, num banco descartável próprio.
 });
 
 // ==========================================================================

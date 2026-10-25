@@ -162,6 +162,22 @@ export async function acessoPorNivelDoAluno(
   return nivelEfetivoDoAluno(db, companyId, nivelIdDoAluno);
 }
 
+/**
+ * SPEC-089 (P8, IMPL-089-01) — **a regra para um lote inteiro**, decidida
+ * aqui e não por quem chama: a importação lê a chave uma vez e recebe o
+ * predicado pronto. Clube que não restringe recebe um predicado que deixa
+ * entrar em tudo; o que restringe recebe `podeEntrarPorNivel`.
+ */
+export async function regraDeNivelDoLote(
+  db: Pick<Prisma.TransactionClient, 'empresa'>,
+  companyId: string,
+): Promise<
+  (nivelDaTurma: string | null, nivelEfetivo: { id: string } | null) => boolean
+> {
+  if (!(await nivelRestringe(db, companyId))) return () => true;
+  return podeEntrarPorNivel;
+}
+
 /** Para quem a mensagem é escrita (D4). */
 export type LeitorDaRecusa = 'aluno' | 'gestor';
 
