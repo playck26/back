@@ -191,6 +191,8 @@ model Usuario {
   /// `usuarios`: a do dono (composta) e a de quem emitiu (simples).
   convitesDeAcesso             ConviteDeAcesso[]    @relation("ConviteDeAcessoDoUsuario")
   convitesDeAcessoEmitidos     ConviteDeAcesso[]    @relation("ConviteDeAcessoCriadoPor")
+  /// SPEC-090 — os pedidos de redefinicao de senha que cobrem esta conta.
+  contasDaRedefinicao          ContaDaRedefinicao[]
 
   /// DEF-024 fase 1 — alvo da FK composta de `alunos`. `company_id` aqui e
   /// NULAVEL (super_admin nao tem empresa), e um UNIQUE sobre coluna nulavel
@@ -2086,4 +2088,64 @@ enum ResultadoDoEmail {
   falhou
 
   @@map("resultado_do_email")
+}
+
+/// SPEC-090/D2 — o pedido de redefinicao de senha. **Um pedido, N contas**
+/// (I2): o link e um so, e a pagina dele lista as contas do e-mail. Sem
+/// `companyId` de proposito — um pedido pode cobrir contas de varias empresas,
+/// e quem pertence a empresa e cada linha de `ContaDaRedefinicao`.
+model PedidoDeRedefinicao {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Como digitado, sem normalizar (LIM-090-01). Serve so ao teto (D3).
+  email          String
+  /// sha256 do token, nunca o token.
+  tokenHash      String            @unique(map: "pedidos_de_redefinicao_token_hash_key") @map("token_hash")
+  /// `criadoEm` + 60 min (`VALIDADE_DA_REDEFINICAO_EM_MINUTOS`).
+  expiraEm       DateTime          @map("expira_em") @db.Timestamptz(6)
+  /// INV-090a — no PEDIDO, e nao na conta: redefinir uma conta mata o link
+  /// para todas (I6). O `UPDATE ... WHERE usado_em IS NULL` e a guarda.
+  usadoEm        DateTime?         @map("usado_em") @db.Timestamptz(6)
+  /// D3, passo 5 — gravados num UPDATE DEPOIS do commit, como no convite. O
+  /// CHECK `pedidos_de_redefinicao_email_coerente` (so na migration) exige
+  /// resultado e instante juntos.
+  emailResultado ResultadoDoEmail? @map("email_resultado")
+  emailMotivo    String?           @map("email_motivo")
+  emailEm        DateTime?         @map("email_em") @db.Timestamptz(6)
+  criadoEm       DateTime          @default(now()) @map("criado_em") @db.Timestamptz(6)
+
+  contas ContaDaRedefinicao[]
+
+  /// O teto de 3 por e-mail por hora (D3). Faz a contagem barata; **nao** a
+  /// faz valer sob corrida (LIM-090-02).
+  @@index([email, criadoEm], map: "pedidos_de_redefinicao_email_criado_em_idx")
+  @@map("pedidos_de_redefinicao")
+}
+
+/// SPEC-090/D2 — uma conta coberta por um pedido, com a impressao da senha
+/// dela na emissao.
+model ContaDaRedefinicao {
+  pedidoId            String @map("pedido_id") @db.Uuid
+  companyId           String @map("company_id") @db.Uuid
+  usuarioId           String @map("usuario_id") @db.Uuid
+  /// sha256 de `usuarios.senha_hash` na emissao (INV-090b). O `POST` a
+  /// compara com a senha lida sob `FOR UPDATE`: senha trocada por QUALQUER
+  /// caminho deixa de bater, porque o bcrypt tem salt.
+  impressaoCredencial String @map("impressao_credencial")
+
+  /// Conta -> pedido, `Cascade`. **Nao ha cascata reversa:** apagar a ultima
+  /// conta deixa o pedido orfao (D2). **`onUpdate: NoAction` e explicito de
+  /// proposito:** o padrao do Prisma e `Cascade`, e a migration escreve NO
+  /// ACTION -- omitir aqui seria drift.
+  pedido  PedidoDeRedefinicao @relation(fields: [pedidoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "contas_da_redefinicao_pedido_id_fkey")
+  /// INV-090c — FK COMPOSTA para `usuarios(company_id, id)`, como a do
+  /// convite: com `companyId` obrigatorio, o `super_admin` (de `company_id`
+  /// nulo) nao tem pedido, e a conta nao cruza empresa. `Cascade` porque
+  /// conta que nao existe mais nao tem senha para redefinir. Mesmo motivo do
+  /// `NoAction` explicito.
+  usuario Usuario             @relation(fields: [companyId, usuarioId], references: [companyId, id], onDelete: Cascade, onUpdate: NoAction, map: "contas_da_redefinicao_usuario_fkey")
+
+  /// INV-090f, a parte do banco: a associacao e unica. Quem exige esta linha
+  /// antes de escrever a senha e o `POST` (D5, passo 1), nao o banco.
+  @@id([pedidoId, usuarioId], map: "contas_da_redefinicao_pkey")
+  @@map("contas_da_redefinicao")
 }

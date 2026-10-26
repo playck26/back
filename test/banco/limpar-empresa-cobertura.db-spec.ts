@@ -140,6 +140,37 @@ describe('limparEmpresa — a cobertura conferida contra o schema', () => {
     }
   });
 
+  it('SPEC-090/D2 — `contas_da_redefinicao` no laço, antes de `usuarios`; `pedidos_de_redefinicao` fora, e sem `company_id`', async () => {
+    // AC-028, a parte da cobertura. As duas tabelas da redefinição NÃO entram
+    // do mesmo jeito, e este teste prende a diferença: a conta tem
+    // `company_id` e sai pelo laço; o pedido não tem — pode cobrir contas de
+    // várias empresas — e sai pelo passo fixo de `limparEmpresa`, só quando
+    // fica órfão.
+    //
+    // **Se um dia o pedido ganhar `company_id`**, as asserções de cima o
+    // poriam na lista, e o laço passaria a apagar o pedido A+B ao limpar A —
+    // matando o link de B (S17). Este teste quebra antes, para quem mudar
+    // reler a D2.
+    const lista: readonly string[] = TABELAS_DA_EMPRESA;
+    const comCompanyId = new Set(
+      (await tabelasComCompanyId()).map((t) => t.tabela),
+    );
+
+    expect(comCompanyId.has('contas_da_redefinicao')).toBe(true);
+    expect(lista.indexOf('contas_da_redefinicao')).toBe(
+      lista.indexOf('usuarios') - 1,
+    );
+
+    const [pedidos] = await prisma.$queryRawUnsafe<{ existe: boolean }[]>(
+      `SELECT to_regclass('public.pedidos_de_redefinicao') IS NOT NULL AS existe`,
+    );
+    // Controle: a tabela existe — senão "fora da lista e sem company_id"
+    // passaria por ela nem estar no schema.
+    expect(pedidos.existe).toBe(true);
+    expect(comCompanyId.has('pedidos_de_redefinicao')).toBe(false);
+    expect(lista).not.toContain('pedidos_de_redefinicao');
+  });
+
   it('nenhuma exceção declarada bloqueia o delete da empresa', async () => {
     // Uma exceção com FK `RESTRICT` seria uma bomba armada: passaria neste
     // arquivo e derrubaria a suíte que tentasse apagar a empresa.
