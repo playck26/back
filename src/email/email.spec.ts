@@ -715,7 +715,8 @@ Se você não esperava este convite, ignore este e-mail.
    * pela mesma razão da do convite: com os dados do exemplo (uma conta, link
    * do Cliente), o modelo tem de gerar exatamente este HTML, conferido a olho
    * em 2026-10-26. Antes do banner, só o `<head>` sem estilo e as duas tabelas
-   * que o contêm.
+   * que o contêm. **O texto é o da D8 e nada mais** (REV-090-B04): sem o "Se o
+   * botão não abrir…" do convite, e a saudação num parágrafo só.
    *
    * **Os ramos:** N contas (a linha "Seu e-mail tem conta em N clubes") e o
    * link do Admin, cada um pela mesma cópia com uma troca só. O alcance é o
@@ -733,10 +734,9 @@ Se você não esperava este convite, ignore este e-mail.
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;">
 <tr><td style="padding:0;"><img src="https://app.playck.com.br/email/playck-banner-v2.jpg" width="600" height="213" alt="PlayCK — Mais que esporte, é conexão." style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr>
 <tr><td style="padding:32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;color:#18181b;">
-<p style="margin:0 0 16px;">Olá.</p>
-<p style="margin:0 0 24px;">Recebemos um pedido para redefinir a senha da sua conta no PlayCK.</p>
+<p style="margin:0 0 24px;">Olá. Recebemos um pedido para redefinir a senha da sua conta no PlayCK.</p>
 <p style="margin:0 0 24px;"><a href="https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA" style="display:inline-block;padding:12px 24px;background-color:#18181b;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Redefinir minha senha</a></p>
-<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">Se o botão não abrir, copie este endereço no navegador:<br><a href="https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA" style="color:#18181b;word-break:break-all;">https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA</a></p>
+<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;"><a href="https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA" style="color:#18181b;word-break:break-all;">https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA</a></p>
 <p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">O link vale por 1 hora e só pode ser usado uma vez.</p>
 <p style="margin:0;font-size:14px;line-height:20px;color:#52525b;">Se você não pediu, ignore este e-mail. Sua senha continua a mesma.</p>
 </td></tr>
@@ -747,9 +747,7 @@ Se você não esperava este convite, ignore este e-mail.
 </html>
 `;
 
-  const TEXTO_REVISADO_DA_REDEFINICAO = `Olá.
-
-Recebemos um pedido para redefinir a senha da sua conta no PlayCK.
+  const TEXTO_REVISADO_DA_REDEFINICAO = `Olá. Recebemos um pedido para redefinir a senha da sua conta no PlayCK.
 
 https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA
 

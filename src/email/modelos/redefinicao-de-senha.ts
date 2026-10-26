@@ -98,6 +98,11 @@ export function renderizarRedefinicaoDeSenha(
   // **Mudar este HTML obriga a rever a cópia literal do `email.spec.ts`**
   // (AC-019): o teste exige este HTML exato nos dois ramos (uma conta, N
   // contas). **Ramo novo aqui pede cópia nova lá.**
+  //
+  // **O texto é só o da D8**, sem frase de apoio: o molde do convite é de
+  // forma, não de texto. O endereço por extenso vem sozinho, sem o "Se o
+  // botão não abrir…" do convite, e a saudação é um parágrafo só (revisão
+  // REV-090-B04). Frase nova aqui é texto que a spec não aprovou.
   const html = `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -110,10 +115,9 @@ export function renderizarRedefinicaoDeSenha(
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;">
 <tr><td style="padding:0;"><img src="${escaparHtml(banner)}" width="${BANNER_DO_EMAIL.largura}" height="${BANNER_DO_EMAIL.altura}" alt="${escaparHtml(BANNER_DO_EMAIL.alt)}" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr>
 <tr><td style="padding:32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;color:#18181b;">
-<p style="margin:0 0 16px;">Olá.</p>
-<p style="margin:0 0 24px;">Recebemos um pedido para redefinir a senha da sua conta no PlayCK.</p>
+<p style="margin:0 0 24px;">Olá. Recebemos um pedido para redefinir a senha da sua conta no PlayCK.</p>
 <p style="margin:0 0 24px;"><a href="${escaparHtml(link)}" style="display:inline-block;padding:12px 24px;background-color:#18181b;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Redefinir minha senha</a></p>
-<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">Se o botão não abrir, copie este endereço no navegador:<br><a href="${escaparHtml(link)}" style="color:#18181b;word-break:break-all;">${escaparHtml(link)}</a></p>
+<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;"><a href="${escaparHtml(link)}" style="color:#18181b;word-break:break-all;">${escaparHtml(link)}</a></p>
 <p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">O link vale por ${validade} e só pode ser usado uma vez.</p>
 ${variasContas === null ? '' : `<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">${variasContas}</p>\n`}<p style="margin:0;font-size:14px;line-height:20px;color:#52525b;">Se você não pediu, ignore este e-mail. Sua senha continua a mesma.</p>
 </td></tr>
@@ -126,9 +130,7 @@ ${variasContas === null ? '' : `<p style="margin:0 0 16px;font-size:14px;line-he
 
   // Completo sem a imagem, como o convite (LIM-083l).
   const text = [
-    'Olá.',
-    '',
-    'Recebemos um pedido para redefinir a senha da sua conta no PlayCK.',
+    'Olá. Recebemos um pedido para redefinir a senha da sua conta no PlayCK.',
     '',
     link,
     '',
