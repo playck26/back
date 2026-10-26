@@ -21,12 +21,20 @@ import { MemoriaProvedorDeEmail } from './memoria-provedor-de-email';
 import {
   BANNER_DO_EMAIL,
   CONVITE_DE_ACESSO,
-  MODELOS_DE_EMAIL,
   montarLinkDeAtivacao,
   renderizarConviteDeAcesso,
   VALIDADE_DO_CONVITE_EM_DIAS,
   type DadosDoConviteDeAcesso,
 } from './modelos/convite-de-acesso';
+import {
+  montarLinkDeRedefinicao,
+  REDEFINICAO_DE_SENHA,
+  renderizarRedefinicaoDeSenha,
+  VALIDADE_DA_REDEFINICAO_EM_MINUTOS,
+  type DadosDaRedefinicaoDeSenha,
+} from './modelos/redefinicao-de-senha';
+// SPEC-090/AC-019 — o registro tem arquivo próprio desde o segundo modelo.
+import { MODELOS_DE_EMAIL } from './modelos/registro';
 import {
   MOTIVOS_DA_FALHA,
   PROVEDOR_DE_EMAIL,
@@ -49,9 +57,50 @@ const CONFIG: ConfiguracaoDosModelos = {
   remetente: 'nao-responda@playck.com.br',
   responderPara: 'suporte@playck.com.br',
   urlCliente: 'https://app.playck.com.br',
+  urlAdmin: 'https://admin.playck.com.br',
 };
 
 const TOKEN = CONVITE_DE_ACESSO.exemplo.token;
+
+/**
+ * SPEC-090/AC-019 (DOR-090-R1-04) — **os oráculos que eram globais, por
+ * modelo.** Até o segundo modelo, "todo modelo tem campo de pessoa" e "todo
+ * remetente é `<clube> via PlayCK`" eram verdade para o registro inteiro; a
+ * redefinição não tem nenhum dos dois (D8). Em vez de afrouxar o oráculo, cada
+ * modelo declara o seu — e o do convite fica **igual ou mais estrito**: os
+ * campos passam de "pelo menos um" para "exatamente estes dois" (S20).
+ *
+ * **Um modelo do registro sem entrada aqui reprova** (S21): o terceiro modelo
+ * não herda oráculo de ninguém por omissão.
+ */
+const ORACULOS_POR_MODELO: Readonly<
+  Record<
+    string,
+    {
+      readonly camposDePessoa: readonly string[];
+      /** O remetente com `remetente: 'outro@exemplo.com'` na configuração. */
+      readonly remetente: (from: string) => void;
+    }
+  >
+> = {
+  convite_de_acesso: {
+    camposDePessoa: ['nomeDoClube', 'nomeDaPessoa'],
+    remetente: (from) =>
+      expect(from).toMatch(/ via PlayCK" <outro@exemplo\.com>$/),
+  },
+  redefinicao_de_senha: {
+    camposDePessoa: [],
+    remetente: (from) => expect(from).toBe('"PlayCK" <outro@exemplo.com>'),
+  },
+};
+
+function oraculoDe(nome: string) {
+  const oraculo = ORACULOS_POR_MODELO[nome];
+  if (!oraculo) {
+    throw new Error(`o modelo ${nome} não tem oráculo no email.spec.ts`);
+  }
+  return oraculo;
+}
 
 /** Os dois valores hostis do AC-028, exatamente como a spec os escreve. */
 const INJECAO_DE_HTML = '"><a href="https://x">clique</a>';
@@ -61,6 +110,12 @@ function convite(
   trocas: Partial<DadosDoConviteDeAcesso> = {},
 ): DadosDoConviteDeAcesso {
   return { ...CONVITE_DE_ACESSO.exemplo, ...trocas };
+}
+
+function redefinicao(
+  trocas: Partial<DadosDaRedefinicaoDeSenha> = {},
+): DadosDaRedefinicaoDeSenha {
+  return { ...REDEFINICAO_DE_SENHA.exemplo, ...trocas };
 }
 
 function mensagens(quantas: number): MensagemDeEmail[] {
@@ -339,15 +394,132 @@ describe('AC-027 (parte do módulo) — o link vem só da configuração', () =>
   });
 });
 
+describe('SPEC-090/AC-008 (parte do módulo) — o link da redefinição vem da configuração e do papel', () => {
+  const TOKEN_090 = REDEFINICAO_DE_SENHA.exemplo.token;
+
+  it('cliente: URL_CLIENTE + /redefinir-senha/ + token; admin: URL_ADMIN + o mesmo caminho', () => {
+    expect(montarLinkDeRedefinicao(CONFIG, 'cliente', TOKEN_090)).toBe(
+      `https://app.playck.com.br/redefinir-senha/${TOKEN_090}`,
+    );
+    expect(montarLinkDeRedefinicao(CONFIG, 'admin', TOKEN_090)).toBe(
+      `https://admin.playck.com.br/redefinir-senha/${TOKEN_090}`,
+    );
+  });
+
+  it('com outra URL_ADMIN, o link do gestor muda junto, no HTML e no texto', () => {
+    const outra = { ...CONFIG, urlAdmin: 'https://outro-admin.exemplo.com' };
+    const { html, text } = renderizarRedefinicaoDeSenha(
+      outra,
+      redefinicao({ destino: 'admin' }),
+    );
+    const link = `https://outro-admin.exemplo.com/redefinir-senha/${TOKEN_090}`;
+    expect(html).toContain(link);
+    expect(text).toContain(link);
+    expect(html).not.toContain('admin.playck.com.br');
+  });
+
+  it('a assinatura não aceita requisição, host nem origem (INV-090d)', () => {
+    const requisicaoForjada = {
+      headers: {
+        host: 'atacante.exemplo',
+        origin: 'https://atacante.exemplo',
+        referer: 'https://atacante.exemplo/esqueci-senha',
+      },
+    };
+    // Três parâmetros, e nenhum é requisição. Se a função passar a receber o
+    // `Request`, o `@ts-expect-error` fica sem erro e o typecheck reprova.
+    expect(montarLinkDeRedefinicao).toHaveLength(3);
+    const link = montarLinkDeRedefinicao(
+      CONFIG,
+      'cliente',
+      TOKEN_090,
+      // @ts-expect-error -- a função não recebe Request; é o que se prova aqui
+      requisicaoForjada,
+    );
+    expect(link).toBe(`https://app.playck.com.br/redefinir-senha/${TOKEN_090}`);
+    expect(link).not.toContain('atacante');
+  });
+
+  it('a validade é de 60 minutos, e o e-mail diz "1 hora"', () => {
+    expect(VALIDADE_DA_REDEFINICAO_EM_MINUTOS).toBe(60);
+    const { html, text } = renderizarRedefinicaoDeSenha(CONFIG, redefinicao());
+    expect(html).toContain('O link vale por 1 hora');
+    expect(text).toContain('O link vale por 1 hora');
+  });
+});
+
+describe('SPEC-090/AC-020 — o e-mail da redefinição não leva nome de pessoa nem de clube', () => {
+  /** Os dois nomes de clube hostis do AC-020, exatamente como a spec os escreve. */
+  const CLUBE_HTML = '"><a href="https://x">';
+  const CLUBE_CABECALHO = '\r\nBcc: x@x';
+
+  it('dados com nomes hostis enfiados à força: nenhum dos dois textos aparece no HTML, no texto nem nos cabeçalhos', () => {
+    // O tipo do modelo não tem campo de nome — é a prova de tipo. Esta é a de
+    // execução: um modelo que lesse `nomeDoClube` ou `nomeDaPessoa` de onde
+    // viessem, ou que iterasse os dados, deixaria o texto passar.
+    const forcados = {
+      ...redefinicao({ quantidadeDeContas: 2 }),
+      nomeDoClube: CLUBE_HTML,
+      nomeDaPessoa: CLUBE_CABECALHO,
+      clubes: `${CLUBE_HTML}${CLUBE_CABECALHO}`,
+    } as DadosDaRedefinicaoDeSenha;
+    const mensagem = renderizarRedefinicaoDeSenha(CONFIG, forcados);
+
+    for (const parte of [
+      mensagem.html,
+      mensagem.text,
+      mensagem.from,
+      mensagem.to,
+      mensagem.replyTo,
+      mensagem.subject,
+    ]) {
+      expect(parte).not.toContain(CLUBE_HTML);
+      expect(parte).not.toContain('href="https://x"');
+      expect(parte).not.toContain('Bcc:');
+    }
+    expect(mensagem.from).not.toMatch(/[\r\n]/);
+    expect(mensagem.subject).not.toMatch(/[\r\n]/);
+    // E o e-mail continua sendo o de duas contas: os dados foram lidos.
+    expect(mensagem.text).toContain('Seu e-mail tem conta em 2 clubes.');
+  });
+
+  it('a declaração do modelo: nenhum campo de pessoa, e nenhum campo de nome nos dados', () => {
+    expect(REDEFINICAO_DE_SENHA.camposDePessoa).toEqual([]);
+    expect(Object.keys(REDEFINICAO_DE_SENHA.exemplo).sort()).toEqual([
+      'destino',
+      'para',
+      'pedidoId',
+      'quantidadeDeContas',
+      'token',
+    ]);
+  });
+});
+
 describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
   it('cada campo de pessoa declarado existe nos dados do modelo', () => {
     for (const modelo of MODELOS_DE_EMAIL) {
-      expect(modelo.camposDePessoa.length).toBeGreaterThan(0);
       for (const campo of modelo.camposDePessoa) {
         expect(Object.keys(modelo.exemplo)).toContain(campo);
       }
     }
   });
+
+  it('SPEC-090/AC-019 — todo modelo do registro tem entrada no mapa de oráculos (S21)', () => {
+    expect(MODELOS_DE_EMAIL.map((modelo) => modelo.nome)).toEqual([
+      'convite_de_acesso',
+      'redefinicao_de_senha',
+    ]);
+    for (const modelo of MODELOS_DE_EMAIL) {
+      expect(Object.keys(ORACULOS_POR_MODELO)).toContain(modelo.nome);
+    }
+  });
+
+  it.each(MODELOS_DE_EMAIL.map((modelo) => [modelo.nome, modelo] as const))(
+    'SPEC-090/AC-019 — %s: os campos de pessoa são EXATAMENTE os do oráculo (S20)',
+    (nome, modelo) => {
+      expect(modelo.camposDePessoa).toEqual(oraculoDe(nome).camposDePessoa);
+    },
+  );
 
   // Um caso por modelo × campo × valor hostil: tirar o `escaparHtml()` de um
   // campo derruba só os casos daquele campo (S5).
@@ -362,8 +534,11 @@ describe('AC-028 — o modelo, com nome hostil de clube e de pessoa', () => {
     ),
   );
 
-  it('são 4 casos hoje: 1 modelo × 2 campos × 2 valores', () => {
+  it('são 4 casos hoje: convite × 2 campos × 2 valores, e a redefinição sem campo nenhum', () => {
     expect(casos).toHaveLength(4);
+    expect(new Set(casos.map((caso) => caso.nome))).toEqual(
+      new Set(['convite_de_acesso']),
+    );
   });
 
   it.each(casos)(
@@ -535,11 +710,110 @@ Se você não esperava este convite, ignore este e-mail.
     );
   });
 
+  /**
+   * SPEC-090/AC-019 — **a cópia revisada da redefinição**, no mesmo molde e
+   * pela mesma razão da do convite: com os dados do exemplo (uma conta, link
+   * do Cliente), o modelo tem de gerar exatamente este HTML, conferido a olho
+   * em 2026-10-26. Antes do banner, só o `<head>` sem estilo e as duas tabelas
+   * que o contêm.
+   *
+   * **Os ramos:** N contas (a linha "Seu e-mail tem conta em N clubes") e o
+   * link do Admin, cada um pela mesma cópia com uma troca só. O alcance é o
+   * dos dados que o teste passa, como o do convite.
+   */
+  const HTML_REVISADO_DA_REDEFINICAO = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f5;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;">
+<tr><td style="padding:0;"><img src="https://app.playck.com.br/email/playck-banner-v2.jpg" width="600" height="213" alt="PlayCK — Mais que esporte, é conexão." style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr>
+<tr><td style="padding:32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;color:#18181b;">
+<p style="margin:0 0 16px;">Olá.</p>
+<p style="margin:0 0 24px;">Recebemos um pedido para redefinir a senha da sua conta no PlayCK.</p>
+<p style="margin:0 0 24px;"><a href="https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA" style="display:inline-block;padding:12px 24px;background-color:#18181b;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Redefinir minha senha</a></p>
+<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">Se o botão não abrir, copie este endereço no navegador:<br><a href="https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA" style="color:#18181b;word-break:break-all;">https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA</a></p>
+<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">O link vale por 1 hora e só pode ser usado uma vez.</p>
+<p style="margin:0;font-size:14px;line-height:20px;color:#52525b;">Se você não pediu, ignore este e-mail. Sua senha continua a mesma.</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+`;
+
+  const TEXTO_REVISADO_DA_REDEFINICAO = `Olá.
+
+Recebemos um pedido para redefinir a senha da sua conta no PlayCK.
+
+https://app.playck.com.br/redefinir-senha/cmVkZWZpbmljYW8tZGUtZXhlbXBsby0zMi1ieXRlczA
+
+O link vale por 1 hora e só pode ser usado uma vez.
+
+Se você não pediu, ignore este e-mail. Sua senha continua a mesma.
+`;
+
+  it('SPEC-090/AC-019 — redefinicao_de_senha, uma conta: o HTML e o texto são exatamente a cópia revisada', () => {
+    const { html, text } = renderizarRedefinicaoDeSenha(CONFIG, redefinicao());
+    expect(html).toBe(HTML_REVISADO_DA_REDEFINICAO);
+    expect(text).toBe(TEXTO_REVISADO_DA_REDEFINICAO);
+  });
+
+  it('SPEC-090/AC-019 — redefinicao_de_senha, três contas: a mesma cópia, com a linha dos clubes depois da validade', () => {
+    const { html, text } = renderizarRedefinicaoDeSenha(
+      CONFIG,
+      redefinicao({ quantidadeDeContas: 3 }),
+    );
+    const validade =
+      '<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">O link vale por 1 hora e só pode ser usado uma vez.</p>\n';
+    expect(html).toBe(
+      trocarUmaVez(
+        HTML_REVISADO_DA_REDEFINICAO,
+        validade,
+        `${validade}<p style="margin:0 0 16px;font-size:14px;line-height:20px;color:#52525b;">Seu e-mail tem conta em 3 clubes. Ao abrir o link, escolha qual conta vai ter a senha redefinida.</p>\n`,
+      ),
+    );
+    expect(text).toBe(
+      trocarUmaVez(
+        TEXTO_REVISADO_DA_REDEFINICAO,
+        'uma vez.\n\n',
+        'uma vez.\n\nSeu e-mail tem conta em 3 clubes. Ao abrir o link, escolha qual conta vai ter a senha redefinida.\n\n',
+      ),
+    );
+  });
+
+  it('SPEC-090/AC-019 — redefinicao_de_senha, link do Admin: a mesma cópia, com a origem do Admin nos três lugares do link', () => {
+    const { html, text } = renderizarRedefinicaoDeSenha(
+      CONFIG,
+      redefinicao({ destino: 'admin' }),
+    );
+    const doCliente = 'https://app.playck.com.br/redefinir-senha/';
+    const doAdmin = 'https://admin.playck.com.br/redefinir-senha/';
+    // Três no HTML (o botão, o `href` do endereço e o endereço por extenso) e
+    // um no texto; o banner continua vindo do Cliente.
+    expect(HTML_REVISADO_DA_REDEFINICAO.split(doCliente)).toHaveLength(4);
+    expect(html).toBe(
+      HTML_REVISADO_DA_REDEFINICAO.split(doCliente).join(doAdmin),
+    );
+    expect(text).toBe(
+      trocarUmaVez(TEXTO_REVISADO_DA_REDEFINICAO, doCliente, doAdmin),
+    );
+    expect(html).toContain(
+      'src="https://app.playck.com.br/email/playck-banner-v2.jpg"',
+    );
+  });
+
   it('todo modelo do registro tem a sua cópia revisada', () => {
     // Um modelo novo no registro sem cópia revisada reprova aqui: a prova do
     // banner não pode ficar para trás quando o segundo modelo chegar.
     const revisados: Readonly<Record<string, string>> = {
       convite_de_acesso: HTML_REVISADO_DO_CONVITE,
+      redefinicao_de_senha: HTML_REVISADO_DA_REDEFINICAO,
     };
     for (const modelo of MODELOS_DE_EMAIL) {
       expect(Object.keys(revisados)).toContain(modelo.nome);
@@ -567,18 +841,29 @@ describe('AC-041 — remetente e reply_to', () => {
   });
 
   it.each(MODELOS_DE_EMAIL.map((modelo) => [modelo.nome, modelo] as const))(
-    '%s: todo modelo usa EMAIL_REMETENTE e EMAIL_RESPONDER_PARA da configuração',
-    (_nome, modelo) => {
+    '%s: todo modelo usa EMAIL_REMETENTE e EMAIL_RESPONDER_PARA da configuração (o remetente pelo oráculo do modelo, SPEC-090/AC-019)',
+    (nome, modelo) => {
       const outra = {
         ...CONFIG,
         remetente: 'outro@exemplo.com',
         responderPara: 'ajuda@exemplo.com',
       };
       const mensagem = modelo.renderizar(outra, modelo.exemplo);
-      expect(mensagem.from).toMatch(/ via PlayCK" <outro@exemplo\.com>$/);
+      oraculoDe(nome).remetente(mensagem.from);
       expect(mensagem.replyTo).toBe('ajuda@exemplo.com');
     },
   );
+
+  it('SPEC-090/D8 — a redefinição: remetente "PlayCK", assunto fixo, chave pelo id do pedido', () => {
+    const mensagem = renderizarRedefinicaoDeSenha(CONFIG, redefinicao());
+    expect(mensagem.from).toBe('"PlayCK" <nao-responda@playck.com.br>');
+    expect(mensagem.replyTo).toBe('suporte@playck.com.br');
+    expect(mensagem.to).toBe(REDEFINICAO_DE_SENHA.exemplo.para);
+    expect(mensagem.subject).toBe('Redefinir sua senha do PlayCK');
+    expect(mensagem.chaveDeIdempotencia).toBe(
+      `redefinicao-de-senha/${REDEFINICAO_DE_SENHA.exemplo.pedidoId}`,
+    );
+  });
 
   it('o adaptador da Resend repassa o reply_to e só os campos da mensagem', async () => {
     const { cliente, emails } = dubleDoResend();
@@ -915,6 +1200,12 @@ describe('AC-031 (parte do módulo) — nada de token, link ou corpo em log', ()
 });
 
 describe('AC-030 — a configuração, validada no boot', () => {
+  /**
+   * SPEC-090/AC-021 — **a `URL_ADMIN` válida entra aqui.** Sem ela, todo caso
+   * de "em produção, recusa %s" ficaria verde por falta de `URL_ADMIN`, sem
+   * provar a recusa que diz provar — e por isso cada caso confere também a
+   * variável citada na mensagem (S24).
+   */
   const PRODUCAO: Record<string, string> = {
     NODE_ENV: 'production',
     EMAIL_PROVEDOR: 'resend',
@@ -922,6 +1213,7 @@ describe('AC-030 — a configuração, validada no boot', () => {
     EMAIL_REMETENTE: 'nao-responda@playck.com.br',
     EMAIL_RESPONDER_PARA: 'suporte@playck.com.br',
     URL_CLIENTE: 'https://app.playck.com.br',
+    URL_ADMIN: 'https://admin.playck.com.br',
   };
 
   function configCom(valores: Record<string, string | undefined>) {
@@ -943,43 +1235,112 @@ describe('AC-030 — a configuração, validada no boot', () => {
       remetente: 'nao-responda@playck.com.br',
       responderPara: 'suporte@playck.com.br',
       urlCliente: 'https://app.playck.com.br',
+      urlAdmin: 'https://admin.playck.com.br',
     });
   });
 
-  it.each<[string, Record<string, string | undefined>]>([
-    ['EMAIL_PROVEDOR=memoria', { EMAIL_PROVEDOR: 'memoria' }],
-    ['EMAIL_PROVEDOR ausente', { EMAIL_PROVEDOR: undefined }],
-    ['EMAIL_PROVEDOR desconhecido', { EMAIL_PROVEDOR: 'smtp' }],
-    ['sem RESEND_API_KEY', { RESEND_API_KEY: undefined }],
-    ['RESEND_API_KEY em branco', { RESEND_API_KEY: '   ' }],
-    ['RESEND_API_KEY com quebra de linha', { RESEND_API_KEY: 're_a\nb' }],
-    ['sem EMAIL_RESPONDER_PARA', { EMAIL_RESPONDER_PARA: undefined }],
-    ['EMAIL_RESPONDER_PARA sem @', { EMAIL_RESPONDER_PARA: 'suporte' }],
+  it('SPEC-090/AC-021 — produção sobe com URL_ADMIN https://admin.exemplo, sem barra final', () => {
+    expect(
+      carregarEmailConfig(emProducao({ URL_ADMIN: 'https://admin.exemplo/' }))
+        .urlAdmin,
+    ).toBe('https://admin.exemplo');
+  });
+
+  /**
+   * O terceiro elemento é a variável que a mensagem tem de citar
+   * (SPEC-090/AC-021): uma recusa por outra variável não conta como a deste
+   * caso.
+   */
+  it.each<[string, Record<string, string | undefined>, string]>([
+    ['EMAIL_PROVEDOR=memoria', { EMAIL_PROVEDOR: 'memoria' }, 'EMAIL_PROVEDOR'],
+    ['EMAIL_PROVEDOR ausente', { EMAIL_PROVEDOR: undefined }, 'EMAIL_PROVEDOR'],
+    [
+      'EMAIL_PROVEDOR desconhecido',
+      { EMAIL_PROVEDOR: 'smtp' },
+      'EMAIL_PROVEDOR',
+    ],
+    ['sem RESEND_API_KEY', { RESEND_API_KEY: undefined }, 'RESEND_API_KEY'],
+    ['RESEND_API_KEY em branco', { RESEND_API_KEY: '   ' }, 'RESEND_API_KEY'],
+    [
+      'RESEND_API_KEY com quebra de linha',
+      { RESEND_API_KEY: 're_a\nb' },
+      'RESEND_API_KEY',
+    ],
+    [
+      'sem EMAIL_RESPONDER_PARA',
+      { EMAIL_RESPONDER_PARA: undefined },
+      'EMAIL_RESPONDER_PARA',
+    ],
+    [
+      'EMAIL_RESPONDER_PARA sem @',
+      { EMAIL_RESPONDER_PARA: 'suporte' },
+      'EMAIL_RESPONDER_PARA',
+    ],
     [
       'EMAIL_RESPONDER_PARA com nome de exibição',
       { EMAIL_RESPONDER_PARA: 'Suporte <suporte@playck.com.br>' },
+      'EMAIL_RESPONDER_PARA',
     ],
     [
       'EMAIL_RESPONDER_PARA com cabeçalho injetado',
       { EMAIL_RESPONDER_PARA: 'suporte@playck.com.br\r\nBcc: x@x' },
+      'EMAIL_RESPONDER_PARA',
     ],
-    ['sem EMAIL_REMETENTE', { EMAIL_REMETENTE: undefined }],
-    ['EMAIL_REMETENTE inválido', { EMAIL_REMETENTE: 'nao-responda' }],
-    ['sem URL_CLIENTE', { URL_CLIENTE: undefined }],
-    ['URL_CLIENTE sem https', { URL_CLIENTE: 'http://app.playck.com.br' }],
+    ['sem EMAIL_REMETENTE', { EMAIL_REMETENTE: undefined }, 'EMAIL_REMETENTE'],
+    [
+      'EMAIL_REMETENTE inválido',
+      { EMAIL_REMETENTE: 'nao-responda' },
+      'EMAIL_REMETENTE',
+    ],
+    ['sem URL_CLIENTE', { URL_CLIENTE: undefined }, 'URL_CLIENTE'],
+    [
+      'URL_CLIENTE sem https',
+      { URL_CLIENTE: 'http://app.playck.com.br' },
+      'URL_CLIENTE',
+    ],
     [
       'URL_CLIENTE com caminho',
       { URL_CLIENTE: 'https://app.playck.com.br/cliente' },
+      'URL_CLIENTE',
     ],
     [
       'URL_CLIENTE com query',
       { URL_CLIENTE: 'https://app.playck.com.br/?x=1' },
+      'URL_CLIENTE',
     ],
-    ['URL_CLIENTE relativa', { URL_CLIENTE: 'app.playck.com.br' }],
-  ])('em produção, recusa %s', (_rotulo, trocas) => {
-    expect(() => carregarEmailConfig(emProducao(trocas))).toThrow(
-      ConfiguracaoDeEmailInvalida,
-    );
+    [
+      'URL_CLIENTE relativa',
+      { URL_CLIENTE: 'app.playck.com.br' },
+      'URL_CLIENTE',
+    ],
+    // SPEC-090/AC-021 — a `URL_ADMIN`, pela mesma regra (S14).
+    ['sem URL_ADMIN', { URL_ADMIN: undefined }, 'URL_ADMIN'],
+    ['URL_ADMIN em branco', { URL_ADMIN: '  ' }, 'URL_ADMIN'],
+    [
+      'URL_ADMIN sem https',
+      { URL_ADMIN: 'http://admin.playck.com.br' },
+      'URL_ADMIN',
+    ],
+    [
+      'URL_ADMIN com caminho',
+      { URL_ADMIN: 'https://admin.playck.com.br/admin' },
+      'URL_ADMIN',
+    ],
+    [
+      'URL_ADMIN com credencial',
+      { URL_ADMIN: 'https://usuario:senha@admin.playck.com.br' },
+      'URL_ADMIN',
+    ],
+    [
+      'URL_ADMIN com query',
+      { URL_ADMIN: 'https://admin.playck.com.br/?x=1' },
+      'URL_ADMIN',
+    ],
+    ['URL_ADMIN relativa', { URL_ADMIN: 'admin.playck.com.br' }, 'URL_ADMIN'],
+  ])('em produção, recusa %s', (_rotulo, trocas, variavel) => {
+    const carregar = () => carregarEmailConfig(emProducao(trocas));
+    expect(carregar).toThrow(ConfiguracaoDeEmailInvalida);
+    expect(carregar).toThrow(new RegExp(variavel));
   });
 
   it('não ecoa a chave na mensagem de erro (segredo em log de boot)', () => {
@@ -1000,7 +1361,9 @@ describe('AC-030 — a configuração, validada no boot', () => {
       remetente: PADROES_FORA_DE_PRODUCAO.EMAIL_REMETENTE,
       responderPara: PADROES_FORA_DE_PRODUCAO.EMAIL_RESPONDER_PARA,
       urlCliente: PADROES_FORA_DE_PRODUCAO.URL_CLIENTE,
+      urlAdmin: 'http://localhost:3001',
     });
+    expect(PADROES_FORA_DE_PRODUCAO.URL_ADMIN).toBe('http://localhost:3001');
   });
 
   it('fora de produção, o que vier ainda é validado', () => {
@@ -1017,6 +1380,17 @@ describe('AC-030 — a configuração, validada no boot', () => {
       carregarEmailConfig(configCom({ URL_CLIENTE: 'http://localhost:3003/' }))
         .urlCliente,
     ).toBe('http://localhost:3003');
+    // SPEC-090/AC-021 — a `URL_ADMIN` também, fora de produção.
+    expect(() =>
+      carregarEmailConfig(configCom({ URL_ADMIN: 'ftp://x.com' })),
+    ).toThrow(/URL_ADMIN/);
+    expect(() =>
+      carregarEmailConfig(configCom({ URL_ADMIN: 'http://u:s@x.com' })),
+    ).toThrow(/URL_ADMIN/);
+    expect(
+      carregarEmailConfig(configCom({ URL_ADMIN: 'http://localhost:3001/' }))
+        .urlAdmin,
+    ).toBe('http://localhost:3001');
   });
 
   describe('o EmailModule, montado de verdade', () => {
@@ -1036,6 +1410,18 @@ describe('AC-030 — a configuração, validada no boot', () => {
       await expect(
         compilarCom({ ...PRODUCAO, EMAIL_RESPONDER_PARA: undefined }),
       ).rejects.toThrow(ConfiguracaoDeEmailInvalida);
+    });
+
+    it('SPEC-090/AC-021 — não sobe em produção sem URL_ADMIN', async () => {
+      await expect(
+        compilarCom({ ...PRODUCAO, URL_ADMIN: undefined }),
+      ).rejects.toThrow(/URL_ADMIN/);
+    });
+
+    it('SPEC-090/AC-021 — não sobe em produção com URL_ADMIN http://', async () => {
+      await expect(
+        compilarCom({ ...PRODUCAO, URL_ADMIN: 'http://admin.exemplo' }),
+      ).rejects.toThrow(/URL_ADMIN/);
     });
 
     it('não sobe em produção com EMAIL_PROVEDOR=memoria', async () => {
@@ -1078,6 +1464,7 @@ describe('AC-030 — a configuração, validada no boot', () => {
         remetente: 'nao-responda@playck.com.br',
         responderPara: 'suporte@playck.com.br',
         urlCliente: 'https://app.playck.com.br',
+        urlAdmin: 'https://admin.playck.com.br',
       });
       expect(JSON.stringify(paraModelos)).not.toContain('re_chave');
     });
