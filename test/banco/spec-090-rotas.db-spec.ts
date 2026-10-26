@@ -897,11 +897,13 @@ describe('SPEC-090/AC-013 — POST 410 com o mesmo corpo (S6)', () => {
 
     // Uma conta real do MESMO e-mail, criada depois do pedido.
     const depois = await conta(await empresa(), email);
+    // Lido ANTES do POST: lido depois, a comparação da linha final seria
+    // o hash com ele mesmo e não provaria nada (SAB-090-R1).
+    const hashDeDepois = await senhaHashDe(depois);
     respostas.push([
       'criada depois',
       await redefinir(token, depois, 'spec-090-x-12345'),
     ]);
-    const hashDeDepois = await senhaHashDe(depois);
 
     // Usado por A: B não redefine mais (I6).
     expect((await redefinir(token, a, 'spec-090-nova-de-a')).status).toBe(204);
