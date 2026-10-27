@@ -33,6 +33,13 @@ export interface ConfiguracaoDosModelos {
   readonly responderPara: string;
   /** A origem do Cliente, sem barra final: base do link e do banner. */
   readonly urlCliente: string;
+  /**
+   * SPEC-090/D6 — a origem do Admin, sem barra final: base do link de
+   * redefinição de senha do gestor. **Obrigatória**, como a do Cliente: com
+   * um campo opcional, um literal tipado sem ela compilaria, e o link do
+   * gestor sairia sem origem.
+   */
+  readonly urlAdmin: string;
 }
 
 /**
@@ -52,18 +59,21 @@ export const VARIAVEIS_DE_EMAIL = [
   'EMAIL_REMETENTE',
   'EMAIL_RESPONDER_PARA',
   'URL_CLIENTE',
+  'URL_ADMIN',
 ] as const;
 
 /**
  * Fora de produção, e só lá. Os endereços são os da I13, os mesmos que
  * produção usa; `localhost:3003` é onde o Cliente roda localmente (o
- * `NEXT_PUBLIC_CLIENTE_URL` do Admin no `HANDOFF.md`).
+ * `NEXT_PUBLIC_CLIENTE_URL` do Admin no `HANDOFF.md`), e `localhost:3001` é
+ * onde o Admin roda (SPEC-090/D6).
  */
 export const PADROES_FORA_DE_PRODUCAO = {
   EMAIL_PROVEDOR: 'memoria',
   EMAIL_REMETENTE: 'nao-responda@playck.com.br',
   EMAIL_RESPONDER_PARA: 'suporte@playck.com.br',
   URL_CLIENTE: 'http://localhost:3003',
+  URL_ADMIN: 'http://localhost:3001',
 } as const;
 
 export class ConfiguracaoDeEmailInvalida extends Error {
@@ -99,40 +109,50 @@ function endereco(nome: string, valor: string): string {
  * D8 — em produção, `https://` e sem caminho. Em qualquer ambiente, sem query,
  * sem fragmento e sem credencial: o link é `URL_CLIENTE + '/ativar/' + token`,
  * e qualquer um dos três o quebraria.
+ *
+ * SPEC-090/D6 — **generalizada, e não copiada**: a `URL_ADMIN` passa pela
+ * mesma regra, e o nome da variável vai na mensagem para quem lê o log do
+ * boot saber qual das duas corrigir. Uma cópia por variável divergiria na
+ * primeira revisão de uma delas.
  */
-function origemDoCliente(valor: string, producao: boolean): string {
+function origem(
+  nome: 'URL_CLIENTE' | 'URL_ADMIN',
+  valor: string,
+  producao: boolean,
+): string {
   let url: URL;
   try {
     url = new URL(valor);
   } catch {
-    throw new ConfiguracaoDeEmailInvalida('URL_CLIENTE não é uma URL absoluta');
+    throw new ConfiguracaoDeEmailInvalida(`${nome} não é uma URL absoluta`);
   }
   if (producao && url.protocol !== 'https:') {
     throw new ConfiguracaoDeEmailInvalida(
-      'URL_CLIENTE precisa ser https em produção',
+      `${nome} precisa ser https em produção`,
     );
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new ConfiguracaoDeEmailInvalida('URL_CLIENTE precisa ser http(s)');
+    throw new ConfiguracaoDeEmailInvalida(`${nome} precisa ser http(s)`);
   }
   if (url.username !== '' || url.password !== '') {
     throw new ConfiguracaoDeEmailInvalida(
-      'URL_CLIENTE não pode ter usuário nem senha',
+      `${nome} não pode ter usuário nem senha`,
     );
   }
   // No texto, e não em `url.search`: `https://x/?` tem `search` vazio.
   if (valor.includes('?') || valor.includes('#')) {
     throw new ConfiguracaoDeEmailInvalida(
-      'URL_CLIENTE não pode ter query nem fragmento',
+      `${nome} não pode ter query nem fragmento`,
     );
   }
   const caminho = url.pathname.replace(/\/+$/, '');
   if (producao && caminho !== '') {
     throw new ConfiguracaoDeEmailInvalida(
-      'URL_CLIENTE não pode ter caminho em produção',
+      `${nome} não pode ter caminho em produção`,
     );
   }
-  // Sem barra final: quem monta o link concatena `/ativar/`.
+  // Sem barra final: quem monta o link concatena `/ativar/` ou
+  // `/redefinir-senha/`.
   return `${url.protocol}//${url.host}${caminho}`;
 }
 
@@ -173,7 +193,8 @@ export function carregarEmailConfig(
       'EMAIL_RESPONDER_PARA',
       valor('EMAIL_RESPONDER_PARA'),
     ),
-    urlCliente: origemDoCliente(valor('URL_CLIENTE'), producao),
+    urlCliente: origem('URL_CLIENTE', valor('URL_CLIENTE'), producao),
+    urlAdmin: origem('URL_ADMIN', valor('URL_ADMIN'), producao),
   };
 
   if (provedor === 'memoria') {

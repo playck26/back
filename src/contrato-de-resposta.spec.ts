@@ -79,6 +79,18 @@ const SEM_SCHEMA_DE_RESPOSTA = new Set<string>([
   // produção, e a causa foi exatamente esta lista, implícita e com 90 linhas.
 ]);
 
+/**
+ * SPEC-090/D1 — **as rotas cujo `202` é sem corpo por contrato**, e não por
+ * esquecimento. Valem como o `204`: resposta sem corpo não tem schema a
+ * declarar. Não é a lista de dívida acima: o `202` vazio é a regra da rota (a
+ * resposta não pode carregar nada que dependa de existir conta, INV-090e).
+ *
+ * Por nome, e não "todo `202`": um `202` novo que devesse ter corpo ficaria
+ * vermelho no teste de cima. E o teste de baixo confere que cada linha daqui
+ * existe, publica `202` e não publica corpo nenhum.
+ */
+const ACEITAS_SEM_CORPO = new Set<string>(['POST /api/v1/auth/esqueci-senha']);
+
 const VERBOS = ['get', 'post', 'put', 'patch', 'delete'] as const;
 
 interface Resposta {
@@ -130,10 +142,14 @@ function classificarOperacoes(): Classificada[] {
           resposta.content !== undefined &&
           Object.keys(resposta.content).length > 0,
       );
+      const chave = `${verbo.toUpperCase()} ${path}`;
       saida.push({
-        chave: `${verbo.toUpperCase()} ${path}`,
+        chave,
         temSchema,
-        semCorpo: Object.keys(respostas).includes('204'),
+        semCorpo:
+          Object.keys(respostas).includes('204') ||
+          (ACEITAS_SEM_CORPO.has(chave) &&
+            Object.keys(respostas).includes('202')),
       });
     }
   }
@@ -188,6 +204,27 @@ describe('INV-058/INV-060 — contrato de resposta publicado (SPEC-021)', () => 
     );
 
     expect(fantasmas).toEqual([]);
+  });
+
+  it('SPEC-090/D1 — cada rota de ACEITAS_SEM_CORPO existe, publica 202 e nenhum corpo', () => {
+    const doc = lerOpenApi();
+    for (const chave of ACEITAS_SEM_CORPO) {
+      const [verbo, path] = chave.split(' ');
+      const op = doc.paths[path]?.[verbo.toLowerCase()];
+      expect({ chave, existe: op !== undefined }).toEqual({
+        chave,
+        existe: true,
+      });
+      const respostas = op?.responses ?? {};
+      expect(Object.keys(respostas)).toContain('202');
+      const comCorpo = Object.entries(respostas).filter(
+        ([codigo, r]) =>
+          codigo.startsWith('2') &&
+          r.content !== undefined &&
+          Object.keys(r.content).length > 0,
+      );
+      expect(comCorpo).toEqual([]);
+    }
   });
 });
 

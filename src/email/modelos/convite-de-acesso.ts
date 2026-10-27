@@ -5,6 +5,9 @@ import {
   nomeDoClubeNoRemetente,
 } from '../escapar-html';
 import type { MensagemDeEmail } from '../provedor-de-email';
+// Só o tipo: o registro importa este arquivo, e um import de valor de volta
+// fecharia um ciclo de módulos. O `import type` some na compilação.
+import type { ModeloDeEmail } from './registro';
 
 /**
  * SPEC-083/D8 — o modelo `convite_de_acesso`: o e-mail que leva o link para a
@@ -147,30 +150,9 @@ export function renderizarConviteDeAcesso(
 }
 
 /**
- * O contrato de todo modelo, e o que os testes do AC-028 e do AC-041 iteram.
- *
- * `renderizar` é método, e não propriedade com função, para o registro
- * aceitar modelos com dados de formatos diferentes.
+ * O modelo no registro (`registro.ts`, SPEC-090/D8): o contrato
+ * `ModeloDeEmail` mora lá, com os dois modelos.
  */
-export interface ModeloDeEmail<
-  Dados extends Record<string, string> = Record<string, string>,
-> {
-  readonly nome: string;
-  renderizar(config: ConfiguracaoDosModelos, dados: Dados): MensagemDeEmail;
-  /**
-   * Os campos que vêm de pessoa (gestor, aluno, professor). Todos passam por
-   * `escaparHtml()` no HTML, e o teste injeta em cada um, **um de cada vez**:
-   * tirar o escape de um campo derruba só o caso daquele campo (S5).
-   *
-   * `string`, e não `keyof Dados`: o `keyof` tornaria o tipo invariante e o
-   * registro recusaria o modelo. O teste confere que cada campo existe em
-   * `exemplo`.
-   */
-  readonly camposDePessoa: readonly string[];
-  /** Dados válidos, de onde o teste parte para trocar um campo. */
-  readonly exemplo: Dados;
-}
-
 export const CONVITE_DE_ACESSO: ModeloDeEmail<DadosDoConviteDeAcesso> = {
   nome: 'convite_de_acesso',
   renderizar: renderizarConviteDeAcesso,
@@ -183,13 +165,3 @@ export const CONVITE_DE_ACESSO: ModeloDeEmail<DadosDoConviteDeAcesso> = {
     nomeDaPessoa: 'Maria Souza',
   },
 };
-
-/**
- * **O registro, mesmo com um modelo só.** Um modelo novo entra aqui e herda,
- * sem teste novo, as provas de escape, remetente e imagem única; a do banner
- * primeiro, não: ela é uma cópia revisada por modelo, e o `email.spec.ts`
- * reprova o modelo do registro que não tiver a sua.
- * Mora neste arquivo enquanto há um modelo; com o segundo, vale um arquivo
- * próprio.
- */
-export const MODELOS_DE_EMAIL: readonly ModeloDeEmail[] = [CONVITE_DE_ACESSO];

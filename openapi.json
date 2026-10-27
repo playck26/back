@@ -1583,6 +1583,84 @@
         ]
       }
     },
+    "/api/v1/auth/esqueci-senha": {
+      "post": {
+        "operationId": "EsqueciSenhaController_esqueciSenha",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EsqueciSenhaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/public/redefinicao/{token}": {
+      "get": {
+        "operationId": "RedefinicaoPublicaController_consultar",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedefinicaoPublicaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "redefinicao"
+        ]
+      }
+    },
+    "/api/v1/public/redefinicao": {
+      "post": {
+        "operationId": "RedefinicaoPublicaController_redefinir",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedefinirSenhaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "redefinicao"
+        ]
+      }
+    },
     "/api/v1/planos": {
       "get": {
         "operationId": "PlanosController_listar",
@@ -8391,6 +8469,102 @@
         },
         "required": [
           "token",
+          "senha"
+        ]
+      },
+      "EsqueciSenhaDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "PapelDaRedefinicao": {
+        "type": "string",
+        "enum": [
+          "aluno",
+          "professor",
+          "company_admin"
+        ]
+      },
+      "EmpresaDaRedefinicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "example": "Clube X"
+          },
+          "logoUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "nome",
+          "logoUrl"
+        ]
+      },
+      "ContaDaRedefinicaoResponseDto": {
+        "type": "object",
+        "properties": {
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "papel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PapelDaRedefinicao"
+              }
+            ]
+          },
+          "empresa": {
+            "$ref": "#/components/schemas/EmpresaDaRedefinicaoResponseDto"
+          }
+        },
+        "required": [
+          "usuarioId",
+          "papel",
+          "empresa"
+        ]
+      },
+      "RedefinicaoPublicaResponseDto": {
+        "type": "object",
+        "properties": {
+          "contas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContaDaRedefinicaoResponseDto"
+            }
+          }
+        },
+        "required": [
+          "contas"
+        ]
+      },
+      "RedefinirSenhaDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "senha": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "token",
+          "usuarioId",
           "senha"
         ]
       },

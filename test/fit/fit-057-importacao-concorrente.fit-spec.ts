@@ -108,6 +108,7 @@ const MODELOS = {
   remetente: 'convites@fit057.teste.local',
   responderPara: 'suporte@fit057.teste.local',
   urlCliente: 'https://cliente.fit057.teste.local',
+  urlAdmin: 'https://admin.fit057.teste.local',
 };
 
 /** Quem monta a fixtura e confere o que ficou gravado. */

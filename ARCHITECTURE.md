@@ -1,6 +1,18 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-10-25** (era 2026-10-08).
+**Fonte: análise direta do código.** Data: **2026-10-26** (era 2026-10-25).
+
+**SPEC-090, na branch `spec090/esqueci-senha` (sobre o `main` em `f13013e`),
+2026-10-26.** Conferidos por comando: **62 migrations** (`ls -d
+prisma/migrations/*/`; +1, `20261026120000_spec090_redefinicao_de_senha`; o
+`main` tem 61), **45 modelos e 19 enums** (`^model`/`^enum` no `schema.prisma`;
++2 modelos, `PedidoDeRedefinicao` e `ContaDaRedefinicao`, nenhum enum — o
+`resultado_do_email` da SPEC-083 é reusado), **128 caminhos / 177 operações** no
+`openapi.json` (lido por `node`; o do `main`, 125 / 174): `POST
+/api/v1/auth/esqueci-senha`, `GET /api/v1/public/redefinicao/{token}` e `POST
+/api/v1/public/redefinicao`. A migration tem **2 `CREATE TABLE` e nenhum
+`CREATE TRIGGER`** (`grep -ci`). Ver "O esqueci minha senha (SPEC-090)", no fim
+da seção 10.
 
 **SPEC-089, na branch `spec089/nivel-opcional` (sobre o `main` em `7074aea`),
 2026-10-25.** Conferidos por comando: **61 migrations** (`ls -d
@@ -223,13 +235,16 @@ Do `package.json` (produção):
 
 **NÃO existem no projeto** (docs antigos ou suposições comuns podem citar):
 Turborepo ou qualquer monorepo (ADR-001 é poly-repo), Redis, GraphQL, ORM
-além do Prisma, gateway de pagamento, WebSocket. **E-mail de recuperação de
-senha, aviso de senha alterada e outbox de e-mail também não existem.**
+além do Prisma, gateway de pagamento, WebSocket. **Aviso de "sua senha foi
+alterada", normalização de caixa do e-mail e outbox de e-mail também não
+existem** (os dois primeiros continuam na SPEC-051, rascunho).
 
-**Provedor de e-mail passou a existir com a SPEC-083 (2026-10-04, nesta
-branch)** e saiu da lista acima — **para um e-mail só, o convite de acesso**
-(ADR-030). Ler `src/email/` esperando "esqueci minha senha" é ler errado: isso
-é da SPEC-051, que segue rascunho.
+**Provedor de e-mail passou a existir com a SPEC-083 (2026-10-04)** e saiu da
+lista acima, para um e-mail só, o convite de acesso (ADR-030). **Desde a
+SPEC-090 (2026-10-26, branch `spec090/esqueci-senha`) são dois modelos**: o
+convite e a **redefinição de senha** ("esqueci minha senha", que saiu da lista
+acima). Da SPEC-051, a 090 entrega **só** o REQ-002 de lá; o resto segue
+rascunho.
 
 **Storage de arquivo passou a existir em 2026-08-24** (SPEC-017) e é o único
 item que saiu desta lista. Existem, das TASK-001/002/002b/003/004: a porta `StorageProvider`, o
@@ -620,9 +635,15 @@ a replicar:
 
 ## 3. Modelo de domínio
 
-**43 modelos e 19 enums** no `schema.prisma`, **59 migrations** (conferido em
-**2026-10-04**, na branch da SPEC-083: `^model`/`^enum` no `schema.prisma` e
-`ls -d prisma/migrations/*/`). *A SPEC-083 somou um modelo
+**45 modelos e 19 enums** no `schema.prisma`, **62 migrations** (conferido em
+**2026-10-26**, na branch da SPEC-090: `^model`/`^enum` no `schema.prisma` e
+`ls -d prisma/migrations/*/`). *A SPEC-090 somou dois modelos
+(`PedidoDeRedefinicao`, `ContaDaRedefinicao`), nenhum enum e uma migration; a
+SPEC-086 e a SPEC-089 somaram uma migration cada, sem modelo nem enum (o
+`main` em `f13013e`: 43/19 e 61).*
+
+*Registro de 2026-10-04:* **43 modelos e 19 enums**, **59 migrations** (na
+branch da SPEC-083). *A SPEC-083 somou um modelo
 (`ConviteDeAcesso`), um enum (`ResultadoDoEmail`) e uma migration; as quatro
 migrations entre a SPEC-075 e a SPEC-079 não mudaram a contagem de modelos e
 enums (42/18 no `main` em `ff0c9f5`, conferido).*
@@ -719,6 +740,8 @@ conta `pg_tables` (43).*
 | `refresh_tokens` | MOD-001 | rotação por claim atômica; reuso revoga a sessão inteira. `token_hash` é **SHA-256** desde a SPEC-081 (a linha é achada pelo `jti`, e o hash só é conferido depois); linha legada em bcrypt (`$2…`) ainda confere, uma vez, até a spec de limpeza (LIM-081a) |
 | `convites_aluno` | MOD-001 | `token_hash` é **sha256 determinístico**, não bcrypt — o token é a chave de busca da claim atômica (INV-009) |
 | `convites_de_acesso` | MOD-001 (dados), `AcessoModule` | **SPEC-083.** O link de ativação do convite por e-mail. Mesmo `token_hash` sha256 de `convites_aluno`, mais **`impressao_credencial`** (sha256 de `usuarios.senha_hash` na emissão): a ativação a compara sob `FOR UPDATE` no usuário, e senha trocada por qualquer caminho mata o link (INV-083c). `company_id NOT NULL` + FK composta para `usuarios (company_id, id)`: `super_admin` não tem convite (INV-083d). `email_resultado`/`email_motivo`/`email_em` gravados **depois** do `COMMIT`; os dois nulos querem dizer `sem_confirmacao`. Também escrita pela **importação** (MOD-003), no SQL cru dela, com linhas que o `AcessoService` prepara |
+| `pedidos_de_redefinicao` | MOD-001 (dados), `AcessoModule` | **SPEC-090.** Um pedido de "esqueci minha senha": o `email` como digitado (serve só ao teto de 3 por hora), o `token_hash` sha256 (único), `expira_em` (60 min), `usado_em` e o resultado do envio (`email_resultado`/`email_motivo`/`email_em`, o enum da SPEC-083, gravado depois do `COMMIT`). **Não tem `company_id`**: um pedido cobre N contas do mesmo e-mail, em empresas diferentes. `usado_em` fica **no pedido**, e não na conta: redefinir uma conta mata o link para todas (I6). Ninguém apaga pedido em produção (LIM-090-04) |
+| `contas_da_redefinicao` | MOD-001 (dados), `AcessoModule` | **SPEC-090.** As contas que um pedido cobre, uma linha por `(pedido_id, usuario_id)` (PK), com a `impressao_credencial` (sha256 do `senha_hash` lido na emissão, sem trava): a redefinição a compara sob `FOR UPDATE` no usuário, e senha trocada por qualquer caminho tira a conta do link (INV-090b). `company_id NOT NULL` + FK composta para `usuarios (company_id, id)`, `CASCADE`: `super_admin` não tem pedido (INV-090c). FK para o pedido, `CASCADE` — **sem cascata reversa**: a última conta apagada deixa o pedido órfão, que responde `410` |
 | `pedidos_reserva` | MOD-005 | idempotência **do pedido**, com fingerprint do payload. **SPEC-054/D9:** pedido sem adicional (ou com lista vazia) grava `quadraId\|data\|slots` byte a byte como antes; com adicional, ganha `\|adicionais=<id>:<q>,…` em ordem de id — a comparação é `!==`, e mudar o formato de todo pedido quebraria o replay de chaves já gravadas |
 | `alunos` | MOD-003 | `status` (ativo/inativo) ≠ `vinculo` (pendente/aprovado/recusado). O segundo é INV-010 |
 | `professores` | MOD-003 | `usuario_id` **anulável e único** (INV-014). Nulo é o estado normal: ficha sem acesso. `ON DELETE SET NULL` — apagar a conta não apaga o histórico de turmas. `foto_key` (SPEC-018) existe **por causa** disso: professor sem conta não teria onde guardar foto. Leitura é `coalesce(usuarios.foto_key, professores.foto_key)` — INV-034 |
@@ -771,6 +794,7 @@ que são a garantia real):
 | `convites_de_acesso_um_vivo_por_usuario` (índice único **parcial**, SPEC-083) | INV-083b: no máximo um convite vivo (`usado_em` e `revogado_em` nulos) por usuário. Expirado continua vivo para o índice — o reenvio o revoga na mesma transação. **Não aparece no `schema.prisma`** (o Prisma não expressa `WHERE`); a violação vira `409 CONVITE_EM_EMISSAO` pelo tradutor por constraint |
 | `convites_de_acesso_fim_unico`, `convites_de_acesso_email_coerente` (SPEC-083) | usado **ou** revogado, nunca os dois; `email_resultado` e `email_em` nulos juntos ou preenchidos juntos |
 | `convites_de_acesso_usuario_fkey` (composta, `ON DELETE CASCADE`), `convites_de_acesso_criado_por_fkey` (simples, sem ação) | o convite não cruza empresa e não existe para `super_admin`; apagar o gestor que convidou é recusado pelo banco, em vez de decidido por ele |
+| `pedidos_de_redefinicao_email_coerente` (SPEC-090) | o mesmo `CHECK` do convite: `email_resultado` e `email_em` nulos juntos ou preenchidos juntos. **O único da migration que o Prisma não expressa** — os dois índices (`…_token_hash_key`, `…_email_criado_em_idx`), a PK composta e as duas FKs estão no `schema.prisma` |
 | `usuarios_foto_da_empresa_check`, parte `company_id IS NOT NULL` | consequência declarada: **`super_admin` não tem foto de perfil.** A gramática da chave começa por `empresas/<company_id>/` e não representa foto de quem não tem empresa. **Decidido em 2026-08-25** (SPEC-018/LIM-005): é conta operacional e o SAdmin não tem tela de perfil. A rota devolve 403 `PERFIL_SEM_EMPRESA` antes de tocar o storage, para o caso nunca virar 500 vindo de constraint |
 
 ### 3.1 Triggers — e são as primeiras do projeto
@@ -854,13 +878,19 @@ src/
   acesso/          SPEC-083 — `AcessoModule` (dados de MOD-001): o convite
                    de acesso por e-mail — emitir, consultar, ativar, a
                    situação, as rotas públicas `/public/ativacao` e o
-                   tradutor por constraint. `cli/` é outra coisa, de antes:
-                   o `pnpm acesso:sadmin` (super admin sem senha), fora do
-                   módulo Nest
+                   tradutor por constraint. SPEC-090 — o "esqueci minha
+                   senha": `redefinicao.service.ts`,
+                   `redefinicao-publica.controller.ts` (duas classes:
+                   `EsqueciSenhaController` em `/auth` e
+                   `RedefinicaoPublicaController` em `/public/redefinicao`)
+                   e `dto/redefinicao.dto.ts`. `cli/` é outra coisa, de
+                   antes: o `pnpm acesso:sadmin` (super admin sem senha),
+                   fora do módulo Nest
   email/           SPEC-083 — MOD-015 (Email): a porta `ProvedorDeEmail`,
                    os adaptadores Resend e memória, `email.config.ts`, o
-                   escape e o modelo `convite_de_acesso`. **Sem controller
-                   e sem tabela**
+                   escape e os modelos em `modelos/`: `convite_de_acesso`,
+                   `redefinicao_de_senha` (SPEC-090) e o registro
+                   `registro.ts`. **Sem controller e sem tabela**
   companies/       MOD-002 — tenants (+ rota pública por slug)
   people/          MOD-003 — alunos, professores, níveis; `importacao/`
                    (SPEC-038; SPEC-083: cinco colunas, turma, convidados)
@@ -916,7 +946,11 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**99 caminhos, 138 operações HTTP** (conferido em **2026-09-11** contra o
+**Hoje: 128 caminhos, 177 operações HTTP** (conferido em **2026-10-26**, na
+branch da SPEC-090, lendo o `openapi.json` por `node`; +3 / +3 sobre o `main`
+em `f13013e`). A contagem por spec desde a SPEC-047 está no topo do arquivo.
+
+*Registro de 2026-09-11:* **99 caminhos, 138 operações HTTP** (contra o
 `openapi.json`, depois da SPEC-047). A progressão: 85/120 depois da
 SPEC-040, 87/122 com a SPEC-035, 88/124 com a SPEC-036, 92/130 com a SPEC-037,
 93/131 com a SPEC-038, 97/136 com as SPECs 045 e 046, **99/138 com a SPEC-047**
@@ -1773,13 +1807,20 @@ hora); erros de domínio trazem `code` estável (`FORA_DO_EXPEDIENTE`,
 - Throttle: **a chave é o usuário quando o Bearer token confere**, e o IP
   quando não confere ou não existe (SPEC-017/TASK-006). **Exceto onde o
   limite existe para conter quem ainda não é ninguém** — login, aceite de
-  convite, auto-cadastro, leitura pública e, com a SPEC-083, as duas rotas do
-  link de ativação (`/public/ativacao`) contam **sempre por IP**, via
+  convite, auto-cadastro, leitura pública, com a SPEC-083 as duas rotas do
+  link de ativação (`/public/ativacao`) e, com a SPEC-090, as três do
+  "esqueci minha senha" (`POST /auth/esqueci-senha` com `@LimiteDeLogin()`,
+  `GET`/`POST /public/redefinicao` com `@LimitePublico()`, 10 pedidos em 15
+  min cada, um balde por rota) contam **sempre por IP**, via
   `@ContagemPorIp()`. Ver seção 10.
 - **SPEC-083 — ativar pelo link não abre sessão.** `POST /public/ativacao`
   grava a senha e responde `204`; a pessoa entra pelo login, e passa pelos
   dois portões do `JwtAuthGuard` como qualquer conta criada pelo gestor (o do
   aceite, no primeiro acesso). Nenhum guard novo.
+- **SPEC-090 — redefinir pelo link também não abre sessão.** `POST
+  /public/redefinicao` grava a senha (`senha_temporaria = false`), revoga os
+  refresh tokens **só daquela conta** e responde `204`; a pessoa entra pelo
+  login. Nenhum guard novo.
 
 ### Papéis de banco (SPEC-057/TASK-001/D3)
 
@@ -1846,9 +1887,9 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | 5 | Ocupação de turma não tem `aluno_id`: não há como cancelar/remarcar uma ocorrência por aluno (GAP-008). `presencas` é base para resolver, mas **não resolve** — remarcar exige estado além de presente/ausente/justificado | Média — adiado por decisão |
 | 6 | Cancelar parte de um bloco de reserva não é suportado (GAP-013) | Baixa |
 | 7 | **A regra do passado é assimétrica por papel, e mora só na aplicação** (SPEC-042, D-I5): o aluno não cria nem cancela horário já começado; o gestor faz os dois, porque fechar caixa e corrigir lançamento errado são trabalho real. **Não há CHECK que possa sustentar isso** — a regra depende de quem pede, e o banco não conhece papel. Sete ocupações passadas nasceram antes da guarda e **ficaram**: duas com cobrança em aberto, e apagar cobrança por script é pior que a origem | Média — invariante só de aplicação, por impossibilidade e não por descuido |
-| 7 | Sem e-mail de recuperação de senha (GAP-004): recuperação é manual, via admin. **Desde a SPEC-083 (nesta branch) existe e-mail, mas só o convite de acesso** (ADR-030); "esqueci minha senha" continua com a SPEC-051 | Baixa — ADR-013 |
+| 7 | ~~Sem e-mail de recuperação de senha (GAP-004)~~ — **fechado pela SPEC-090 (2026-10-26, branch `spec090/esqueci-senha`)**: aluno, professor e gestor pedem o link pelo próprio e-mail (`POST /auth/esqueci-senha`) e redefinem por `/public/redefinicao`. Os caminhos por autoridade (gestor gera senha do aluno e do professor; super admin, a do gestor) continuam. Fica de fora a normalização de caixa do e-mail (LIM-090-01, SPEC-051) | — |
 | 8 | `seed.ts` cria dado de demonstração; recusa rodar com `NODE_ENV=production` sem variável explícita | Baixa — mitigado |
-| 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin. **Sobra o `super_admin`**, que não tem papel acima para autorizar — runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
+| 10 | ~~Nenhum papel de painel tem recuperação de senha~~ — **fechado para `company_admin` em 2026-08-23 (SPEC-016)**: o super admin gera senha temporária pelo SAdmin; **e, desde a SPEC-090, o próprio gestor pede o link** (vai para `URL_ADMIN`). **Sobra o `super_admin`**, que não tem papel acima para autorizar e **continua sem "esqueci minha senha"** — filtrado pelo `role` e recusado pela FK composta de `contas_da_redefinicao` (INV-090c). Runbook manual em `OPERATIONS.md`, com gatilhos declarados na LIM-010 | Média — limite declarado |
 | 11 | ~~**DEF-006 — o `GET` e o `PUT` da chamada discordam sobre quem ela cobre.**~~ — **fechado em 2026-09-26 (SPEC-076)**: o `PUT` saiu, e não há mais escritor humano de presença para discordar do `GET`. `chamada()` com cabeçalho `completa` devolve o snapshot (INV-020 estrita); `salvarChamada()` recalcula `esperados` como `matriculados hoje ∪ já registrados`. Matrícula posterior a uma chamada completa faz o `PUT` do que o próprio `GET` devolveu virar 422 `CHAMADA_INCOMPLETA`, acusando aluno que a tela não mostra — e sem saída pelo produto (LIM-002: o gestor só lê) | **Alta quando ocorrer** — reproduzida em produção em 2026-08-23 |
 | 12 | ~~**O histórico do gestor não expõe `completude`**~~ — **fechado em 2026-08-30 (SPEC-030)**. Ele devolvia `chamadaFeita` derivado de `presencas.length > 0`; agora devolve `estado` resolvido pela fonte única, e `registradoPor` vem do cabeçalho antes das presenças — sem isso uma aula `nao_houve`, que não tem nenhuma presença, não mostraria quem a fechou | — |
 | 13 | **`ocorrenciasDaTurma` ordena `data desc` sem teto futuro**, então as ocorrências futuras ficam acima da única lançável: o card "fazer chamada" é sempre o último da lista. Medido em produção em 2026-08-23 (9º de 9 na Turma 02; 15º de 16 na turma 01, que ainda tem 8 ocupações canceladas duplicando as ativas) | Baixa — atrito na operação mais frequente do professor |
@@ -1860,8 +1901,8 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 | ID | Módulo | Escreve em | Invariantes |
 |---|---|---|---|
 | MOD-001 | AuthIdentity | `usuarios`, `refresh_tokens`, `convites_aluno` | INV-002, INV-004, INV-008, INV-009, INV-013 |
-| MOD-001 (`AcessoModule`) | AcessoModule | `convites_de_acesso`; na ativação, `usuarios` (senha) e `refresh_tokens` (revoga) | **SPEC-083.** INV-083a a INV-083f. Módulo Nest próprio, com os dados de MOD-001, por ciclo: `AuthModule → PeopleModule`, e o `PeopleModule` emite convite. **A importação (MOD-003) também escreve `convites_de_acesso`**, no SQL cru dela, com linhas preparadas por `AcessoService.prepararConvite` |
-| **MOD-015** | **Email** | — (sem tabela; quem grava o resultado do envio é quem emitiu) | **SPEC-083.** INV-083e, INV-083f, INV-083h. Porta `ProvedorDeEmail` (token `PROVEDOR_DE_EMAIL`), que **nunca lança**; Resend em produção, memória nos testes; sem controller |
+| MOD-001 (`AcessoModule`) | AcessoModule | `convites_de_acesso`, `pedidos_de_redefinicao`, `contas_da_redefinicao`; na ativação e na redefinição, `usuarios` (senha) e `refresh_tokens` (revoga) | **SPEC-083.** INV-083a a INV-083f. **SPEC-090:** INV-090a a INV-090g, o `RedefinicaoService` e as três rotas do "esqueci minha senha" — inclusive `POST /auth/esqueci-senha`, servida daqui para o `AuthModule` não importar o `AcessoModule`. Módulo Nest próprio, com os dados de MOD-001, por ciclo: `AuthModule → PeopleModule`, e o `PeopleModule` emite convite. **A importação (MOD-003) também escreve `convites_de_acesso`**, no SQL cru dela, com linhas preparadas por `AcessoService.prepararConvite` |
+| **MOD-015** | **Email** | — (sem tabela; quem grava o resultado do envio é quem emitiu) | **SPEC-083.** INV-083e, INV-083f, INV-083h. Porta `ProvedorDeEmail` (token `PROVEDOR_DE_EMAIL`), que **nunca lança**; Resend em produção, memória nos testes; sem controller. **Dois modelos desde a SPEC-090** (`convite_de_acesso`, `redefinicao_de_senha`), no registro `modelos/registro.ts` |
 | MOD-002 | CompanyManagement | `empresas` | INV-005 |
 | MOD-003 | PeopleManagement | `alunos`, `professores`, `niveis` | INV-002, INV-006, INV-010, INV-013, INV-014 |
 | MOD-004 | ClassScheduling | `turmas`, `turma_alunos`, `presencas`, `chamadas` | INV-003, INV-012, INV-015 a INV-020, INV-026, INV-027 |
@@ -1884,7 +1925,9 @@ relógio do servidor — **dívida consciente**, ver Gaps.
 Prisma por baixo); **SPEC-083:** `PeopleModule → AcessoModule, EmailModule`,
 `AcessoModule → EmailModule`, e o `AppModule` registra o `EmailModule` direto,
 para a configuração ser validada no boot. Sem ciclos — o `AcessoModule` não
-importa o `PeopleModule`.
+importa o `PeopleModule`. **SPEC-090:** `AcessoModule → StorageModule` (a logo
+de cada clube na página do link, pelo `LogoDaEmpresaService`, registrado como
+provider no próprio `AcessoModule`, como o `AuthModule` faz desde a SPEC-086).
 **`StorageModule` não tem dependente nenhum hoje** — é fundação registrada
 antes do consumidor, e quem passa a depender dela é a SPEC-018. Exporta
 `StorageService` (o caminho de leitura, com a conferência obrigatória) e
@@ -2405,6 +2448,11 @@ todos. **O nome não é o portador; o valor é.**
 real recebido e ativado pelo Israel no mesmo dia (`OPERATIONS.md`, "Runbook —
 E-mail pela Resend"). Decisão: ADR-030.*
 
+*Desde a SPEC-090 (2026-10-26) há um segundo e-mail, a redefinição de senha,
+e o registro dos modelos saiu do `convite-de-acesso.ts` para
+`modelos/registro.ts`; a tabela abaixo descreve a SPEC-083. Ver "O esqueci
+minha senha (SPEC-090)", no fim desta seção.*
+
 **O produto passou a enviar um e-mail, e só um: o convite de acesso.** O gestor
 o emite pela ficha do aluno ou do professor, ou marca linhas na importação; a
 pessoa recebe um link de uso único e cria a própria senha. Três peças, e a
@@ -2437,7 +2485,8 @@ produção, e o boot avisa em `warn` quando ele está ligado.
 `storage.config.ts`), e é por isso que o `AppModule` registra o `EmailModule`
 mesmo sem consumidor direto. Em produção não há padrão: sem `EMAIL_PROVEDOR`
 (só `resend`), `RESEND_API_KEY`, `EMAIL_REMETENTE`, `EMAIL_RESPONDER_PARA` ou
-`URL_CLIENTE` (`https://`, sem caminho), o app não sobe. O módulo exporta a
+`URL_CLIENTE` (`https://`, sem caminho) — e, desde a SPEC-090, `URL_ADMIN`,
+pela mesma função de origem —, o app não sobe. O módulo exporta a
 porta e uma configuração **sem a chave** (`CONFIGURACAO_DOS_MODELOS`); a com a
 chave fica dentro dele, como o `STORAGE_CONFIG`.
 
@@ -2576,6 +2625,102 @@ de `presencas` tem de tirar o `company_id` da ocorrência.** O endurecimento
   recusa qualquer payload com `typ`. O `AuthModule` registra o
   `LogoDaEmpresaService` (as dependências vêm do `StorageModule`), para não
   importar o `CompaniesModule`, que o importa.
+
+### O esqueci minha senha (SPEC-090)
+
+*Escrita em 2026-10-26 sobre a branch `spec090/esqueci-senha` (commits
+`285c18d`..`98caddb`, sobre o `main` em `f13013e`). **Não está no ar**: a
+branch não foi mergeada. Spec: `specs/changes/090-esqueci-minha-senha/spec.md`.*
+
+**Quem tem conta ativa (aluno, professor ou gestor) pede um link pelo
+e-mail e redefine a senha sem falar com ninguém.** Um link cobre todas as
+contas do e-mail; a pessoa escolhe **uma** na página, e o link morre para
+todas (I6). O `super_admin` fica de fora (LIM-010 da SPEC-016).
+
+| Rota | Limite (por IP, balde da rota) | Faz |
+|---|---|---|
+| `POST /auth/esqueci-senha` `{ email }` | `@LimiteDeLogin()` — 10 / 15 min | responde **`202` vazio antes de olhar o banco**: o controller chama `solicitar` **sem `await`** (INV-090e), e o `.catch` registra só `{ evento: 'redefinicao_falhou' }`. `400` só para e-mail malformado |
+| `GET /public/redefinicao/:token` | `@LimitePublico()` — 10 / 15 min | as contas que ainda aceitam o link (`usuarioId`, `papel`, `empresa.nome`, `empresa.logoUrl`), em ordem de nome do clube e id; **não consome** |
+| `POST /public/redefinicao` `{ token, usuarioId, senha }` | `@LimitePublico()` — 10 / 15 min | redefine **uma** conta e responde `204`, sem sessão |
+
+Todo `410` das duas rotas públicas é o mesmo objeto congelado,
+`REDEFINICAO_INVALIDA` (`code: 'LINK_INVALIDO'`, mensagem *"Este link não vale
+mais. Peça outro em "Esqueceu a senha?"."*): formato, hash inexistente, usado,
+expirado, nenhuma conta aceita, conta fora do pedido, impressão que não bate.
+
+**As três rotas moram no `AcessoModule`, inclusive a de `/auth`**
+(`redefinicao-publica.controller.ts`, duas classes): o `AuthModule` importa o
+`PeopleModule`, que importa o `AcessoModule`, e o caminho inverso fecharia um
+ciclo. **`RedefinicaoService`** (`src/acesso/redefinicao.service.ts`):
+
+- **`solicitar(email)`**, depois do `202`: contas com o e-mail **exato**
+  (LIM-090-01), `role` aluno/professor/company_admin, conta `ativo`, empresa
+  `ativa` — `senha_temporaria` **não** filtra (I4). Nenhuma → fim. **Teto de 3
+  pedidos por e-mail por hora** (`TETO_DE_PEDIDOS_POR_HORA`), só aplicação.
+  Pedido e contas numa transação, com a impressão do `senha_hash` lido sem
+  trava; o envio depois do `COMMIT`, e o resultado num `UPDATE` seguinte.
+  **Pedidos anteriores não são revogados** (I7). Papéis misturados (só por
+  escrita direta no banco) não emitem: `{ evento:
+  'redefinicao_papeis_misturados' }`.
+- **`redefinir`** (D5): bcrypt **antes** da transação; localizar pedido e a
+  linha `(pedido_id, usuario_id)`; `FOR UPDATE OF u` no dono; conferir conta
+  ativa, empresa ativa e impressão; reivindicar o **pedido** com `UPDATE …
+  WHERE usado_em IS NULL AND expira_em > now()` (0 linhas → `410`); senha nova
+  com `senha_temporaria = false`; revogar os refresh tokens **por
+  `usuario_id`**, nunca por e-mail. **Ordem de travas: `usuarios` →
+  `pedidos_de_redefinicao` → `refresh_tokens`**, compatível com todo escritor
+  de `refresh_tokens` (varredura na D5 da spec).
+- **Efeito colateral declarado, sem código novo:** redefinir troca o
+  `senha_hash`, então o convite vivo da SPEC-083 daquela conta e o token de
+  escolha da SPEC-086 morrem pela impressão (AC-016).
+
+**O link sai da configuração e do papel, nunca da requisição** (INV-090d):
+`montarLinkDeRedefinicao(config, destino, token)` não recebe `Request`. Uma
+conta de `company_admin` → `URL_ADMIN/redefinir-senha/<token>`; uma ou mais de
+aluno/professor → `URL_CLIENTE/redefinir-senha/<token>`.
+
+**`URL_ADMIN` entrou em `VARIAVEIS_DE_EMAIL`** (`email.config.ts`), com a
+**mesma** validação de `URL_CLIENTE` — a função `origemDoCliente` virou
+`origem(nome, valor, producao)`, generalizada e não copiada — e é o campo
+**obrigatório** `urlAdmin` de `ConfiguracaoDosModelos`. Fora de produção, o
+padrão é `http://localhost:3001`; em produção, ausente ou inválida, o app não
+sobe. Em produção ela existe no App Platform desde 2026-10-26
+(`https://admin.playck.com.br`).
+
+**O segundo modelo de e-mail**, `redefinicao_de_senha`
+(`src/email/modelos/redefinicao-de-senha.ts`): remetente `"PlayCK"
+<EMAIL_REMETENTE>` (sem nome de clube: um e-mail pode cobrir vários),
+`camposDePessoa = []` — o único dado variável é o número de contas —, chave de
+idempotência `redefinicao-de-senha/<pedidoId>`,
+`VALIDADE_DA_REDEFINICAO_EM_MINUTOS = 60`. **O registro `MODELOS_DE_EMAIL`
+saiu do `convite-de-acesso.ts` para `src/email/modelos/registro.ts`**, com o
+contrato `ModeloDeEmail` e os dois modelos; o `email.spec.ts` passou a ter um
+mapa de oráculos **por modelo** (`camposDePessoa` e remetente), e um modelo do
+registro sem entrada no mapa reprova.
+
+**A limpeza dos testes** (`test/banco/limpar-empresa.ts`):
+`contas_da_redefinicao` entra em `TABELAS_DA_EMPRESA` logo antes de
+`usuarios`; `pedidos_de_redefinicao` **não entra** (não tem `company_id`). Na
+mesma transação, um passo fixo lê **antes do laço** os pedidos com conta da
+empresa (`PEDIDOS_DA_EMPRESA`) e apaga **depois** só os que ficaram sem conta
+(`APAGAR_PEDIDOS_ORFAOS`) — dois comandos, e não um `WITH … DELETE`, porque no
+mesmo comando o `NOT EXISTS` veria o snapshot de antes. Pedido de A+B,
+limpando A: fica, com a conta de B. Órfão alheio: não é tocado.
+
+**`ACEITAS_SEM_CORPO`** (`src/contrato-de-resposta.spec.ts`): a lista com
+**só** `POST /api/v1/auth/esqueci-senha`, a única rota 2xx sem schema que não é
+`204` e não é dívida — o `202` vazio é a D1. Um teste confere que cada rota da
+lista existe, publica `202` e nenhum corpo.
+
+| Gate | Prova |
+|---|---|
+| `test/banco/spec-090-redefinicao.db-spec.ts` | as tabelas, os índices, o `CHECK`, as FKs, o `23503` do super admin (AC-001) e a limpeza (AC-028) |
+| `test/banco/limpar-empresa-cobertura.db-spec.ts` | `contas_da_redefinicao` na lista, `pedidos_de_redefinicao` fora |
+| `src/acesso/redefinicao.service.spec.ts` | o serviço com Prisma dublado |
+| `test/redefinicao.e2e-spec.ts` | **só a camada HTTP** (o e2e do CI não tem banco): o `202` antes de o serviço resolver (AC-004), `400`, `410` de malformado e de inexistente, limite por IP |
+| `test/banco/spec-090-rotas.db-spec.ts` | as rotas por HTTP real contra Postgres: os sete casos do AC-003 e os ACs que dependem do banco (delta D-2026-10-26 da spec) |
+| `test/banco/spec-090-corrida.db-spec.ts` | as corridas do AC-018, com a espera observada em `pg_stat_activity` |
+| `src/email/email.spec.ts` | o modelo novo, a cópia literal dos dois ramos (uma conta, N contas), o mapa de oráculos e a `URL_ADMIN` (AC-019 a AC-021) |
 
 ## 11. Patterns observados
 

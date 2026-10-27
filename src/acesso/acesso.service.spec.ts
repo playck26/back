@@ -56,6 +56,7 @@ const MODELOS: ConfiguracaoDosModelos = {
   remetente: 'nao-responda@playck.com.br',
   responderPara: 'suporte@playck.com.br',
   urlCliente: 'https://cliente.teste.local',
+  urlAdmin: 'https://admin.teste.local',
 };
 
 const SENHA_HASH_ATUAL = '$2b$12$senha-temporaria-de-hoje';

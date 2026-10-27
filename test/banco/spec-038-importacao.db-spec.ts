@@ -43,6 +43,7 @@ function servico(): ImportacaoDeAlunosService {
     remetente: 'convites@spec038.teste.local',
     responderPara: 'suporte@spec038.teste.local',
     urlCliente: 'https://cliente.spec038.teste.local',
+    urlAdmin: 'https://admin.spec038.teste.local',
   };
   return new ImportacaoDeAlunosService(
     p,

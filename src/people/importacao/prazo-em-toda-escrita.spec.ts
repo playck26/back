@@ -35,6 +35,7 @@ const MODELOS = {
   remetente: 'convites@unit.teste.local',
   responderPara: 'suporte@unit.teste.local',
   urlCliente: 'https://cliente.unit.teste.local',
+  urlAdmin: 'https://admin.unit.teste.local',
 };
 const GESTOR = '9a000000-0000-4000-8000-000000000001';
 

@@ -41,6 +41,7 @@ import { ResendProvedorDeEmail } from './resend-provedor-de-email';
         remetente: email.remetente,
         responderPara: email.responderPara,
         urlCliente: email.urlCliente,
+        urlAdmin: email.urlAdmin,
       }),
     },
     {

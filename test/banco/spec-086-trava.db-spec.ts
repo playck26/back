@@ -109,6 +109,7 @@ const MODELOS = {
   remetente: 'convites@spec086t.teste.local',
   responderPara: 'suporte@spec086t.teste.local',
   urlCliente: 'https://cliente.spec086t.teste.local',
+  urlAdmin: 'https://admin.spec086t.teste.local',
 };
 
 const db = new PrismaClient();

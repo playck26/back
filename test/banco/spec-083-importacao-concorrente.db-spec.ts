@@ -102,6 +102,7 @@ const MODELOS = {
   remetente: 'convites@spec083k.teste.local',
   responderPara: 'suporte@spec083k.teste.local',
   urlCliente: 'https://cliente.spec083k.teste.local',
+  urlAdmin: 'https://admin.spec083k.teste.local',
 };
 
 /**

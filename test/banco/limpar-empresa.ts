@@ -38,6 +38,16 @@ export interface ClienteSql {
 }
 
 /**
+ * SPEC-090/D2 — a transação da limpeza também LÊ: os pedidos de redefinição
+ * que tocam a empresa são guardados antes do laço (ver
+ * `PEDIDOS_DA_EMPRESA`). Só a transação aberta aqui dentro precisa disto; quem
+ * chama `limparEmpresa` continua passando um `ClienteSql`.
+ */
+interface ClienteSqlComLeitura extends ClienteSql {
+  $queryRawUnsafe<T = unknown>(sql: string, ...valores: unknown[]): Promise<T>;
+}
+
+/**
  * SPEC-032/TASK-005 — a limpeza passou a precisar de **transação própria**: a
  * válvula das tabelas append-only é um GUC `is_local`, que morre com a
  * transação. Sem transação não há escopo, e o salvo-conduto vazaria para a
@@ -49,7 +59,7 @@ export interface ClienteSql {
  */
 interface ComTransacao {
   $transaction<T>(
-    fn: (tx: ClienteSql) => Promise<T>,
+    fn: (tx: ClienteSqlComLeitura) => Promise<T>,
     opcoes?: { maxWait?: number; timeout?: number },
   ): Promise<T>;
 }
@@ -244,8 +254,48 @@ export const TABELAS_DA_EMPRESA = [
   // linhas -- e limpeza que depende disso e a que quebra no dia errado, com a
   // mensagem culpando `usuarios`.
   'convites_de_acesso',
+  // SPEC-090/D2: logo antes de `usuarios`. A FK composta da conta para
+  // `usuarios` e CASCADE, entao ela cairia junto; entra explicitamente pela
+  // mesma razao de `assinaturas_push` (apagar de proposito nao depende do
+  // CASCADE, e a cobertura exige toda tabela com `company_id`). Sai SO a conta
+  // desta empresa: o pedido que a cobre pode cobrir outra empresa, e o link
+  // segue valendo para ela.
+  //
+  // `pedidos_de_redefinicao` NAO entra, e nao pode entrar: nao tem
+  // `company_id`, e este laco apaga por `company_id`. Quem o apaga, e so
+  // quando fica orfao, e o passo fixo de `limparEmpresa` (ver
+  // `PEDIDOS_DA_EMPRESA`).
+  'contas_da_redefinicao',
   'usuarios',
 ] as const;
+
+/**
+ * SPEC-090/D2 — os pedidos de redefinição que têm conta DESTA empresa, lidos
+ * ANTES do laço. É o limite do passo fixo que apaga o pedido órfão: sem ele,
+ * a limpeza de uma empresa apagaria órfão de qualquer outra — contra a
+ * garantia do cabeçalho deste arquivo, e nos canários que rodam contra o Neon
+ * DEV (S22).
+ */
+const PEDIDOS_DA_EMPRESA = `SELECT DISTINCT pedido_id::text AS pedido_id
+    FROM contas_da_redefinicao
+   WHERE company_id = $1::uuid`;
+
+/**
+ * SPEC-090/D2 — o passo fixo, DEPOIS do laço: apaga **só o pedido que tinha
+ * conta desta empresa e ficou sem nenhuma**. Pedido A+B, limpando A: perde a
+ * conta de A, continua com a de B, e fica (S17). Limpando B depois: sem conta,
+ * sai (S18).
+ *
+ * **São dois comandos, e não um `WITH ... DELETE ... RETURNING`, de
+ * propósito:** no mesmo comando, o `NOT EXISTS` veria as contas ainda pelo
+ * snapshot de antes do `DELETE`, e nenhum pedido sairia. Em comandos
+ * separados, dentro da mesma transação, o segundo enxerga o que o laço apagou.
+ */
+const APAGAR_PEDIDOS_ORFAOS = `DELETE FROM pedidos_de_redefinicao p
+   WHERE p.id = ANY($1::uuid[])
+     AND NOT EXISTS (
+       SELECT 1 FROM contas_da_redefinicao c WHERE c.pedido_id = p.id
+     )`;
 
 /**
  * Apaga tudo o que pertence a uma empresa, e depois a empresa.
@@ -264,6 +314,13 @@ export async function limparEmpresa(
   // `$transaction` pelos 32 chamadores.
   const comTransacao = cliente as unknown as ComTransacao;
   await comTransacao.$transaction(async (tx) => {
+    const pedidos = (
+      await tx.$queryRawUnsafe<{ pedido_id: string }[]>(
+        PEDIDOS_DA_EMPRESA,
+        companyId,
+      )
+    ).map((linha) => linha.pedido_id);
+
     for (const tabela of TABELAS_DA_EMPRESA) {
       if (APPEND_ONLY.has(tabela)) {
         // A válvula, e ela é **estreita de propósito**: vale por uma
@@ -289,6 +346,7 @@ export async function limparEmpresa(
         companyId,
       );
     }
+    await tx.$executeRawUnsafe(APAGAR_PEDIDOS_ORFAOS, pedidos);
     await tx.$executeRawUnsafe(
       `DELETE FROM empresas WHERE id = $1::uuid`,
       companyId,
