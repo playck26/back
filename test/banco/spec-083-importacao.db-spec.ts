@@ -303,11 +303,13 @@ describe('SPEC-083/AC-007 — a turma pelo nome, com caixa, acento e espaços di
   it('casa a turma ativa, e o aluno nasce em `turma_alunos`', async () => {
     const t = await turma('Terça 19h');
     const ana = email('ana');
-    const csv = `nome;email;turma\r\nAna;${ana};  TERCA    19H \r\n`;
+    const csv = `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${ana};  TERCA    19H ;;Iniciante;;\r\n`;
 
     const conferida = await pelaRota(csv, { conferir: true });
     expect(corpoDe<RelatorioDeImportacaoDto>(conferida.r).linhas).toEqual([
-      expect.objectContaining({ turmaId: t, turmaNome: 'Terça 19h' }),
+      expect.objectContaining({
+        turmas: [{ id: t, nome: 'Terça 19h', coluna: 'turma 1' }],
+      }),
     ]);
 
     const antes = Date.now();
@@ -328,6 +330,46 @@ describe('SPEC-083/AC-007 — a turma pelo nome, com caixa, acento e espaços di
     expect(matricula[0].createdAt.getTime()).toBeLessThanOrEqual(
       depois + 5_000,
     );
+  });
+
+  it('SPEC-091/D3 — um aluno em DUAS turmas (`turma 1` e `turma 3`): duas linhas em `turma_alunos`, as duas do mesmo aluno', async () => {
+    const terca = await turma('Terça 19h');
+    const quinta = await turma('Quinta 19h');
+    const outra = await turma('Sábado 9h');
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('duas')};;Iniciante;Terça 19h;;quinta 19H\r\n`;
+
+    const { r } = await pelaRota(csv);
+    expect(r.status).toBe(200);
+    const [criado] = corpoDe<ImportacaoConcluidaDto>(r).criados;
+    const matriculas = await db.turmaAluno.findMany({
+      where: { alunoId: criado.alunoId },
+      select: { turmaId: true },
+    });
+    expect(matriculas.map((m) => m.turmaId).sort()).toEqual(
+      [terca, quinta].sort(),
+    );
+    // A terceira turma ativa não recebe ninguém: o aluno não foi em todas.
+    expect(await db.turmaAluno.count({ where: { turmaId: outra } })).toBe(0);
+  });
+
+  it('SPEC-091/AC-004 — um aluno nas TRÊS colunas: três linhas em `turma_alunos`, todas dele', async () => {
+    const terca = await turma('Terça 19h');
+    const quinta = await turma('Quinta 19h');
+    const sabado = await turma('Sábado 9h');
+    const outra = await turma('Domingo 8h');
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('tres')};;Iniciante;Terça 19h;Quinta 19h;Sábado 9h\r\n`;
+
+    const { r } = await pelaRota(csv);
+    expect(r.status).toBe(200);
+    const [criado] = corpoDe<ImportacaoConcluidaDto>(r).criados;
+    const matriculas = await db.turmaAluno.findMany({
+      where: { alunoId: criado.alunoId },
+      select: { turmaId: true },
+    });
+    expect(matriculas.map((m) => m.turmaId).sort()).toEqual(
+      [terca, quinta, sabado].sort(),
+    );
+    expect(await db.turmaAluno.count({ where: { turmaId: outra } })).toBe(0);
   });
 });
 
@@ -357,7 +399,7 @@ describe('SPEC-083/AC-008 — turma inexistente, inativa ou de outra empresa', (
       const antes = await contarTudo();
 
       const { r } = await pelaRota(
-        `nome;email;turma\r\nAna;${email('ana')};${citada}\r\n`,
+        `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${email('ana')};${citada};;Iniciante;;\r\n`,
       );
 
       expect(r.status).toBe(422);
@@ -365,7 +407,7 @@ describe('SPEC-083/AC-008 — turma inexistente, inativa ou de outra empresa', (
       expect(relatorioDo422(r).erros).toEqual([
         {
           linha: 2,
-          coluna: 'turma',
+          coluna: 'turma 1',
           mensagem: `A turma "${citada}" não existe entre as turmas ativas. As ativas são: Ativa A, Ativa B.`,
         },
       ]);
@@ -378,7 +420,7 @@ describe('SPEC-083/AC-008 — turma inexistente, inativa ou de outra empresa', (
       await turma(`Turma ${String(i).padStart(2, '0')}`);
     }
     const { r } = await pelaRota(
-      `nome;email;turma\r\nAna;${email('ana')};Nenhuma\r\n`,
+      `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${email('ana')};Nenhuma;;Iniciante;;\r\n`,
       { conferir: true },
     );
     const [erro] = corpoDe<RelatorioDeImportacaoDto>(r).erros;
@@ -395,14 +437,14 @@ describe('SPEC-083/AC-009 — duas ativas com o mesmo nome normalizado', () => {
     const antes = await contarTudo();
 
     const { r } = await pelaRota(
-      `nome;email;turma\r\nAna;${email('ana')};Sábado 8h\r\n`,
+      `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${email('ana')};Sábado 8h;;Iniciante;;\r\n`,
     );
 
     expect(r.status).toBe(422);
     expect(relatorioDo422(r).erros).toEqual([
       {
         linha: 2,
-        coluna: 'turma',
+        coluna: 'turma 1',
         mensagem:
           'Há 2 turmas ativas chamadas "Sábado 8h". Renomeie uma delas no Admin para a planilha dizer qual é.',
       },
@@ -412,18 +454,23 @@ describe('SPEC-083/AC-009 — duas ativas com o mesmo nome normalizado', () => {
 });
 
 describe('SPEC-083/AC-010 — o nível da linha contra o da turma', () => {
-  it('linha de nível X em turma de nível Y, e linha SEM nível em turma que não é do primeiro: o texto do gestor da SPEC-075, e nada escrito', async () => {
+  // SPEC-091/D2 — a linha SEM nível ("ele conta como Iniciante") deixou de
+  // existir pela importação: o nível é obrigatório. A linha 3 passou a dizer o
+  // nível do primeiro (Iniciante) com todas as letras, e a 5 prova a recusa
+  // do vazio.
+  it('linha de nível X em turma de nível Y (nos dois sentidos), e linha sem nível: o texto do gestor da SPEC-075, e nada escrito', async () => {
     await turma('Iniciantes', { nivel: INICIANTE });
     await turma('Intermediários', { nivel: INTERMEDIARIO });
     const antes = await contarTudo();
 
     const { r } = await pelaRota(
       [
-        'nome;email;nivel;turma',
-        `Ana;${email('ana')};Intermediário;Iniciantes`,
-        `Beto;${email('beto')};;Intermediários`,
-        // O controle: sem nível, na turma do primeiro nível, entra.
-        `Cris;${email('cris')};;Iniciantes`,
+        'nome;email;nivel;turma 1;telefone;turma 2;turma 3',
+        `Ana;${email('ana')};Intermediário;Iniciantes;;;`,
+        `Beto;${email('beto')};Iniciante;Intermediários;;;`,
+        // O controle: Iniciante, na turma do primeiro nível, entra.
+        `Cris;${email('cris')};Iniciante;Iniciantes;;;`,
+        `Dani;${email('dani')};;Iniciantes;;;`,
       ].join('\r\n'),
     );
 
@@ -431,7 +478,7 @@ describe('SPEC-083/AC-010 — o nível da linha contra o da turma', () => {
     expect(relatorioDo422(r).erros).toEqual([
       {
         linha: 2,
-        coluna: 'turma',
+        coluna: 'turma 1',
         mensagem: mensagemDeNivelIncompativel('gestor', 'Iniciante', {
           id: INTERMEDIARIO,
           nome: 'Intermediário',
@@ -440,17 +487,18 @@ describe('SPEC-083/AC-010 — o nível da linha contra o da turma', () => {
       },
       {
         linha: 3,
-        coluna: 'turma',
+        coluna: 'turma 1',
         mensagem: mensagemDeNivelIncompativel('gestor', 'Intermediário', {
           id: INICIANTE,
           nome: 'Iniciante',
-          doPrimeiro: true,
+          doPrimeiro: false,
         }),
       },
+      { linha: 5, coluna: 'nivel', mensagem: 'O nível é obrigatório.' },
     ]);
     // O texto é o do GESTOR, que diz o que fazer — e não o do aluno.
     expect(relatorioDo422(r).erros[1].mensagem).toBe(
-      'Esta turma é do nível Intermediário, e este aluno ainda não tem nível — ele conta como Iniciante. Para alocá-lo, defina o nível dele.',
+      'Esta turma é do nível Intermediário, e este aluno é Iniciante. Para alocá-lo, mude o nível dele.',
     );
     expect(relatorioDo422(r).linhas.map((l) => l.linha)).toEqual([4]);
     expect(await contarTudo()).toEqual(antes);
@@ -467,10 +515,10 @@ describe('SPEC-089/AC-007 — clube que não restringe por nível: a importaçã
 
     const { r } = await pelaRota(
       [
-        'nome;email;nivel;turma',
-        `Ana;${email('ana')};Intermediário;Iniciantes`,
-        `Beto;${email('beto')};;Intermediários`,
-        `Cris;${email('cris')};;Iniciantes`,
+        'nome;email;nivel;turma 1;telefone;turma 2;turma 3',
+        `Ana;${email('ana')};Intermediário;Iniciantes;;;`,
+        `Beto;${email('beto')};Iniciante;Intermediários;;;`,
+        `Cris;${email('cris')};Iniciante;Iniciantes;;;`,
       ].join('\r\n'),
     );
 
@@ -491,10 +539,10 @@ describe('SPEC-083/AC-011 — a capacidade, pela ordem do arquivo', () => {
 
   const arquivo = (n: number) =>
     [
-      'nome;email;turma',
+      'nome;email;turma 1;telefone;nivel;turma 2;turma 3',
       ...Array.from(
         { length: n },
-        (_, i) => `Aluno ${i + 1};${email('cap')};Cinco lugares`,
+        (_, i) => `Aluno ${i + 1};${email('cap')};Cinco lugares;;Iniciante;;`,
       ),
     ].join('\r\n');
 
@@ -509,7 +557,7 @@ describe('SPEC-083/AC-011 — a capacidade, pela ordem do arquivo', () => {
     expect(relatorioDo422(r).erros).toEqual([
       {
         linha: 5,
-        coluna: 'turma',
+        coluna: 'turma 1',
         mensagem:
           'A turma "Cinco lugares" tem 3 vaga(s) livre(s), e a planilha põe 4 aluno(s) nela. Esta é a primeira linha que não cabe.',
       },
@@ -538,15 +586,15 @@ describe('SPEC-083/AC-012 — a aula lotada, contando as reposições, para k al
     const antes = await contarTudo();
 
     const csv = [
-      'nome;email;turma',
-      `Ana;${email('rep')};Com reposição`,
-      `Beto;${email('rep')};Com reposição`,
+      'nome;email;turma 1;telefone;nivel;turma 2;turma 3',
+      `Ana;${email('rep')};Com reposição;;Iniciante;;`,
+      `Beto;${email('rep')};Com reposição;;Iniciante;;`,
     ].join('\r\n');
     const { r } = await pelaRota(csv);
 
     expect(r.status).toBe(422);
     const [erro] = relatorioDo422(r).erros;
-    expect(erro).toMatchObject({ linha: 3, coluna: 'turma' });
+    expect(erro).toMatchObject({ linha: 3, coluna: 'turma 1' });
     expect(erro.mensagem).toContain('ficaria acima da capacidade');
     expect(await contarTudo()).toEqual(antes);
 
@@ -577,7 +625,9 @@ describe('SPEC-083/D3 — a conferência refeita sob a trava (determinístico, s
     const intrusa = await alunoExistente();
     let ocupou = false;
 
-    const csv = `nome;email;turma\r\nAna;${email('vaga')};Última vaga\r\n`;
+    // Na `turma 3`, e não na primeira: o erro refeito sob a trava tem de
+    // apontar a coluna de onde a turma veio (SPEC-091/D4).
+    const csv = `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${email('vaga')};;;Iniciante;;Última vaga\r\n`;
     // A conferência de fora passa: há uma vaga.
     expect(
       corpoDe<RelatorioDeImportacaoDto>(
@@ -602,7 +652,7 @@ describe('SPEC-083/D3 — a conferência refeita sob a trava (determinístico, s
     expect(relatorioDo422(r).erros).toEqual([
       {
         linha: 2,
-        coluna: 'turma',
+        coluna: 'turma 3',
         mensagem: 'A turma "Última vaga" já está cheia (capacidade 2).',
       },
     ]);
@@ -616,7 +666,7 @@ describe('SPEC-083/D3 — a conferência refeita sob a trava (determinístico, s
   it('outra conexão cria conta com um e-mail do arquivo: o 23505 da etapa de usuários vira 422 com o erro de e-mail', async () => {
     const roubado = email('corrida');
     let criou = false;
-    const csv = `nome;email\r\nAna;${email('ok')}\r\nBeto;${roubado}\r\n`;
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('ok')};;Iniciante;;;\r\nBeto;${roubado};;Iniciante;;;\r\n`;
     const antes = await contarTudo();
 
     const { r } = await pelaRota(csv, {
@@ -656,9 +706,11 @@ describe('SPEC-083/D3 — a conferência refeita sob a trava (determinístico, s
 describe('SPEC-083/AC-014 — 300 linhas (150 convidadas), bcrypt de verdade, numa chamada', () => {
   it('importa sem P2028; a duração e o tempo das quatro escritas vão para o log (LIM-083m)', async () => {
     await turma('Lote', { capacidade: 100 });
-    const linhas = ['nome;email;turma'];
+    const linhas = ['nome;email;turma 1;telefone;nivel;turma 2;turma 3'];
     for (let i = 1; i <= 300; i++) {
-      linhas.push(`Aluno ${i};${email('lote')};${i <= 100 ? 'Lote' : ''}`);
+      linhas.push(
+        `Aluno ${i};${email('lote')};${i <= 100 ? 'Lote' : ''};;Iniciante;;`,
+      );
     }
     // Linhas pares da planilha (4, 6, …, 300 — e a 2): 150 convidadas.
     const convidar = Array.from({ length: 150 }, (_, i) => 2 + i * 2).join(',');
@@ -715,10 +767,10 @@ describe('SPEC-083/AC-014 — 300 linhas (150 convidadas), bcrypt de verdade, nu
 describe('SPEC-083/AC-017 — `convidar` escolhe as linhas', () => {
   const dez = () =>
     [
-      'nome;email',
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
       ...Array.from(
         { length: 10 },
-        (_, i) => `Pessoa ${i + 2};${email('dez')}`,
+        (_, i) => `Pessoa ${i + 2};${email('dez')};;Iniciante;;;`,
       ),
     ].join('\r\n');
 
@@ -766,7 +818,7 @@ describe('SPEC-083/AC-018 — a linha convidada nasce sem senha conhecida; a nã
     const comSenha = email('senha');
     const antes = Date.now();
     const { r } = await pelaRota(
-      `nome;email\r\nAna;${convidadaA}\r\nBia;${convidadaB}\r\nCris;${comSenha}\r\n`,
+      `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${convidadaA};;Iniciante;;;\r\nBia;${convidadaB};;Iniciante;;;\r\nCris;${comSenha};;Iniciante;;;\r\n`,
       { convidar: '2,3' },
     );
     const depois = Date.now();
@@ -859,7 +911,7 @@ describe('SPEC-083/AC-019 — por linha convidada, `enviado` ou `falhou` com mot
   it('provedor aceitando: `enviado`, gravado no convite, e o e-mail leva o link do token gravado', async () => {
     const ana = email('env');
     const { r, memoria } = await pelaRota(
-      `nome;email\r\nAna Souza;${ana}\r\n`,
+      `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna Souza;${ana};;Iniciante;;;\r\n`,
       {
         convidar: '2',
       },
@@ -895,10 +947,13 @@ describe('SPEC-083/AC-019 — por linha convidada, `enviado` ou `falhou` com mot
     'provedor falhando com %s: a importação responde o sucesso, a conta existe, e o convite guarda `falhou` e o motivo',
     async (motivo) => {
       const ana = email('falha');
-      const { r } = await pelaRota(`nome;email\r\nAna;${ana}\r\n`, {
-        convidar: '2',
-        falharCom: motivo,
-      });
+      const { r } = await pelaRota(
+        `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${ana};;Iniciante;;;\r\n`,
+        {
+          convidar: '2',
+          falharCom: motivo,
+        },
+      );
       expect(r.status).toBe(200);
       expect(corpoDe<ImportacaoConcluidaDto>(r).criados[0].convite).toEqual({
         email: 'falhou',
@@ -931,9 +986,9 @@ describe('SPEC-083/AC-019 — por linha convidada, `enviado` ou `falhou` com mot
 describe('SPEC-083/AC-051 — pouco prazo para escrever: conclui ou desiste inteira, nunca um COMMIT cancelado', () => {
   it.each([50, 10, 1])('com %i ms de prazo restante', async (restanteMs) => {
     await turma('Prazo curto', { capacidade: 50 });
-    const linhas = ['nome;email;turma'];
+    const linhas = ['nome;email;turma 1;telefone;nivel;turma 2;turma 3'];
     for (let i = 1; i <= 40; i++) {
-      linhas.push(`Aluno ${i};${email('prazo')};Prazo curto`);
+      linhas.push(`Aluno ${i};${email('prazo')};Prazo curto;;Iniciante;;`);
     }
     const antes = await contarTudo();
     let falhaRegistrada: unknown = null;

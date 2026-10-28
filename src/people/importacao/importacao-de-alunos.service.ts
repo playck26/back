@@ -71,19 +71,31 @@ import type {
   ImportacaoConcluidaDto,
   LinhaValidaDto,
   RelatorioDeImportacaoDto,
+  TurmaDaLinhaDto,
 } from './dto/importacao-response.dto';
 
 /**
- * As colunas aceitas — **cinco, em qualquer ordem** (SPEC-083/D1). **`nome` e
- * `email` são os únicos obrigatórios** (D9 da 038): importar 300 alunos com
- * nome e e-mail é um estado legítimo, e a faixa do app pede o resto.
+ * As colunas do modelo — **sete, em qualquer ordem, e todas presentes no
+ * cabeçalho** (SPEC-091/D1). **`nome`, `email` e `nivel` são os obrigatórios
+ * na linha** (D2); telefone e as três turmas podem ficar vazios.
  *
- * *Por que saíram nascimento e os dois de emergência:* o Israel pediu o modelo
- * só com o que foi alinhado (I5), e manter colunas que o modelo não traz
- * deixaria a importação aceitando uma planilha que ninguém mais distribui.
- * Uma planilha antiga cai em `COLUNA_DESCONHECIDA`, com as cinco na mensagem.
+ * *Por que todas no cabeçalho:* o modelo de sete colunas é o único aceito
+ * (o Israel, em 2026-10-28). A planilha da SPEC-083, com a coluna `turma`,
+ * cai em `COLUNA_DESCONHECIDA` — aceitá-la como "Turma 1" manteria viva uma
+ * planilha que ninguém mais distribui.
  */
-const COLUNAS = ['nome', 'email', 'telefone', 'nivel', 'turma'] as const;
+const COLUNAS = [
+  'nome',
+  'email',
+  'telefone',
+  'nivel',
+  'turma 1',
+  'turma 2',
+  'turma 3',
+] as const;
+
+/** As três colunas de turma, na ordem do modelo (SPEC-091/D3). */
+const COLUNAS_DE_TURMA = ['turma 1', 'turma 2', 'turma 3'] as const;
 
 type Coluna = (typeof COLUNAS)[number];
 
@@ -102,7 +114,12 @@ const APELIDOS: Record<string, Coluna> = {
   telefone: 'telefone',
   celular: 'telefone',
   nivel: 'nivel',
-  turma: 'turma',
+  'turma 1': 'turma 1',
+  'turma 2': 'turma 2',
+  'turma 3': 'turma 3',
+  turma1: 'turma 1',
+  turma2: 'turma 2',
+  turma3: 'turma 3',
 };
 
 /** Sem acento, sem caixa, sem espaço nas pontas — para casar apelido. */
@@ -364,6 +381,8 @@ interface TurmaConferida {
 
 interface LinhaNaTurma {
   linha: number;
+  /** De qual das três colunas veio a turma: o erro aponta para ela. */
+  coluna: string;
   turmaId: string;
   turmaNome: string;
   nivelId: string | null;
@@ -486,8 +505,8 @@ async function errosDeTurma(
   agora: Date,
 ): Promise<ErroDeImportacaoDto[]> {
   const erros: ErroDeImportacaoDto[] = [];
-  const erro = (linha: number, mensagem: string) =>
-    erros.push({ linha, coluna: 'turma', mensagem });
+  const erro = (l: Pick<LinhaNaTurma, 'linha' | 'coluna'>, mensagem: string) =>
+    erros.push({ linha: l.linha, coluna: l.coluna, mensagem });
 
   const primeiro = linhas.some((l) => l.nivelId === null)
     ? await primeiroNivel(db, companyId)
@@ -498,12 +517,12 @@ async function errosDeTurma(
   const podeEntrar = await regraDeNivelDoLote(db, companyId);
 
   /** Por turma, as linhas que passaram no nível, na ordem do arquivo. */
-  const candidatas = new Map<string, number[]>();
+  const candidatas = new Map<string, LinhaNaTurma[]>();
   for (const l of linhas) {
     const turma = turmas.get(l.turmaId);
     if (!turma) {
       erro(
-        l.linha,
+        l,
         `A turma "${l.turmaNome}" deixou de estar ativa depois da conferência. Confira as turmas no Admin e envie de novo.`,
       );
       continue;
@@ -519,7 +538,7 @@ async function errosDeTurma(
         : null;
     if (!podeEntrar(turma.nivelId, efetivo)) {
       erro(
-        l.linha,
+        l,
         mensagemDeNivelIncompativel(
           'gestor',
           nomesDosNiveis.get(turma.nivelId) ?? 'outro nível',
@@ -529,7 +548,7 @@ async function errosDeTurma(
       continue;
     }
     const daTurma = candidatas.get(turma.id) ?? [];
-    daTurma.push(l.linha);
+    daTurma.push(l);
     candidatas.set(turma.id, daTurma);
   }
 
@@ -563,7 +582,7 @@ async function errosDeTurma(
     for (const [turmaId, { posicao, data }] of lotadas) {
       const turma = turmas.get(turmaId) as TurmaConferida;
       erro(
-        (candidatas.get(turmaId) as number[])[posicao - 1],
+        (candidatas.get(turmaId) as LinhaNaTurma[])[posicao - 1],
         `A aula de ${diaEMes(data)} da turma "${turma.nome}" ficaria acima da capacidade, contando as reposições marcadas. Esta é a primeira linha da planilha que não cabe nesse dia.`,
       );
     }
@@ -721,6 +740,7 @@ export class ImportacaoDeAlunosService {
   private lerCabecalho(campos: string[]): Record<Coluna, number> {
     const mapa = {} as Record<Coluna, number>;
     const desconhecidas: string[] = [];
+    const repetidas: string[] = [];
 
     campos.forEach((bruto, indice) => {
       const chave = normalizarCabecalho(bruto);
@@ -728,6 +748,12 @@ export class ImportacaoDeAlunosService {
       const coluna = APELIDOS[chave];
       if (!coluna) {
         desconhecidas.push(bruto.trim());
+        return;
+      }
+      // SPEC-091 — `Turma 1` e `turma1` são a mesma coluna. Ficar com a última
+      // descartaria a outra em silêncio, e as turmas dela sumiriam do aluno.
+      if (mapa[coluna] !== undefined) {
+        repetidas.push(bruto.trim());
         return;
       }
       mapa[coluna] = indice;
@@ -741,12 +767,22 @@ export class ImportacaoDeAlunosService {
         colunas: desconhecidas,
       });
     }
-    if (mapa.nome === undefined || mapa.email === undefined) {
+    if (repetidas.length > 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'COLUNA_REPETIDA',
+        message: `Coluna repetida no cabeçalho: ${repetidas.join(', ')}. Cada coluna do modelo aparece uma vez só.`,
+        colunas: repetidas,
+      });
+    }
+    // SPEC-091/D1 — o modelo é o único aceito: as sete no cabeçalho, mesmo
+    // as que a linha pode deixar vazias.
+    const ausentes = COLUNAS.filter((c) => mapa[c] === undefined);
+    if (ausentes.length > 0) {
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'PLANILHA_SEM_CABECALHO',
-        message:
-          'A primeira linha precisa ser o cabeçalho, com pelo menos as colunas `nome` e `email`.',
+        message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${ausentes.join(', ')}.`,
       });
     }
     return mapa;
@@ -800,8 +836,8 @@ export class ImportacaoDeAlunosService {
     // SPEC-083/D3, item 1 — a turma é buscada pelo nome entre as ATIVAS da
     // empresa. Só se o arquivo citar alguma: planilha sem turma não paga a
     // consulta.
-    const citaTurma = dados.some(
-      ({ campos }) => valorDe(campos, 'turma') !== '',
+    const citaTurma = dados.some(({ campos }) =>
+      COLUNAS_DE_TURMA.some((c) => valorDe(campos, c) !== ''),
     );
     const ativas = citaTurma
       ? await this.prisma.turma.findMany({
@@ -879,7 +915,12 @@ export class ImportacaoDeAlunosService {
       let nivelId: string | null = null;
       let nivelValido = true;
       const nivelBruto = valor('nivel');
-      if (nivelBruto !== '') {
+      // SPEC-091/D2 — o nível passou a ser obrigatório na planilha. A ADR-026
+      // continua valendo para o aluno criado por outro caminho.
+      if (nivelBruto === '') {
+        nivelValido = false;
+        erro('nivel', 'O nível é obrigatório.');
+      } else {
         const achado = porNome.get(normalizarNome(nivelBruto));
         if (!achado) {
           nivelValido = false;
@@ -894,27 +935,38 @@ export class ImportacaoDeAlunosService {
         }
       }
 
-      // SPEC-083/D3, itens 1 a 3 — a turma pelo nome, entre as ativas.
-      let turma: { id: string; nome: string } | null = null;
-      const turmaBruta = valor('turma');
-      if (turmaBruta !== '') {
+      // SPEC-083/D3, itens 1 a 3 — a turma pelo nome, entre as ativas. Até
+      // três por linha (SPEC-091/D3), cada uma conferida pela sua coluna.
+      const turmasDaLinha: TurmaDaLinhaDto[] = [];
+      for (const coluna of COLUNAS_DE_TURMA) {
+        const turmaBruta = valor(coluna);
+        if (turmaBruta === '') continue;
         const achadas = turmasPorNome.get(normalizarNome(turmaBruta)) ?? [];
         if (achadas.length === 0) {
-          erro('turma', mensagemDeTurmaInexistente(turmaBruta, ativas));
+          erro(coluna, mensagemDeTurmaInexistente(turmaBruta, ativas));
         } else if (achadas.length > 1) {
           // Escolher uma das duas seria pôr o aluno numa turma que o gestor
           // talvez não quisesse. O conserto é dele, e é de um gesto só.
           erro(
-            'turma',
+            coluna,
             `Há ${achadas.length} turmas ativas chamadas "${turmaBruta}". Renomeie uma delas no Admin para a planilha dizer qual é.`,
           );
+        } else if (turmasDaLinha.some((t) => t.id === achadas[0].id)) {
+          // A mesma turma duas vezes seria duas matrículas do mesmo aluno — o
+          // banco recusaria a segunda, e o gestor veria um 500.
+          erro(
+            coluna,
+            `A turma "${achadas[0].nome}" já aparece em outra coluna desta linha.`,
+          );
         } else {
-          turma = { id: achadas[0].id, nome: achadas[0].nome };
+          const turma = { id: achadas[0].id, nome: achadas[0].nome, coluna };
+          turmasDaLinha.push(turma);
           // A linha com nível inexistente já tem o erro dela, e o nível da
           // turma não tem contra o que ser conferido.
           if (nivelValido) {
             naTurma.push({
               linha: numero,
+              coluna,
               turmaId: turma.id,
               turmaNome: turma.nome,
               nivelId,
@@ -929,14 +981,17 @@ export class ImportacaoDeAlunosService {
         email,
         telefone: valor('telefone') || null,
         nivelId,
-        turmaId: turma?.id ?? null,
-        turmaNome: turma?.nome ?? null,
+        turmas: turmasDaLinha,
       });
     }
 
-    // D3, itens 4 a 6 — nível, capacidade e aula lotada, sem trava.
-    if (naTurma.length > 0) {
-      const ids = [...new Set(naTurma.map((l) => l.turmaId))];
+    // D3, itens 4 a 6 — nível, capacidade e aula lotada, sem trava. A linha
+    // já recusada (e-mail, nome, outra coluna de turma) não disputa vaga: a
+    // vaga que ela tomasse daria "não cabe" a uma linha correta (SPEC-091).
+    const jaRecusadas = new Set(erros.map((e) => e.linha));
+    const disputam = naTurma.filter((l) => !jaRecusadas.has(l.linha));
+    if (disputam.length > 0) {
+      const ids = [...new Set(disputam.map((l) => l.turmaId))];
       const alocados = await contarAlocados(this.prisma, ids);
       const turmas = new Map(
         ativas
@@ -948,7 +1003,7 @@ export class ImportacaoDeAlunosService {
           this.prisma,
           companyId,
           turmas,
-          naTurma,
+          disputam,
           nomesDosNiveis,
           new Date(),
         )),
@@ -1163,16 +1218,13 @@ export class ImportacaoDeAlunosService {
       ),
     ];
     const naTurma = linhas.flatMap((l) =>
-      l.linha.turmaId
-        ? [
-            {
-              linha: l.linha.linha,
-              turmaId: l.linha.turmaId,
-              turmaNome: l.linha.turmaNome ?? '',
-              nivelId: l.linha.nivelId,
-            },
-          ]
-        : [],
+      l.linha.turmas.map((t) => ({
+        linha: l.linha.linha,
+        coluna: t.coluna,
+        turmaId: t.id,
+        turmaNome: t.nome,
+        nivelId: l.linha.nivelId,
+      })),
     );
     // D3, passo 3 — em ordem de `id`. O texto do UUID em minúsculas ordena
     // como o `uuid` do Postgres (byte a byte), e é essa a ordem que duas
@@ -1256,10 +1308,12 @@ export class ImportacaoDeAlunosService {
         );
         lote.registrarCriados(criados);
 
-        const matriculas = linhas.filter((l) => l.linha.turmaId);
+        const matriculas = linhas.flatMap((l) =>
+          l.linha.turmas.map((t) => ({ turmaId: t.id, alunoId: l.alunoId })),
+        );
         if (matriculas.length > 0) {
           // AC-049 — sem a trava por aluno, só se matricula quem nasceu aqui.
-          lote.exigirCriados(matriculas.map((l) => l.alunoId));
+          lote.exigirCriados([...new Set(matriculas.map((m) => m.alunoId))]);
           await this.escreverComPrazo(tx, 'turma_alunos', () =>
             this.inserirMatriculas(tx, matriculas),
           );
@@ -1543,7 +1597,7 @@ export class ImportacaoDeAlunosService {
 
   private async inserirMatriculas(
     tx: Prisma.TransactionClient,
-    linhas: readonly LinhaParaEscrever[],
+    matriculas: readonly { turmaId: string; alunoId: string }[],
   ): Promise<void> {
     // A turma já é desta transação, pelo `FOR UPDATE`; o aluno nasceu nela.
     // Nenhuma das duas FKs espera. `turma_alunos.created_at` também é
@@ -1553,11 +1607,11 @@ export class ImportacaoDeAlunosService {
       INSERT INTO turma_alunos (id, turma_id, aluno_id, created_at)
       SELECT gen_random_uuid(), d.turma_id, d.aluno_id,
              (now() AT TIME ZONE 'UTC')
-        FROM unnest(${linhas.map((l) => l.linha.turmaId as string)}::uuid[],
-                    ${linhas.map((l) => l.alunoId)}::uuid[])
+        FROM unnest(${matriculas.map((m) => m.turmaId)}::uuid[],
+                    ${matriculas.map((m) => m.alunoId)}::uuid[])
                AS d(turma_id, aluno_id)
        WHERE ${DEPOIS_DO_PRAZO}`;
-    exigirGravadas('turma_alunos', gravados, linhas.length);
+    exigirGravadas('turma_alunos', gravados, matriculas.length);
   }
 
   private async inserirConvites(

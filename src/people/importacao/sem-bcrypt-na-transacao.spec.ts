@@ -155,11 +155,11 @@ function montar(ganchos: GanchosDaImportacao = {}) {
 
 /** Quatro linhas: duas convidadas (3 e 5), duas com senha, três na turma. */
 const ARQUIVO = [
-  'nome;email;turma',
-  'Ana;ana@x.com;Terça',
-  'Beto;beto@x.com;Terça',
-  'Cris;cris@x.com;',
-  'Dani;dani@x.com;Terça',
+  'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+  'Ana;ana@x.com;;Iniciante;Terça;;',
+  'Beto;beto@x.com;;Iniciante;Terça;;',
+  'Cris;cris@x.com;;Iniciante;;;',
+  'Dani;dani@x.com;;Iniciante;Terça;;',
 ].join('\r\n');
 
 afterEach(() => {

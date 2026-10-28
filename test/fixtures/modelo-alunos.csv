@@ -1,4 +1,4 @@
-﻿nome;email;telefone;nivel;turma
-Ana Souza;ana@exemplo.com;(11) 99999-0000;Iniciante;Turma Terça 19h
-Carlos Lima;carlos@exemplo.com;(11) 98888-7777;;
-Beatriz Rocha;beatriz@exemplo.com;;Intermediário;
+﻿Nome;E-mail;Telefone;Nível;Turma 1;Turma 2;Turma 3
+Ana Souza;ana@exemplo.com;(11) 99999-0000;Iniciante;Turma Terça 19h;;
+Carlos Lima;carlos@exemplo.com;;Iniciante;;;
+Beatriz Rocha;beatriz@exemplo.com;(11) 98888-7777;Intermediário;Turma Quinta 19h;Turma Sábado 9h;

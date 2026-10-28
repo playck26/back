@@ -172,9 +172,10 @@ function importar(
 }
 
 const planilha = (emails: readonly string[]) =>
-  ['nome;email', ...emails.map((e, i) => `Aluno 083k ${i + 1};${e}`)].join(
-    '\r\n',
-  );
+  [
+    'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+    ...emails.map((e, i) => `Aluno 083k ${i + 1};${e};;Intermediário;;;`),
+  ].join('\r\n');
 
 // ============================================================================
 // A trava de e-mail, do lado do teste

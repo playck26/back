@@ -78,7 +78,11 @@ import { subirAppReal } from '../fit/app-real';
 import { bodyOf } from '../utils/http';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
-import { comNivelDaFixture, primeiroNivelSql } from './nivel-da-fixture';
+import {
+  comNivelDaFixture,
+  NOME_DO_NIVEL_DA_FIXTURE,
+  primeiroNivelSql,
+} from './nivel-da-fixture';
 
 exigirBancoLocal();
 jest.setTimeout(300_000);
@@ -397,11 +401,12 @@ const SERVIDOR_OCUPADO = {
 };
 
 function planilha(linhas: readonly [string, string, string?][]): string {
-  const comTurma = linhas.some((l) => l[2] !== undefined);
-  const cabecalho = comTurma ? 'nome;email;turma' : 'nome;email';
+  // SPEC-091 — o modelo de sete colunas; o nível (obrigatório) é o do clube.
   return [
-    cabecalho,
-    ...linhas.map((l) => (comTurma ? l.join(';') : `${l[0]};${l[1]}`)),
+    'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+    ...linhas.map(
+      (l) => `${l[0]};${l[1]};;${NOME_DO_NIVEL_DA_FIXTURE};${l[2] ?? ''};;`,
+    ),
   ].join('\r\n');
 }
 

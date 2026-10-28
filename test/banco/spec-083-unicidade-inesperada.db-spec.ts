@@ -215,7 +215,7 @@ describe('SPEC-083/AC-052 — unicidade inesperada fora da etapa de usuários so
 
     const r = await pelaRota(
       servico,
-      `nome;email\r\nAna;${ana}\r\nBeto;${beto}\r\n`,
+      `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${ana};;Iniciante;;;\r\nBeto;${beto};;Iniciante;;;\r\n`,
       '2',
     );
 
@@ -225,7 +225,7 @@ describe('SPEC-083/AC-052 — unicidade inesperada fora da etapa de usuários so
     expect(await db.usuario.count({ where: { email: beto } })).toBe(1);
     const refeita = await servico.conferir(
       EMPRESA,
-      `nome;email\r\nAna;${ana}\r\nBeto;${beto}\r\n`,
+      `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${ana};;Iniciante;;;\r\nBeto;${beto};;Iniciante;;;\r\n`,
     );
     expect(refeita.erros).toEqual([
       { linha: 3, coluna: 'email', mensagem: MENSAGEM_EMAIL_JA_EXISTE },
@@ -253,7 +253,7 @@ describe('SPEC-083/AC-053 — na etapa de usuários, o 422 exige erro de e-mail'
           ? existente.usuarioId
           : randomUUID(),
     });
-    const csv = `nome;email\r\nAna;${email('ana')}\r\nBeto;${email('beto')}\r\n`;
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('ana')};;Iniciante;;;\r\nBeto;${email('beto')};;Iniciante;;;\r\n`;
     const antes = await contarTudo();
 
     const r = await pelaRota(servico, csv);
@@ -293,14 +293,14 @@ describe('SPEC-083/AC-053 — na etapa de usuários, o 422 exige erro de e-mail'
         );
       },
     });
-    const csv = `nome;email;turma\r\nAna;${email('ana')};Duas vagas\r\n`;
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('ana')};;Iniciante;Duas vagas;;\r\n`;
     const antes = await contarTudo();
 
     const r = await pelaRota(servico, csv);
 
     // Precondição, as duas coisas: há erro de turma, e nenhum de e-mail.
     const refeita = await servico.conferir(EMPRESA, csv);
-    expect(refeita.erros.map((e) => e.coluna)).toEqual(['turma']);
+    expect(refeita.erros.map((e) => e.coluna)).toEqual(['turma 1']);
     expect(refeita.erros.some((e) => e.coluna === 'email')).toBe(false);
 
     expect(r.status).toBe(500);
