@@ -509,8 +509,9 @@ async function primeiraLinhaQueLotaAula(
  * que não cabe numa turma depende **só de quantas linhas** vão para ela, e não
  * de quais. Pela capacidade, é a posição `livres + 1`. Pela aula, é o que a
  * `primeiraLinhaQueLotaAula` responde, porque cada aluno novo soma exatamente
- * 1 em toda aula. Daí o **limiar** de cada turma sai de uma ida só ao banco
- * (a mesma busca de antes), e o resto é conta em memória, por rodadas: em cada
+ * 1 em toda aula. Daí o **limiar** de cada turma sai de uma busca só (a
+ * mesma de antes: uma leitura inicial e a busca binária, ~log k leituras, não
+ * uma por rodada), e o resto é conta em memória, por rodadas: em cada
  * uma, entre as turmas ainda não estouradas, acha-se a MENOR linha `L*` que
  * ocupa a posição do limiar; ela recebe erro em toda turma onde é a primeira
  * que não cabe; essas turmas estouram, e as linhas delas a partir de `L*` saem
@@ -872,23 +873,29 @@ export class ImportacaoDeAlunosService {
     // SPEC-091/D1 — o modelo é o único aceito: as sete no cabeçalho, mesmo
     // as que a linha pode deixar vazias.
     const ausentes = COLUNAS.filter((c) => mapa[c] === undefined);
-    if (ausentes.length > 0) {
-      throw new UnprocessableEntityException({
-        statusCode: 422,
-        code: 'PLANILHA_SEM_CABECALHO',
-        message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${ausentes.join(', ')}.`,
-      });
-    }
+    // D5 antes da ausente (R2 da validação): apagar o nome de uma das sete
+    // também deixa uma ausente, e o gestor precisa saber QUAL célula é.
     if (semNome.length > 0) {
       const quais =
         semNome.length === 1
           ? `A coluna ${semNome[0]} do cabeçalho está sem nome.`
           : `As colunas ${semNome.slice(0, -1).join(', ')} e ${semNome[semNome.length - 1]} do cabeçalho estão sem nome.`;
+      const oQueFazer =
+        ausentes.length > 0
+          ? `${ausentes.length === 1 ? 'Falta' : 'Faltam'}: ${ausentes.join(', ')}. Escreva na coluna sem nome o nome que falta (ou apague a que sobrar) e envie de novo.`
+          : `Apague ${semNome.length === 1 ? 'a coluna vazia' : 'as colunas vazias'} (ou o separador sobrando no fim do cabeçalho) e envie de novo.`;
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'COLUNA_SEM_NOME',
-        message: `${quais} O modelo tem exatamente as sete colunas: ${COLUNAS.join(', ')}. Apague ${semNome.length === 1 ? 'a coluna vazia' : 'as colunas vazias'} (ou o separador sobrando no fim do cabeçalho) e envie de novo.`,
+        message: `${quais} O modelo tem exatamente as sete colunas: ${COLUNAS.join(', ')}. ${oQueFazer}`,
         posicoes: semNome,
+      });
+    }
+    if (ausentes.length > 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'PLANILHA_SEM_CABECALHO',
+        message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${ausentes.join(', ')}.`,
       });
     }
     return mapa;

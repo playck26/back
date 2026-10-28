@@ -270,6 +270,16 @@ describe('SPEC-038 — o cabeçalho', () => {
  * 422 com código próprio, dizendo a posição.
  */
 describe('SPEC-091/D1 — coluna sem nome no cabeçalho (A1)', () => {
+  const COLUNAS_DO_MODELO = [
+    'nome',
+    'email',
+    'telefone',
+    'nivel',
+    'turma 1',
+    'turma 2',
+    'turma 3',
+  ];
+
   it('vazia no meio: 422 COLUNA_SEM_NOME, e a mensagem diz que é a coluna 2', async () => {
     // O repro da validação, literal: o `IGNORADO` era descartado.
     await expect(
@@ -287,6 +297,36 @@ describe('SPEC-091/D1 — coluna sem nome no cabeçalho (A1)', () => {
       },
     });
   });
+
+  // R2 da validação (2026-10-28): apagar o NOME de uma das sete, sem coluna a
+  // mais, caía em PLANILHA_SEM_CABECALHO ("Faltam: email") e perdia a posição.
+  // A coluna sem nome vem antes da ausente, e a mensagem diz as duas coisas.
+  it.each([
+    [1, 'nome'],
+    [2, 'email'],
+    [3, 'telefone'],
+    [4, 'nivel'],
+    [5, 'turma 1'],
+    [6, 'turma 2'],
+    [7, 'turma 3'],
+  ])(
+    'o nome da coluna %i do modelo apagado: COLUNA_SEM_NOME com a posição, e diz que falta %s',
+    async (posicao, falta) => {
+      const cabecalho = COLUNAS_DO_MODELO.map((c, i) =>
+        i === posicao - 1 ? '' : c,
+      ).join(';');
+      await expect(
+        servico().conferir('c1', `${cabecalho}\nAna;ana@x.com;;Iniciante;;;`),
+      ).rejects.toMatchObject({
+        response: {
+          statusCode: 422,
+          code: 'COLUNA_SEM_NOME',
+          posicoes: [posicao],
+          message: `A coluna ${posicao} do cabeçalho está sem nome. O modelo tem exatamente as sete colunas: nome, email, telefone, nivel, turma 1, turma 2, turma 3. Falta: ${falta}. Escreva na coluna sem nome o nome que falta (ou apague a que sobrar) e envie de novo.`,
+        },
+      });
+    },
+  );
 
   it('separador sobrando no fim do cabeçalho: 422 COLUNA_SEM_NOME na coluna 8', async () => {
     // O segundo repro: o `PERDIDO` da oitava célula sumia.
