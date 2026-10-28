@@ -41,7 +41,10 @@ import { createTestApp } from '../utils/create-test-app';
 import { bodyOf } from '../utils/http';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
-import { comNivelDaFixture } from './nivel-da-fixture';
+import {
+  comNivelDaFixture,
+  NOME_DO_NIVEL_DA_FIXTURE,
+} from './nivel-da-fixture';
 
 exigirBancoLocal();
 jest.setTimeout(120_000);
@@ -409,7 +412,7 @@ const entradas: [string, number, () => Promise<Response>][] = [
         .attach(
           'arquivo',
           Buffer.from(
-            `nome,email\nAluno E6 Ordem,${novoEmail('e6')}\nAluno E6 Dois,${novoEmail('e6')}\n`,
+            `nome,email,telefone,nivel,turma 1,turma 2,turma 3\nAluno E6 Ordem,${novoEmail('e6')},,${NOME_DO_NIVEL_DA_FIXTURE},,,\nAluno E6 Dois,${novoEmail('e6')},,${NOME_DO_NIVEL_DA_FIXTURE},,,\n`,
             'utf8',
           ),
           'alunos.csv',

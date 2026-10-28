@@ -22,6 +22,18 @@ export class ErroDeImportacaoDto {
   mensagem!: string;
 }
 
+/** SPEC-091/D3 — uma das até três turmas de uma linha. */
+export class TurmaDaLinhaDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'Terça 19h' })
+  nome!: string;
+  /** De qual coluna veio: um erro achado depois, sob a trava, aponta para ela. */
+  @ApiProperty({ enum: ['turma 1', 'turma 2', 'turma 3'] })
+  coluna!: 'turma 1' | 'turma 2' | 'turma 3';
+}
+
 /**
  * Uma linha que passou na conferencia, ja normalizada.
  *
@@ -46,16 +58,13 @@ export class LinhaValidaDto {
   nivelId!: string | null;
 
   /**
-   * SPEC-083/D3 — a turma achada pelo nome entre as ativas. Nula quando a
-   * linha não tem turma. O id vai junto do nome para o Admin mostrar o que a
-   * busca achou (o nome cadastrado, com a caixa e o acento de lá), e não o
-   * que o gestor digitou.
+   * SPEC-083/D3 e SPEC-091/D3 — as turmas achadas pelo nome entre as ativas,
+   * na ordem das colunas (até três). Vazia quando a linha não tem turma. O id
+   * vai junto do nome para o Admin mostrar o que a busca achou (o nome
+   * cadastrado, com a caixa e o acento de lá), e não o que o gestor digitou.
    */
-  @ApiProperty({ type: String, format: 'uuid', nullable: true })
-  turmaId!: string | null;
-
-  @ApiProperty({ type: String, nullable: true, example: 'Terça 19h' })
-  turmaNome!: string | null;
+  @ApiProperty({ type: () => TurmaDaLinhaDto, isArray: true })
+  turmas!: TurmaDaLinhaDto[];
 }
 
 /**

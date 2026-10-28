@@ -237,9 +237,10 @@ interface Linha {
 
 function planilha(linhas: readonly Linha[]): string {
   return [
-    'nome;email;turma',
+    'nome;email;turma 1;telefone;nivel;turma 2;turma 3',
     ...linhas.map(
-      (l, i) => `Aluno FIT057 ${i + 1};${l.email};${l.turma ?? ''}`,
+      (l, i) =>
+        `Aluno FIT057 ${i + 1};${l.email};${l.turma ?? ''};;Intermediário;;`,
     ),
   ].join('\n');
 }
@@ -1243,7 +1244,7 @@ describe('SPEC-083/FIT-057 AC-013 — a corrida: a conferência passa, e a impor
       expect(relatorioDo422(r).erros).toEqual([
         {
           linha: 2,
-          coluna: 'turma',
+          coluna: 'turma 1',
           mensagem: `A turma "${A.nome}" já está cheia (capacidade 2).`,
         },
       ]);

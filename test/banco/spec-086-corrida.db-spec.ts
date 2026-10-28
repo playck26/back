@@ -68,7 +68,10 @@ import { subirAppReal } from '../fit/app-real';
 import { bodyOf } from '../utils/http';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
-import { comNivelDaFixture } from './nivel-da-fixture';
+import {
+  comNivelDaFixture,
+  NOME_DO_NIVEL_DA_FIXTURE,
+} from './nivel-da-fixture';
 
 exigirBancoLocal();
 jest.setTimeout(180_000);
@@ -391,7 +394,7 @@ async function montar(
       // Duas linhas: a disputada e uma livre. Na recusa, a livre também não
       // pode ficar — "nenhuma linha do lote".
       const livre = novoEmail('e6-livre');
-      const planilha = `nome,email\nAluno E6 Matriz,${email}\nAluno E6 Livre,${livre}\n`;
+      const planilha = `nome,email,telefone,nivel,turma 1,turma 2,turma 3\nAluno E6 Matriz,${email},,${NOME_DO_NIVEL_DA_FIXTURE},,,\nAluno E6 Livre,${livre},,${NOME_DO_NIVEL_DA_FIXTURE},,,\n`;
       return {
         rotulo,
         escritor,

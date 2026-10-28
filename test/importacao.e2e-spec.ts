@@ -35,7 +35,9 @@ process.env.EMAIL_RESPONDER_PARA = 'respostas@suporte.e2e.local';
 process.env.URL_CLIENTE = 'https://cliente.e2e.local';
 
 const ROTA = '/api/v1/students/importar';
-const PLANILHA = 'nome,email\nAna,ana@clube.local\nBeto,beto@clube.local';
+// SPEC-091 — o modelo de sete colunas, com o nível (obrigatório) do clube.
+const PLANILHA =
+  'nome,email,telefone,nivel,turma 1,turma 2,turma 3\nAna,ana@clube.local,,Iniciante,,,\nBeto,beto@clube.local,,Iniciante,,,';
 
 /** Uma instrução crua que a transação mandou, já montada. */
 interface Instrucao {
@@ -119,7 +121,7 @@ describe('Importação de alunos (e2e) — SPEC-038', () => {
     const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
     prisma.usuario.findUnique.mockResolvedValue({ senhaTemporaria: false });
     prisma.usuario.findMany.mockResolvedValue([]);
-    prisma.nivel.findMany.mockResolvedValue([]);
+    prisma.nivel.findMany.mockResolvedValue([{ id: 'n1', nome: 'Iniciante' }]);
     armarTransacaoDaImportacao();
     return accessToken;
   }
@@ -174,7 +176,7 @@ describe('Importação de alunos (e2e) — SPEC-038', () => {
     const token = await comoAdmin();
     const res = await enviar(
       token,
-      'nome,email\n,sem-nome@clube.local',
+      'nome,email,telefone,nivel,turma 1,turma 2,turma 3\n,sem-nome@clube.local,,Iniciante,,,',
       false,
     ).expect(422);
 
@@ -201,10 +203,10 @@ describe('Importação de alunos (e2e) — SPEC-038', () => {
 
   describe('SPEC-083/D5 — o campo `convidar` do multipart (REQ-004)', () => {
     const DEZ = [
-      'nome;email',
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
       ...Array.from(
         { length: 10 },
-        (_, i) => `Pessoa ${i + 2};pessoa${i + 2}@clube.local`,
+        (_, i) => `Pessoa ${i + 2};pessoa${i + 2}@clube.local;;Iniciante;;;`,
       ),
     ].join('\r\n');
 

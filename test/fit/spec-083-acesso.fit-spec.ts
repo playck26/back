@@ -16,7 +16,10 @@ import {
 } from '../../src/email/provedor-de-email';
 import { exigirBancoLocal } from '../banco/exigir-banco-local';
 import { limparEmpresa } from '../banco/limpar-empresa';
-import { comNivelDaFixture } from '../banco/nivel-da-fixture';
+import {
+  comNivelDaFixture,
+  NOME_DO_NIVEL_DA_FIXTURE,
+} from '../banco/nivel-da-fixture';
 import { bodyOf } from '../utils/http';
 import { subirAppReal } from './app-real';
 
@@ -1303,9 +1306,10 @@ describe('AC-018 — pela rota de login: a convidada da importação não entra 
     const convidada = 'spec083-acesso-imp-convidada@teste.local';
     const naoConvidada = 'spec083-acesso-imp-com-senha@teste.local';
     const planilha = [
-      'nome;email',
-      `Convidada Importada;${convidada}`,
-      `Comsenha Importada;${naoConvidada}`,
+      // SPEC-091 — o modelo de sete colunas, e o nível passou a ser obrigatório.
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Convidada Importada;${convidada};;${NOME_DO_NIVEL_DA_FIXTURE};;;`,
+      `Comsenha Importada;${naoConvidada};;${NOME_DO_NIVEL_DA_FIXTURE};;;`,
     ].join('\r\n');
 
     const gerador = jest.spyOn(senhaTemporaria, 'gerarSenhaTemporaria');

@@ -163,10 +163,10 @@ function ehAjusteDoPrazo(i: Instrucao): boolean {
 const VARIAVEL_DA_SESSAO = /current_setting\('(playck\.[a-z_]+)', true\)/;
 
 const ARQUIVO = [
-  'nome;email;turma',
-  'Ana;ana@x.com;Terça',
-  'Beto;beto@x.com;',
-  'Cris;cris@x.com;Terça',
+  'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+  'Ana;ana@x.com;;Iniciante;Terça;;',
+  'Beto;beto@x.com;;Iniciante;;;',
+  'Cris;cris@x.com;;Iniciante;Terça;;',
 ].join('\r\n');
 
 describe.each([
@@ -290,10 +290,10 @@ describe('SPEC-083/AC-051 — controle do gravador', () => {
  */
 describe('SPEC-083/TASK-005c — o INSERT de usuários em ordem determinística', () => {
   const FORA_DE_ORDEM = [
-    'nome;email;telefone',
-    'Zeca;zeca@x.com;111',
-    'Ana;ana@x.com;222',
-    'Mara;mara@x.com;333',
+    'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+    'Zeca;zeca@x.com;111;Iniciante;;;',
+    'Ana;ana@x.com;222;Iniciante;;;',
+    'Mara;mara@x.com;333;Iniciante;;;',
   ].join('\r\n');
 
   let usuarios: Instrucao;

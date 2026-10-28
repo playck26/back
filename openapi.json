@@ -8275,6 +8275,32 @@
           "mensagem"
         ]
       },
+      "TurmaDaLinhaDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Terça 19h"
+          },
+          "coluna": {
+            "type": "string",
+            "enum": [
+              "turma 1",
+              "turma 2",
+              "turma 3"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "nome",
+          "coluna"
+        ]
+      },
       "LinhaValidaDto": {
         "type": "object",
         "properties": {
@@ -8299,15 +8325,11 @@
             "format": "uuid",
             "nullable": true
           },
-          "turmaId": {
-            "type": "string",
-            "format": "uuid",
-            "nullable": true
-          },
-          "turmaNome": {
-            "type": "string",
-            "nullable": true,
-            "example": "Terça 19h"
+          "turmas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurmaDaLinhaDto"
+            }
           }
         },
         "required": [
@@ -8316,8 +8338,7 @@
           "email",
           "telefone",
           "nivelId",
-          "turmaId",
-          "turmaNome"
+          "turmas"
         ]
       },
       "RelatorioDeImportacaoDto": {

@@ -23,7 +23,6 @@ import { limparEmpresa } from './limpar-empresa';
 import { AcessoService } from '../../src/acesso/acesso.service';
 import { MemoriaProvedorDeEmail } from '../../src/email/memoria-provedor-de-email';
 import { ImportacaoDeAlunosService } from '../../src/people/importacao/importacao-de-alunos.service';
-import { nivelEfetivoDoAluno } from '../../src/people/nivel-efetivo';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(180_000);
@@ -56,7 +55,11 @@ function servico(): ImportacaoDeAlunosService {
 const importar = (conteudo: string, convidar?: string) =>
   servico().importar(EMPRESA, conteudo, { gestorId: GESTOR, convidar });
 
-const CABECALHO = 'nome,email';
+const CABECALHO = 'nome,email,telefone,nivel,turma 1,turma 2,turma 3';
+
+/** SPEC-091/D2 — o nível é obrigatório na planilha: todo clube do arquivo
+ *  nasce com este, de ordem 0, e as linhas sem outro nível o citam. */
+const NIVEL_BASE = 'f0380000-0000-4000-8000-0000000000b0';
 
 async function contarAlunos(): Promise<number> {
   return db.aluno.count({ where: { companyId: EMPRESA } });
@@ -66,6 +69,9 @@ beforeEach(async () => {
   await limparEmpresa(db, EMPRESA);
   await q(
     `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-038','spec-038-${EMPRESA}',now())`,
+  );
+  await q(
+    `INSERT INTO niveis (id,company_id,nome,ordem) VALUES ('${NIVEL_BASE}','${EMPRESA}','Base',0)`,
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${GESTOR}','gestor038@teste.local','h','Gestor 038','company_admin','${EMPRESA}',now())`,
@@ -79,9 +85,11 @@ afterAll(async () => {
 describe('SPEC-038 — a importação escreve de verdade', () => {
   it('cria conta e ficha, com `vinculo: aprovado` e senha temporária', async () => {
     const { criados } = await importar(
-      [CABECALHO, 'Ana,ana038@teste.local', 'Beto,beto038@teste.local'].join(
-        '\n',
-      ),
+      [
+        CABECALHO,
+        'Ana,ana038@teste.local,,Base,,,',
+        'Beto,beto038@teste.local,,Base,,,',
+      ].join('\n'),
     );
 
     expect(criados).toHaveLength(2);
@@ -117,9 +125,9 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
   it('SPEC-083/AC-001: o telefone da planilha de `;` vai para `usuarios.telefone`', async () => {
     await importar(
       [
-        'nome;email;telefone;nivel;turma',
-        'Ana;ana038@teste.local;(11) 99999-0000;;',
-        'Beto;beto038@teste.local;;;',
+        'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+        'Ana;ana038@teste.local;(11) 99999-0000;Base;;;',
+        'Beto;beto038@teste.local;;Base;;;',
       ].join('\r\n'),
     );
     // O telefone vazio vai NULO, e não texto vazio: o lote passa '' no
@@ -152,45 +160,39 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
   });
 
   /**
-   * SPEC-083/AC-005 e S8 — **nível vazio grava `alunos.nivel_id` NULO**, contra
-   * o banco: é a coluna, e não o relatório, que diz o que ficou gravado.
-   *
-   * O clube tem dois níveis de propósito. Sem nível nenhum, nulo seria a única
-   * resposta possível, e o caso passaria com a sabotagem (gravar o id do
-   * primeiro).
+   * SPEC-091/D2 — substitui o SPEC-083/AC-005 ("sem nível grava NULO"): pela
+   * importação, o aluno sem nível deixou de existir. **Nível vazio recusa o
+   * arquivo inteiro, e nada é gravado** — contado no banco, não no relatório.
+   * A linha com nível é boa, e também não entra: é tudo ou nada (D3).
    */
-  it('SPEC-083/AC-005: sem nível grava NULO, e o efetivo é o primeiro', async () => {
-    const primeiro = 'f0380000-0000-4000-8000-0000000000b1';
-    const segundo = 'f0380000-0000-4000-8000-0000000000b2';
+  it('SPEC-091/D2: nível vazio é 422 na coluna `nivel`, e nada é gravado', async () => {
     await q(
-      `INSERT INTO niveis (id,company_id,nome,ordem) VALUES ('${primeiro}','${EMPRESA}','Iniciante',1),('${segundo}','${EMPRESA}','Intermediário',2)`,
+      `INSERT INTO niveis (id,company_id,nome,ordem) VALUES ('f0380000-0000-4000-8000-0000000000b2','${EMPRESA}','Intermediário',2)`,
     );
 
-    await importar(
-      [
-        'nome;email;nivel',
-        'Ana;ana038@teste.local;',
-        'Beto;beto038@teste.local;Intermediário',
-      ].join('\r\n'),
-    );
-
-    const porEmail = async (email: string) =>
-      db.aluno.findFirstOrThrow({
-        where: { companyId: EMPRESA, usuario: { email } },
-      });
-    const ana = await porEmail('ana038@teste.local');
-    const beto = await porEmail('beto038@teste.local');
-
-    // `primeiro` aqui seria a S8: a ordem de hoje congelada no aluno.
-    expect(ana.nivelId).toBeNull();
-    expect(beto.nivelId).toBe(segundo);
-    // E a regra que já existe (ADR-026) resolve a Ana para o primeiro, na
-    // leitura — a mesma função que toda recusa por nível usa.
-    expect(await nivelEfetivoDoAluno(db, EMPRESA, ana.nivelId)).toEqual({
-      id: primeiro,
-      nome: 'Iniciante',
-      doPrimeiro: true,
+    await expect(
+      importar(
+        [
+          'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+          'Ana;ana038@teste.local;;;;;',
+          'Beto;beto038@teste.local;;Intermediário;;;',
+        ].join('\r\n'),
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'PLANILHA_COM_ERROS',
+        erros: [
+          { linha: 2, coluna: 'nivel', mensagem: 'O nível é obrigatório.' },
+        ],
+      },
     });
+
+    expect(await contarAlunos()).toBe(0);
+    expect(
+      await db.usuario.count({
+        where: { email: { in: ['ana038@teste.local', 'beto038@teste.local'] } },
+      }),
+    ).toBe(0);
   });
 
   /**
@@ -222,7 +224,7 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
     try {
       const linhas = [CABECALHO];
       for (let i = 1; i <= 10; i++) {
-        linhas.push(`Aluno ${i},aluno${i}038@teste.local`);
+        linhas.push(`Aluno ${i},aluno${i}038@teste.local,,Base,,,`);
       }
 
       // A sonda é o que falha, e não outra coisa: sem isto, um erro qualquer
@@ -284,9 +286,11 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
     );
 
     try {
-      const linhas = ['nome;email;turma'];
+      const linhas = ['nome;email;telefone;nivel;turma 1;turma 2;turma 3'];
       for (let i = 1; i <= N; i++) {
-        linhas.push(`Aluno ${i};conv${i}038@teste.local;Terça 19h`);
+        linhas.push(
+          `Aluno ${i};conv${i}038@teste.local;;Iniciante;Terça 19h;;`,
+        );
       }
       // Todas convidadas e todas na turma: as quatro escritas acontecem.
       const todas = Array.from({ length: N }, (_, i) => i + 2).join(',');
@@ -314,9 +318,11 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
   it('AC-012: arquivo COM erro não escreve nada, e diz quantos', async () => {
     await expect(
       importar(
-        [CABECALHO, 'Ana,ana038@teste.local', ',sem-nome@teste.local'].join(
-          '\n',
-        ),
+        [
+          CABECALHO,
+          'Ana,ana038@teste.local,,Base,,,',
+          ',sem-nome@teste.local,,Base,,,',
+        ].join('\n'),
       ),
     ).rejects.toMatchObject({
       response: { code: 'PLANILHA_COM_ERROS' },
@@ -329,7 +335,7 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
   it('AC-001: `conferir` não escreve — provado CONTANDO, não pela ausência de erro', async () => {
     await servico().conferir(
       EMPRESA,
-      [CABECALHO, 'Ana,ana038@teste.local'].join('\n'),
+      [CABECALHO, 'Ana,ana038@teste.local,,Base,,,'].join('\n'),
     );
     // Um teste que só verificasse "não lançou erro" ficaria verde com uma
     // implementação que escrevesse.
@@ -343,7 +349,7 @@ describe('SPEC-038 — a importação escreve de verdade', () => {
     );
 
     await importar(
-      ['nome,email,nivel', 'Ana,ana038@teste.local,intermediario'].join('\n'),
+      [CABECALHO, 'Ana,ana038@teste.local,,intermediario,,,'].join('\n'),
     );
 
     const aluno = await db.aluno.findFirstOrThrow({
