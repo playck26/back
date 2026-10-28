@@ -69,6 +69,8 @@ type TurmaDoDuble = {
   capacidade: number;
   nivelId: string;
   alocados?: number;
+  /** O status que o `FOR UPDATE` da transação lê (padrão: `ativa`). */
+  statusSobATrava?: string;
 };
 
 /**
@@ -136,7 +138,7 @@ function montar(
         nome: t.nome,
         capacidade: t.capacidade,
         nivel_id: t.nivelId,
-        status: 'ativa',
+        status: t.statusSobATrava ?? 'ativa',
       }));
     }
     if (i.sql.includes('INSERT INTO alunos')) {
@@ -257,6 +259,158 @@ describe('SPEC-038 — o cabeçalho', () => {
     await expect(servico().conferir('c1', CABECALHO)).rejects.toMatchObject({
       response: { code: 'PLANILHA_VAZIA' },
     });
+  });
+});
+
+/**
+ * SPEC-091/D1, achado A1 da validação de 2026-10-28 — **coluna sem nome no
+ * cabeçalho é recusada, sempre.** Antes, a célula vazia do cabeçalho era
+ * pulada: o que o gestor escrevesse embaixo dela sumia em silêncio, e a
+ * planilha passava como se fosse o modelo. Decisão do Israel (2026-10-28):
+ * 422 com código próprio, dizendo a posição.
+ */
+describe('SPEC-091/D1 — coluna sem nome no cabeçalho (A1)', () => {
+  it('vazia no meio: 422 COLUNA_SEM_NOME, e a mensagem diz que é a coluna 2', async () => {
+    // O repro da validação, literal: o `IGNORADO` era descartado.
+    await expect(
+      servico().conferir(
+        'c1',
+        'nome;;email;telefone;nivel;turma 1;turma 2;turma 3\nAna;IGNORADO;ana@x.com;;Iniciante;;;',
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 422,
+        code: 'COLUNA_SEM_NOME',
+        posicoes: [2],
+        message:
+          'A coluna 2 do cabeçalho está sem nome. O modelo tem exatamente as sete colunas: nome, email, telefone, nivel, turma 1, turma 2, turma 3. Apague a coluna vazia (ou o separador sobrando no fim do cabeçalho) e envie de novo.',
+      },
+    });
+  });
+
+  it('separador sobrando no fim do cabeçalho: 422 COLUNA_SEM_NOME na coluna 8', async () => {
+    // O segundo repro: o `PERDIDO` da oitava célula sumia.
+    await expect(
+      servico().conferir(
+        'c1',
+        'nome;email;telefone;nivel;turma 1;turma 2;turma 3;\nAna;ana@x.com;;Iniciante;;;;PERDIDO',
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'COLUNA_SEM_NOME', posicoes: [8] },
+    });
+  });
+
+  it('o separador sobrando é recusado mesmo com a linha de dados vazia ali', async () => {
+    await expect(
+      servico().conferir(
+        'c1',
+        'nome;email;telefone;nivel;turma 1;turma 2;turma 3;\nAna;ana@x.com;;Iniciante;;;;',
+      ),
+    ).rejects.toMatchObject({ response: { code: 'COLUNA_SEM_NOME' } });
+  });
+
+  it('duas sem nome (uma só de espaços): o plural, com as duas posições', async () => {
+    await expect(
+      servico().conferir(
+        'c1',
+        'nome,   ,email,telefone,nivel,turma 1,turma 2,turma 3,\nAna,,ana@x.com,,Iniciante,,,,',
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'COLUNA_SEM_NOME',
+        posicoes: [2, 9],
+        message: expect.stringMatching(
+          /^As colunas 2 e 9 do cabeçalho estão sem nome\. /,
+        ) as unknown,
+      },
+    });
+  });
+
+  it('as outras duas sondas da validação seguem como estavam: espaço duplo é desconhecida; BOM, vírgula e apelidos passam', async () => {
+    await expect(
+      servico().conferir(
+        'c1',
+        'nome;email;telefone;nivel;Turma  1;turma 2;turma 3\nAna;ana@x.com;;Iniciante;;;',
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'COLUNA_DESCONHECIDA', colunas: ['Turma  1'] },
+    });
+    const r = await servico().conferir(
+      'c1',
+      '\uFEFFNome,E-mail,Celular,Nível,turma1,turma2,turma3\nAna,ana@x.com,,Iniciante,,,',
+    );
+    expect(r).toMatchObject({ total: 1, validas: 1, erros: [] });
+  });
+
+  it('**e nada é escrito**: a importação recusa antes da transação', async () => {
+    const { servico: s, prisma } = montar();
+    await expect(
+      s.importar(
+        'c1',
+        'nome;;email;telefone;nivel;turma 1;turma 2;turma 3\nAna;IGNORADO;ana@x.com;;Iniciante;;;',
+        { gestorId: GESTOR },
+      ),
+    ).rejects.toMatchObject({ response: { code: 'COLUNA_SEM_NOME' } });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SPEC-091/D1, complemento do A1 (mesma família, decidida com ele): **célula
+ * com conteúdo além da largura do cabeçalho é erro naquela linha.** O
+ * cabeçalho certo não basta: uma linha com uma oitava célula preenchida
+ * perderia o conteúdo dela do mesmo jeito. Célula vazia sobrando continua
+ * aceita — é o que o Excel grava quando alguém formatou a coluna ao lado.
+ */
+describe('SPEC-091/D1 — conteúdo além da última coluna do cabeçalho', () => {
+  it('a oitava célula preenchida é erro na linha, apontando a coluna 8 e o conteúdo', async () => {
+    const r = await conferir([
+      'Ana,ana@x.com,,Iniciante,,,,PERDIDO',
+      'Beto,beto@x.com,,Iniciante,,,',
+    ]);
+    expect(r.erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'coluna 8',
+        mensagem:
+          'Esta linha tem conteúdo depois da última coluna do cabeçalho (coluna 8: "PERDIDO"). O modelo tem sete colunas: apague o que sobrou ou mova para a coluna certa.',
+      },
+    ]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+  });
+
+  it('várias células além: um erro só, na primeira, citando todas', async () => {
+    const r = await conferir(['Ana,ana@x.com,,Iniciante,,,,,X,,Y']);
+    expect(r.erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'coluna 9',
+        mensagem:
+          'Esta linha tem conteúdo depois da última coluna do cabeçalho (coluna 9: "X"; coluna 11: "Y"). O modelo tem sete colunas: apague o que sobrou ou mova para a coluna certa.',
+      },
+    ]);
+  });
+
+  it('células vazias (ou só de espaços) sobrando na linha de dados continuam aceitas', async () => {
+    const r = await conferir(['Ana,ana@x.com,,Iniciante,,,,,  ,']);
+    expect(r.erros).toEqual([]);
+    expect(r.validas).toBe(1);
+  });
+
+  it('a linha recusada por célula a mais não toma vaga: a correta seguinte cabe', async () => {
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,Turma Única,,,PERDIDO',
+        'Beto,beto@x.com,,Iniciante,Turma Única,,',
+      ],
+      {
+        turmas: [
+          { id: 't-u', nome: 'Turma Única', capacidade: 1, nivelId: 'n1' },
+        ],
+      },
+    );
+    expect(r.erros.map((e) => [e.linha, e.coluna])).toEqual([[2, 'coluna 8']]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
   });
 });
 
@@ -792,9 +946,12 @@ describe('SPEC-083/D3 — a turma da planilha', () => {
       niveis: NIVEIS,
       turmas: [{ ...TERCA, capacidade: 1 }],
     });
-    tx.turmaAluno.groupBy.mockResolvedValueOnce([
-      { turmaId: 't-terca', _count: { _all: 1 } },
-    ]);
+    // O mesmo `groupBy` serve fora e dentro: a 1ª leitura é a conferência de
+    // fora (com vaga), a 2ª é a de sob a trava (cheia). Sem o `[]` na frente,
+    // a recusa vinha da conferência de fora, e a transação nem abria.
+    tx.turmaAluno.groupBy
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ turmaId: 't-terca', _count: { _all: 1 } }]);
     await expect(
       s.importar(
         'c1',
@@ -816,6 +973,248 @@ describe('SPEC-083/D3 — a turma da planilha', () => {
       },
     });
     // Nenhuma escrita: a recusa veio antes delas.
+    expect(instrucoes.some((i) => /INSERT INTO/.test(i.sql))).toBe(false);
+  });
+});
+
+/**
+ * SPEC-091/D3, achado A2 da validação de 2026-10-28 — **"um erro por turma",
+ * e a linha recusada não toma vaga em turma nenhuma.** Decisão do Israel
+ * (2026-10-28): na ordem do arquivo, a linha recusada em QUALQUER coluna não
+ * ocupa vaga; quando uma turma estoura, só a primeira linha que não cabe
+ * recebe erro, e ela e as seguintes daquela turma deixam de disputar vaga nas
+ * outras. A recusa por nível e por turma que deixou de estar ativa também
+ * tira a linha de todas as turmas.
+ */
+describe('SPEC-091/D3 — a linha recusada não disputa vaga em outra turma (A2)', () => {
+  const CHEIA: TurmaDoDuble = {
+    id: 't-cheia',
+    nome: 'Cheia',
+    capacidade: 1,
+    nivelId: 'n1',
+    alocados: 1,
+  };
+  const LIVRE: TurmaDoDuble = {
+    id: 't-livre',
+    nome: 'Livre',
+    capacidade: 1,
+    nivelId: 'n1',
+  };
+
+  it('o repro da validação: Ana recusada pela Cheia não toma a vaga da Livre, e Beto entra', async () => {
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,Cheia,Livre,',
+        'Beto,beto@x.com,,Iniciante,Livre,,',
+      ],
+      { turmas: [CHEIA, LIVRE] },
+    );
+    expect(r.erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 1',
+        mensagem: 'A turma "Cheia" já está cheia (capacidade 1).',
+      },
+    ]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+    expect(r.validas).toBe(1);
+  });
+
+  it('a ordem das colunas não importa: a Cheia na `turma 3` também tira Ana da Livre', async () => {
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,Livre,,Cheia',
+        'Beto,beto@x.com,,Iniciante,,Livre,',
+      ],
+      { turmas: [CHEIA, LIVRE] },
+    );
+    expect(r.erros.map((e) => [e.linha, e.coluna])).toEqual([[2, 'turma 3']]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+  });
+
+  it('as linhas SEGUINTES da turma estourada também deixam de disputar: só a primeira recebe erro', async () => {
+    // Uma vaga na Pequena (Ana fica com ela). Beto é o primeiro que não cabe;
+    // Cris também não caberia, e não recebe erro (um por turma). Nenhum dos
+    // dois toma a vaga da Livre: Davi, a seguir, cabe.
+    const PEQUENA: TurmaDoDuble = {
+      id: 't-pequena',
+      nome: 'Pequena',
+      capacidade: 1,
+      nivelId: 'n1',
+    };
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,Pequena,,',
+        'Beto,beto@x.com,,Iniciante,Pequena,Livre,',
+        'Cris,cris@x.com,,Iniciante,Livre,Pequena,',
+        'Davi,davi@x.com,,Iniciante,Livre,,',
+      ],
+      { turmas: [PEQUENA, LIVRE] },
+    );
+    expect(r.erros).toEqual([
+      {
+        linha: 3,
+        coluna: 'turma 1',
+        mensagem:
+          'A turma "Pequena" tem 1 vaga(s) livre(s), e a planilha põe 3 aluno(s) nela. Esta é a primeira linha que não cabe.',
+      },
+    ]);
+    expect(erroNa(r, 5)).toBeUndefined();
+  });
+
+  it('a recusa por NÍVEL numa turma tira a linha de todas: a vaga da outra fica para a seguinte', async () => {
+    const INTERMEDIARIA: TurmaDoDuble = {
+      id: 't-inter',
+      nome: 'Intermediária',
+      capacidade: 10,
+      nivelId: 'n2',
+    };
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,Intermediária,Livre,',
+        'Beto,beto@x.com,,Iniciante,Livre,,',
+      ],
+      { turmas: [INTERMEDIARIA, LIVRE] },
+    );
+    expect(r.erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 1',
+        mensagem:
+          'Esta turma é do nível Intermediário, e este aluno é Iniciante. Para alocá-lo, mude o nível dele.',
+      },
+    ]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+  });
+
+  it('duas turmas estouram na mesma linha: um erro em cada coluna, e nenhum falso depois', async () => {
+    const A: TurmaDoDuble = { ...CHEIA, id: 't-a', nome: 'A' };
+    const B: TurmaDoDuble = { ...CHEIA, id: 't-b', nome: 'B' };
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,A,B,Livre',
+        'Beto,beto@x.com,,Iniciante,Livre,,',
+      ],
+      { turmas: [A, B, LIVRE] },
+    );
+    expect(r.erros.map((e) => [e.linha, e.coluna])).toEqual([
+      [2, 'turma 1'],
+      [2, 'turma 2'],
+    ]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+  });
+
+  it('em cadeia: a recusa numa turma libera a vaga que evitaria a recusa noutra', async () => {
+    // X tem 1 vaga, Y tem 1 vaga. Ana fica com X. Beto não cabe em X (erro) e
+    // não toma Y. Cris, em Y, cabe — sem Beto, Y não estoura.
+    const X: TurmaDoDuble = {
+      id: 't-x',
+      nome: 'X',
+      capacidade: 1,
+      nivelId: 'n1',
+    };
+    const Y: TurmaDoDuble = {
+      id: 't-y',
+      nome: 'Y',
+      capacidade: 1,
+      nivelId: 'n1',
+    };
+    const r = await conferir(
+      [
+        'Ana,ana@x.com,,Iniciante,X,,',
+        'Beto,beto@x.com,,Iniciante,Y,X,',
+        'Cris,cris@x.com,,Iniciante,Y,,',
+      ],
+      { turmas: [X, Y] },
+    );
+    expect(r.erros.map((e) => [e.linha, e.coluna])).toEqual([[3, 'turma 2']]);
+    expect(r.linhas.map((l) => l.linha)).toEqual([2, 4]);
+  });
+
+  it('**sob a trava**: a turma que deixou de estar ativa tira a linha das outras, e a seguinte cabe', async () => {
+    // Fora da trava as duas turmas são ativas e tudo cabe (a Livre tem duas
+    // vagas, para Ana e Beto). Sob a trava, Sumiu deixou de ser ativa e a
+    // Livre tem uma vaga só (outra matrícula entrou): Ana é recusada pela
+    // Sumiu e não pode tomar a vaga de Beto.
+    const SUMIU: TurmaDoDuble = {
+      id: 't-sumiu',
+      nome: 'Sumiu',
+      capacidade: 5,
+      nivelId: 'n1',
+      statusSobATrava: 'inativa',
+    };
+    const { servico: s, prisma } = montar({
+      turmas: [SUMIU, { ...LIVRE, capacidade: 2 }],
+    });
+    // 1ª leitura: a conferência de fora (Livre com 0 alocados); 2ª: sob a
+    // trava (Livre com 1); depois, a conferência refeita após o rollback.
+    prisma.turmaAluno.groupBy
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ turmaId: 't-livre', _count: { _all: 1 } }])
+      .mockResolvedValue([]);
+    await expect(
+      s.importar(
+        'c1',
+        'nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;ana@x.com;;Iniciante;Sumiu;Livre;\r\nBeto;beto@x.com;;Iniciante;Livre;;\r\n',
+        { gestorId: GESTOR },
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'PLANILHA_COM_ERROS',
+        erros: [
+          {
+            linha: 2,
+            coluna: 'turma 1',
+            mensagem:
+              'A turma "Sumiu" deixou de estar ativa depois da conferência. Confira as turmas no Admin e envie de novo.',
+          },
+        ],
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Lacuna b da validação de 2026-10-28 — **o erro achado SOB A TRAVA leva a
+ * coluna de origem.** O teste de banco anterior não isolava isso: depois do
+ * rollback a conferência é refeita fora da trava, acha o mesmo erro (a
+ * intrusa continua lá) e a resposta sai dela. Aqui a conferência refeita volta
+ * limpa, e a resposta só pode vir do erro produzido dentro da transação.
+ */
+describe('SPEC-091/D4 — a coluna do erro achado sob a trava (lacuna b)', () => {
+  it('turma na `turma 3`, cheia só sob a trava: o 422 aponta `turma 3`', async () => {
+    const {
+      servico: s,
+      prisma,
+      instrucoes,
+    } = montar({
+      turmas: [{ id: 't-sab', nome: 'Sábado', capacidade: 1, nivelId: 'n1' }],
+    });
+    prisma.turmaAluno.groupBy
+      .mockResolvedValueOnce([]) // fora: vaga
+      .mockResolvedValueOnce([{ turmaId: 't-sab', _count: { _all: 1 } }]) // sob a trava: cheia
+      .mockResolvedValue([]); // refeita após o rollback: limpa de novo
+    await expect(
+      s.importar(
+        'c1',
+        'nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;ana@x.com;;Iniciante;;;Sábado\r\n',
+        { gestorId: GESTOR },
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'PLANILHA_COM_ERROS',
+        erros: [
+          {
+            linha: 2,
+            coluna: 'turma 3',
+            mensagem: 'A turma "Sábado" já está cheia (capacidade 1).',
+          },
+        ],
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.turmaAluno.groupBy).toHaveBeenCalledTimes(3);
     expect(instrucoes.some((i) => /INSERT INTO/.test(i.sql))).toBe(false);
   });
 });

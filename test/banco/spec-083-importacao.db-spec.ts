@@ -663,6 +663,105 @@ describe('SPEC-083/D3 — a conferência refeita sob a trava (determinístico, s
     });
   });
 
+  it('lacuna b (2026-10-28): o erro achado SÓ sob a trava leva a coluna de origem — a conferência refeita depois volta limpa', async () => {
+    // O caso acima não isola a origem: depois do rollback a intrusa continua
+    // lá, a conferência refeita acha o mesmo erro e a resposta sai dela. Aqui
+    // a intrusa sai antes da reconferência (`depoisDoRollback`), e a resposta
+    // só pode vir do erro produzido dentro da transação.
+    const t = await turma('Vaga que volta', { capacidade: 2 });
+    await matricular(t, await alunoExistente());
+    const intrusa = await alunoExistente();
+    let ocupou = false;
+    let liberou = false;
+
+    const csv = `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${email('volta')};;;Iniciante;;Vaga que volta\r\n`;
+    const antes = await contarTudo();
+
+    const { r } = await pelaRota(csv, {
+      ganchos: {
+        aoTravar: async () => {
+          await matricular(t, intrusa);
+          ocupou = true;
+        },
+        depoisDoRollback: async () => {
+          await q(
+            `DELETE FROM turma_alunos WHERE turma_id = $1::uuid AND aluno_id = $2::uuid`,
+            t,
+            intrusa,
+          );
+          liberou = true;
+        },
+      },
+    });
+
+    expect([ocupou, liberou]).toEqual([true, true]);
+    expect(r.status).toBe(422);
+    expect(r.code).toBe('PLANILHA_COM_ERROS');
+    expect(relatorioDo422(r).erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 3',
+        mensagem: 'A turma "Vaga que volta" já está cheia (capacidade 2).',
+      },
+    ]);
+    // A prova de que a reconferência voltou limpa: o mesmo arquivo, agora,
+    // não tem erro.
+    expect(
+      corpoDe<RelatorioDeImportacaoDto>(
+        (await pelaRota(csv, { conferir: true })).r,
+      ).erros,
+    ).toEqual([]);
+    expect(await contarTudo()).toEqual(antes);
+  });
+
+  it('SPEC-091/A2 sob a trava: a linha que não cabe numa turma não toma a vaga da outra, e a seguinte não recebe erro falso', async () => {
+    // Fora da trava tudo cabe (Primeira: 1 vaga para Ana; Segunda: 2 vagas
+    // para Ana e Beto). Sob a trava, outra conexão ocupa uma vaga em cada:
+    // Ana não cabe na Primeira; Beto cabe na única vaga da Segunda, porque
+    // Ana deixou de disputá-la. Antes do conserto, Beto recebia "não cabe".
+    const primeira = await turma('Primeira sob trava', { capacidade: 2 });
+    const segunda = await turma('Segunda sob trava', { capacidade: 2 });
+    await matricular(primeira, await alunoExistente());
+    const intrusas = [await alunoExistente(), await alunoExistente()];
+
+    const csv = [
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Ana;${email('a2t')};;Iniciante;Primeira sob trava;Segunda sob trava;`,
+      `Beto;${email('a2t')};;Iniciante;;;Segunda sob trava`,
+    ].join('\r\n');
+    expect(
+      corpoDe<RelatorioDeImportacaoDto>(
+        (await pelaRota(csv, { conferir: true })).r,
+      ).erros,
+    ).toEqual([]);
+
+    const antes = await contarTudo();
+    const { r } = await pelaRota(csv, {
+      ganchos: {
+        aoTravar: async () => {
+          await matricular(primeira, intrusas[0]);
+          await matricular(segunda, intrusas[1]);
+        },
+        // Fora, de novo, tudo cabe: a resposta vem do que a trava achou.
+        depoisDoRollback: async () => {
+          await q(
+            `DELETE FROM turma_alunos WHERE aluno_id = ANY($1::uuid[])`,
+            intrusas,
+          );
+        },
+      },
+    });
+    expect(r.status).toBe(422);
+    expect(relatorioDo422(r).erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 1',
+        mensagem: 'A turma "Primeira sob trava" já está cheia (capacidade 2).',
+      },
+    ]);
+    expect(await contarTudo()).toEqual(antes);
+  });
+
   it('outra conexão cria conta com um e-mail do arquivo: o 23505 da etapa de usuários vira 422 com o erro de e-mail', async () => {
     const roubado = email('corrida');
     let criou = false;

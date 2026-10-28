@@ -495,6 +495,32 @@ async function primeiraLinhaQueLotaAula(
  *
  * Turma ausente do mapa é turma que deixou de ser ativa (ou de existir) entre
  * a conferência e a trava.
+ *
+ * ## Um erro por turma, e a linha recusada não toma vaga (SPEC-091, A2)
+ *
+ * Decisão do Israel (2026-10-28): na ordem do arquivo, **a linha recusada em
+ * qualquer coluna não ocupa vaga em turma nenhuma**. A recusa por nível ou por
+ * turma inativa tira a linha de todas as turmas antes da conta de vagas. Na
+ * conta de vagas, quando uma turma estoura, só a primeira linha que não cabe
+ * recebe erro, e **ela e as seguintes daquela turma** saem da disputa nas
+ * outras turmas.
+ *
+ * *Como, sem rodar a regra linha a linha contra o banco:* a primeira posição
+ * que não cabe numa turma depende **só de quantas linhas** vão para ela, e não
+ * de quais. Pela capacidade, é a posição `livres + 1`. Pela aula, é o que a
+ * `primeiraLinhaQueLotaAula` responde, porque cada aluno novo soma exatamente
+ * 1 em toda aula. Daí o **limiar** de cada turma sai de uma ida só ao banco
+ * (a mesma busca de antes), e o resto é conta em memória, por rodadas: em cada
+ * uma, entre as turmas ainda não estouradas, acha-se a MENOR linha `L*` que
+ * ocupa a posição do limiar; ela recebe erro em toda turma onde é a primeira
+ * que não cabe; essas turmas estouram, e as linhas delas a partir de `L*` saem
+ * das outras.
+ *
+ * *Por que a rodada não erra:* tirar linhas `>= L*` de uma turma só mexe nas
+ * posições dela depois de `L*`, e o limiar é uma posição fixa. Nenhuma turma
+ * passa a estourar antes de `L*` — então o erro de `L*` é definitivo, e as
+ * rodadas seguintes só acham linhas maiores. São no máximo tantas rodadas
+ * quantas turmas, e nenhuma delas vai ao banco.
  */
 async function errosDeTurma(
   db: LeitorDaTurma,
@@ -516,8 +542,10 @@ async function errosDeTurma(
   // Lida uma vez: a importação toda vê o mesmo interruptor.
   const podeEntrar = await regraDeNivelDoLote(db, companyId);
 
+  /** As linhas recusadas por nível ou por turma inativa: saem de TODAS. */
+  const recusadas = new Set<number>();
   /** Por turma, as linhas que passaram no nível, na ordem do arquivo. */
-  const candidatas = new Map<string, LinhaNaTurma[]>();
+  const porTurma = new Map<string, LinhaNaTurma[]>();
   for (const l of linhas) {
     const turma = turmas.get(l.turmaId);
     if (!turma) {
@@ -525,6 +553,7 @@ async function errosDeTurma(
         l,
         `A turma "${l.turmaNome}" deixou de estar ativa depois da conferência. Confira as turmas no Admin e envie de novo.`,
       );
+      recusadas.add(l.linha);
       continue;
     }
     const efetivo: NivelEfetivo | null = l.nivelId
@@ -545,33 +574,44 @@ async function errosDeTurma(
           efetivo,
         ),
       );
+      recusadas.add(l.linha);
       continue;
     }
-    const daTurma = candidatas.get(turma.id) ?? [];
+    const daTurma = porTurma.get(turma.id) ?? [];
     daTurma.push(l);
-    candidatas.set(turma.id, daTurma);
+    porTurma.set(turma.id, daTurma);
+  }
+  // A coluna recusada pode vir DEPOIS de outra que já tinha entrado na lista
+  // da sua turma: o filtro vem depois do laço, e não dentro dele.
+  const candidatas = new Map<string, LinhaNaTurma[]>();
+  for (const [turmaId, daTurma] of porTurma) {
+    const ficam = daTurma.filter((l) => !recusadas.has(l.linha));
+    if (ficam.length > 0) candidatas.set(turmaId, ficam);
   }
 
+  /** Por turma, a posição (de 1) da primeira linha que não cabe, e por quê. */
+  const limiares = new Map<
+    string,
+    { posicao: number; data: Date | null; livres: number }
+  >();
   const paraAula: { id: string; capacidade: number; k: number }[] = [];
-  for (const [turmaId, numeros] of candidatas) {
+  for (const [turmaId, daTurma] of candidatas) {
     const turma = turmas.get(turmaId) as TurmaConferida;
     const livres = turma.capacidade - turma.alocados;
-    if (numeros.length > livres) {
-      erro(
-        numeros[Math.max(livres, 0)],
-        livres <= 0
-          ? `A turma "${turma.nome}" já está cheia (capacidade ${turma.capacidade}).`
-          : `A turma "${turma.nome}" tem ${livres} vaga(s) livre(s), e a planilha põe ${numeros.length} aluno(s) nela. Esta é a primeira linha que não cabe.`,
-      );
-      continue;
+    if (daTurma.length > livres) {
+      limiares.set(turmaId, {
+        posicao: Math.max(livres, 0) + 1,
+        data: null,
+        livres,
+      });
     }
-    paraAula.push({
-      id: turmaId,
-      capacidade: turma.capacidade,
-      k: numeros.length,
-    });
+    // A aula só se pergunta para as posições que a capacidade aceita: a que
+    // a capacidade já recusa tem o erro dela, e mais cedo nenhuma lota.
+    const k = Math.min(daTurma.length, Math.max(livres, 0));
+    if (k > 0) {
+      paraAula.push({ id: turmaId, capacidade: turma.capacidade, k });
+    }
   }
-
   if (paraAula.length > 0) {
     const lotadas = await primeiraLinhaQueLotaAula(
       db,
@@ -581,10 +621,56 @@ async function errosDeTurma(
     );
     for (const [turmaId, { posicao, data }] of lotadas) {
       const turma = turmas.get(turmaId) as TurmaConferida;
+      // `posicao <= k <= livres`: antes do limiar da capacidade, se houver.
+      limiares.set(turmaId, {
+        posicao,
+        data,
+        livres: turma.capacidade - turma.alocados,
+      });
+    }
+  }
+
+  /** Linhas que deixaram de disputar vaga: a que estourou e as de depois. */
+  const fora = new Set<number>();
+  const estouradas = new Set<string>();
+  for (;;) {
+    const ofensores: {
+      turmaId: string;
+      linha: LinhaNaTurma;
+      daTurma: LinhaNaTurma[];
+    }[] = [];
+    for (const [turmaId, todas] of candidatas) {
+      const limiar = limiares.get(turmaId);
+      if (!limiar || estouradas.has(turmaId)) continue;
+      const daTurma = todas.filter((l) => !fora.has(l.linha));
+      if (daTurma.length < limiar.posicao) continue;
+      ofensores.push({
+        turmaId,
+        linha: daTurma[limiar.posicao - 1],
+        daTurma,
+      });
+    }
+    if (ofensores.length === 0) break;
+    const menor = Math.min(...ofensores.map((o) => o.linha.linha));
+    for (const o of ofensores) {
+      if (o.linha.linha !== menor) continue;
+      const turma = turmas.get(o.turmaId) as TurmaConferida;
+      const { data, livres } = limiares.get(o.turmaId) as {
+        data: Date | null;
+        livres: number;
+      };
       erro(
-        (candidatas.get(turmaId) as LinhaNaTurma[])[posicao - 1],
-        `A aula de ${diaEMes(data)} da turma "${turma.nome}" ficaria acima da capacidade, contando as reposições marcadas. Esta é a primeira linha da planilha que não cabe nesse dia.`,
+        o.linha,
+        data
+          ? `A aula de ${diaEMes(data)} da turma "${turma.nome}" ficaria acima da capacidade, contando as reposições marcadas. Esta é a primeira linha da planilha que não cabe nesse dia.`
+          : livres <= 0
+            ? `A turma "${turma.nome}" já está cheia (capacidade ${turma.capacidade}).`
+            : `A turma "${turma.nome}" tem ${livres} vaga(s) livre(s), e a planilha põe ${o.daTurma.length} aluno(s) nela. Esta é a primeira linha que não cabe.`,
       );
+      estouradas.add(o.turmaId);
+      for (const l of o.daTurma) {
+        if (l.linha >= menor) fora.add(l.linha);
+      }
     }
   }
   return erros;
@@ -741,10 +827,18 @@ export class ImportacaoDeAlunosService {
     const mapa = {} as Record<Coluna, number>;
     const desconhecidas: string[] = [];
     const repetidas: string[] = [];
+    /** As posições (contando de 1, como o Excel) das colunas sem nome. */
+    const semNome: number[] = [];
 
     campos.forEach((bruto, indice) => {
       const chave = normalizarCabecalho(bruto);
-      if (chave === '') return;
+      // SPEC-091/D1 (A1 da validação de 2026-10-28) — a coluna sem nome é
+      // RECUSADA, e não pulada: pulada, o que o gestor escreveu embaixo dela
+      // sumia em silêncio. Vale também para o separador sobrando no fim.
+      if (chave === '') {
+        semNome.push(indice + 1);
+        return;
+      }
       const coluna = APELIDOS[chave];
       if (!coluna) {
         desconhecidas.push(bruto.trim());
@@ -785,6 +879,18 @@ export class ImportacaoDeAlunosService {
         message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${ausentes.join(', ')}.`,
       });
     }
+    if (semNome.length > 0) {
+      const quais =
+        semNome.length === 1
+          ? `A coluna ${semNome[0]} do cabeçalho está sem nome.`
+          : `As colunas ${semNome.slice(0, -1).join(', ')} e ${semNome[semNome.length - 1]} do cabeçalho estão sem nome.`;
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'COLUNA_SEM_NOME',
+        message: `${quais} O modelo tem exatamente as sete colunas: ${COLUNAS.join(', ')}. Apague ${semNome.length === 1 ? 'a coluna vazia' : 'as colunas vazias'} (ou o separador sobrando no fim do cabeçalho) e envie de novo.`,
+        posicoes: semNome,
+      });
+    }
     return mapa;
   }
 
@@ -813,6 +919,8 @@ export class ImportacaoDeAlunosService {
     }
 
     const mapa = this.lerCabecalho(linhas[0].campos);
+    /** Depois do `lerCabecalho`, são exatamente as sete — nenhuma sem nome. */
+    const largura = linhas[0].campos.length;
     const dados = linhas.slice(1);
     if (dados.length === 0) {
       throw new UnprocessableEntityException({
@@ -885,6 +993,25 @@ export class ImportacaoDeAlunosService {
       const valor = (c: Coluna): string => valorDe(campos, c);
       const erro = (coluna: string, mensagem: string) =>
         erros.push({ linha: numero, coluna, mensagem });
+
+      // SPEC-091/D1 (complemento do A1) — conteúdo depois da última coluna
+      // do cabeçalho não pertence a coluna nenhuma: ignorá-lo seria perdê-lo
+      // em silêncio. Um erro na linha, na primeira célula que sobrou, citando
+      // todas. A célula vazia sobrando continua aceita.
+      const alem = campos
+        .map((c, i) => ({ posicao: i + 1, texto: c.trim() }))
+        .slice(largura)
+        .filter((c) => c.texto !== '');
+      if (alem.length > 0) {
+        erro(
+          `coluna ${alem[0].posicao}`,
+          `Esta linha tem conteúdo depois da última coluna do cabeçalho (${alem
+            .map((c) => `coluna ${c.posicao}: "${c.texto}"`)
+            .join(
+              '; ',
+            )}). O modelo tem sete colunas: apague o que sobrou ou mova para a coluna certa.`,
+        );
+      }
 
       const nome = valor('nome');
       const email = valor('email').toLowerCase();
@@ -986,8 +1113,10 @@ export class ImportacaoDeAlunosService {
     }
 
     // D3, itens 4 a 6 — nível, capacidade e aula lotada, sem trava. A linha
-    // já recusada (e-mail, nome, outra coluna de turma) não disputa vaga: a
-    // vaga que ela tomasse daria "não cabe" a uma linha correta (SPEC-091).
+    // já recusada (e-mail, nome, célula além do cabeçalho, outra coluna de
+    // turma) não disputa vaga: a vaga que ela tomasse daria "não cabe" a uma
+    // linha correta (SPEC-091). A recusa achada DENTRO da `errosDeTurma`
+    // (nível, lotação) segue a mesma regra lá dentro.
     const jaRecusadas = new Set(erros.map((e) => e.linha));
     const disputam = naTurma.filter((l) => !jaRecusadas.has(l.linha));
     if (disputam.length > 0) {
