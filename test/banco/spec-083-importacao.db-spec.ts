@@ -714,6 +714,61 @@ describe('SPEC-083/D3 — a conferência refeita sob a trava (determinístico, s
     expect(await contarTudo()).toEqual(antes);
   });
 
+  it('lacuna b, turma no MEIO da linha: cheia só sob a trava na `turma 2`, entre duas com vaga — o 422 aponta `turma 2`', async () => {
+    // Revisão de 2026-10-28 sobre o d182fa0: no caso acima a turma com erro é
+    // a única da linha, e trocar a coluna pela da primeira (ou da última)
+    // turma da linha passava. Aqui só a coluna da própria turma acerta.
+    const antesDela = await turma('Antes do meio', { capacidade: 2 });
+    const t = await turma('Meio que volta', { capacidade: 2 });
+    const depoisDela = await turma('Depois do meio', { capacidade: 2 });
+    await matricular(t, await alunoExistente());
+    const intrusa = await alunoExistente();
+    let ocupou = false;
+    let liberou = false;
+
+    const csv = `nome;email;turma 1;telefone;nivel;turma 2;turma 3\r\nAna;${email('meio')};Antes do meio;;Iniciante;Meio que volta;Depois do meio\r\n`;
+    const antes = await contarTudo();
+
+    const { r } = await pelaRota(csv, {
+      ganchos: {
+        aoTravar: async () => {
+          await matricular(t, intrusa);
+          ocupou = true;
+        },
+        depoisDoRollback: async () => {
+          await q(
+            `DELETE FROM turma_alunos WHERE turma_id = $1::uuid AND aluno_id = $2::uuid`,
+            t,
+            intrusa,
+          );
+          liberou = true;
+        },
+      },
+    });
+
+    expect([ocupou, liberou]).toEqual([true, true]);
+    expect(r.status).toBe(422);
+    expect(r.code).toBe('PLANILHA_COM_ERROS');
+    expect(relatorioDo422(r).erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 2',
+        mensagem: 'A turma "Meio que volta" já está cheia (capacidade 2).',
+      },
+    ]);
+    expect(
+      corpoDe<RelatorioDeImportacaoDto>(
+        (await pelaRota(csv, { conferir: true })).r,
+      ).erros,
+    ).toEqual([]);
+    expect(await contarTudo()).toEqual(antes);
+    expect(
+      await db.turmaAluno.count({
+        where: { turmaId: { in: [antesDela, depoisDela] } },
+      }),
+    ).toBe(0);
+  });
+
   it('SPEC-091/A2 sob a trava: a linha que não cabe numa turma não toma a vaga da outra, e a seguinte não recebe erro falso', async () => {
     // Fora da trava tudo cabe (Primeira: 1 vaga para Ana; Segunda: 2 vagas
     // para Ana e Beto). Sob a trava, outra conexão ocupa uma vaga em cada:

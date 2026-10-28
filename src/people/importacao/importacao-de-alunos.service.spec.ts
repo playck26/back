@@ -1217,6 +1217,50 @@ describe('SPEC-091/D4 — a coluna do erro achado sob a trava (lacuna b)', () =>
     expect(prisma.turmaAluno.groupBy).toHaveBeenCalledTimes(3);
     expect(instrucoes.some((i) => /INSERT INTO/.test(i.sql))).toBe(false);
   });
+
+  // Revisão de 2026-10-28 sobre o d182fa0: nos testes acima a turma com erro
+  // é sempre a PRIMEIRA turma da linha, e por isso trocar a coluna pela da
+  // primeira turma da linha (`l.linha.turmas[0].coluna`) passava. Aqui a
+  // turma cheia fica no meio, entre duas com vaga: só a coluna da própria
+  // turma (`turma 2`) acerta — nem a primeira nem a última da linha.
+  it('turma cheia só sob a trava NO MEIO da linha (`turma 2`, entre duas com vaga): o 422 aponta `turma 2`', async () => {
+    const {
+      servico: s,
+      prisma,
+      instrucoes,
+    } = montar({
+      turmas: [
+        { id: 't-livre', nome: 'Livre', capacidade: 1, nivelId: 'n1' },
+        { id: 't-sab', nome: 'Sábado', capacidade: 1, nivelId: 'n1' },
+        { id: 't-dom', nome: 'Domingo', capacidade: 1, nivelId: 'n1' },
+      ],
+    });
+    prisma.turmaAluno.groupBy
+      .mockResolvedValueOnce([]) // fora: as três com vaga
+      .mockResolvedValueOnce([{ turmaId: 't-sab', _count: { _all: 1 } }]) // sob a trava: só a Sábado cheia
+      .mockResolvedValue([]); // refeita após o rollback: limpa de novo
+    await expect(
+      s.importar(
+        'c1',
+        'nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;ana@x.com;;Iniciante;Livre;Sábado;Domingo\r\n',
+        { gestorId: GESTOR },
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'PLANILHA_COM_ERROS',
+        erros: [
+          {
+            linha: 2,
+            coluna: 'turma 2',
+            mensagem: 'A turma "Sábado" já está cheia (capacidade 1).',
+          },
+        ],
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.turmaAluno.groupBy).toHaveBeenCalledTimes(3);
+    expect(instrucoes.some((i) => /INSERT INTO/.test(i.sql))).toBe(false);
+  });
 });
 
 /**
