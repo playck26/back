@@ -7,6 +7,7 @@ import {
   nomeDoArquivoDaPlanilha,
   statusNaPlanilha,
   type AlunoDaPlanilha,
+  type VinculoNaPlanilha,
 } from './planilha-de-alunos';
 
 /** Uma linha da consulta, antes de virar `AlunoDaPlanilha`. */
@@ -17,6 +18,7 @@ interface LinhaDoBanco {
   nivel: string | null;
   aluno_inativo: boolean;
   conta_inativa: boolean;
+  vinculo: VinculoNaPlanilha;
   senha_temporaria: boolean;
   turmas: string[];
 }
@@ -47,6 +49,7 @@ export class ExportacaoDeAlunosService {
              n.nome                       AS nivel,
              (a.status = 'inativo')       AS aluno_inativo,
              (u.status = 'inativo')       AS conta_inativa,
+             a.vinculo::text              AS vinculo,
              u.senha_temporaria,
              COALESCE(
                array_agg(t.nome ORDER BY t.nome, t.id)
@@ -78,6 +81,7 @@ export class ExportacaoDeAlunosService {
       status: statusNaPlanilha({
         alunoInativo: l.aluno_inativo,
         contaInativa: l.conta_inativa,
+        vinculo: l.vinculo,
         senhaTemporaria: l.senha_temporaria,
       }),
     }));

@@ -116,6 +116,7 @@ async function aluno(dados: {
   alunoStatus?: 'ativo' | 'inativo';
   contaStatus?: 'ativo' | 'inativo';
   senhaTemporaria?: boolean;
+  vinculo?: 'pendente' | 'aprovado' | 'recusado';
   empresa?: string;
 }): Promise<string> {
   const usuarioId = randomUUID();
@@ -133,7 +134,7 @@ async function aluno(dados: {
     dados.senhaTemporaria ?? false,
   );
   await q(
-    `INSERT INTO alunos (id,usuario_id,company_id,vinculo,status,nivel_id) VALUES ($1::uuid,$2::uuid,$3::uuid,'aprovado',$4::usuario_status,$5::uuid)`,
+    `INSERT INTO alunos (id,usuario_id,company_id,vinculo,status,nivel_id) VALUES ($1::uuid,$2::uuid,$3::uuid,$6::vinculo_aluno,$4::usuario_status,$5::uuid)`,
     alunoId,
     usuarioId,
     empresa,
@@ -143,6 +144,7 @@ async function aluno(dados: {
         ? INICIANTE
         : NIVEL_B
       : dados.nivel,
+    dados.vinculo ?? 'aprovado',
   );
   return alunoId;
 }
@@ -395,6 +397,67 @@ describe('SPEC-092/AC-003 — o Status pelo banco', () => {
       Fabi: 'ativo',
     });
   });
+
+  it('o vínculo (D3): recusado, aguardando aprovação, e a precedência nas combinações', async () => {
+    const casos: [Omit<Parameters<typeof aluno>[0], 'email'>, string][] = [
+      [{ nome: 'V1 Recusado', vinculo: 'recusado' }, 'recusado'],
+      [{ nome: 'V2 Aguardando', vinculo: 'pendente' }, 'aguardando aprovação'],
+      // AC-003 — desativado e recusado sai desativado.
+      [
+        {
+          nome: 'V3 Inativo Recusado',
+          vinculo: 'recusado',
+          alunoStatus: 'inativo',
+        },
+        'desativado',
+      ],
+      [
+        {
+          nome: 'V4 Conta Inativa Aguardando',
+          vinculo: 'pendente',
+          contaStatus: 'inativo',
+        },
+        'desativado',
+      ],
+      // AC-003 — recusado com senha temporária sai recusado.
+      [
+        {
+          nome: 'V5 Recusado Senha',
+          vinculo: 'recusado',
+          senhaTemporaria: true,
+        },
+        'recusado',
+      ],
+      // AC-003 — aguardando aprovação com senha temporária sai aguardando.
+      [
+        {
+          nome: 'V6 Aguardando Senha',
+          vinculo: 'pendente',
+          senhaTemporaria: true,
+        },
+        'aguardando aprovação',
+      ],
+      [
+        {
+          nome: 'V7 Aprovado Senha',
+          vinculo: 'aprovado',
+          senhaTemporaria: true,
+        },
+        'pendente',
+      ],
+    ];
+    for (const [i, [dados]] of casos.entries()) {
+      await aluno({ ...dados, email: `v${i + 1}@spec092.local` });
+    }
+
+    const linhas = await exportarELer();
+    const status = Object.fromEntries(linhas.slice(1).map((l) => [l[0], l[7]]));
+    for (const [dados, esperado] of casos) {
+      expect([dados.nome, status[dados.nome]]).toEqual([dados.nome, esperado]);
+    }
+    // Os de antes não mudaram, e nenhum aluno sumiu nem dobrou.
+    expect(linhas).toHaveLength(1 + 6 + casos.length);
+  });
 });
 
 describe('SPEC-092/AC-004 — o que o aluno escreveu volta igual pelo `csv.ts`', () => {
@@ -544,5 +607,162 @@ describe('SPEC-092/AC-010 — com alunos em até 10 turmas, o arquivo sem Status
         message: expect.stringContaining('O máximo é turma 10') as unknown,
       },
     });
+  });
+});
+
+describe('SPEC-092/D5 e AC-011 — ida e volta: o arquivo exportado volta pela importação com os valores originais', () => {
+  const ORIGEM = `${base}0c`;
+  const DESTINO = `${base}0e`;
+  const NIVEL_ORIGEM = `${base}a1`;
+  const NIVEL_DESTINO = `${base}a2`;
+  const QUADRA_ORIGEM = `${base}e1`;
+  const QUADRA_DESTINO = `${base}e2`;
+  const GESTOR_DESTINO = `${base}f1`;
+  const NOMES_DAS_TURMAS = ['@Sab', '-Dom', '=Seg', 'Ter'];
+
+  async function turmaEm(
+    empresa: string,
+    quadra: string,
+    nivel: string,
+    nome: string,
+  ): Promise<string> {
+    const id = randomUUID();
+    await q(
+      `INSERT INTO turmas (id,company_id,nome,quadra_id,capacidade,status,nivel_id) VALUES ($1::uuid,$2::uuid,$3,$4::uuid,20,'ativa',$5::uuid)`,
+      id,
+      empresa,
+      nome,
+      quadra,
+      nivel,
+    );
+    return id;
+  }
+
+  /** Tira a última coluna (Status) e regrava no mesmo formato. */
+  function semStatus(conteudo: string): string {
+    return (
+      '\uFEFF' +
+      analisarCsv(conteudo, ';')
+        .map(
+          (campos) =>
+            campos.slice(0, -1).map(celulaDaPlanilha).join(';') + '\r\n',
+        )
+        .join('')
+    );
+  }
+
+  /** O que o banco tem de cada aluno do clube, pelo e-mail. */
+  async function gravados(empresa: string) {
+    const lidos = await db.aluno.findMany({
+      where: { companyId: empresa },
+      select: {
+        usuario: { select: { nome: true, email: true, telefone: true } },
+        nivel: { select: { nome: true } },
+        turmaAlunos: { select: { turma: { select: { nome: true } } } },
+      },
+    });
+    return lidos
+      .map((a) => ({
+        nome: a.usuario.nome,
+        email: a.usuario.email,
+        telefone: a.usuario.telefone,
+        nivel: a.nivel?.nome ?? null,
+        turmas: a.turmaAlunos.map((t) => t.turma.nome).sort(),
+      }))
+      .sort((x, y) => x.email.localeCompare(y.email));
+  }
+
+  beforeEach(async () => {
+    await limparEmpresa(db, ORIGEM);
+    await limparEmpresa(db, DESTINO);
+    await montarClube(ORIGEM, NIVEL_ORIGEM, QUADRA_ORIGEM);
+    await montarClube(DESTINO, NIVEL_DESTINO, QUADRA_DESTINO);
+    await q(
+      `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ($1::uuid,'gestor-destino@spec092.local','h','Gestor','company_admin',$2::uuid,now())`,
+      GESTOR_DESTINO,
+      DESTINO,
+    );
+  });
+  afterAll(async () => {
+    await limparEmpresa(db, ORIGEM);
+    await limparEmpresa(db, DESTINO);
+  });
+
+  it("'=Ana', '+55…', '-x@y' e '@Sab' saem com `'` e voltam idênticos", async () => {
+    const turmasDaOrigem = new Map<string, string>();
+    for (const nome of NOMES_DAS_TURMAS) {
+      turmasDaOrigem.set(
+        nome,
+        await turmaEm(ORIGEM, QUADRA_ORIGEM, NIVEL_ORIGEM, nome),
+      );
+    }
+    const ana = await aluno({
+      nome: '=Ana',
+      email: '-x@y.local',
+      telefone: '+55 11 98888-7777',
+      empresa: ORIGEM,
+      nivel: NIVEL_ORIGEM,
+    });
+    // O `'` que o próprio aluno escreveu, antes de letra, não é da
+    // exportação: vai e volta como está.
+    const bia = await aluno({
+      nome: "'Bia",
+      email: 'bia@spec092-c.local',
+      telefone: "'(11) 9",
+      empresa: ORIGEM,
+      nivel: NIVEL_ORIGEM,
+    });
+    for (const nome of ['@Sab', '-Dom', '=Seg']) {
+      await matricular(turmasDaOrigem.get(nome) as string, ana);
+    }
+    await matricular(turmasDaOrigem.get('Ter') as string, bia);
+
+    const antes = await gravados(ORIGEM);
+    expect(antes).toEqual([
+      {
+        nome: '=Ana',
+        email: '-x@y.local',
+        telefone: '+55 11 98888-7777',
+        nivel: 'Iniciante',
+        turmas: ['-Dom', '=Seg', '@Sab'],
+      },
+      {
+        nome: "'Bia",
+        email: 'bia@spec092-c.local',
+        telefone: "'(11) 9",
+        nivel: 'Iniciante',
+        turmas: ['Ter'],
+      },
+    ]);
+
+    const { conteudo } = await exportacao.exportar(ORIGEM);
+    const arquivo = semStatus(conteudo);
+    // A exportação protegeu as células (D5) — sem isto, a volta não provaria
+    // nada sobre o `'`.
+    const linhaDaAna =
+      analisarCsv(arquivo, ';').find((l) => l[1] === "'-x@y.local") ?? [];
+    expect(linhaDaAna.slice(0, 4)).toEqual([
+      "'=Ana",
+      "'-x@y.local",
+      "'+55 11 98888-7777",
+      'Iniciante',
+    ]);
+    // A ordem das turmas é a da collation do banco (D4), que ignora a
+    // pontuação no ICU; aqui importa só que as três foram protegidas.
+    expect(linhaDaAna.slice(4, 7).sort()).toEqual(["'-Dom", "'=Seg", "'@Sab"]);
+
+    // Os e-mails têm de estar livres para a importação no outro clube: a
+    // origem sai do banco antes da volta.
+    await limparEmpresa(db, ORIGEM);
+    for (const nome of NOMES_DAS_TURMAS) {
+      await turmaEm(DESTINO, QUADRA_DESTINO, NIVEL_DESTINO, nome);
+    }
+
+    const resultado = await importacao().importar(DESTINO, arquivo, {
+      gestorId: GESTOR_DESTINO,
+    });
+    expect(resultado.criados).toHaveLength(2);
+
+    expect(await gravados(DESTINO)).toEqual(antes);
   });
 });

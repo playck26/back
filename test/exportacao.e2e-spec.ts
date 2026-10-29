@@ -28,6 +28,7 @@ const LINHA = {
   nivel: 'Iniciante',
   aluno_inativo: false,
   conta_inativa: false,
+  vinculo: 'aprovado',
   senha_temporaria: false,
   turmas: ['Terça 19h'],
 };

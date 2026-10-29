@@ -193,6 +193,26 @@ describe('Importação de alunos (e2e) — SPEC-038', () => {
     expect(bodyOf<{ validas: number }>(res).validas).toBe(2);
   });
 
+  it("SPEC-092/AC-011: o `'` que a exportação pôs sai na leitura, e o de antes de letra fica", async () => {
+    const token = await comoAdmin();
+    // O formato da exportação: BOM, `;` e CRLF.
+    const exportado =
+      '\uFEFFNome;E-mail;Telefone;Nível;Turma 1;Turma 2;Turma 3\r\n' +
+      "'=Ana;'-ana@clube.local;'+55 11 98888-7777;Iniciante;;;\r\n" +
+      "'Bia;bia@clube.local;'(11) 9;Iniciante;;;\r\n";
+    const res = await enviar(token, exportado, true).expect(201);
+
+    const corpo = bodyOf<{
+      erros: unknown[];
+      linhas: { nome: string; email: string; telefone: string | null }[];
+    }>(res);
+    expect(corpo.erros).toEqual([]);
+    expect(corpo.linhas.map((l) => [l.nome, l.email, l.telefone])).toEqual([
+      ['=Ana', '-ana@clube.local', '+55 11 98888-7777'],
+      ["'Bia", 'bia@clube.local', "'(11) 9"],
+    ]);
+  });
+
   it('sem arquivo é 400, com o código do upload', async () => {
     const token = await comoAdmin();
     await request(app.getHttpServer())

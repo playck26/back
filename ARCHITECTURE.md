@@ -1009,11 +1009,22 @@ continuam com o conjunto fechado delas. **Até a fase 2, o arquivo não volta
 pela importação** (`Status` é `COLUNA_DESCONHECIDA`). O `JOIN` de turmas
 também casa pelo clube (`t.company_id = a.company_id`), porque `turma_alunos`
 não carrega o clube e o banco aceita a matrícula cruzada; o teste de banco
-grava uma e confere que o nome da turma do outro clube não vaza. Dois limites
-conhecidos, que a spec não resolve: o `'` contra fórmula vale para **qualquer**
-célula (D5), e a importação não o tira, então um telefone `+55…` exportado
-volta com o `'`; e o `Status` não olha o `vinculo` (D3), então o aluno
-`recusado` ou com aprovação `pendente` sai `ativo`.
+grava uma e confere que o nome da turma do outro clube não vaza.
+
+**O `Status` tem cinco valores (D3), decididos por `statusNaPlanilha`** a partir
+de `alunos.status`, `usuarios.status`, `alunos.vinculo` e
+`usuarios.senha_temporaria`, lidos na mesma consulta: `desativado` >
+`recusado` > `aguardando aprovação` > `pendente` > `ativo`. **E a importação
+tira o `'` da exportação (D5):** a lista de caracteres de fórmula
+(`CARACTERES_DE_FORMULA`, em `planilha-de-alunos.ts`) é uma só para as duas
+pontas — `celulaDaPlanilha` põe o `'`, `semProtecaoDeFormula` o tira — e a
+importação a aplica no `valorDe` da `conferirComContexto`, o ponto único por
+onde passa toda célula lida (nome, e-mail, telefone, nível, turma 1 a 10),
+antes do `trim`. O `'` antes de outro caractere fica. O teste de banco faz a
+ida e volta: exporta `=Ana`, `-x@y.local`, `+55…` e `@Sab`, importa noutro
+clube e confere que o gravado é idêntico. **Limite que fica:** o valor que já
+começa com `'` seguido de fórmula (`'=x`, digitado assim pelo aluno) sai sem
+prefixo e volta como `=x`.
 
 **E a importação passa a aceitar até dez colunas de turma (SPEC-092/D8).**
 `Turma 1` a `Turma 3` continuam obrigatórias no cabeçalho (SPEC-091/D1);

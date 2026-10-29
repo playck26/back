@@ -2405,3 +2405,70 @@ describe('SPEC-092/D8 — até dez colunas de turma (AC-008, AC-009)', () => {
     });
   });
 });
+
+describe("SPEC-092/AC-011 — a importação tira o `'` que a exportação pôs (D5)", () => {
+  const ARROBA_X: TurmaDoDuble = {
+    id: 't-arroba',
+    nome: '@x',
+    capacidade: 10,
+    nivelId: 'n1',
+  };
+  const COM_FORMULA = [...NIVEIS, { id: 'n3', nome: '=Topo' }];
+
+  it("nome, e-mail, telefone, nível e turma: o `'` antes de =, +, -, @ sai", async () => {
+    const r = await conferir(
+      [
+        "'=Ana,'-ana@x.com,'+55 11 98888-7777,Iniciante,'@x,,",
+        "Beto,beto@x.com,,'=Topo,,,",
+      ],
+      { niveis: COM_FORMULA, turmas: [ARROBA_X] },
+    );
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0]).toMatchObject({
+      nome: '=Ana',
+      email: '-ana@x.com',
+      telefone: '+55 11 98888-7777',
+      nivelId: 'n1',
+      turmas: [{ id: 't-arroba', nome: '@x', coluna: 'turma 1' }],
+    });
+    expect(r.linhas[1]).toMatchObject({ nome: 'Beto', nivelId: 'n3' });
+  });
+
+  it("o `'` antes de outro caractere fica como veio — em todas as colunas", async () => {
+    const r = await conferir(
+      [
+        "'Ana,ana@x.com,'(11) 9,Iniciante,,,",
+        "Beto,beto@x.com,,'Iniciante,,,",
+        "Caio,caio@x.com,,Iniciante,'x,,",
+      ],
+      { niveis: NIVEIS, turmas: [ARROBA_X] },
+    );
+    expect(r.linhas.map((l) => [l.nome, l.telefone])).toEqual([
+      ["'Ana", "'(11) 9"],
+    ]);
+    // O nível e a turma com `'` na frente são outros nomes, e não existem.
+    expect(r.erros).toEqual([
+      {
+        linha: 3,
+        coluna: 'nivel',
+        mensagem: expect.stringContaining(`"'Iniciante"`) as unknown,
+      },
+      {
+        linha: 4,
+        coluna: 'turma 1',
+        mensagem: expect.stringContaining(`"'x"`) as unknown,
+      },
+    ]);
+  });
+
+  it('nas turmas extras também (turma 4 a 10)', async () => {
+    const r = await servico({ niveis: NIVEIS, turmas: [ARROBA_X] }).conferir(
+      'c1',
+      [`${CABECALHO},turma 4`, "Ana,ana@x.com,,Iniciante,,,,'@x"].join('\n'),
+    );
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0].turmas).toEqual([
+      { id: 't-arroba', nome: '@x', coluna: 'turma 4' },
+    ]);
+  });
+});

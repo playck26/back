@@ -37,7 +37,11 @@ export const ROTULOS_DO_MODELO = [
 export const TURMAS_DO_MODELO = 3;
 
 /** D3 — o que a coluna `Status` diz. */
-export type StatusNaPlanilha = 'ativo' | 'desativado' | 'pendente';
+export type StatusNaPlanilha =
+  'ativo' | 'desativado' | 'recusado' | 'aguardando aprovação' | 'pendente';
+
+/** D3 — o vínculo do aluno com o clube (`alunos.vinculo`). */
+export type VinculoNaPlanilha = 'pendente' | 'aprovado' | 'recusado';
 
 /** Um aluno, já lido do banco, do jeito que a planilha precisa. */
 export interface AlunoDaPlanilha {
@@ -52,26 +56,65 @@ export interface AlunoDaPlanilha {
 }
 
 /**
- * D3 — **`desativado` vence `pendente`.** O aluno inativo não entra, tenha ou
- * não trocado a senha; dizer `pendente` dele faria o gestor reenviar convite a
- * quem ele mesmo desligou.
+ * D3 — **a precedência é a ordem dos `if`s:** `desativado`, `recusado`,
+ * `aguardando aprovação`, `pendente`; o resto é `ativo`.
  *
- * `pendente` é o critério da "situação do acesso" (`derivarSituacao`): a conta
- * ainda com senha temporária, que é a de quem não aceitou o convite nem trocou
- * a `pck-`.
+ * - `desativado` vence tudo: o aluno que o gestor desligou não "aguarda" nem
+ *   está "pendente"; dizer isso dele faria o gestor aprovar ou reenviar
+ *   convite a quem ele mesmo desligou.
+ * - `recusado` e `aguardando aprovação` vêm do vínculo (`alunos.vinculo`) e
+ *   vencem `pendente`: enquanto o clube não aprovou, não é a senha temporária
+ *   que deixa a pessoa de fora.
+ * - `pendente` é o critério da "situação do acesso" (`derivarSituacao`): a
+ *   conta ainda com senha temporária, que é a de quem não aceitou o convite
+ *   nem trocou a `pck-`.
  */
 export function statusNaPlanilha(situacao: {
   alunoInativo: boolean;
   contaInativa: boolean;
+  vinculo: VinculoNaPlanilha;
   senhaTemporaria: boolean;
 }): StatusNaPlanilha {
   if (situacao.alunoInativo || situacao.contaInativa) return 'desativado';
+  if (situacao.vinculo === 'recusado') return 'recusado';
+  if (situacao.vinculo === 'pendente') return 'aguardando aprovação';
   if (situacao.senhaTemporaria) return 'pendente';
   return 'ativo';
 }
 
-/** D5 — o começo que o Excel lê como fórmula (ou que esconde uma). */
-const COMECO_DE_FORMULA = /^[=+\-@\t\r]/;
+/**
+ * D5 — **os caracteres que o Excel lê como começo de fórmula** (ou que
+ * escondem uma). É a lista de UM lugar só: a exportação põe o `'` antes deles
+ * (`celulaDaPlanilha`) e a importação o tira (`semProtecaoDeFormula`). Duas
+ * listas divergiriam em silêncio — o arquivo exportado deixaria de voltar
+ * limpo, ou a importação passaria a comer o `'` de quem o escreveu de
+ * propósito.
+ */
+export const CARACTERES_DE_FORMULA: readonly string[] = [
+  '=',
+  '+',
+  '-',
+  '@',
+  '\t',
+  '\r',
+];
+
+function comecaComFormula(valor: string): boolean {
+  return valor !== '' && CARACTERES_DE_FORMULA.includes(valor[0]);
+}
+
+/**
+ * D5 — **o inverso exato do `'` da exportação**, aplicado pela importação a
+ * toda célula que ela lê: tira o `'` inicial só quando o caractere seguinte é
+ * um de `CARACTERES_DE_FORMULA` (`'+55…` volta `+55…`). O `'` antes de outro
+ * caractere (`'Ana`) não foi a exportação que pôs, e fica.
+ */
+export function semProtecaoDeFormula(valor: string): string {
+  return valor.startsWith("'") && comecaComFormula(valor.slice(1))
+    ? valor.slice(1)
+    : valor;
+}
+
 /** D5 — o que obriga a célula a ir entre aspas no CSV de `;`. */
 const PEDE_ASPAS = /[;"\r\n]/;
 
@@ -83,7 +126,7 @@ const PEDE_ASPAS = /[;"\r\n]/;
  * leria o campo como `'` seguido de texto entre aspas — que não é CSV.
  */
 export function celulaDaPlanilha(valor: string): string {
-  const texto = COMECO_DE_FORMULA.test(valor) ? `'${valor}` : valor;
+  const texto = comecaComFormula(valor) ? `'${valor}` : valor;
   return PEDE_ASPAS.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
 }
 

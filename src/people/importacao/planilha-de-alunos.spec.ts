@@ -7,7 +7,9 @@ import {
   montarPlanilhaDeAlunos,
   nomeDoArquivoDaPlanilha,
   quantasColunasDeTurma,
+  semProtecaoDeFormula,
   statusNaPlanilha,
+  CARACTERES_DE_FORMULA,
   type AlunoDaPlanilha,
 } from './planilha-de-alunos';
 import type { PrismaService } from '../../prisma/prisma.service';
@@ -141,41 +143,102 @@ describe('SPEC-092/AC-002 — as colunas de turma crescem com o aluno', () => {
 });
 
 describe('SPEC-092/AC-003 — o Status (D3)', () => {
-  const casos: [string, Parameters<typeof statusNaPlanilha>[0], string][] = [
+  type Situacao = Parameters<typeof statusNaPlanilha>[0];
+  const s = (parcial: Partial<Situacao> = {}): Situacao => ({
+    alunoInativo: false,
+    contaInativa: false,
+    vinculo: 'aprovado',
+    senhaTemporaria: false,
+    ...parcial,
+  });
+  const casos: [string, Situacao, string][] = [
+    ['ativo', s(), 'ativo'],
+    ['desativado pelo aluno', s({ alunoInativo: true }), 'desativado'],
+    ['desativado pela conta', s({ contaInativa: true }), 'desativado'],
+    ['recusado', s({ vinculo: 'recusado' }), 'recusado'],
     [
-      'ativo',
-      { alunoInativo: false, contaInativa: false, senhaTemporaria: false },
-      'ativo',
+      'aguardando aprovação',
+      s({ vinculo: 'pendente' }),
+      'aguardando aprovação',
     ],
+    ['pendente', s({ senhaTemporaria: true }), 'pendente'],
+    // As combinações da AC-003, e as que a precedência da D3 decide.
     [
-      'desativado pelo aluno',
-      { alunoInativo: true, contaInativa: false, senhaTemporaria: false },
+      'desativado e recusado: desativado vence',
+      s({ alunoInativo: true, vinculo: 'recusado' }),
       'desativado',
     ],
     [
-      'desativado pela conta',
-      { alunoInativo: false, contaInativa: true, senhaTemporaria: false },
+      'conta desativada e aguardando aprovação: desativado vence',
+      s({ contaInativa: true, vinculo: 'pendente' }),
       'desativado',
     ],
     [
-      'pendente',
-      { alunoInativo: false, contaInativa: false, senhaTemporaria: true },
-      'pendente',
+      'recusado com senha temporária: recusado vence',
+      s({ vinculo: 'recusado', senhaTemporaria: true }),
+      'recusado',
+    ],
+    [
+      'aguardando aprovação com senha temporária: aguardando aprovação vence',
+      s({ vinculo: 'pendente', senhaTemporaria: true }),
+      'aguardando aprovação',
     ],
     [
       'desativado com senha temporária: desativado vence',
-      { alunoInativo: true, contaInativa: false, senhaTemporaria: true },
+      s({ alunoInativo: true, senhaTemporaria: true }),
       'desativado',
     ],
     [
       'conta desativada com senha temporária: desativado vence',
-      { alunoInativo: false, contaInativa: true, senhaTemporaria: true },
+      s({ contaInativa: true, senhaTemporaria: true }),
+      'desativado',
+    ],
+    [
+      'tudo ao mesmo tempo: desativado vence',
+      s({
+        alunoInativo: true,
+        contaInativa: true,
+        vinculo: 'recusado',
+        senhaTemporaria: true,
+      }),
       'desativado',
     ],
   ];
 
   it.each(casos)('%s', (_rotulo, situacao, esperado) => {
     expect(statusNaPlanilha(situacao)).toBe(esperado);
+  });
+});
+
+describe("SPEC-092/D5 e AC-011 — a importação tira o `'` da exportação, e só ele", () => {
+  it.each([
+    ["'+55 11 98888-7777", '+55 11 98888-7777'],
+    ["'=Ana", '=Ana'],
+    ["'@x", '@x'],
+    ["'-x@y.local", '-x@y.local'],
+    ["'\tescondido", '\tescondido'],
+    ["'\rescondido", '\rescondido'],
+    // O `'` antes de outro caractere não foi a exportação que pôs.
+    ["'Ana", "'Ana"],
+    ["''=Ana", "''=Ana"],
+    ["'", "'"],
+    ["' =Ana", "' =Ana"],
+    ['=Ana', '=Ana'],
+    ['', ''],
+  ])('%j volta como %j', (celula, valor) => {
+    expect(semProtecaoDeFormula(celula)).toBe(valor);
+  });
+
+  it("a lista é a mesma nas duas pontas: todo começo de fórmula vai com `'` e volta igual", () => {
+    expect(CARACTERES_DE_FORMULA).toEqual(['=', '+', '-', '@', '\t', '\r']);
+    for (const c of CARACTERES_DE_FORMULA) {
+      const valor = `${c}valor`;
+      const [, [relida]] = reler(
+        montarPlanilhaDeAlunos([aluno({ nome: valor })]),
+      );
+      expect(relida).toBe(`'${valor}`);
+      expect(semProtecaoDeFormula(relida)).toBe(valor);
+    }
   });
 });
 
@@ -251,8 +314,20 @@ describe('SPEC-092/D6 — o nome do arquivo e a consulta única', () => {
           nivel: 'Iniciante',
           aluno_inativo: false,
           conta_inativa: false,
+          vinculo: 'aprovado',
           senha_temporaria: true,
           turmas: ['A'],
+        },
+        {
+          nome: 'Caio',
+          email: 'caio@clube.local',
+          telefone: null,
+          nivel: null,
+          aluno_inativo: false,
+          conta_inativa: false,
+          vinculo: 'recusado',
+          senha_temporaria: true,
+          turmas: [],
         },
         {
           nome: 'Beto',
@@ -261,6 +336,7 @@ describe('SPEC-092/D6 — o nome do arquivo e a consulta única', () => {
           nivel: null,
           aluno_inativo: true,
           conta_inativa: false,
+          vinculo: 'pendente',
           senha_temporaria: true,
           turmas: [],
         },
@@ -273,6 +349,10 @@ describe('SPEC-092/D6 — o nome do arquivo e a consulta única', () => {
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     const sql = (prisma.$queryRaw.mock.calls[0] as [{ values: unknown[] }])[0];
     expect(sql.values).toEqual(['clube-x']);
-    expect(alunos.map((a) => a.status)).toEqual(['pendente', 'desativado']);
+    expect(alunos.map((a) => a.status)).toEqual([
+      'pendente',
+      'recusado',
+      'desativado',
+    ]);
   });
 });

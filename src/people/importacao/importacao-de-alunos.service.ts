@@ -71,6 +71,7 @@ import {
   type NivelEfetivo,
 } from '../nivel-efetivo';
 import { linhasComNumero } from './csv';
+import { semProtecaoDeFormula } from './planilha-de-alunos';
 import type {
   AlunoImportadoDto,
   ErroDeImportacaoDto,
@@ -1166,8 +1167,17 @@ export class ImportacaoDeAlunosService {
       });
     }
 
+    /**
+     * **O ponto único de leitura de célula.** Toda coluna que a importação usa
+     * (nome, e-mail, telefone, nível, turma 1 a 10) passa por aqui, e é aqui
+     * que sai o `'` que a exportação pôs antes de um começo de fórmula
+     * (SPEC-092/D5) — antes do `trim`, porque o `'` é o primeiro caractere da
+     * célula como a exportação a escreveu.
+     */
     const valorDe = (campos: string[], c: Coluna): string =>
-      mapa[c] === undefined ? '' : (campos[mapa[c]] ?? '').trim();
+      mapa[c] === undefined
+        ? ''
+        : semProtecaoDeFormula(campos[mapa[c]] ?? '').trim();
 
     const niveis = await this.prisma.nivel.findMany({
       where: { companyId },
