@@ -68,3 +68,20 @@ export const ESPERA_POR_TRAVAS_DA_IMPORTACAO_MS = 2_000;
 export const PRAZO_DA_IMPORTACAO_MS =
   ESPERA_POR_TRAVAS_DA_IMPORTACAO_MS +
   MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO * CUSTO_DA_INSTRUCAO_FRIA_MS;
+
+/**
+ * **Quanto tempo, no máximo, a importação segura a trava do clube** — o que
+ * quem espera por ela (a edição de nível, que trava EXCLUSIVA e sem
+ * `lock_timeout`) tem de admitir.
+ *
+ * O prazo limita, no servidor, toda espera e toda execução até o `COMMIT`;
+ * **não limita a rede**: o `statement_timeout` não conta as idas. Se uma
+ * espera come o prazo quase inteiro, as instruções que vêm depois ainda pagam
+ * as idas delas. O teto aqui é o pior disso, declarado: o prazo + todas as
+ * instruções do teto pagando o custo frio de novo — **11.380 ms**. É uma cota
+ * de cima (nenhuma execução real paga as 14 duas vezes), e é ela que o
+ * `TIMEOUT_DA_EDICAO_DE_NIVEL_MS` (`nivel-efetivo.ts`) soma.
+ */
+export const POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS =
+  PRAZO_DA_IMPORTACAO_MS +
+  MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO * CUSTO_DA_INSTRUCAO_FRIA_MS;

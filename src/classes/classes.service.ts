@@ -24,6 +24,7 @@ import {
 import {
   conferirEdicaoDeNivel,
   recusaPorNivel,
+  TIMEOUT_DA_EDICAO_DE_NIVEL,
   travarNivelDaEmpresa,
   nivelRestringe,
 } from '../people/nivel-efetivo';
@@ -604,6 +605,12 @@ export class ClassesService {
     // NFR-001: mesma garantia all-or-nothing da criação — se o horário
     // muda, cancelar as ocupações futuras antigas e gerar as novas
     // acontece na mesma transação da atualização da turma.
+    //
+    // DEF-040 — com `nivelId`, a trava `escrita` espera a importação inteira,
+    // e a transação precisa do `timeout` dela; sem `nivelId` não há trava do
+    // clube, e vale o padrão.
+    const opcoes =
+      dto.nivelId !== undefined ? TIMEOUT_DA_EDICAO_DE_NIVEL : undefined;
     const turma = await this.prisma.$transaction(async (tx) => {
       // SPEC-075/D13 — quando o corpo traz `nivelId`, a trava de nível da
       // empresa é a PRIMEIRA instrução, antes do `FOR UPDATE` da turma logo
@@ -856,7 +863,7 @@ export class ClassesService {
       }
 
       return atualizada;
-    });
+    }, opcoes);
 
     return this.findOne(companyId, turma.id);
   }

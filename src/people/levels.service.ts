@@ -10,6 +10,7 @@ import {
   conferirEdicaoDeNivel,
   criarNiveisPadrao,
   primeiroNivel,
+  TIMEOUT_DA_EDICAO_DE_NIVEL,
   travarNivelDaEmpresa,
 } from './nivel-efetivo';
 import { NivelResponseDto } from './dto/people-response.dto';
@@ -132,7 +133,8 @@ export class LevelsService {
       );
       if (r.recusa) throw new UnprocessableEntityException(r.recusa);
       return r.resultado;
-    });
+      // DEF-040 — a trava `escrita` espera a importação inteira.
+    }, TIMEOUT_DA_EDICAO_DE_NIVEL);
   }
 
   /**
@@ -165,7 +167,8 @@ export class LevelsService {
 
       await this.recusarSeEmUso(tx, companyId, id);
       await tx.nivel.delete({ where: { id } });
-    });
+      // DEF-040 — a trava `escrita` espera a importação inteira.
+    }, TIMEOUT_DA_EDICAO_DE_NIVEL);
   }
 
   private async recusarSeEmUso(

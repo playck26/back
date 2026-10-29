@@ -167,10 +167,12 @@ const TETO_DE_TURMAS_NA_MENSAGEM = 10;
  *
  * DEF-040: com o prazo da importação em 6,69 s (`PRAZO_DA_IMPORTACAO_MS`), o
  * pior caso da transação é o `BEGIN` e a trava de e-mail (duas instruções
- * frias), os 5 s dela, e os 6,69 s do prazo — que já contam as instruções até
- * o `COMMIT` —, com 1 s de folga: 13,4 s. Os 20 s continuam acima disso com
- * 6,6 s de sobra, e por isso não mudaram; `prazo-da-importacao.spec.ts`
- * amarra a desigualdade.
+ * frias), os 5 s dela, e da trava do clube ao `COMMIT` a posse máxima dela
+ * (`POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS`, 11,38 s: o prazo e a
+ * rede das instruções depois de uma espera que o comeu, que o
+ * `statement_timeout` não mede), com 1 s de folga: 18,05 s. Os 20 s continuam
+ * acima disso, e por isso não mudaram; `prazo-da-importacao.spec.ts` amarra a
+ * desigualdade.
  */
 export const TIMEOUT_DA_IMPORTACAO_MS = 15_000 + PRAZO_DA_TRAVA_DE_EMAIL_MS;
 

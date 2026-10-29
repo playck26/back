@@ -5,12 +5,17 @@ import {
   PRAZO_DA_MATRICULA_MS,
 } from '../../common/lock/prazo-de-espera';
 import { PRAZO_DA_TRAVA_DE_EMAIL_MS } from '../../acesso/trava-de-email';
-import { travarNivelDaEmpresa } from '../nivel-efetivo';
+import {
+  TIMEOUT_DA_EDICAO_DE_NIVEL,
+  TIMEOUT_DA_EDICAO_DE_NIVEL_MS,
+  travarNivelDaEmpresa,
+} from '../nivel-efetivo';
 import { TIMEOUT_DA_IMPORTACAO_MS } from './importacao-de-alunos.service';
 import {
   CUSTO_DA_INSTRUCAO_FRIA_MS,
   ESPERA_POR_TRAVAS_DA_IMPORTACAO_MS,
   MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO,
+  POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS,
   PRAZO_DA_IMPORTACAO_MS,
 } from './prazo-da-importacao';
 
@@ -42,16 +47,38 @@ describe('DEF-040 — o prazo da importação', () => {
     expect(PRAZO_DA_IMPORTACAO_MS).not.toBe(PRAZO_DA_MATRICULA_MS);
   });
 
-  it('o `timeout` da transação cobre o BEGIN, a trava de e-mail, o prazo dela e o da importação, com folga', () => {
+  it('o `timeout` da transação cobre o BEGIN, a trava de e-mail, o prazo dela e a posse máxima da trava do clube, com folga', () => {
     // BEGIN e a instrução da trava de e-mail, frias; os 5 s da trava de
-    // e-mail; o prazo da importação (que já conta até o COMMIT); 1 s de folga.
+    // e-mail; da trava do clube ao COMMIT, a posse máxima — o prazo E a rede
+    // das instruções depois de uma espera que o comeu, que o
+    // `statement_timeout` não mede (revisão do 512025f); 1 s de folga.
+    //
+    // Sem número literal aqui: subir o teto sobe o pior caso junto, e o
+    // teste só fica vermelho se o `timeout` deixar de cobri-lo.
     const piorCaso =
       2 * CUSTO_DA_INSTRUCAO_FRIA_MS +
       PRAZO_DA_TRAVA_DE_EMAIL_MS +
-      PRAZO_DA_IMPORTACAO_MS +
+      POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS +
       FOLGA_DO_TIMEOUT_MS;
-    expect(piorCaso).toBe(13_360);
     expect(TIMEOUT_DA_IMPORTACAO_MS).toBeGreaterThan(piorCaso);
+  });
+
+  it('a posse máxima da trava do clube é o prazo + o teto de instruções pagando a rede de novo', () => {
+    expect(POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS).toBe(
+      PRAZO_DA_IMPORTACAO_MS +
+        MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO * CUSTO_DA_INSTRUCAO_FRIA_MS,
+    );
+  });
+
+  it('quem edita nível (modo `escrita`, sem `lock_timeout`) aceita esperar a posse máxima da importação, além dos 5 s do próprio trabalho', () => {
+    expect(TIMEOUT_DA_EDICAO_DE_NIVEL_MS).toBe(
+      5_000 +
+        POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS +
+        FOLGA_DO_TIMEOUT_MS,
+    );
+    expect(TIMEOUT_DA_EDICAO_DE_NIVEL).toEqual({
+      timeout: TIMEOUT_DA_EDICAO_DE_NIVEL_MS,
+    });
   });
 });
 
@@ -88,6 +115,31 @@ function valoresDoPrazo(instrucoes: readonly Prisma.Sql[]): unknown[] {
   return comPrazo[0].values;
 }
 
+/**
+ * **O prazo que o SQL grava, e não só o número entre os parâmetros**
+ * (revisão do 512025f: `${PRAZO}::int / 3 * interval …` ou `interval '1
+ * second'` mantinham o número nos parâmetros e mudavam o prazo). O texto da
+ * instrução tem de ser exatamente `clock_timestamp() + $n::int * interval
+ * '1 millisecond'` dentro do `set_config` do marcador, e o `$n` é o número
+ * devolvido.
+ */
+function prazoGravadoEmMs(instrucoes: readonly Prisma.Sql[]): unknown {
+  const comPrazo = instrucoes.filter((i) =>
+    i.sql.includes(`set_config('${MARCADOR_DO_PRAZO}'`),
+  );
+  expect(comPrazo).toHaveLength(1);
+  const texto = comPrazo[0].text.replace(/\s+/g, ' ');
+  const antes = `set_config('${MARCADOR_DO_PRAZO}', (clock_timestamp() + $`;
+  const depois = `::int * interval '1 millisecond')::text, true)`;
+  const inicio = texto.indexOf(antes);
+  expect(inicio).toBeGreaterThanOrEqual(0);
+  const numero = /^\d+/.exec(texto.slice(inicio + antes.length));
+  expect(numero).not.toBeNull();
+  const fim = inicio + antes.length + numero![0].length;
+  expect(texto.slice(fim, fim + depois.length)).toBe(depois);
+  return comPrazo[0].values[Number(numero![0]) - 1];
+}
+
 describe('DEF-040 — cada modo da trava do clube grava o seu prazo', () => {
   it(`o modo da importação (\`lote-novo\`) grava ${PRAZO_DA_IMPORTACAO_MS} ms, e não os 2 s da matrícula`, async () => {
     const { db, instrucoes } = clienteQueRegistra();
@@ -95,6 +147,7 @@ describe('DEF-040 — cada modo da trava do clube grava o seu prazo', () => {
     const valores = valoresDoPrazo(instrucoes);
     expect(valores).toContain(PRAZO_DA_IMPORTACAO_MS);
     expect(valores).not.toContain(PRAZO_DA_MATRICULA_MS);
+    expect(prazoGravadoEmMs(instrucoes)).toBe(PRAZO_DA_IMPORTACAO_MS);
   });
 
   it('o modo da matrícula (`leitura`) continua gravando 2 s, e não o prazo da importação', async () => {
@@ -103,6 +156,7 @@ describe('DEF-040 — cada modo da trava do clube grava o seu prazo', () => {
     const valores = valoresDoPrazo(instrucoes);
     expect(valores).toContain(PRAZO_DA_MATRICULA_MS);
     expect(valores).not.toContain(PRAZO_DA_IMPORTACAO_MS);
+    expect(prazoGravadoEmMs(instrucoes)).toBe(PRAZO_DA_MATRICULA_MS);
   });
 
   it('o modo `escrita` (catálogo de níveis) não grava prazo nenhum', async () => {

@@ -32,7 +32,11 @@ import type { UpdateStudentDto } from './dto/update-student.dto';
 import { calcularCompletude } from './completude-do-cadastro';
 import type { CamposDoCadastroDto } from './dto/campos-do-cadastro.dto';
 import { normalizarNascimento } from './normalizar-nascimento';
-import { conferirEdicaoDeNivel, travarNivelDaEmpresa } from './nivel-efetivo';
+import {
+  conferirEdicaoDeNivel,
+  TIMEOUT_DA_EDICAO_DE_NIVEL,
+  travarNivelDaEmpresa,
+} from './nivel-efetivo';
 import {
   formatDateOnly,
   formatTimeOnly,
@@ -541,6 +545,11 @@ export class StudentsService {
       }
     }
 
+    // DEF-040 — com `nivelId`, a trava `escrita` espera a importação inteira,
+    // e a transação precisa do `timeout` dela; sem `nivelId` não há trava do
+    // clube, e vale o padrão.
+    const opcoes =
+      dto.nivelId !== undefined ? TIMEOUT_DA_EDICAO_DE_NIVEL : undefined;
     const aluno = await this.prisma.$transaction(async (tx) => {
       // SPEC-075/D13 — quando o corpo traz `nivelId` (inclusive `null`), a
       // trava de nível da empresa é a PRIMEIRA instrução, antes das escritas
@@ -628,7 +637,7 @@ export class StudentsService {
       );
       if (r.recusa) throw new UnprocessableEntityException(r.recusa);
       return r.resultado;
-    });
+    }, opcoes);
 
     return this.toResponse(aluno);
   }
