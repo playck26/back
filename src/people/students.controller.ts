@@ -10,14 +10,17 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
+  ApiProduces,
   ApiTags,
 } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { AcessoService } from '../acesso/acesso.service';
 import { SituacaoDoConviteResponseDto } from '../acesso/dto/situacao-do-convite.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -35,6 +38,7 @@ import { CreateStudentDto } from './dto/create-student.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { StudentsService } from './students.service';
+import { ExportacaoDeAlunosService } from './importacao/exportacao-de-alunos.service';
 import {
   FrequenciaService,
   JANELA_MAXIMA_DIAS,
@@ -51,6 +55,8 @@ export class StudentsController {
     private readonly frequencias: FrequenciaService,
     /** SPEC-083 — por último, pela lição da SPEC-039 (ver `InvitesService`). */
     private readonly acesso: AcessoService,
+    /** SPEC-092 — por último, pela mesma lição. */
+    private readonly exportacao: ExportacaoDeAlunosService,
   ) {}
 
   /**
@@ -85,6 +91,47 @@ export class StudentsController {
     @Query() query: ListStudentsQueryDto,
   ) {
     return this.studentsService.list(user.companyId as string, query);
+  }
+
+  /**
+   * SPEC-092 — a planilha de TODOS os alunos do clube, no formato do modelo
+   * da importação (D1, D2), com a coluna `Status` (D3).
+   *
+   * **Declarada antes de `@Get(':id')`, e não por gosto:** o Express casa na
+   * ordem de registro, e depois do `:id` a palavra `exportar` chegaria ao
+   * `UuidCanonicoPipe` como id e responderia 400 (DEF-039, o gate da
+   * SPEC-067 confere).
+   *
+   * O clube sai do token, e só dele (D6): a rota não lê parâmetro nenhum.
+   * `no-store` porque o arquivo tem e-mail e telefone de gente, e não há
+   * motivo para um proxy ou o disco do navegador guardarem uma cópia.
+   *
+   * O `Access-Control-Expose-Headers` vai **nesta resposta**, e não nas
+   * opções de CORS (cujo conjunto é fechado e tem prova própria): sem ele, o
+   * Admin, que mora em outra origem, não consegue ler o nome do arquivo.
+   */
+  @Get('exportar')
+  @ApiProduces('text/csv')
+  @ApiOkResponse({
+    description:
+      'CSV com BOM, `;` e CRLF: Nome;E-mail;Telefone;Nível;Turma 1…N;Status. O nome do arquivo vem em Content-Disposition (alunos-AAAA-MM-DD.csv).',
+    content: { 'text/csv': { schema: { type: 'string' } } },
+  })
+  async exportar(
+    @CurrentUser() user: AccessTokenPayload,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const { nomeDoArquivo, conteudo } = await this.exportacao.exportar(
+      user.companyId as string,
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${nomeDoArquivo}"`,
+    );
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    res.setHeader('Cache-Control', 'no-store');
+    return conteudo;
   }
 
   // SPEC-009/REQ-008: decidir sobre um cadastro é ação exclusiva do

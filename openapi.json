@@ -564,6 +564,32 @@
         ]
       }
     },
+    "/api/v1/students/exportar": {
+      "get": {
+        "operationId": "StudentsController_exportar",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "CSV com BOM, `;` e CRLF: Nome;E-mail;Telefone;Nível;Turma 1…N;Status. O nome do arquivo vem em Content-Disposition (alunos-AAAA-MM-DD.csv).",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/{id}/senha-temporaria": {
       "post": {
         "operationId": "StudentsController_regenerarSenhaTemporaria",
