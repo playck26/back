@@ -67,7 +67,11 @@ export const CADENCIA_MS = 20;
 export type Espera = 'primeira' | 'segunda' | null;
 
 export interface Amostra {
-  /** Milissegundos desde o início (`playck.prazo − 2 s`), no relógio do servidor. */
+  /**
+   * Milissegundos desde a origem (`playck.prazo − 2 s`), no relógio do
+   * servidor. A origem é o começo do prazo quando ele era de 2 s; desde o
+   * DEF-040 é "2 s antes do fim do prazo" (ver `inicioDe` no FIT-057).
+   */
   ms: number;
   /** O `state` de `pg_stat_activity`; nulo se o `pid` já não estava lá. */
   state: string | null;

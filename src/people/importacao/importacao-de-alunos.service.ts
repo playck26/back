@@ -1,6 +1,7 @@
 import {
   comTraducaoDaTravaDeEmail,
   conflitoDeContasDaEmpresa,
+  contaEmConflitoNaEmpresa,
   PRAZO_DA_TRAVA_DE_EMAIL_MS,
   travarEmailsParaCriarConta,
 } from '../../acesso/trava-de-email';
@@ -24,8 +25,12 @@ import {
 } from '../../acesso/acesso.service';
 import {
   ALUNO_NOVO,
-  aulasQueAMatriculaLotaria,
+  carregarAulasFuturas,
   diaEMes,
+  montarConjuntos,
+  primeirasAulasQueLotariam,
+  sqlDasAulasFuturas,
+  type AulasFuturas,
 } from '../../classes/ocupacao-da-ocorrencia';
 import {
   ehEsperaEstourada,
@@ -58,6 +63,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   mensagemDeNivelIncompativel,
+  regraDeNivel,
   regraDeNivelDoLote,
   primeiroNivel,
   travarNivelDaEmpresa,
@@ -156,7 +162,17 @@ const TETO_DE_TURMAS_NA_MENSAGEM = 10;
  * D4 — o `timeout` da transação da importação. Ver a D3, passo 6.
  *
  * SPEC-086: os 15 s de antes **mais** o orçamento da trava de e-mail, que
- * agora vem antes de tudo e pode consumir até 5 s esperando outro cadastro.
+ * agora vem antes de tudo e pode consumir até 5 s esperando outro cadastro —
+ * **20 s**.
+ *
+ * DEF-040: com o prazo da importação em 6,69 s (`PRAZO_DA_IMPORTACAO_MS`), o
+ * pior caso da transação é o `BEGIN` e a trava de e-mail (duas instruções
+ * frias), os 5 s dela, e da trava do clube ao `COMMIT` a posse máxima dela
+ * (`POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS`, 11,38 s: o prazo e a
+ * rede das instruções depois de uma espera que o comeu, que o
+ * `statement_timeout` não mede), com 1 s de folga: 18,05 s. Os 20 s continuam
+ * acima disso, e por isso não mudaram; `prazo-da-importacao.spec.ts` amarra a
+ * desigualdade.
  */
 export const TIMEOUT_DA_IMPORTACAO_MS = 15_000 + PRAZO_DA_TRAVA_DE_EMAIL_MS;
 
@@ -333,10 +349,12 @@ export const GANCHOS_DA_IMPORTACAO = Symbol('GANCHOS_DA_IMPORTACAO');
  *
  * - `gerarId` — o gerador dos ids das linhas novas (AC-053 injeta um id de
  *   usuário que já existe, para a colisão de chave primária);
- * - `aoTravar` — chamado logo depois da instrução inicial, na sessão da
- *   importação, com o `playck.prazo` que ela fixou e o `pg_backend_pid()`
- *   (AC-045 e AC-050 medem pelo prazo da sessão: noutra conexão,
- *   `current_setting` devolve nulo). Só quando existe a consulta é feita;
+ * - `aoTravar` — chamado depois da trava do clube e da instrução das
+ *   referenciadas (que traz a conferência de e-mail; DEF-040), e antes do
+ *   `FOR UPDATE` das turmas, na sessão da importação, com o `playck.prazo`
+ *   que a trava fixou e o `pg_backend_pid()` (AC-045 e AC-050 medem pelo
+ *   prazo da sessão: noutra conexão, `current_setting` devolve nulo). Só
+ *   quando existe a consulta é feita;
  * - `aoMedirEscrita` — a duração de cada escrita, medida no Back, para o
  *   registro do LIM-083m (AC-014);
  * - `depoisDoRollback` — chamado depois do rollback e antes de decidir a
@@ -402,35 +420,68 @@ async function contarAlocados(
 }
 
 /**
- * D3, item 6 — **a primeira linha que lotaria uma aula futura**, por turma.
+ * **O que as conferências de turma precisam do banco**, já lido: o primeiro
+ * nível (para a linha sem nível), a regra de nível do clube e as aulas
+ * futuras das turmas, com os conjuntos de cada uma.
  *
- * É a conta da `aulaQueAMatriculaLotaria`, **a mesma função**, generalizada
- * para k alunos novos sem uma segunda cópia da regra: um aluno novo não é
- * matriculado, não tem falta nem reposição, então cada um soma exatamente 1 a
- * `ocupados` em toda aula. "k novos passam da capacidade C" é o mesmo que
- * "um novo passa de C − (k − 1)" — e a função já sabe responder isso, para
- * várias turmas numa ida.
- *
- * Lotar é monótono em k, então a primeira linha que lota sai de uma busca
- * binária: só roda quando o arquivo inteiro lotaria, e custa uma ida por
- * passo, com todas as turmas lotadas juntas.
+ * Duas fontes, a mesma forma: a conferência de fora lê pelo Prisma
+ * (`carregarDadosDeTurma`), e a transação lê numa instrução só, sob as travas
+ * (`lerDadosSobATrava`, DEF-040). **A regra que usa os dados é uma só** — a
+ * `errosDeTurma`, que não vai ao banco.
  */
-async function primeiraLinhaQueLotaAula(
+interface DadosDaTurma {
+  primeiro: { id: string; nome: string } | null;
+  podeEntrar: ReturnType<typeof regraDeNivel>;
+  aulas: AulasFuturas;
+}
+
+/** A conferência de fora: pelo Prisma, na ordem de antes do DEF-040. */
+async function carregarDadosDeTurma(
   db: LeitorDaTurma,
   companyId: string,
-  turmas: readonly { id: string; capacidade: number; k: number }[],
+  turmaIds: readonly string[],
+  precisaDoPrimeiro: boolean,
   agora: Date,
-): Promise<Map<string, { posicao: number; data: Date }>> {
+): Promise<DadosDaTurma> {
+  const primeiro = precisaDoPrimeiro
+    ? await primeiroNivel(db, companyId)
+    : null;
+  // SPEC-089 (P8) — a regra do lote vem pronta de `nivel-efetivo.ts` (D1):
+  // clube que não restringe recebe um predicado que deixa entrar em tudo.
+  // Lida uma vez: a importação toda vê o mesmo interruptor.
+  const podeEntrar = await regraDeNivelDoLote(db, companyId);
+  const aulas = await carregarAulasFuturas(db, companyId, turmaIds, agora);
+  return { primeiro, podeEntrar, aulas };
+}
+
+/**
+ * D3, item 6 — **a primeira linha que lotaria uma aula futura**, por turma.
+ *
+ * É a conta da `aulaQueAMatriculaLotaria`, **a mesma função**
+ * (`primeirasAulasQueLotariam`), generalizada para k alunos novos sem uma
+ * segunda cópia da regra: um aluno novo não é matriculado, não tem falta nem
+ * reposição, então cada um soma exatamente 1 a `ocupados` em toda aula. "k
+ * novos passam da capacidade C" é o mesmo que "um novo passa de C − (k − 1)"
+ * — e a função já sabe responder isso, para várias turmas de uma vez.
+ *
+ * Lotar é monótono em k, então a primeira linha que lota sai de uma busca
+ * binária. **Nenhum passo vai ao banco** (DEF-040): as aulas e os conjuntos já
+ * vieram lidos, e a mesma pergunta com outra capacidade é conta em memória.
+ * Antes, cada passo eram quatro idas — e sob a trava do clube elas comiam o
+ * prazo das escritas (então de 2 s).
+ */
+function primeiraLinhaQueLotaAula(
+  aulas: AulasFuturas,
+  turmas: readonly { id: string; capacidade: number; k: number }[],
+): Map<string, { posicao: number; data: Date }> {
   const comCapacidade = (id: string, capacidade: number, k: number) => ({
     id,
     capacidade: capacidade - (k - 1),
   });
-  const comTodos = await aulasQueAMatriculaLotaria(
-    db,
-    companyId,
+  const comTodos = primeirasAulasQueLotariam(
+    aulas,
     turmas.map((t) => comCapacidade(t.id, t.capacidade, t.k)),
     ALUNO_NOVO,
-    agora,
   );
   const busca = new Map<
     string,
@@ -455,12 +506,10 @@ async function primeiraLinhaQueLotaAula(
       b,
       meio: Math.floor((b.lo + b.hi) / 2),
     }));
-    const lotadas = await aulasQueAMatriculaLotaria(
-      db,
-      companyId,
+    const lotadas = primeirasAulasQueLotariam(
+      aulas,
       meios.map((m) => comCapacidade(m.id, m.b.capacidade, m.meio)),
       ALUNO_NOVO,
-      agora,
     );
     for (const m of meios) {
       const aula = lotadas.get(m.id);
@@ -480,11 +529,12 @@ async function primeiraLinhaQueLotaAula(
 /**
  * SPEC-083/D3, itens 4 a 6 — **nível, capacidade e aula lotada**, pela ordem
  * do arquivo. Uma função só para as duas passadas: a conferência (sem trava,
- * pelo cliente de fora) e a importação (pelo `tx`, sob a trava do clube e o
- * `FOR UPDATE` das turmas). **A conferência é aviso; a garantia é esta mesma
- * conta refeita sob as travas.**
+ * com os dados lidos pelo cliente de fora) e a importação (com os dados lidos
+ * pelo `tx`, sob a trava do clube e o `FOR UPDATE` das turmas). **A
+ * conferência é aviso; a garantia é esta mesma conta refeita sob as travas.**
+ * Ela não vai ao banco: recebe tudo em `DadosDaTurma` (DEF-040).
  *
- * - **nível**: o predicado de `regraDeNivelDoLote` (SPEC-089), com o efetivo da linha
+ * - **nível**: o predicado de `regraDeNivel` (SPEC-089), com o efetivo da linha
  *   ou, vazio, o primeiro nível da empresa — o que inclui a linha sem nível
  *   numa turma que não é do primeiro (I4). A recusa é o texto do gestor da
  *   SPEC-075;
@@ -510,8 +560,8 @@ async function primeiraLinhaQueLotaAula(
  * de quais. Pela capacidade, é a posição `livres + 1`. Pela aula, é o que a
  * `primeiraLinhaQueLotaAula` responde, porque cada aluno novo soma exatamente
  * 1 em toda aula. Daí o **limiar** de cada turma sai de uma busca só (a
- * mesma de antes: uma leitura inicial e a busca binária, ~log k leituras, não
- * uma por rodada), e o resto é conta em memória, por rodadas: em cada
+ * busca binária, ~log k passos, em memória desde o DEF-040, e não uma por
+ * rodada), e o resto é conta em memória, por rodadas: em cada
  * uma, entre as turmas ainda não estouradas, acha-se a MENOR linha `L*` que
  * ocupa a posição do limiar; ela recebe erro em toda turma onde é a primeira
  * que não cabe; essas turmas estouram, e as linhas delas a partir de `L*` saem
@@ -523,25 +573,17 @@ async function primeiraLinhaQueLotaAula(
  * rodadas seguintes só acham linhas maiores. São no máximo tantas rodadas
  * quantas turmas, e nenhuma delas vai ao banco.
  */
-async function errosDeTurma(
-  db: LeitorDaTurma,
-  companyId: string,
+function errosDeTurma(
+  dados: DadosDaTurma,
   turmas: ReadonlyMap<string, TurmaConferida>,
   linhas: readonly LinhaNaTurma[],
   nomesDosNiveis: ReadonlyMap<string, string>,
-  agora: Date,
-): Promise<ErroDeImportacaoDto[]> {
+): ErroDeImportacaoDto[] {
   const erros: ErroDeImportacaoDto[] = [];
   const erro = (l: Pick<LinhaNaTurma, 'linha' | 'coluna'>, mensagem: string) =>
     erros.push({ linha: l.linha, coluna: l.coluna, mensagem });
 
-  const primeiro = linhas.some((l) => l.nivelId === null)
-    ? await primeiroNivel(db, companyId)
-    : null;
-  // SPEC-089 (P8) — a regra do lote vem pronta de `nivel-efetivo.ts` (D1):
-  // clube que não restringe recebe um predicado que deixa entrar em tudo.
-  // Lida uma vez: a importação toda vê o mesmo interruptor.
-  const podeEntrar = await regraDeNivelDoLote(db, companyId);
+  const { primeiro, podeEntrar } = dados;
 
   /** As linhas recusadas por nível ou por turma inativa: saem de TODAS. */
   const recusadas = new Set<number>();
@@ -614,12 +656,7 @@ async function errosDeTurma(
     }
   }
   if (paraAula.length > 0) {
-    const lotadas = await primeiraLinhaQueLotaAula(
-      db,
-      companyId,
-      paraAula,
-      agora,
-    );
+    const lotadas = primeiraLinhaQueLotaAula(dados.aulas, paraAula);
     for (const [turmaId, { posicao, data }] of lotadas) {
       const turma = turmas.get(turmaId) as TurmaConferida;
       // `posicao <= k <= livres`: antes do limiar da capacidade, se houver.
@@ -675,6 +712,138 @@ async function errosDeTurma(
     }
   }
   return erros;
+}
+
+/** Uma turma como o `FOR UPDATE` da transação a devolve. */
+interface TurmaTravada {
+  id: string;
+  nome: string;
+  capacidade: number;
+  nivel_id: string;
+  status: string;
+}
+
+/** Uma conta com um e-mail do arquivo, lida sob a trava (SPEC-086). */
+interface ContaDoEmail {
+  email: string;
+  companyId: string | null;
+  role: string;
+}
+
+/**
+ * O marcador da instrução dos dados sob a trava. Os dublês dos testes
+ * unitários reconhecem a instrução por ele.
+ */
+export const MARCADOR_DOS_DADOS_SOB_A_TRAVA =
+  'importacao: dados da conferencia sob a trava';
+
+/**
+ * DEF-040 — **tudo o que a conferência de turma lê sob as travas, numa
+ * instrução só**, depois do `FOR UPDATE` das turmas: os matriculados de cada
+ * turma (e daí os alocados), a chave de nível do clube, as aulas futuras e
+ * as faltas e reposições delas.
+ *
+ * **O banco só devolve dados** (JSON), e nenhuma regra: a ocupação é a
+ * `calcularOcupacao` de sempre, montada pelos mesmos `montarConjuntos` e
+ * `primeirasAulasQueLotariam`; a regra de nível é a `regraDeNivel`. As formas
+ * SQL do que é "aula futura" mora ao lado da forma do Prisma
+ * (`sqlDasAulasFuturas`), e o teste de banco confere que concordam.
+ *
+ * **O primeiro nível não é lido aqui** (R4 da validação do DEF-040): ele só
+ * serve à linha SEM nível, e essa linha não chega à transação desde a
+ * SPEC-091/D2 — o nível vazio é recusado na conferência ("O nível é
+ * obrigatório."). Lê-lo sob a trava era código morto, que nenhum teste
+ * conseguia exercitar. `escreverNaTransacao` afirma a premissa antes de
+ * abrir a transação.
+ *
+ * Eram seis a nove idas (contagem, chave, primeiro nível, aulas e três
+ * conjuntos, mais quatro por passo da busca binária), todas descontadas do
+ * prazo das escritas (então de 2 s).
+ */
+async function lerDadosSobATrava(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  turmaIds: readonly string[],
+  agora: Date,
+): Promise<{ alocados: Map<string, number>; dados: DadosDaTurma }> {
+  const [linha] = await tx.$queryRaw<
+    {
+      restringe: boolean | null;
+      matriculas: { turmaId: string; alunoId: string }[];
+      aulas: { id: string; data: string; turmaId: string }[];
+      faltas: { ocupacaoId: string; alunoId: string }[];
+      reposicoes: { ocupacaoId: string; alunoId: string }[];
+    }[]
+  >`
+    /* ${Prisma.raw(MARCADOR_DOS_DADOS_SOB_A_TRAVA)} */
+    WITH aulas AS MATERIALIZED (
+      SELECT o.id, o.data, o.hora_inicio, o.origem_turma_id
+        FROM ocupacoes_quadra o
+       WHERE ${sqlDasAulasFuturas(companyId, turmaIds, agora)}
+    )
+    SELECT
+      (SELECT e.nivel_restringe_acesso FROM empresas e
+        WHERE e.id = ${companyId}::uuid) AS restringe,
+      (SELECT coalesce(json_agg(json_build_object(
+                'turmaId', ta.turma_id, 'alunoId', ta.aluno_id)), '[]'::json)
+         FROM turma_alunos ta
+        WHERE ta.turma_id = ANY(${[...turmaIds]}::uuid[])) AS matriculas,
+      (SELECT coalesce(json_agg(json_build_object(
+                'id', a.id, 'data', a.data, 'turmaId', a.origem_turma_id)
+                ORDER BY a.data, a.hora_inicio, a.id), '[]'::json)
+         FROM aulas a) AS aulas,
+      (SELECT coalesce(json_agg(json_build_object(
+                'ocupacaoId', f.ocupacao_id, 'alunoId', f.aluno_id)), '[]'::json)
+         FROM faltas_avisadas f
+        WHERE f.company_id = ${companyId}::uuid
+          AND f.ocupacao_id IN (SELECT a.id FROM aulas a)) AS faltas,
+      (SELECT coalesce(json_agg(json_build_object(
+                'ocupacaoId', r.ocupacao_id, 'alunoId', r.aluno_id)), '[]'::json)
+         FROM reposicoes_de_aula r
+        WHERE r.company_id = ${companyId}::uuid
+          AND r.ocupacao_id IN (SELECT a.id FROM aulas a)) AS reposicoes`;
+  if (
+    !linha ||
+    !Array.isArray(linha.matriculas) ||
+    !Array.isArray(linha.aulas) ||
+    !Array.isArray(linha.faltas) ||
+    !Array.isArray(linha.reposicoes)
+  ) {
+    // Uma linha sem as quatro listas é defeito desta instrução, e não "turma
+    // sem aula": seguir com listas vazias conferiria menos do que se lê.
+    throw new Error('importação: a leitura sob a trava não trouxe os dados');
+  }
+
+  const alocados = new Map<string, number>();
+  for (const m of linha.matriculas) {
+    alocados.set(m.turmaId, (alocados.get(m.turmaId) ?? 0) + 1);
+  }
+  // A `data` é `date` no banco e chega em JSON como `AAAA-MM-DD`: o `Date` à
+  // meia-noite UTC é o que o Prisma devolve para `@db.Date`.
+  const futuras = linha.aulas.map((a) => ({
+    id: a.id,
+    data: new Date(`${a.data}T00:00:00.000Z`),
+    turmaId: a.turmaId,
+  }));
+  return {
+    alocados,
+    dados: {
+      // Empresa inexistente responde "restringe", como `nivelRestringe`.
+      podeEntrar: regraDeNivel(linha.restringe ?? true),
+      // Nenhuma linha sem nível chega aqui (SPEC-091/D2; a premissa é
+      // afirmada em `escreverNaTransacao`).
+      primeiro: null,
+      aulas: {
+        futuras,
+        conjuntos: montarConjuntos(
+          futuras,
+          linha.matriculas,
+          linha.faltas,
+          linha.reposicoes,
+        ),
+      },
+    },
+  };
 }
 
 /** Erros pela ordem do arquivo; na mesma linha, a ordem em que nasceram. */
@@ -1134,16 +1303,14 @@ export class ImportacaoDeAlunosService {
           .filter((t) => ids.includes(t.id))
           .map((t) => [t.id, { ...t, alocados: alocados.get(t.id) ?? 0 }]),
       );
-      erros.push(
-        ...(await errosDeTurma(
-          this.prisma,
-          companyId,
-          turmas,
-          disputam,
-          nomesDosNiveis,
-          new Date(),
-        )),
+      const dados = await carregarDadosDeTurma(
+        this.prisma,
+        companyId,
+        ids,
+        disputam.some((l) => l.nivelId === null),
+        new Date(),
       );
+      erros.push(...errosDeTurma(dados, turmas, disputam, nomesDosNiveis));
     }
 
     const comErro = new Set(erros.map((e) => e.linha));
@@ -1327,8 +1494,9 @@ export class ImportacaoDeAlunosService {
    * Devolve o nome do clube, lido sob a trava, para o e-mail.
    *
    * A ordem das travas é a da spec, e é ela que evita ciclo com as matrículas:
-   * 1. a trava do clube, **compartilhada**, com o prazo absoluto de 2 s
-   *    (modo `lote-novo`, sem trava de aluno);
+   * 1. a trava do clube, **compartilhada**, com o prazo absoluto da
+   *    importação, 6,69 s (`PRAZO_DA_IMPORTACAO_MS`, DEF-040; modo
+   *    `lote-novo`, sem trava de aluno);
    * 2. as linhas referenciadas — a empresa, os níveis citados e o gestor —
    *    em `FOR KEY SHARE`, numa instrução, com o `lock_timeout` recalculado
    *    por linha;
@@ -1338,9 +1506,9 @@ export class ImportacaoDeAlunosService {
    * 5. as quatro escritas, cada uma depois do ajuste do prazo; e a reposição
    *    do `statement_timeout` antes do `COMMIT`.
    *
-   * **O `timeout` é de 15 s** (D4): a espera por travas e as escritas ficam
-   * presas aos 2 s do prazo; os 15 s cobrem as idas de rede, que nenhum dos
-   * dois conta.
+   * **O `timeout` é de 20 s** (D4 e SPEC-086): a espera por travas e as
+   * escritas ficam presas ao prazo da importação; o resto cobre a trava de
+   * e-mail e a folga (ver `TIMEOUT_DA_IMPORTACAO_MS`).
    */
   private async escreverNaTransacao(
     companyId: string,
@@ -1348,6 +1516,14 @@ export class ImportacaoDeAlunosService {
     linhas: readonly LinhaParaEscrever[],
     nomesDosNiveis: ReadonlyMap<string, string>,
   ): Promise<string> {
+    // SPEC-091/D2 — o nível é obrigatório, e a conferência recusa o vazio. A
+    // conferência sob a trava parte disso (não lê o primeiro nível): uma
+    // linha sem nível aqui é defeito de programação, e não recusa ao gestor.
+    if (linhas.some((l) => !l.linha.nivelId)) {
+      throw new Error(
+        'importação: uma linha sem nível chegou à transação (a conferência a recusa, SPEC-091/D2)',
+      );
+    }
     const nivelIds = [
       ...new Set(
         linhas.flatMap((l) => (l.linha.nivelId ? [l.linha.nivelId] : [])),
@@ -1375,44 +1551,30 @@ export class ImportacaoDeAlunosService {
         // SPEC-086 — **os e-mails primeiro, antes de qualquer outra trava**:
         // nenhum caminho toma trava de e-mail depois de clube ou turma, e por
         // isso não há ciclo (spec, "Ordem das travas"). São dois orçamentos
-        // sucessivos, declarados: até 2 s para os e-mails (o da função), e o
-        // de hoje, que `travarNivelDaEmpresa` grava em seguida, para o resto.
+        // sucessivos, declarados: até 5 s para os e-mails (o da função,
+        // `PRAZO_DA_TRAVA_DE_EMAIL_MS`), e o da importação
+        // (`PRAZO_DA_IMPORTACAO_MS`), que `travarNivelDaEmpresa` grava em
+        // seguida, para o resto.
         await travarEmailsParaCriarConta(tx, emails);
         const lote: LoteNovo = await naEtapa(
           'travas',
           travarNivelDaEmpresa(tx, companyId, 'lote-novo'),
         );
 
+        // DEF-040 — **do prazo que a trava do clube acabou de fixar, as
+        // leituras levam três instruções** (e o ajuste, a quarta) antes da
+        // primeira escrita: as referenciadas com as contas dos e-mails, as
+        // turmas, e os dados da conferência de turma. Eram dez; a 167 ms por
+        // ida, a escrita chegava com 1 ms de prazo e o arquivo com turma
+        // levava 409 sem disputa nenhuma. O prazo é o da importação
+        // (`PRAZO_DA_IMPORTACAO_MS`), contado sobre um teto de instruções da
+        // trava ao `COMMIT`; o `spec-083-importacao.db-spec.ts` conta as
+        // instruções e trava os dois tetos.
+        //
         // A conferência de conflito vem DEPOIS da trava do clube, não antes:
         // ainda sob a trava dos e-mails (que é o que a torna correta), e sem
-        // tocar `usuarios` antes do clube (FIT-057, AC-047).
-        const emConflito = new Set(
-          (
-            await tx.usuario.findMany({
-              where: conflitoDeContasDaEmpresa(emails, companyId),
-              select: { email: true },
-            })
-          ).map((u) => u.email.toLowerCase()),
-        );
-        if (emConflito.size > 0) {
-          throw new RecusaSobATrava(
-            linhas
-              .filter((l) => emConflito.has(l.linha.email.toLowerCase()))
-              .map((l) => ({
-                linha: l.linha.linha,
-                coluna: 'email',
-                mensagem: MENSAGEM_EMAIL_JA_EXISTE,
-              })),
-          );
-        }
-
-        if (this.ganchos.aoTravar) {
-          const [sessao] = await tx.$queryRaw<
-            { prazo: string; pid: number }[]
-          >`SELECT current_setting('playck.prazo') AS prazo, pg_backend_pid() AS pid`;
-          await this.ganchos.aoTravar({ ...sessao, tx });
-        }
-
+        // tocar `usuarios` antes do clube (FIT-057, AC-047). Ela vai na
+        // instrução das referenciadas.
         const nomeDoClube = await this.travarReferenciadas(
           tx,
           companyId,
@@ -1421,15 +1583,21 @@ export class ImportacaoDeAlunosService {
           linhas,
         );
 
+        if (this.ganchos.aoTravar) {
+          const [sessao] = await tx.$queryRaw<
+            { prazo: string; pid: number }[]
+          >`SELECT current_setting('playck.prazo') AS prazo, pg_backend_pid() AS pid`;
+          await this.ganchos.aoTravar({ ...sessao, tx });
+        }
+
         if (turmaIds.length > 0) {
-          const turmas = await this.travarTurmas(tx, companyId, turmaIds);
-          const erros = await errosDeTurma(
+          const travadas = await this.travarTurmas(tx, companyId, turmaIds);
+          const erros = await this.conferirTurmasSobATrava(
             tx,
             companyId,
-            turmas,
+            travadas,
             naTurma,
             nomesDosNiveis,
-            new Date(),
           );
           if (erros.length > 0) {
             throw new RecusaSobATrava(emOrdemDeLinha(erros));
@@ -1477,6 +1645,14 @@ export class ImportacaoDeAlunosService {
    * checagem de FK das escritas acha a linha já travada pela própria
    * transação, e não espera com um valor antigo.
    *
+   * **Na mesma instrução, as contas dos e-mails do arquivo** (SPEC-086, a
+   * conferência sob a trava; DEF-040 a trouxe para cá, para não pagar uma ida
+   * só por ela). O banco devolve toda conta com um e-mail do arquivo — o que é
+   * comum aos dois ramos da chave `EMAIL_EM_VARIAS_EMPRESAS` — e
+   * `contaEmConflitoNaEmpresa` decide qual é conflito, a mesma regra do
+   * filtro da conferência de fora. O conflito recusa antes de tudo, como
+   * quando era uma instrução própria e vinha primeiro.
+   *
    * Um nível que sumiu entre a conferência e a trava (o catálogo de níveis
    * trava exclusiva, e espera esta; mas pode ter apagado antes dela) vira erro
    * nas linhas que o citam, e não um `23503` no meio do lote.
@@ -1490,13 +1666,19 @@ export class ImportacaoDeAlunosService {
   ): Promise<string> {
     const tabelas = ['empresa', ...nivelIds.map(() => 'nivel'), 'usuario'];
     const ids = [companyId, ...nivelIds, gestorId];
+    const emails = linhas.map((l) => l.linha.email);
     const achadas = await naEtapa(
       'referenciadas',
       tx.$queryRaw<
-        { tabela: string; achado: string | null; empresa_nome: string | null }[]
+        {
+          tabela: string;
+          achado: string | null;
+          empresa_nome: string | null;
+          contas: ContaDoEmail[] | null;
+        }[]
       >`
       SELECT ref.tabela, coalesce(e.id, n.id, u.id)::text AS achado,
-             e.nome AS empresa_nome
+             e.nome AS empresa_nome, c.contas
         FROM unnest(${tabelas}::text[], ${ids}::uuid[])
                WITH ORDINALITY AS ref(tabela, id, ord)
         CROSS JOIN LATERAL (SELECT set_config('lock_timeout', ${RESTO_DO_PRAZO}, true) AS cfg
@@ -1515,8 +1697,33 @@ export class ImportacaoDeAlunosService {
                               AND u2.company_id = ${companyId}::uuid
                               AND r.cfg IS NOT NULL
                             FOR KEY SHARE) u ON true
+        LEFT JOIN LATERAL (SELECT json_agg(json_build_object(
+                                    'email', u3.email,
+                                    'companyId', u3.company_id,
+                                    'role', u3.role)) AS contas
+                             FROM usuarios u3
+                            WHERE ref.ord = 1
+                              AND u3.email = ANY(${emails}::text[])) c ON true
        ORDER BY ref.ord`,
     );
+
+    const contas = achadas.find((a) => a.tabela === 'empresa')?.contas ?? [];
+    const emConflito = new Set(
+      contas
+        .filter((c) => contaEmConflitoNaEmpresa(c, companyId))
+        .map((c) => c.email.toLowerCase()),
+    );
+    if (emConflito.size > 0) {
+      throw new RecusaSobATrava(
+        linhas
+          .filter((l) => emConflito.has(l.linha.email.toLowerCase()))
+          .map((l) => ({
+            linha: l.linha.linha,
+            coluna: 'email',
+            mensagem: MENSAGEM_EMAIL_JA_EXISTE,
+          })),
+      );
+    }
 
     const empresa = achadas.find((a) => a.tabela === 'empresa');
     const gestor = achadas.find((a) => a.tabela === 'usuario');
@@ -1554,24 +1761,19 @@ export class ImportacaoDeAlunosService {
    * linhas numa instrução" das pré-provas da SPEC-082): esperar a primeira
    * turma não dá à segunda o prazo inteiro de novo.
    *
-   * Devolve as turmas ainda ativas, com os alocados contados sob a trava.
+   * Devolve as turmas como a trava as viu, com o status. O que se conta nelas
+   * é lido depois, numa instrução própria (`lerDadosSobATrava`): uma leitura
+   * na mesma instrução do `FOR UPDATE` usaria a fotografia de antes da
+   * espera, e não veria a matrícula que a turma esperou terminar.
    */
   private async travarTurmas(
     tx: Prisma.TransactionClient,
     companyId: string,
     turmaIds: readonly string[],
-  ): Promise<Map<string, TurmaConferida>> {
-    const travadas = await naEtapa(
+  ): Promise<TurmaTravada[]> {
+    return naEtapa(
       'turmas',
-      tx.$queryRaw<
-        {
-          id: string;
-          nome: string;
-          capacidade: number;
-          nivel_id: string;
-          status: string;
-        }[]
-      >`
+      tx.$queryRaw<TurmaTravada[]>`
       SELECT t.id::text AS id, t.nome, t.capacidade, t.nivel_id::text AS nivel_id,
              t.status::text AS status
         FROM unnest(${[...turmaIds]}::uuid[]) WITH ORDINALITY AS d(id, ord)
@@ -1584,12 +1786,29 @@ export class ImportacaoDeAlunosService {
                              FOR UPDATE) t
        ORDER BY d.ord`,
     );
+  }
+
+  /**
+   * D3, passo 4 — **a conferência de turma refeita sob as travas**: a mesma
+   * `errosDeTurma` da conferência de fora, com os dados lidos agora, numa
+   * instrução (`lerDadosSobATrava`). Só as turmas ainda ativas entram; a que
+   * deixou de ser ativa fica fora do mapa, e a `errosDeTurma` a recusa.
+   */
+  private async conferirTurmasSobATrava(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    travadas: readonly TurmaTravada[],
+    naTurma: readonly LinhaNaTurma[],
+    nomesDosNiveis: ReadonlyMap<string, string>,
+  ): Promise<ErroDeImportacaoDto[]> {
     const ativas = travadas.filter((t) => t.status === 'ativa');
-    const alocados = await contarAlocados(
+    const { alocados, dados } = await lerDadosSobATrava(
       tx,
+      companyId,
       ativas.map((t) => t.id),
+      new Date(),
     );
-    return new Map(
+    const turmas = new Map(
       ativas.map((t) => [
         t.id,
         {
@@ -1601,6 +1820,7 @@ export class ImportacaoDeAlunosService {
         },
       ]),
     );
+    return errosDeTurma(dados, turmas, naTurma, nomesDosNiveis);
   }
 
   /**

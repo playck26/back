@@ -29,12 +29,24 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { exigirBancoLocal } from './exigir-banco-local';
+import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import { limparEmpresa } from './limpar-empresa';
-import { resposta, type Resposta, I6 } from './spec-082-fixture';
+import {
+  linhaEmForUpdate,
+  resposta,
+  segurar,
+  type Resposta,
+  I6,
+} from './spec-082-fixture';
+import { MENSAGEM_SERVIDOR_OCUPADO } from '../../src/common/erros/erro-transitorio';
 import { AcessoService } from '../../src/acesso/acesso.service';
 import type { AccessTokenPayload } from '../../src/common/types/jwt-payload.type';
 import { SENHA_TEMPORARIA_VALIDADE_MS } from '../../src/common/utils/senha-temporaria';
 import { hojeNoFusoDoClube } from '../../src/courts/date-time.util';
+import {
+  filtroDasAulasFuturas,
+  sqlDasAulasFuturas,
+} from '../../src/classes/ocupacao-da-ocorrencia';
 import { MemoriaProvedorDeEmail } from '../../src/email/memoria-provedor-de-email';
 import type { MotivoDaFalha } from '../../src/email/provedor-de-email';
 import {
@@ -49,6 +61,7 @@ import type {
   RelatorioDeImportacaoDto,
 } from '../../src/people/importacao/dto/importacao-response.dto';
 import { mensagemDeNivelIncompativel } from '../../src/people/nivel-efetivo';
+import { MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO } from '../../src/people/importacao/prazo-da-importacao';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(240_000);
@@ -245,11 +258,14 @@ const GESTOR_DO_TOKEN = {
   companyId: EMPRESA,
 } as unknown as AccessTokenPayload;
 
-function montarServico(ganchos: GanchosDaImportacao = {}) {
+function montarServico(
+  ganchos: GanchosDaImportacao = {},
+  cliente: PrismaService = p,
+) {
   const memoria = new MemoriaProvedorDeEmail();
   const servico = new ImportacaoDeAlunosService(
-    p,
-    new AcessoService(p, memoria, MODELOS),
+    cliente,
+    new AcessoService(cliente, memoria, MODELOS),
     memoria,
     MODELOS,
     ganchos,
@@ -265,9 +281,11 @@ async function pelaRota(
     ganchos?: GanchosDaImportacao;
     falharCom?: MotivoDaFalha;
     conferir?: boolean;
+    /** DEF-040 — outro cliente (o que registra as instruções). */
+    cliente?: PrismaService;
   } = {},
 ): Promise<{ r: Resposta; memoria: MemoriaProvedorDeEmail }> {
-  const { controller, memoria } = montarServico(opcoes.ganchos);
+  const { controller, memoria } = montarServico(opcoes.ganchos, opcoes.cliente);
   if (opcoes.falharCom) memoria.falharCom(opcoes.falharCom);
   const r = await resposta(
     controller.importar(
@@ -1188,5 +1206,484 @@ describe('SPEC-083/AC-051 — pouco prazo para escrever: conclui ou desiste inte
     ]).toContain(etapa);
     console.log(`AC-051 (${restanteMs} ms): desistiu na etapa ${etapa}`);
     expect(await contarTudo()).toEqual(antes);
+  });
+});
+
+// ==========================================================================
+// DEF-040 — as idas ao banco sob a trava do clube
+// ==========================================================================
+
+/**
+ * DEF-040 — **a importação com turma dava 409 em produção, sem disputa.** A
+ * trava do clube fixa `playck.prazo` em 2 s; entre ela e o primeiro `INSERT`
+ * a transação fazia 10 instruções. A 167 ms por ida (o Back em Atlanta, o
+ * Neon em São Paulo), o `RESTO_DO_PRAZO` chegava à escrita no piso de 1 ms, e
+ * o `INSERT` estourava com `57014` — que a borda traduz em 409 (LIM-083m).
+ *
+ * O conserto não mexe no prazo nem na ordem das travas: junta as leituras.
+ * **O que este teste trava é o número de instruções que a sessão da
+ * importação manda ao banco** entre a trava do clube e a primeira escrita —
+ * a grandeza que a latência multiplica. O tempo é prova local (CLI_AUDIT), e
+ * não daqui: medir milissegundos no CI daria um teste que passa por sorte.
+ *
+ * As instruções são as que o Prisma registra no evento `query` de um cliente
+ * próprio — o mesmo serviço, a mesma rota, só um cliente que conta.
+ */
+describe('DEF-040 — as instruções entre a trava do clube e a primeira escrita', () => {
+  /** Três leituras (referenciadas com e-mail, turmas, dados) + o ajuste. */
+  const TETO_ATE_A_ESCRITA = 4;
+  /** As mesmas três leituras, e nenhuma ida por passo da busca binária. */
+  const TETO_ATE_A_RECUSA = 3;
+
+  async function comClienteQueConta<T>(
+    corpo: (cliente: PrismaService, idas: string[]) => Promise<T>,
+  ): Promise<T> {
+    const cliente = new PrismaClient({
+      log: [{ emit: 'event', level: 'query' }],
+    });
+    const idas: string[] = [];
+    cliente.$on('query', (e) => idas.push(e.query));
+    try {
+      return await corpo(cliente as unknown as PrismaService, idas);
+    } finally {
+      await cliente.$disconnect();
+    }
+  }
+
+  /** As instruções depois da trava do clube e antes da que casa `fim`. */
+  function entre(idas: readonly string[], fim: RegExp): string[] {
+    const trava = idas.findIndex((i) =>
+      i.includes('pg_advisory_xact_lock_shared'),
+    );
+    expect(trava).toBeGreaterThanOrEqual(0);
+    const ate = idas.findIndex((i, k) => k > trava && fim.test(i));
+    expect(ate).toBeGreaterThan(trava);
+    // A leitura do gancho `aoTravar` é de teste: em produção não há gancho, e
+    // ela não é feita (ver `GanchosDaImportacao`).
+    return idas
+      .slice(trava + 1, ate)
+      .filter((i) => !/pg_backend_pid\(\) AS pid/.test(i));
+  }
+
+  const resumo = (i: string) => i.replace(/\s+/g, ' ').trim().slice(0, 90);
+
+  it(`com turma, aula futura, reposição e falta: no máximo ${TETO_ATE_A_ESCRITA} instruções até o INSERT de usuários`, async () => {
+    const a = await turma('DEF-040 A', { capacidade: 10 });
+    const b = await turma('DEF-040 B', { capacidade: 10 });
+    const c = await turma('DEF-040 C', { capacidade: 10 });
+    const aulaA = await aulaFutura(a, emDias(3));
+    await aulaFutura(b, emDias(4));
+    await aulaFutura(c, emDias(5));
+    await reposicaoMarcada(aulaA, c);
+    const membro = await alunoExistente();
+    await matricular(a, membro);
+    await q(
+      `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at) VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,now())`,
+      EMPRESA,
+      aulaA,
+      membro,
+    );
+    // O arquivo do sintoma: uma linha em três turmas, outra em uma.
+    const csv = [
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Ana;${email('d040')};;Iniciante;DEF-040 A;DEF-040 B;DEF-040 C`,
+      `Beto;${email('d040')};;Iniciante;DEF-040 A;;`,
+    ].join('\r\n');
+
+    await comClienteQueConta(async (cliente, idas) => {
+      const { r } = await pelaRota(csv, { cliente });
+      expect(r.status).toBe(200);
+      const sob = entre(idas, /INSERT INTO usuarios/);
+      console.log(
+        `DEF040_IDAS ate_a_escrita=${sob.length}\n${sob.map(resumo).join('\n')}`,
+      );
+      expect(sob.length).toBeLessThanOrEqual(TETO_ATE_A_ESCRITA);
+    });
+    expect(await db.turmaAluno.count({ where: { turmaId: a } })).toBe(3);
+  });
+
+  /**
+   * DEF-040 — **o teto em que o prazo da importação foi contado.** O prazo é
+   * 2 s + `MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO` × o custo de uma
+   * instrução fria (`prazo-da-importacao.ts`). Este caso faz o pior caminho —
+   * turma com aula futura, falta e reposição, e convite, para que as quatro
+   * escritas aconteçam — e conta as instruções da sessão da trava do clube
+   * ao `COMMIT`, os dois inclusive. Uma consulta a mais na transação passa do
+   * teto e deixa este caso vermelho: quem a acrescentar sobe o teto, e o
+   * prazo sobe junto.
+   */
+  it(`pior caminho (turma, aula futura, falta, reposição e convite): da trava do clube ao COMMIT, no máximo ${MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO} instruções`, async () => {
+    const a = await turma('DEF-040 pior A', { capacidade: 10 });
+    const b = await turma('DEF-040 pior B', { capacidade: 10 });
+    const c = await turma('DEF-040 pior C', { capacidade: 10 });
+    const aulaA = await aulaFutura(a, emDias(3));
+    await aulaFutura(b, emDias(4));
+    await aulaFutura(c, emDias(5));
+    await reposicaoMarcada(aulaA, c);
+    const membro = await alunoExistente();
+    await matricular(a, membro);
+    await q(
+      `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at) VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,now())`,
+      EMPRESA,
+      aulaA,
+      membro,
+    );
+    const csv = [
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Ana;${email('d040p')};;Iniciante;DEF-040 pior A;DEF-040 pior B;DEF-040 pior C`,
+      `Beto;${email('d040p')};;Iniciante;DEF-040 pior A;;`,
+    ].join('\r\n');
+
+    await comClienteQueConta(async (cliente, idas) => {
+      const { r } = await pelaRota(csv, { cliente, convidar: '2' });
+      expect(r.status).toBe(200);
+      const trava = idas.findIndex((i) =>
+        i.includes('pg_advisory_xact_lock_shared'),
+      );
+      expect(trava).toBeGreaterThanOrEqual(0);
+      const commit = idas.findIndex((i, k) => k > trava && /^COMMIT/.test(i));
+      expect(commit).toBeGreaterThan(trava);
+      const sob = idas.slice(trava, commit + 1);
+      console.log(
+        `DEF040_IDAS da_trava_ao_commit=${sob.length} teto=${MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO}\n${sob.map(resumo).join('\n')}`,
+      );
+      // É o pior caminho: as quatro escritas estão nele.
+      for (const tabela of [
+        'usuarios',
+        'alunos',
+        'turma_alunos',
+        'convites_de_acesso',
+      ]) {
+        expect({
+          tabela,
+          escrita: sob.some((i) => i.includes(`INSERT INTO ${tabela} `)),
+        }).toEqual({ tabela, escrita: true });
+      }
+      expect(sob.length).toBeLessThanOrEqual(
+        MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO,
+      );
+    });
+    expect(await db.turmaAluno.count({ where: { turmaId: a } })).toBe(3);
+    expect((await contarTudo()).convites).toBe(1);
+  });
+
+  it(`aula lotada achada só sob a trava, com busca binária: no máximo ${TETO_ATE_A_RECUSA} instruções até o ROLLBACK`, async () => {
+    // Fora da trava cabem as três linhas na aula (capacidade 5, nenhuma
+    // reposição). Sob a trava, outra conexão marca três reposições na aula:
+    // sobram 2 lugares, e a terceira linha é a primeira que não cabe — a
+    // resposta sai da busca binária, que ia ao banco a cada passo.
+    const t = await turma('DEF-040 busca', { capacidade: 5 });
+    const outra = await turma('DEF-040 origem', { capacidade: 5 });
+    const aula = await aulaFutura(t, emDias(3));
+    const csv = [
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Ana;${email('d040b')};;Iniciante;DEF-040 busca;;`,
+      `Beto;${email('d040b')};;Iniciante;DEF-040 busca;;`,
+      `Cris;${email('d040b')};;Iniciante;DEF-040 busca;;`,
+    ].join('\r\n');
+    const antes = await contarTudo();
+
+    await comClienteQueConta(async (cliente, idas) => {
+      const { r } = await pelaRota(csv, {
+        cliente,
+        ganchos: {
+          aoTravar: async () => {
+            for (let i = 0; i < 3; i++) await reposicaoMarcada(aula, outra);
+          },
+        },
+      });
+      expect(r.status).toBe(422);
+      expect(relatorioDo422(r).erros.map((e) => [e.linha, e.coluna])).toEqual([
+        [4, 'turma 1'],
+      ]);
+      expect(relatorioDo422(r).erros[0].mensagem).toMatch(
+        /^A aula de \d\d\/\d\d da turma "DEF-040 busca" ficaria acima da capacidade/,
+      );
+      const sob = entre(idas, /^ROLLBACK/);
+      console.log(
+        `DEF040_IDAS ate_a_recusa=${sob.length}\n${sob.map(resumo).join('\n')}`,
+      );
+      expect(sob.length).toBeLessThanOrEqual(TETO_ATE_A_RECUSA);
+    });
+    expect(await contarTudo()).toEqual({
+      ...antes,
+      // As três reposições do gancho criaram três alunos "existentes".
+      usuarios: antes.usuarios + 3,
+      alunos: antes.alunos + 3,
+    });
+  });
+});
+
+/**
+ * DEF-040 — **a conferência sob a trava lê os mesmos dados de antes**, agora
+ * numa instrução só. Cada caso abaixo passa na conferência de fora (que não
+ * mudou) e só pode falhar pela de dentro: é o que pega uma leitura única que
+ * esqueça um conjunto, conte a aula errada ou misture turmas.
+ */
+describe('DEF-040 — a conferência sob a trava, dado por dado', () => {
+  it('a falta avisada de um matriculado libera o lugar dele na aula (conjunto F)', async () => {
+    // Capacidade 3: um matriculado que avisou falta e duas reposições. Sem a
+    // falta, a aula teria 3 e o novo seria o 4º; com ela, ocupa 2 e cabe.
+    const t = await turma('DEF-040 falta', { capacidade: 3 });
+    const origem = await turma('DEF-040 falta origem');
+    const aula = await aulaFutura(t, emDias(3));
+    const membro = await alunoExistente();
+    await matricular(t, membro);
+    await q(
+      `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at) VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,now())`,
+      EMPRESA,
+      aula,
+      membro,
+    );
+    await reposicaoMarcada(aula, origem);
+    await reposicaoMarcada(aula, origem);
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('falta')};;Iniciante;DEF-040 falta;;\r\n`;
+
+    const { r } = await pelaRota(csv);
+    expect(r.status).toBe(200);
+    expect(await db.turmaAluno.count({ where: { turmaId: t } })).toBe(2);
+  });
+
+  it('a reposição marcada depois da conferência lota a aula sob a trava (conjunto V)', async () => {
+    const t = await turma('DEF-040 visita', { capacidade: 2 });
+    const origem = await turma('DEF-040 visita origem');
+    const aula = await aulaFutura(t, emDias(3));
+    await reposicaoMarcada(aula, origem);
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('visita')};;Iniciante;;DEF-040 visita;\r\n`;
+    const antes = await contarTudo();
+
+    const { r } = await pelaRota(csv, {
+      ganchos: { aoTravar: () => reposicaoMarcada(aula, origem) },
+    });
+    expect(r.status).toBe(422);
+    expect(relatorioDo422(r).erros.map((e) => [e.linha, e.coluna])).toEqual([
+      [2, 'turma 2'],
+    ]);
+    expect(relatorioDo422(r).erros[0].mensagem).toMatch(
+      /^A aula de \d\d\/\d\d da turma "DEF-040 visita" ficaria acima da capacidade/,
+    );
+    expect(await db.turmaAluno.count({ where: { turmaId: t } })).toBe(0);
+    // Só o visitante do gancho nasceu; nada da importação ficou.
+    expect((await contarTudo()).usuarios).toBe(antes.usuarios + 1);
+  });
+
+  it('aula que já passou e aula cancelada não contam, nem cheias de reposição', async () => {
+    const t = await turma('DEF-040 passadas', { capacidade: 1 });
+    const origem = await turma('DEF-040 passadas origem');
+    const passada = await aulaFutura(t, emDias(-1));
+    const cancelada = await aulaFutura(t, emDias(6));
+    await reposicaoMarcada(passada, origem);
+    await reposicaoMarcada(cancelada, origem);
+    await cancelarOcupacaoNaFixture(db, {
+      companyId: EMPRESA,
+      ocupacaoId: cancelada,
+      autorId: GESTOR,
+    });
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('passadas')};;Iniciante;DEF-040 passadas;;\r\n`;
+
+    const { r } = await pelaRota(csv);
+    expect(r.status).toBe(200);
+    expect(await db.turmaAluno.count({ where: { turmaId: t } })).toBe(1);
+  });
+
+  it('a aula de OUTRA turma não conta para esta, e a matrícula de outra turma não ocupa vaga aqui', async () => {
+    const t = await turma('DEF-040 esta', { capacidade: 1 });
+    const vizinha = await turma('DEF-040 vizinha', { capacidade: 1 });
+    const origem = await turma('DEF-040 esta origem');
+    await aulaFutura(t, emDias(3));
+    const daVizinha = await aulaFutura(vizinha, emDias(3));
+    await reposicaoMarcada(daVizinha, origem);
+    await matricular(vizinha, await alunoExistente());
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('esta')};;Iniciante;DEF-040 esta;;\r\n`;
+
+    const { r } = await pelaRota(csv);
+    expect(r.status).toBe(200);
+    expect(await db.turmaAluno.count({ where: { turmaId: t } })).toBe(1);
+  });
+
+  // R4 da validação do DEF-040 — **a chave de nível vale como lida SOB a
+  // trava**, e não como a conferência de fora a viu. Nenhum teste mudava a
+  // chave entre as duas passadas, e um `regraDeNivel(false)` (ou o valor de
+  // fora reaproveitado) na leitura única passava verde. O `UPDATE` da outra
+  // conexão não espera: o `FOR KEY SHARE` da empresa não bloqueia a troca de
+  // uma coluna que não é chave.
+  it('a chave de nível ligada depois da conferência recusa sob a trava o que a conferência aceitou', async () => {
+    await turma('DEF-040 chave', { nivel: INICIANTE });
+    await q(
+      `UPDATE empresas SET nivel_restringe_acesso = false WHERE id = '${EMPRESA}'`,
+    );
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('chave')};;Intermediário;;DEF-040 chave;\r\n`;
+    // Com a chave desligada, a conferência de fora aceita a linha.
+    expect(
+      corpoDe<RelatorioDeImportacaoDto>(
+        (await pelaRota(csv, { conferir: true })).r,
+      ).erros,
+    ).toEqual([]);
+    const antes = await contarTudo();
+    let ligou = false;
+
+    const { r } = await pelaRota(csv, {
+      ganchos: {
+        aoTravar: async () => {
+          await q(
+            `UPDATE empresas SET nivel_restringe_acesso = true WHERE id = '${EMPRESA}'`,
+          );
+          ligou = true;
+        },
+      },
+    });
+
+    expect(ligou).toBe(true);
+    expect(r.status).toBe(422);
+    expect(relatorioDo422(r).erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 2',
+        mensagem: mensagemDeNivelIncompativel('gestor', 'Iniciante', {
+          id: INTERMEDIARIO,
+          nome: 'Intermediário',
+          doPrimeiro: false,
+        }),
+      },
+    ]);
+    expect(await contarTudo()).toEqual(antes);
+  });
+});
+
+/**
+ * DEF-040 — **as formas SQL da leitura única concordam com as do Prisma.** A
+ * conferência de fora pergunta pelo Prisma (`filtroDasAulasFuturas`); a de
+ * dentro da transação, pelo SQL ao lado dela (`sqlDasAulasFuturas`). Uma
+ * divergência faria a importação recusar sob a trava o que o relatório
+ * aceitou, ou o contrário — e nos cantos: a aula que termina exatamente
+ * agora, a de hoje que já passou, a cancelada. (O primeiro nível não é mais
+ * lido sob a trava — R4 da validação: a linha sem nível não chega lá desde a
+ * SPEC-091/D2.)
+ */
+describe('DEF-040 — as formas SQL concordam com as do Prisma', () => {
+  async function aulaEm(
+    turmaId: string,
+    data: string,
+    inicio: string,
+    fim: string,
+  ): Promise<string> {
+    const id = randomUUID();
+    await q(
+      `INSERT INTO ocupacoes_quadra (id,company_id,quadra_id,data,hora_inicio,hora_fim,origem_tipo,origem_turma_id,status_pagamento,updated_at)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::date,$5::time,$6::time,'TURMA',$7::uuid,'pendente_pagamento',now())`,
+      id,
+      EMPRESA,
+      QUADRA,
+      data,
+      inicio,
+      fim,
+      turmaId,
+    );
+    return id;
+  }
+
+  it('aulas futuras: as mesmas aulas, na mesma ordem, nos cantos do relógio do clube', async () => {
+    const t = await turma('DEF-040 relógio');
+    const outra = await turma('DEF-040 relógio outra');
+    const dia = emDias(10);
+    // Meio-dia no fuso do clube (UTC−3), no dia `dia`.
+    const agora = new Date(`${dia}T15:00:00.000Z`);
+    const nomes = new Map<string, string>([
+      [await aulaEm(t, emDias(9), '18:00', '19:00'), 'véspera'],
+      [await aulaEm(t, dia, '08:00', '08:30'), 'hoje, já dada'],
+      [await aulaEm(t, dia, '11:00', '12:00'), 'hoje, termina agora'],
+      [await aulaEm(t, dia, '12:00', '12:30'), 'hoje, em andamento'],
+      [await aulaEm(t, dia, '13:00', '13:30'), 'hoje, depois'],
+      [await aulaEm(t, emDias(11), '07:00', '08:00'), 'amanhã cedo'],
+      [await aulaEm(t, emDias(12), '07:00', '08:00'), 'cancelada'],
+      [await aulaEm(outra, emDias(11), '09:00', '10:00'), 'outra turma'],
+      [await aulaEm(t, emDias(13), '07:00', '08:00'), 'depois de amanhã'],
+    ]);
+    const cancelada = [...nomes].find(([, n]) => n === 'cancelada')?.[0];
+    await cancelarOcupacaoNaFixture(db, {
+      companyId: EMPRESA,
+      ocupacaoId: cancelada as string,
+      autorId: GESTOR,
+    });
+
+    const peloPrisma = (
+      await db.ocupacaoQuadra.findMany({
+        where: filtroDasAulasFuturas(EMPRESA, [t], agora),
+        orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }, { id: 'asc' }],
+        select: { id: true },
+      })
+    ).map((o) => nomes.get(o.id));
+    const peloSql = (
+      await db.$queryRaw<{ id: string }[]>`
+        SELECT o.id::text AS id FROM ocupacoes_quadra o
+         WHERE ${sqlDasAulasFuturas(EMPRESA, [t], agora)}
+         ORDER BY o.data, o.hora_inicio, o.id`
+    ).map((o) => nomes.get(o.id));
+
+    expect(peloPrisma).toEqual([
+      'hoje, em andamento',
+      'hoje, depois',
+      'amanhã cedo',
+      'depois de amanhã',
+    ]);
+    expect(peloSql).toEqual(peloPrisma);
+  });
+});
+
+/**
+ * DEF-040/D4 (decisão do Israel, 2026-10-29) — **o 503 de quem espera o mesmo
+ * e-mail atrás de uma importação é aceito**. Com o prazo próprio (6.690 ms), a
+ * importação pode segurar a trava de e-mail por mais que os 5 s de quem espera.
+ * A segunda importação do MESMO arquivo, sem cadastro manual nenhum, recebe
+ * 503 `SERVIDOR_OCUPADO` ("tente de novo"), não grava nada, e a nova tentativa
+ * dá a resposta certa. Este teste fixa as três coisas, para que uma mudança
+ * futura no comportamento seja uma decisão, e não um acidente.
+ */
+describe('DEF-040/D4 — duas importações do mesmo arquivo: a segunda leva 503 e a nova tentativa passa', () => {
+  it('a primeira espera a turma além de 5 s; a segunda leva 503 sem gravar; repetida, importa', async () => {
+    const t = await turma('Espera do D4', { capacidade: 10 });
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna D4;${email('d4')};;Iniciante;Espera do D4;;`;
+
+    const soltarTurma = await segurar(db, linhaEmForUpdate('turmas', t));
+    let segunda: Promise<Resposta> | null = null;
+    let primeira: Resposta;
+    try {
+      primeira = (
+        await pelaRota(csv, {
+          ganchos: {
+            // A primeira já tem a trava de e-mail e a do clube: a segunda,
+            // do mesmo arquivo, fica na fila do mesmo e-mail.
+            aoTravar: () => {
+              segunda = pelaRota(csv).then(({ r }) => r);
+              return Promise.resolve();
+            },
+          },
+        })
+      ).r;
+    } finally {
+      await soltarTurma();
+    }
+
+    expect(primeira.status).toBe(409);
+    expect(segunda).not.toBeNull();
+    const r2 = await segunda!;
+    expect(r2.status).toBe(503);
+    expect(r2.code).toBe('SERVIDOR_OCUPADO');
+    expect(r2.message).toBe(MENSAGEM_SERVIDOR_OCUPADO);
+    expect(await contarTudo()).toEqual({
+      usuarios: 0,
+      alunos: 0,
+      matriculas: 0,
+      convites: 0,
+    });
+
+    // A nova tentativa, sem ninguém na frente, dá a resposta certa.
+    const { r: r3 } = await pelaRota(csv);
+    expect(r3.status).toBe(200);
+    expect(await contarTudo()).toMatchObject({
+      usuarios: 1,
+      alunos: 1,
+      matriculas: 1,
+    });
   });
 });

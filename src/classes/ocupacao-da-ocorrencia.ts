@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { agoraNoFusoDoClube, horaDeMinutos } from '../courts/date-time.util';
 
 /**
@@ -127,7 +127,22 @@ export async function carregarConjuntos(
       select: { ocupacaoId: true, alunoId: true },
     }),
   ]);
+  return montarConjuntos(ocorrencias, matriculas, faltas, reposicoes);
+}
 
+/**
+ * Os três conjuntos de cada ocorrência, **a partir das linhas já lidas** — a
+ * metade de `carregarConjuntos` que não vai ao banco. Existe separada para a
+ * importação (DEF-040), que lê as mesmas três tabelas numa instrução só, sob
+ * a trava, e precisa montar os conjuntos do mesmo jeito.
+ */
+export function montarConjuntos(
+  ocorrencias: readonly { id: string; turmaId: string }[],
+  matriculas: readonly { turmaId: string; alunoId: string }[],
+  faltas: readonly { ocupacaoId: string; alunoId: string }[],
+  reposicoes: readonly { ocupacaoId: string; alunoId: string }[],
+): Map<string, ConjuntosDaOcorrencia> {
+  const resultado = new Map<string, ConjuntosDaOcorrencia>();
   const porTurma = agrupar(matriculas, (m) => m.turmaId);
   const faltasPorOcorrencia = agrupar(faltas, (f) => f.ocupacaoId);
   const visitasPorOcorrencia = agrupar(reposicoes, (r) => r.ocupacaoId);
@@ -198,39 +213,140 @@ export async function aulasQueAMatriculaLotaria(
   alunoId: string,
   agora: Date,
 ): Promise<Map<string, { id: string; data: Date }>> {
-  const lotadas = new Map<string, { id: string; data: Date }>();
-  if (turmas.length === 0) return lotadas;
-  const capacidade = new Map(turmas.map((t) => [t.id, t.capacidade]));
-
-  const agoraLocal = agoraNoFusoDoClube(agora);
-  const futuras = await db.ocupacaoQuadra.findMany({
-    where: {
-      companyId,
-      origemTipo: 'TURMA',
-      origemTurmaId: { in: [...capacidade.keys()] },
-      statusPagamento: { not: 'cancelado' },
-      OR: [
-        { data: { gt: agoraLocal.dia } },
-        {
-          data: agoraLocal.dia,
-          horaFim: { gt: horaDeMinutos(agoraLocal.minutos) },
-        },
-      ],
-    },
-    select: { id: true, data: true, origemTurmaId: true },
-    orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }, { id: 'asc' }],
-  });
-  if (futuras.length === 0) return lotadas;
-
-  const conjuntos = await carregarConjuntos(
+  if (turmas.length === 0) return new Map();
+  const aulas = await carregarAulasFuturas(
     db,
     companyId,
-    futuras.map((o) => ({ id: o.id, turmaId: o.origemTurmaId as string })),
+    turmas.map((t) => t.id),
+    agora,
   );
-  for (const aula of futuras) {
-    const turmaId = aula.origemTurmaId as string;
+  return primeirasAulasQueLotariam(aulas, turmas, alunoId);
+}
+
+/** Uma aula futura de turma, com a turma de onde veio. */
+export interface AulaFutura {
+  id: string;
+  data: Date;
+  turmaId: string;
+}
+
+/**
+ * As aulas futuras de um grupo de turmas, **em ordem de `data`, `hora_inicio`
+ * e `id`**, com os três conjuntos de cada uma. É o que a conta da
+ * `primeirasAulasQueLotariam` precisa, e nada mais: com isto em mãos, a mesma
+ * pergunta para outras capacidades não volta ao banco (DEF-040).
+ */
+export interface AulasFuturas {
+  futuras: readonly AulaFutura[];
+  conjuntos: ReadonlyMap<string, ConjuntosDaOcorrencia>;
+}
+
+/**
+ * **Quais aulas são "próximas"**, no `where` do Prisma: as de turma, das
+ * turmas dadas, não canceladas, e que ainda não terminaram no fuso do clube
+ * (o corte de `ocorrenciaRelevante`, ver o comentário de
+ * `aulasQueAMatriculaLotaria`).
+ *
+ * A importação lê as mesmas aulas por SQL cru, numa instrução só sob a trava
+ * (DEF-040): a forma SQL é `sqlDasAulasFuturas`, logo abaixo, e as duas moram
+ * juntas de propósito — o `spec-083-importacao.db-spec.ts` confere, no
+ * Postgres, que devolvem as mesmas aulas na mesma ordem.
+ */
+export function filtroDasAulasFuturas(
+  companyId: string,
+  turmaIds: readonly string[],
+  agora: Date,
+): Prisma.OcupacaoQuadraWhereInput {
+  const agoraLocal = agoraNoFusoDoClube(agora);
+  return {
+    companyId,
+    origemTipo: 'TURMA',
+    origemTurmaId: { in: [...turmaIds] },
+    statusPagamento: { not: 'cancelado' },
+    OR: [
+      { data: { gt: agoraLocal.dia } },
+      {
+        data: agoraLocal.dia,
+        horaFim: { gt: horaDeMinutos(agoraLocal.minutos) },
+      },
+    ],
+  };
+}
+
+/** A ordem das aulas, a mesma nas duas formas. */
+const ORDEM_DAS_AULAS: Prisma.OcupacaoQuadraOrderByWithRelationInput[] = [
+  { data: 'asc' },
+  { horaInicio: 'asc' },
+  { id: 'asc' },
+];
+
+/**
+ * `filtroDasAulasFuturas` em SQL, sobre `ocupacoes_quadra` com o apelido `o`.
+ * Os mesmos valores, calculados pelas mesmas funções: o dia e a hora do
+ * clube chegam ao banco como o Prisma os mandaria (`'AAAA-MM-DD'` e
+ * `'HH:MM:SS'`). `status_pagamento` é `NOT NULL`, então o `<>` não perde
+ * linha nenhuma que o `not` do Prisma devolveria.
+ *
+ * Quem ordena escreve `ORDER BY o.data, o.hora_inicio, o.id` — a
+ * `ORDEM_DAS_AULAS`.
+ */
+export function sqlDasAulasFuturas(
+  companyId: string,
+  turmaIds: readonly string[],
+  agora: Date,
+): Prisma.Sql {
+  const agoraLocal = agoraNoFusoDoClube(agora);
+  const dia = agoraLocal.dia.toISOString().slice(0, 10);
+  const hora = horaDeMinutos(agoraLocal.minutos).toISOString().slice(11, 19);
+  return Prisma.sql`o.company_id = ${companyId}::uuid
+         AND o.origem_tipo = 'TURMA'
+         AND o.origem_turma_id = ANY(${[...turmaIds]}::uuid[])
+         AND o.status_pagamento <> 'cancelado'
+         AND (o.data > ${dia}::date
+              OR (o.data = ${dia}::date AND o.hora_fim > ${hora}::time))`;
+}
+
+/**
+ * As aulas futuras e os conjuntos delas, pelo Prisma: uma leitura das aulas e
+ * as três do `carregarConjuntos` (nenhuma, se não houver aula).
+ */
+export async function carregarAulasFuturas(
+  db: LeitorDeConjuntos & Pick<Prisma.TransactionClient, 'ocupacaoQuadra'>,
+  companyId: string,
+  turmaIds: readonly string[],
+  agora: Date,
+): Promise<AulasFuturas> {
+  const lidas = await db.ocupacaoQuadra.findMany({
+    where: filtroDasAulasFuturas(companyId, turmaIds, agora),
+    select: { id: true, data: true, origemTurmaId: true },
+    orderBy: ORDEM_DAS_AULAS,
+  });
+  const futuras = lidas.map((o) => ({
+    id: o.id,
+    data: o.data,
+    turmaId: o.origemTurmaId as string,
+  }));
+  const conjuntos = await carregarConjuntos(db, companyId, futuras);
+  return { futuras, conjuntos };
+}
+
+/**
+ * **A regra da `aulasQueAMatriculaLotaria`, sem banco**: por turma, a aula
+ * mais cedo que o aluno lotaria, simulado entre os matriculados de cada aula
+ * (`calcularOcupacao`). Aula de turma fora de `turmas` é ignorada; turma
+ * ausente do mapa é turma que cabe.
+ */
+export function primeirasAulasQueLotariam(
+  aulas: AulasFuturas,
+  turmas: readonly { id: string; capacidade: number }[],
+  alunoId: string,
+): Map<string, { id: string; data: Date }> {
+  const lotadas = new Map<string, { id: string; data: Date }>();
+  const capacidade = new Map(turmas.map((t) => [t.id, t.capacidade]));
+  for (const aula of aulas.futuras) {
+    const turmaId = aula.turmaId;
     if (lotadas.has(turmaId)) continue; // já achou a mais cedo desta turma
-    const daAula = conjuntos.get(aula.id);
+    const daAula = aulas.conjuntos.get(aula.id);
     const cap = capacidade.get(turmaId);
     if (!daAula || cap === undefined) continue;
     const comONovo = {

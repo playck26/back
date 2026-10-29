@@ -189,6 +189,28 @@ export function conflitoDeContasDaEmpresa(
 }
 
 /**
+ * **A mesma regra, sobre uma conta já lida** pelo e-mail: ela é conflito para
+ * uma conta de aluno ou professor na empresa `companyId`?
+ *
+ * Existe para a importação sob a trava (DEF-040), que lê as contas dos
+ * e-mails do arquivo **na mesma instrução** que trava as linhas referenciadas
+ * — e por isso só pode pedir ao banco o que é comum aos dois ramos da chave (o
+ * e-mail); o resto da regra se decide aqui. As duas formas moram juntas, e o
+ * `trava-de-email.spec.ts` confere, cenário a cenário da SPEC-086, que esta
+ * aceita exatamente as contas que o filtro de `conflitoDeContasDaEmpresa` acha.
+ */
+export function contaEmConflitoNaEmpresa(
+  conta: { companyId: string | null; role: string },
+  companyId: string,
+): boolean {
+  if (!emailEmVariasEmpresas()) return true;
+  return (
+    conta.companyId === companyId ||
+    (PAPEIS_DE_GESTAO as readonly string[]).includes(conta.role)
+  );
+}
+
+/**
  * O filtro de uma conta de **gestão**: qualquer conta com o e-mail é
  * conflito, com a chave ligada ou não (I5).
  */

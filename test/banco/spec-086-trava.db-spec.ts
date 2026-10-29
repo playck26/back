@@ -1151,13 +1151,18 @@ describe('SPEC-086/AC-025 — duas importações com [a, b] e [b, a]: sem ciclo'
 
 /**
  * O gancho do AC-020: depois que a pré-conferência **de dentro** da
- * transação devolve (a primeira `tx.usuario.findFirst`, ou a `findMany` da
- * E6), uma conexão adversária grava a conta conflitante por SQL direto — sem
- * trava, como um SQL manual — e comita. Só então a pré-conferência devolve o
+ * transação devolve (a primeira `tx.usuario.findFirst`; na E6, a instrução
+ * das referenciadas, que desde o DEF-040 traz as contas dos e-mails), uma
+ * conexão adversária grava a conta conflitante por SQL direto — sem trava,
+ * como um SQL manual — e comita. Só então a pré-conferência devolve o
  * resultado (vazio) para o serviço, que segue e bate na constraint.
  */
 interface Gancho {
-  metodo: 'findFirst' | 'findMany';
+  /**
+   * `referenciadas` — a E6 (DEF-040): a pré-conferência é o `$queryRaw` das
+   * referenciadas, e o que ela "devolveu" são as contas da linha da empresa.
+   */
+  metodo: 'findFirst' | 'findMany' | 'referenciadas';
   acao: () => Promise<unknown>;
   disparou: boolean;
   /** O que a pré-conferência devolveu: tem de ser "nada". */
@@ -1200,11 +1205,46 @@ function envolverUsuario(delegate: object): object {
   });
 }
 
+/** O texto de uma instrução crua, como o `$queryRaw` a recebe. */
+function textoDaInstrucao(args: unknown[]): string {
+  return Array.isArray(args[0])
+    ? (args[0] as string[]).join('?')
+    : ((args[0] as Prisma.Sql | undefined)?.sql ?? '');
+}
+
+/**
+ * DEF-040 — a pré-conferência de dentro da E6 é a instrução das
+ * referenciadas (a que lê `usuarios u3`). Ela trava as linhas e devolve as
+ * contas na linha da empresa; o gancho dispara depois dela, como dispararia
+ * depois da `findMany` de antes.
+ */
+function envolverQueryRaw(t: object, fn: Funcao): Funcao | undefined {
+  const g = gancho;
+  if (!g || g.disparou || g.metodo !== 'referenciadas') return undefined;
+  return async (...args: unknown[]) => {
+    const devolvido = (await (fn.apply(t, args) as Promise<unknown>)) as {
+      tabela?: string;
+      contas?: unknown;
+    }[];
+    if (!g.disparou && textoDaInstrucao(args).includes('FROM usuarios u3')) {
+      g.disparou = true;
+      g.devolvido =
+        devolvido.find((linha) => linha.tabela === 'empresa')?.contas ?? null;
+      await g.acao();
+    }
+    return devolvido;
+  };
+}
+
 function envolverTx(tx: object): object {
   return new Proxy(tx, {
     get(t, prop) {
       const valor: unknown = Reflect.get(t, prop, t);
       if (prop === 'usuario') return envolverUsuario(valor as object);
+      if (prop === '$queryRaw' && typeof valor === 'function') {
+        const envolvida = envolverQueryRaw(t, valor as Funcao);
+        if (envolvida) return envolvida;
+      }
       return typeof valor === 'function'
         ? ((valor as Funcao).bind(t) as unknown)
         : valor;
@@ -1471,7 +1511,7 @@ describe('SPEC-086/AC-020 — a segunda linha: conta gravada por fora depois da 
       const nome = `Pessoa ${escritor}`;
       const preparado = await preparar(escritor, email, nome);
       gancho = {
-        metodo: escritor === 'E6' ? 'findMany' : 'findFirst',
+        metodo: escritor === 'E6' ? 'referenciadas' : 'findFirst',
         acao: () => contaPorFora(email, conflito.role, conflito.empresa),
         disparou: false,
       };
@@ -1575,7 +1615,7 @@ describe('SPEC-086/AC-020 — a segunda linha: conta gravada por fora depois da 
         const nome = `${PREFIXO_NOME_ALHEIO} ${escritor} ${seq}`;
         const preparado = await preparar(escritor, email, nome);
         gancho = {
-          metodo: escritor === 'E6' ? 'findMany' : 'findFirst',
+          metodo: escritor === 'E6' ? 'referenciadas' : 'findFirst',
           // Outra pessoa, outro e-mail, o mesmo nome: só o EXCLUDE alheio.
           acao: () =>
             contaPorFora(emailNovo('alheio'), 'aluno', EMPRESA_B, nome),

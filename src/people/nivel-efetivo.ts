@@ -1,11 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { ChaveDeLock } from '../common/lock/chave-de-lock';
 import {
+  FOLGA_DO_TIMEOUT_MS,
   instrucaoInicialDaMatricula,
   MARCADOR_DO_PRAZO,
-  PRAZO_DA_MATRICULA_MS,
   RESTO_DO_PRAZO,
 } from '../common/lock/prazo-de-espera';
+import {
+  POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS,
+  PRAZO_DA_IMPORTACAO_MS,
+} from './importacao/prazo-da-importacao';
 
 /**
  * SPEC-075 — **o nível decide o acesso, e a regra mora aqui, num lugar só.**
@@ -174,7 +178,22 @@ export async function regraDeNivelDoLote(
 ): Promise<
   (nivelDaTurma: string | null, nivelEfetivo: { id: string } | null) => boolean
 > {
-  if (!(await nivelRestringe(db, companyId))) return () => true;
+  return regraDeNivel(await nivelRestringe(db, companyId));
+}
+
+/**
+ * A mesma regra do lote, para quem **já leu a chave** junto com outras
+ * colunas (DEF-040: a importação a lê sob a trava, na instrução que traz o
+ * resto da conferência — o mesmo atalho que `acessoPorNivelDoAluno` aceita
+ * pelo `restringe`). A decisão continua aqui, e não em quem chama.
+ */
+export function regraDeNivel(
+  restringe: boolean,
+): (
+  nivelDaTurma: string | null,
+  nivelEfetivo: { id: string } | null,
+) => boolean {
+  if (!restringe) return () => true;
   return podeEntrarPorNivel;
 }
 
@@ -532,8 +551,9 @@ export async function conferirEdicaoDeNivel<T>(
  * A importação de alunos escreve `turma_alunos` para alunos que ela mesma
  * cria. Toma a trava do clube **compartilhada** — a edição de nível, que trava
  * exclusiva, continua esperando a importação (INV-075h), e as matrículas de
- * outras turmas não esperam (INV-083i) — e grava o mesmo prazo absoluto de
- * 2 s, na mesma instrução, como o leitor.
+ * outras turmas não esperam (INV-083i) — e grava, na mesma instrução, como o
+ * leitor, um prazo absoluto: **o da importação** (`PRAZO_DA_IMPORTACAO_MS`,
+ * 6,69 s, DEF-040), e não os 2 s do leitor.
  *
  * **Sem a trava por aluno, e é por isso que o modo tem nome próprio.** Ela
  * existe para pôr em fila duas matrículas do MESMO aluno; os alunos do lote
@@ -547,6 +567,34 @@ export async function conferirEdicaoDeNivel<T>(
  * entre eles (AC-049). Um aluno de fora seria uma matrícula sem a trava dele.
  */
 export type ModoDaTrava = 'leitura' | 'escrita' | 'lote-novo';
+
+/**
+ * DEF-040 — **o `timeout` da transação de quem edita nível** (o modo
+ * `escrita`): o catálogo de níveis, e a turma e o aluno quando o corpo traz
+ * `nivelId`.
+ *
+ * A trava `escrita` é exclusiva e **não tem `lock_timeout`**: espera quem
+ * estiver com a trava do clube, e o mais demorado é a importação, que a segura
+ * até o `COMMIT` com o prazo dela (6,69 s) e mais a rede depois de uma espera
+ * (`POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS`, 11,38 s). Com o padrão
+ * de 5 s do Prisma, a edição que entrava na fila atrás de uma importação que
+ * gastava o prazo caía em `P2028` — **500 ao gestor**, e o backend seguia na
+ * fila da trava do mesmo jeito: desistir no Prisma não tira ninguém da fila do
+ * Postgres. Medido em `def-040-quem-espera-a-importacao.db-spec.ts`.
+ *
+ * A conta: os 5 s que essas transações sempre tiveram para o próprio
+ * trabalho + a posse máxima da importação + 1 s de folga — **17.380 ms**. A
+ * trava, a ordem e o modo não mudam; muda só quanto o Prisma aceita esperar.
+ */
+export const TIMEOUT_DA_EDICAO_DE_NIVEL_MS =
+  5_000 +
+  POSSE_MAXIMA_DA_TRAVA_DO_CLUBE_PELA_IMPORTACAO_MS +
+  FOLGA_DO_TIMEOUT_MS;
+
+/** As opções de `$transaction` de quem toma a trava `escrita`. */
+export const TIMEOUT_DA_EDICAO_DE_NIVEL = {
+  timeout: TIMEOUT_DA_EDICAO_DE_NIVEL_MS,
+} as const;
 
 type ClienteDaTrava = Pick<
   Prisma.TransactionClient,
@@ -590,13 +638,16 @@ export class LoteNovo {
  * (`instrucaoInicialDaMatricula`) sem o último passo, a trava do aluno — e
  * mora aqui, e não ao lado dela, porque é este modo que a dispensa e é aqui
  * que está a razão.
+ *
+ * **O prazo é o da importação** (`PRAZO_DA_IMPORTACAO_MS`, DEF-040), e não os
+ * 2 s da matrícula: o `lote-novo` é o modo da importação, e só ela o toma.
  */
 function instrucaoInicialDoLoteNovo(chaveDoClube: bigint): Prisma.Sql {
   return Prisma.sql`
     SELECT 1 AS ok
       FROM (SELECT set_config('${Prisma.raw(MARCADOR_DO_PRAZO)}',
                      (clock_timestamp()
-                      + ${PRAZO_DA_MATRICULA_MS}::int * interval '1 millisecond')::text,
+                      + ${PRAZO_DA_IMPORTACAO_MS}::int * interval '1 millisecond')::text,
                      true) AS p) a,
            LATERAL (SELECT set_config('lock_timeout', ${RESTO_DO_PRAZO}, true) AS cfg
                      WHERE a.p IS NOT NULL) r1,
