@@ -6,7 +6,10 @@ import {
 } from '../../common/lock/prazo-de-espera';
 import { MemoriaProvedorDeEmail } from '../../email/memoria-provedor-de-email';
 import type { PrismaService } from '../../prisma/prisma.service';
-import { ImportacaoDeAlunosService } from './importacao-de-alunos.service';
+import {
+  ImportacaoDeAlunosService,
+  MARCADOR_DOS_DADOS_SOB_A_TRAVA,
+} from './importacao-de-alunos.service';
 
 /**
  * SPEC-083/D3, passo 4, e AC-051 — **o prazo em toda escrita, e o `COMMIT`
@@ -98,6 +101,20 @@ function gravador() {
             empresa_nome: 'Clube',
           })),
         );
+      }
+      // DEF-040 — os dados da conferência de turma sob a trava, numa
+      // instrução: a turma vazia, sem aula futura, num clube que restringe.
+      if (i.sql.includes(MARCADOR_DOS_DADOS_SOB_A_TRAVA)) {
+        return Promise.resolve([
+          {
+            restringe: true,
+            primeiro: { id: 'n1', nome: 'Iniciante' },
+            matriculas: [],
+            aulas: [],
+            faltas: [],
+            reposicoes: [],
+          },
+        ]);
       }
       if (i.sql.includes('FROM turmas t2')) {
         return Promise.resolve(

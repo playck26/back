@@ -11,6 +11,7 @@ import {
 import {
   etapaDaImportacao,
   ImportacaoDeAlunosService,
+  MARCADOR_DOS_DADOS_SOB_A_TRAVA,
   MENSAGEM_EMAIL_JA_EXISTE,
   type EtapaDaImportacao,
 } from './importacao-de-alunos.service';
@@ -123,14 +124,91 @@ function montar(
     reposicaoDeAula: { findMany: jest.fn().mockResolvedValue([]) },
   };
 
-  const responder = (i: Instrucao): unknown => {
+  /**
+   * DEF-040 — a instrução dos dados sob a trava, respondida pelos MESMOS
+   * dublês de leitura de antes (o `groupBy` dos alocados, a chave do clube,
+   * o primeiro nível, as aulas e os conjuntos), na forma JSON que o banco
+   * devolve. Os casos que programam o `groupBy` em sequência (fora, sob a
+   * trava, refeita) continuam valendo: a 2ª chamada é a de sob a trava.
+   */
+  const dadosSobATrava = async (turmaIds: string[]) => {
+    const grupos = (await leitorDeTurma.turmaAluno.groupBy()) as {
+      turmaId: string;
+      _count: { _all: number };
+    }[];
+    const empresa = (await leitorDeTurma.empresa.findUnique()) as {
+      nivelRestringeAcesso: boolean;
+    } | null;
+    const primeiro = (await leitorDeTurma.nivel.findFirst()) as {
+      id: string;
+      nome: string;
+    } | null;
+    const aulas = (await leitorDeTurma.ocupacaoQuadra.findMany()) as {
+      id: string;
+      data: Date;
+      origemTurmaId: string;
+    }[];
+    const faltas = (await leitorDeTurma.faltaAvisada.findMany()) as {
+      ocupacaoId: string;
+      alunoId: string;
+    }[];
+    const reposicoes = (await leitorDeTurma.reposicaoDeAula.findMany()) as {
+      ocupacaoId: string;
+      alunoId: string;
+    }[];
+    return [
+      {
+        restringe: empresa?.nivelRestringeAcesso ?? null,
+        primeiro,
+        // Um matriculado por alocado, com id de dublê: só a contagem importa.
+        matriculas: grupos
+          .filter((g) => turmaIds.includes(g.turmaId))
+          .flatMap((g) =>
+            Array.from({ length: g._count._all }, (_, k) => ({
+              turmaId: g.turmaId,
+              alunoId: `dub-${g.turmaId}-${k}`,
+            })),
+          ),
+        aulas: aulas.map((a) => ({
+          id: a.id,
+          data: a.data.toISOString().slice(0, 10),
+          turmaId: a.origemTurmaId,
+        })),
+        faltas,
+        reposicoes,
+      },
+    ];
+  };
+
+  const responder = async (i: Instrucao): Promise<unknown> => {
     if (i.sql.includes('FROM empresas e2')) {
-      const [tabelas, ids] = arranjos(i) as [string[], string[]];
+      const [tabelas, ids, emails] = arranjos(i) as [
+        string[],
+        string[],
+        string[],
+      ];
+      // SPEC-086 — o banco devolve toda conta com um e-mail do arquivo (o
+      // filtro só por e-mail, comum aos dois ramos da chave); a regra da
+      // empresa se decide no serviço. O dublê de contas avalia esse filtro.
+      const contas = (await tx.usuario.findMany({
+        where: { email: { in: emails } },
+      })) as { email: string; companyId: string | null; role: string }[];
       return tabelas.map((tabela, k) => ({
         tabela,
         achado: ids[k],
         empresa_nome: tabela === 'empresa' ? 'Clube Dublê' : null,
+        contas:
+          k === 0 && contas.length > 0
+            ? contas.map((c) => ({
+                email: c.email,
+                companyId: c.companyId,
+                role: c.role,
+              }))
+            : null,
       }));
+    }
+    if (i.sql.includes(MARCADOR_DOS_DADOS_SOB_A_TRAVA)) {
+      return dadosSobATrava(arranjos(i)[0] as string[]);
     }
     if (i.sql.includes('FROM turmas t2')) {
       return turmas.map((t) => ({
@@ -149,13 +227,14 @@ function montar(
 
   const tx = {
     ...leitorDeTurma,
-    // SPEC-086 — a conferência dos e-mails sob a trava, dentro da transação.
-    // Vazia: o conflito de e-mail destes casos é o da conferência de fora.
+    // SPEC-086 — as contas dos e-mails lidas sob a trava, na instrução das
+    // referenciadas (DEF-040). Vazia: o conflito de e-mail destes casos é o
+    // da conferência de fora.
     usuario: { findMany: jest.fn().mockResolvedValue([]) },
     $queryRaw: jest.fn((primeiro: unknown, ...resto: unknown[]) => {
       const i = montarSql(primeiro, resto);
       instrucoes.push(i);
-      return Promise.resolve(responder(i));
+      return responder(i);
     }),
     $executeRaw: jest.fn((primeiro: unknown, ...resto: unknown[]) => {
       const i = montarSql(primeiro, resto);
@@ -1819,9 +1898,15 @@ describe('SPEC-083/AC-048 — a tradução da importação, por etapa', () => {
  * SPEC-086/E6 — a importação pelo FILTRO que passa ao Prisma (AC-003,
  * AC-017). Em lote: uma `findMany` com `email: { in: [...] }` e, com a chave
  * ligada, o `OR` da empresa da importação (o `companyId` do gestor) — nunca
- * uma consulta por linha. As duas conferências usam o mesmo filtro: a de fora
- * (a do relatório) e a de dentro da transação, sob a trava. O dublê avalia o
- * filtro sobre contas, com a de outra empresa criada antes (S1).
+ * uma consulta por linha. O dublê avalia o filtro sobre contas, com a de
+ * outra empresa criada antes (S1).
+ *
+ * DEF-040 — **a de dentro da transação mudou de forma, não de regra.** Ela
+ * vai na instrução das referenciadas, e por isso pede ao banco só o que é
+ * comum aos dois ramos da chave (o e-mail); a empresa se decide no serviço,
+ * por `contaEmConflitoNaEmpresa`. Os casos "sob a trava" abaixo são a prova
+ * de que a decisão é a mesma: com a chave ligada, a leitura só por e-mail
+ * acha a conta de OUTRA empresa, e só a regra da empresa a aceita.
  */
 describe('SPEC-086/E6 — o e-mail por empresa na importação', () => {
   const chave = restaurarChaveDoEmailACadaTeste();
@@ -1836,6 +1921,8 @@ describe('SPEC-086/E6 — o e-mail por empresa na importação', () => {
     c.chave === 'ligada'
       ? filtroDaEmpresa({ in: [EMAIL, LIVRE] }, 'c1')
       : { email: { in: [EMAIL, LIVRE] } };
+  /** A leitura sob a trava (DEF-040): só o e-mail, nos dois ramos da chave. */
+  const soPorEmail = { email: { in: [EMAIL, LIVRE] } };
 
   async function importar(
     cenario: CenarioDaEntrada,
@@ -1874,9 +1961,8 @@ describe('SPEC-086/E6 — o e-mail por empresa na importação', () => {
     async (_nome, cenario) => {
       const { r, fora, dentro } = await importar(cenario, cenario.contas);
 
-      for (const w of wheresDasChamadas(fora, dentro)) {
-        expect(w).toEqual(esperado(cenario));
-      }
+      expect(wheresDasChamadas(fora)).toEqual([esperado(cenario)]);
+      for (const w of wheresDasChamadas(dentro)) expect(w).toEqual(soPorEmail);
       expect(fora).toHaveBeenCalledTimes(1);
       if (cenario.aceita) {
         expect(r).not.toBeInstanceOf(Error);
@@ -1898,9 +1984,12 @@ describe('SPEC-086/E6 — o e-mail por empresa na importação', () => {
       // cenário. É o caminho da corrida, decidido pelo filtro de dentro.
       const { r, fora, dentro } = await importar(cenario, []);
 
-      const wheres = wheresDasChamadas(fora, dentro);
-      expect(wheres.length).toBeGreaterThan(1);
-      for (const w of wheres) expect(w).toEqual(esperado(cenario));
+      // A de fora roda duas vezes na recusa: o relatório e a refeita depois
+      // do rollback. Todas com o filtro da empresa.
+      const deFora = wheresDasChamadas(fora);
+      expect(deFora.length).toBeGreaterThan(0);
+      for (const w of deFora) expect(w).toEqual(esperado(cenario));
+      expect(wheresDasChamadas(dentro)).toEqual([soPorEmail]);
       expect(dentro).toHaveBeenCalledTimes(1);
       if (cenario.aceita) {
         expect(r).not.toBeInstanceOf(Error);

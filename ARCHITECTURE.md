@@ -1119,7 +1119,8 @@ recusado pelo `forbidNonWhitelisted`. O banco recusa o que passar por fora:
 > `conferirEdicaoDeNivel` perguntam a ela; as listas usam
 > `acessoPorNivelDoAluno`, que devolve `SEM_RESTRICAO` (aceito por
 > `podeEntrarPorNivel` e `filtroDeTurmaPorNivel`); a importação lê uma vez por
-> lote; o SQL do `cheiaAntesDaFila` ganhou `NOT e.nivel_restringe_acesso OR`.
+> lote (sob a trava, na instrução única dos dados do DEF-040, e a decisão é de
+> `regraDeNivel`); o SQL do `cheiaAntesDaFila` ganhou `NOT e.nivel_restringe_acesso OR`.
 >
 > **Teto de idas da SPEC-082:** `entrar` e `confirmar` trazem a coluna na leitura
 > de `empresas` que já faziam (do limite de turmas) e a passam ao
@@ -2537,6 +2538,31 @@ hash de **um** segredo descartado por importação. O `23505` é decidido pela
 etapa: só na de `usuarios` a conferência é refeita, e só erro de e-mail vira
 `422`; em qualquer outra, `500`.
 
+**Três leituras entre a trava do clube e a primeira escrita (DEF-040).** A
+importação com turma dava `409` em produção sem disputa nenhuma: a trava do
+clube fixa o prazo de 2 s, e entre ela e o primeiro `INSERT` iam dez
+instruções — a 167 ms por ida (Back em Atlanta, Neon em São Paulo), a escrita
+chegava com 1 ms de prazo e estourava com `57014`. O prazo e a ordem das
+travas não mudaram; as leituras foram juntadas: **(1)** as referenciadas em
+`FOR KEY SHARE` trazem, na mesma instrução, as contas dos e-mails do arquivo
+(o banco filtra só pelo e-mail; `contaEmConflitoNaEmpresa`, ao lado de
+`conflitoDeContasDaEmpresa` em `trava-de-email.ts`, decide o conflito);
+**(2)** o `FOR UPDATE` das turmas, sozinho; **(3)** `lerDadosSobATrava`, uma
+instrução que devolve **dados em JSON** — matriculados (e daí os alocados),
+`nivel_restringe_acesso`, o primeiro nível, as aulas futuras e as faltas e
+reposições delas. **A regra continua em TypeScript**: os conjuntos saem de
+`montarConjuntos` e a lotação de `primeirasAulasQueLotariam` (as metades sem
+banco de `carregarConjuntos` e `aulasQueAMatriculaLotaria`, em
+`ocupacao-da-ocorrencia.ts`), e a regra de nível de `regraDeNivel`. A busca
+binária da aula lotada não vai mais ao banco em passo nenhum. As formas SQL de
+"aula futura" e de "primeiro nível" (`sqlDasAulasFuturas`,
+`sqlDoPrimeiroNivel`) moram ao lado das do Prisma, e um teste de banco confere
+que concordam nos cantos. A conferência de fora usa as mesmas funções puras,
+com os dados lidos pelo Prisma. Gate: o `spec-083-importacao.db-spec.ts`
+conta, pelo evento `query` do Prisma, as instruções da sessão entre a trava do
+clube e o `INSERT` de usuários (teto 4) e até o `ROLLBACK` de uma aula lotada
+achada sob a trava (teto 3).
+
 **Os gates**, por camada:
 
 | Gate | Prova |
@@ -2547,6 +2573,7 @@ etapa: só na de `usuarios` a conferência é refeita, e só erro de e-mail vira
 | `src/people/importacao/sem-bcrypt-na-transacao.spec.ts` | nenhum `bcrypt` começa dentro do callback do `$transaction` (AC-014, estrutural) |
 | `src/people/importacao/prazo-em-toda-escrita.spec.ts` | cada escrita vem depois do ajuste do prazo, nos dois ramos, e a reposição antes do `COMMIT` (AC-051) |
 | `src/classes/escritores-de-matricula.spec.ts` | conhece a importação, com o modo `lote-novo` (AC-047) |
+| `src/acesso/trava-de-email.spec.ts` | `contaEmConflitoNaEmpresa` decide, conta a conta e com a chave nos dois estados, o mesmo que o filtro de `conflitoDeContasDaEmpresa` (DEF-040) |
 | `test/banco/spec-083-*.db-spec.ts` (cinco arquivos) | as constraints da tabela, a corrida do professor e o `meta` real do tradutor, a importação, a importação concorrente, a unicidade inesperada |
 | `test/fit/fit-056-ativacao-concorrente.fit-spec.ts`, `fit-057-importacao-concorrente.fit-spec.ts`, `spec-083-acesso.fit-spec.ts` | ativação e emissão concorrentes; a importação contra matrículas e contra si mesma, com o prazo medido por amostras (`test/fit/classificar-amostras.ts`); as rotas do acesso por HTTP |
 

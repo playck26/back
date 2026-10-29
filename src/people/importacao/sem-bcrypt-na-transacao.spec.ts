@@ -8,6 +8,7 @@ import { MemoriaProvedorDeEmail } from '../../email/memoria-provedor-de-email';
 import type { PrismaService } from '../../prisma/prisma.service';
 import {
   ImportacaoDeAlunosService,
+  MARCADOR_DOS_DADOS_SOB_A_TRAVA,
   type GanchosDaImportacao,
 } from './importacao-de-alunos.service';
 
@@ -109,6 +110,20 @@ function montar(ganchos: GanchosDaImportacao = {}) {
             empresa_nome: 'Clube',
           })),
         );
+      }
+      // DEF-040 — os dados da conferência de turma sob a trava, numa
+      // instrução: a turma vazia, sem aula futura, num clube que restringe.
+      if (sql.includes(MARCADOR_DOS_DADOS_SOB_A_TRAVA)) {
+        return Promise.resolve([
+          {
+            restringe: true,
+            primeiro: { id: 'n1', nome: 'Iniciante' },
+            matriculas: [],
+            aulas: [],
+            faltas: [],
+            reposicoes: [],
+          },
+        ]);
       }
       if (sql.includes('FROM turmas t2')) {
         return Promise.resolve(
