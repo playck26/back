@@ -1022,9 +1022,18 @@ importação a aplica no `valorDe` da `conferirComContexto`, o ponto único por
 onde passa toda célula lida (nome, e-mail, telefone, nível, turma 1 a 10),
 antes do `trim`. O `'` antes de outro caractere fica. O teste de banco faz a
 ida e volta: exporta `=Ana`, `-x@y.local`, `+55…` e `@Sab`, importa noutro
-clube e confere que o gravado é idêntico. **Limite que fica:** o valor que já
-começa com `'` seguido de fórmula (`'=x`, digitado assim pelo aluno) sai sem
-prefixo e volta como `=x`.
+clube e confere que o gravado é idêntico. **Limite que fica, e é da regra, não
+do código:** com a D5 como está escrita (a importação tira o `'` só antes de
+`=`, `+`, `-`, `@`, tab ou CR), **nenhuma célula volta como um valor que já
+começa com `'` seguido de um desses** — `'=x` vira `=x`, e `''=x` fica `''=x`.
+A exportação de `=x` e a de `'=x` são a mesma célula, `'=x`. Três efeitos,
+reproduzidos em 2026-10-29 e levados ao Israel como decisão (não consertados):
+o nome `'=Ana` volta `=Ana`; o e-mail `'-x@y.com` (que a regex aceita) volta
+`-x@y.com`, outra conta, sem erro; e a turma `'@Sab` não pode ser citada pela
+planilha, nem pelo próprio arquivo exportado. Fechar exigiria mudar a regra
+das duas pontas (proteger e tirar o `'` também antes de `'…'` seguido de
+fórmula). E o `'` só sai se for o **primeiro** caractere da célula: o `trim`
+vem depois, então ` '=Ana` (espaço antes, só à mão) grava `'=Ana`.
 
 **E a importação passa a aceitar até dez colunas de turma (SPEC-092/D8).**
 `Turma 1` a `Turma 3` continuam obrigatórias no cabeçalho (SPEC-091/D1);
