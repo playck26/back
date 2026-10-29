@@ -1006,7 +1006,14 @@ as turmas por `array_agg` (DEF-013). O handler está na `StudentsController`,
 em `Content-Disposition`, e a própria resposta manda
 `Access-Control-Expose-Headers: Content-Disposition` — as opções de CORS
 continuam com o conjunto fechado delas. **Até a fase 2, o arquivo não volta
-pela importação** (`Status` é `COLUNA_DESCONHECIDA`).
+pela importação** (`Status` é `COLUNA_DESCONHECIDA`). O `JOIN` de turmas
+também casa pelo clube (`t.company_id = a.company_id`), porque `turma_alunos`
+não carrega o clube e o banco aceita a matrícula cruzada; o teste de banco
+grava uma e confere que o nome da turma do outro clube não vaza. Dois limites
+conhecidos, que a spec não resolve: o `'` contra fórmula vale para **qualquer**
+célula (D5), e a importação não o tira, então um telefone `+55…` exportado
+volta com o `'`; e o `Status` não olha o `vinculo` (D3), então o aluno
+`recusado` ou com aprovação `pendente` sai `ativo`.
 
 **E a importação passa a aceitar até dez colunas de turma (SPEC-092/D8).**
 `Turma 1` a `Turma 3` continuam obrigatórias no cabeçalho (SPEC-091/D1);

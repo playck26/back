@@ -290,6 +290,29 @@ describe('SPEC-092/AC-001 — todos do clube, nenhum de outro', () => {
     expect(deB[1][4]).toBe('Turma do Outro Clube');
   });
 
+  // Revisão de 2026-10-29 — `turma_alunos` não tem o clube nem FK composta:
+  // nada no banco impede a matrícula de um aluno do clube A numa turma do
+  // clube B. Só o `t.company_id = a.company_id` do JOIN impede o nome dessa
+  // turma de vazar no arquivo do clube A, e sem esta matrícula cruzada nenhum
+  // teste o derrubaria.
+  it('a matrícula cruzada numa turma de outro clube não vaza o nome dela', async () => {
+    await matricular(turmas.deB, alunos.ana);
+
+    const { conteudo } = await exportacao.exportar(EMPRESA);
+    expect(conteudo).not.toContain('Turma do Outro Clube');
+    const linhas = analisarCsv(conteudo, ';');
+    expect(linhas[0]).toEqual(CABECALHO_DE_3);
+    expect(linhas[1].slice(0, 7)).toEqual([
+      'Ana',
+      'ana@spec092.local',
+      '(11) 99999-0000',
+      'Iniciante',
+      'Turma A',
+      'Turma C',
+      '',
+    ]);
+  });
+
   it('a contagem bate com o banco: uma linha por aluno do clube', async () => {
     const linhas = await exportarELer();
     const noBanco = await db.aluno.findMany({

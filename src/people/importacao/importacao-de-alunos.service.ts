@@ -1103,19 +1103,27 @@ export class ImportacaoDeAlunosService {
         posicoes: semNome,
       });
     }
+    const ultima = COLUNAS_EXTRAS_DE_TURMA[maiorExtra];
+    const faltaNaSequencia = `o cabeçalho tem ${ultima}, e ${lacunas.length === 1 ? 'falta' : 'faltam'} ${lacunas.join(', ')}`;
     if (obrigatoriasAusentes.length > 0) {
+      // Revisão de 2026-10-29: a extra que falta na sequência vai numa frase
+      // própria. Na lista das do modelo, que a frase cita até a turma 3, o
+      // gestor procuraria nele uma turma 4 que o modelo não tem.
+      const eASequencia =
+        lacunas.length > 0
+          ? ` E as colunas de turma vão em sequência, sem pular número: ${faltaNaSequencia}.`
+          : '';
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'PLANILHA_SEM_CABECALHO',
-        message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${ausentes.join(', ')}.`,
+        message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${obrigatoriasAusentes.join(', ')}.${eASequencia}`,
       });
     }
     if (lacunas.length > 0) {
-      const ultima = COLUNAS_EXTRAS_DE_TURMA[maiorExtra];
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'PLANILHA_SEM_CABECALHO',
-        message: `As colunas de turma vão em sequência, sem pular número: o cabeçalho tem ${ultima}, e ${lacunas.length === 1 ? 'falta' : 'faltam'} ${lacunas.join(', ')}. Acrescente ${lacunas.length === 1 ? 'a que falta' : 'as que faltam'} (pode ficar vazia) ou renumere as de depois, e envie de novo.`,
+        message: `As colunas de turma vão em sequência, sem pular número: ${faltaNaSequencia}. Acrescente ${lacunas.length === 1 ? 'a que falta' : 'as que faltam'} (pode ficar vazia) ou renumere as de depois, e envie de novo.`,
       });
     }
     return mapa;

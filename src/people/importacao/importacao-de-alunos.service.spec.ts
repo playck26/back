@@ -2283,6 +2283,24 @@ describe('SPEC-092/D8 — até dez colunas de turma (AC-008, AC-009)', () => {
       });
     });
 
+    // Revisão de 2026-10-29: a turma 4 que falta na SEQUÊNCIA não pode sair
+    // na lista das que faltam do MODELO — a mesma frase cita o modelo só até
+    // a turma 3, e o gestor procuraria a turma 4 nele.
+    it('Turma 3 e Turma 4 faltando com a 5 → o modelo pede a 3, e a sequência pede a 4, em frases separadas', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          'Nome;E-mail;Telefone;Nível;Turma 1;Turma 2;Turma 5\r\nAna;a@x.com;;;;;\r\n',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PLANILHA_SEM_CABECALHO',
+          message:
+            'A primeira linha precisa ser o cabeçalho do modelo: nome, email, telefone, nivel, turma 1, turma 2, turma 3. Faltam: turma 3. E as colunas de turma vão em sequência, sem pular número: o cabeçalho tem turma 5, e falta turma 4.',
+        },
+      });
+    });
+
     it('com Turma 1 a 10, conteúdo depois da décima é erro de linha', async () => {
       const r = await servico({ niveis: NIVEIS }).conferir(
         'c1',
