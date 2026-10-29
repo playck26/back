@@ -1008,6 +1008,21 @@ em `Content-Disposition`, e a própria resposta manda
 continuam com o conjunto fechado delas. **Até a fase 2, o arquivo não volta
 pela importação** (`Status` é `COLUNA_DESCONHECIDA`).
 
+**E a importação passa a aceitar até dez colunas de turma (SPEC-092/D8).**
+`Turma 1` a `Turma 3` continuam obrigatórias no cabeçalho (SPEC-091/D1);
+`Turma 4` a `Turma 10` são opcionais, **em sequência**. As constantes moram no
+DTO (`COLUNAS_DE_TURMA`, `MAXIMO_DE_COLUNAS_DE_TURMA`, `ColunaDeTurma`), porque
+o tipo de `TurmaDaLinhaDto.coluna` sai delas — no `openapi.json` é o `enum` de
+`turma 1` a `turma 10`. No `lerCabecalho`, a extra fora de sequência conta
+como ausente (`PLANILHA_SEM_CABECALHO` nomeando a que falta, ou
+`COLUNA_SEM_NOME` se a célula do nome estiver vazia) e `Turma 11` em diante é
+`COLUNA_DESCONHECIDA` dizendo que o máximo é 10; a precedência da SPEC-091
+(desconhecida → repetida → sem nome → ausente) não mudou. **Nada mudou na
+regra de turma nem na escrita**: `errosDeTurma` já recebia a coluna como
+texto, e as leituras e o `INSERT` de `turma_alunos` já iam em lote — o teste
+de banco do DEF-040 com dez turmas conta **14 instruções da trava ao
+`COMMIT`**, as mesmas de três (teto 14).
+
 **As rotas da SPEC-037** são cinco, e a mais interessante é a que o banco
 guarda:
 

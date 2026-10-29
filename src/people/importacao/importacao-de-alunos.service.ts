@@ -79,16 +79,25 @@ import type {
   RelatorioDeImportacaoDto,
   TurmaDaLinhaDto,
 } from './dto/importacao-response.dto';
+import {
+  COLUNAS_DE_TURMA,
+  MAXIMO_DE_COLUNAS_DE_TURMA,
+  type ColunaDeTurma,
+} from './dto/importacao-response.dto';
 
 /**
  * As colunas do modelo — **sete, em qualquer ordem, e todas presentes no
  * cabeçalho** (SPEC-091/D1). **`nome`, `email` e `nivel` são os obrigatórios
- * na linha** (D2); telefone e as três turmas podem ficar vazios.
+ * na linha** (D2); telefone e as turmas podem ficar vazios.
  *
  * *Por que todas no cabeçalho:* o modelo de sete colunas é o único aceito
  * (o Israel, em 2026-10-28). A planilha da SPEC-083, com a coluna `turma`,
  * cai em `COLUNA_DESCONHECIDA` — aceitá-la como "Turma 1" manteria viva uma
  * planilha que ninguém mais distribui.
+ *
+ * SPEC-092/D8 — além das sete, o cabeçalho pode trazer `turma 4` até
+ * `turma 10`, **em sequência** (`COLUNAS_DE_TURMA`). Elas não entram aqui
+ * porque não são obrigatórias.
  */
 const COLUNAS = [
   'nome',
@@ -100,10 +109,10 @@ const COLUNAS = [
   'turma 3',
 ] as const;
 
-/** As três colunas de turma, na ordem do modelo (SPEC-091/D3). */
-const COLUNAS_DE_TURMA = ['turma 1', 'turma 2', 'turma 3'] as const;
+/** SPEC-092/D8 — as que vão além do modelo: `turma 4` … `turma 10`. */
+const COLUNAS_EXTRAS_DE_TURMA = COLUNAS_DE_TURMA.slice(3);
 
-type Coluna = (typeof COLUNAS)[number];
+type Coluna = (typeof COLUNAS)[number] | ColunaDeTurma;
 
 /**
  * Aceita o cabeçalho como o gestor o escreveria: `E-mail`, `Celular` e `Nível`
@@ -111,7 +120,8 @@ type Coluna = (typeof COLUNAS)[number];
  * acento, então `nível` já chega como `nivel`).
  *
  * *Não é gentileza:* recusá-los transformaria o primeiro uso numa caça ao nome
- * exato da coluna.
+ * exato da coluna. As colunas de turma extras (SPEC-092/D8) seguem a mesma
+ * regra das três do modelo: `Turma 4` e `turma4`.
  */
 const APELIDOS: Record<string, Coluna> = {
   nome: 'nome',
@@ -120,13 +130,27 @@ const APELIDOS: Record<string, Coluna> = {
   telefone: 'telefone',
   celular: 'telefone',
   nivel: 'nivel',
-  'turma 1': 'turma 1',
-  'turma 2': 'turma 2',
-  'turma 3': 'turma 3',
-  turma1: 'turma 1',
-  turma2: 'turma 2',
-  turma3: 'turma 3',
+  ...Object.fromEntries(
+    COLUNAS_DE_TURMA.flatMap((c) => [
+      [c, c],
+      [c.replace(' ', ''), c],
+    ]),
+  ),
 };
+
+/**
+ * SPEC-092/D8 — **`Turma 11` ou acima** (como o normalizador a deixa: `turma
+ * 11` ou `turma11`). Continua sendo coluna desconhecida, mas a mensagem diz
+ * que o máximo é 10: "não reconhecida" sozinho faria o gestor procurar um
+ * erro de digitação que não existe.
+ */
+function eTurmaAlemDoMaximo(chave: string): boolean {
+  const m = /^turma ?(\d+)$/.exec(chave);
+  return m !== null && Number(m[1]) > MAXIMO_DE_COLUNAS_DE_TURMA;
+}
+
+/** As colunas aceitas, do jeito que as mensagens de cabeçalho as dizem. */
+const AS_ACEITAS = `${COLUNAS.join(', ')} e, para mais turmas, turma 4 até turma ${MAXIMO_DE_COLUNAS_DE_TURMA}, em sequência`;
 
 /** Sem acento, sem caixa, sem espaço nas pontas — para casar apelido. */
 function normalizarCabecalho(bruto: string): string {
@@ -399,7 +423,7 @@ interface TurmaConferida {
 
 interface LinhaNaTurma {
   linha: number;
-  /** De qual das três colunas veio a turma: o erro aponta para ela. */
+  /** De qual coluna de turma veio (até dez, SPEC-092/D8): o erro aponta para ela. */
   coluna: string;
   turmaId: string;
   turmaNome: string;
@@ -1024,10 +1048,17 @@ export class ImportacaoDeAlunosService {
     });
 
     if (desconhecidas.length > 0) {
+      // SPEC-092/D8 — `Turma 11` em diante é desconhecida, mas o gestor
+      // precisa saber que o problema é o número, e não a grafia.
+      const alemDoMaximo = desconhecidas.some((d) =>
+        eTurmaAlemDoMaximo(normalizarCabecalho(d)),
+      )
+        ? ` O máximo é turma ${MAXIMO_DE_COLUNAS_DE_TURMA}: um aluno entra em até ${MAXIMO_DE_COLUNAS_DE_TURMA} turmas pela planilha.`
+        : '';
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'COLUNA_DESCONHECIDA',
-        message: `Coluna não reconhecida: ${desconhecidas.join(', ')}. As aceitas são: ${COLUNAS.join(', ')}.`,
+        message: `Coluna não reconhecida: ${desconhecidas.join(', ')}. As aceitas são: ${AS_ACEITAS}.${alemDoMaximo}`,
         colunas: desconhecidas,
       });
     }
@@ -1041,7 +1072,19 @@ export class ImportacaoDeAlunosService {
     }
     // SPEC-091/D1 — o modelo é o único aceito: as sete no cabeçalho, mesmo
     // as que a linha pode deixar vazias.
-    const ausentes = COLUNAS.filter((c) => mapa[c] === undefined);
+    const obrigatoriasAusentes = COLUNAS.filter((c) => mapa[c] === undefined);
+    // SPEC-092/D8 — as extras vão em sequência: com `turma 6`, a `turma 4` e
+    // a `turma 5` também têm de estar lá. A que falta conta como ausente, e
+    // segue a mesma precedência (a coluna sem nome antes).
+    const maiorExtra = COLUNAS_EXTRAS_DE_TURMA.reduce(
+      (maior, c, i) => (mapa[c] !== undefined ? i : maior),
+      -1,
+    );
+    const lacunas = COLUNAS_EXTRAS_DE_TURMA.slice(
+      0,
+      Math.max(maiorExtra, 0),
+    ).filter((c) => mapa[c] === undefined);
+    const ausentes: Coluna[] = [...obrigatoriasAusentes, ...lacunas];
     // D5 antes da ausente (R2 da validação): apagar o nome de uma das sete
     // também deixa uma ausente, e o gestor precisa saber QUAL célula é.
     if (semNome.length > 0) {
@@ -1056,15 +1099,23 @@ export class ImportacaoDeAlunosService {
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'COLUNA_SEM_NOME',
-        message: `${quais} O modelo tem exatamente as sete colunas: ${COLUNAS.join(', ')}. ${oQueFazer}`,
+        message: `${quais} O modelo tem as sete colunas: ${COLUNAS.join(', ')} (e, para mais turmas, turma 4 até turma ${MAXIMO_DE_COLUNAS_DE_TURMA}, em sequência). ${oQueFazer}`,
         posicoes: semNome,
       });
     }
-    if (ausentes.length > 0) {
+    if (obrigatoriasAusentes.length > 0) {
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'PLANILHA_SEM_CABECALHO',
         message: `A primeira linha precisa ser o cabeçalho do modelo: ${COLUNAS.join(', ')}. Faltam: ${ausentes.join(', ')}.`,
+      });
+    }
+    if (lacunas.length > 0) {
+      const ultima = COLUNAS_EXTRAS_DE_TURMA[maiorExtra];
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'PLANILHA_SEM_CABECALHO',
+        message: `As colunas de turma vão em sequência, sem pular número: o cabeçalho tem ${ultima}, e ${lacunas.length === 1 ? 'falta' : 'faltam'} ${lacunas.join(', ')}. Acrescente ${lacunas.length === 1 ? 'a que falta' : 'as que faltam'} (pode ficar vazia) ou renumere as de depois, e envie de novo.`,
       });
     }
     return mapa;
@@ -1095,7 +1146,7 @@ export class ImportacaoDeAlunosService {
     }
 
     const mapa = this.lerCabecalho(linhas[0].campos);
-    /** Depois do `lerCabecalho`, são exatamente as sete — nenhuma sem nome. */
+    /** Depois do `lerCabecalho`, são as sete e as extras em sequência — nenhuma sem nome. */
     const largura = linhas[0].campos.length;
     const dados = linhas.slice(1);
     if (dados.length === 0) {
@@ -1185,7 +1236,7 @@ export class ImportacaoDeAlunosService {
             .map((c) => `coluna ${c.posicao}: "${c.texto}"`)
             .join(
               '; ',
-            )}). O modelo tem sete colunas: apague o que sobrou ou mova para a coluna certa.`,
+            )}). Apague o que sobrou, mova para a coluna certa ou, se for mais uma turma, dê nome à coluna no cabeçalho (turma 4 até turma ${MAXIMO_DE_COLUNAS_DE_TURMA}, em sequência).`,
         );
       }
 
@@ -1239,7 +1290,7 @@ export class ImportacaoDeAlunosService {
       }
 
       // SPEC-083/D3, itens 1 a 3 — a turma pelo nome, entre as ativas. Até
-      // três por linha (SPEC-091/D3), cada uma conferida pela sua coluna.
+      // dez por linha (SPEC-091/D3, SPEC-092/D8), cada uma conferida pela sua coluna.
       const turmasDaLinha: TurmaDaLinhaDto[] = [];
       for (const coluna of COLUNAS_DE_TURMA) {
         const turmaBruta = valor(coluna);

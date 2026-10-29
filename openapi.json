@@ -8317,7 +8317,14 @@
             "enum": [
               "turma 1",
               "turma 2",
-              "turma 3"
+              "turma 3",
+              "turma 4",
+              "turma 5",
+              "turma 6",
+              "turma 7",
+              "turma 8",
+              "turma 9",
+              "turma 10"
             ]
           }
         },

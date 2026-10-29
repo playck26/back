@@ -22,7 +22,31 @@ export class ErroDeImportacaoDto {
   mensagem!: string;
 }
 
-/** SPEC-091/D3 — uma das até três turmas de uma linha. */
+/**
+ * SPEC-092/D8 — **até quantas colunas de turma a importação aceita: 10.**
+ * Turma 1 a 3 são do modelo (SPEC-091/D1); Turma 4 a 10 são opcionais, em
+ * sequência. Mora aqui, e não no serviço, porque o tipo da coluna do DTO
+ * sai dela.
+ */
+export const MAXIMO_DE_COLUNAS_DE_TURMA = 10;
+
+/** `turma 1` … `turma 10`, na ordem: o nome canônico de cada coluna. */
+export const COLUNAS_DE_TURMA = [
+  'turma 1',
+  'turma 2',
+  'turma 3',
+  'turma 4',
+  'turma 5',
+  'turma 6',
+  'turma 7',
+  'turma 8',
+  'turma 9',
+  'turma 10',
+] as const;
+
+export type ColunaDeTurma = (typeof COLUNAS_DE_TURMA)[number];
+
+/** SPEC-091/D3 e SPEC-092/D8 — uma das até dez turmas de uma linha. */
 export class TurmaDaLinhaDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -30,8 +54,8 @@ export class TurmaDaLinhaDto {
   @ApiProperty({ example: 'Terça 19h' })
   nome!: string;
   /** De qual coluna veio: um erro achado depois, sob a trava, aponta para ela. */
-  @ApiProperty({ enum: ['turma 1', 'turma 2', 'turma 3'] })
-  coluna!: 'turma 1' | 'turma 2' | 'turma 3';
+  @ApiProperty({ enum: COLUNAS_DE_TURMA })
+  coluna!: ColunaDeTurma;
 }
 
 /**
@@ -59,7 +83,7 @@ export class LinhaValidaDto {
 
   /**
    * SPEC-083/D3 e SPEC-091/D3 — as turmas achadas pelo nome entre as ativas,
-   * na ordem das colunas (até três). Vazia quando a linha não tem turma. O id
+   * na ordem das colunas (até dez, SPEC-092/D8). Vazia quando a linha não tem turma. O id
    * vai junto do nome para o Admin mostrar o que a busca achou (o nome
    * cadastrado, com a caixa e o acento de lá), e não o que o gestor digitou.
    */

@@ -449,3 +449,77 @@ describe('SPEC-092/AC-006 — sem a coluna Status, o arquivo passa na conferênc
     });
   });
 });
+
+describe('SPEC-092/AC-010 — com alunos em até 10 turmas, o arquivo sem Status passa na conferência', () => {
+  /** Tira a última coluna (Status) e regrava no mesmo formato. */
+  function semStatus(conteudo: string): string {
+    return (
+      '﻿' +
+      analisarCsv(conteudo, ';')
+        .map(
+          (campos) =>
+            campos.slice(0, -1).map(celulaDaPlanilha).join(';') + '\r\n',
+        )
+        .join('')
+    );
+  }
+
+  /** Ana nas três do `beforeEach` (A, C e a inativa) e em mais `extras`. */
+  async function anaEmMais(extras: number): Promise<string[]> {
+    const nomes = Array.from(
+      { length: extras },
+      (_, i) => `Extra ${String(i + 1).padStart(2, '0')}`,
+    );
+    for (const nome of nomes) await matricular(await turma(nome), alunos.ana);
+    return nomes;
+  }
+
+  it('Ana em 10 turmas ativas: Turma 1 a 10, e nenhum erro de cabeçalho nem de turma', async () => {
+    // A, C e 8 extras = 10 ativas (a inativa não conta).
+    const extras = await anaEmMais(8);
+    const { conteudo } = await exportacao.exportar(EMPRESA);
+    const arquivo = semStatus(conteudo);
+    const cabecalho = analisarCsv(arquivo, ';')[0];
+    expect(cabecalho).toEqual([
+      'Nome',
+      'E-mail',
+      'Telefone',
+      'Nível',
+      ...Array.from({ length: 10 }, (_, i) => `Turma ${i + 1}`),
+    ]);
+    expect(analisarCsv(arquivo, ';')[1].slice(4)).toEqual([
+      ...extras,
+      'Turma A',
+      'Turma C',
+    ]);
+
+    // Sem `rejects`: um erro de cabeçalho seria exceção e derrubaria aqui.
+    const relatorio = await importacao().conferir(EMPRESA, arquivo);
+    expect(relatorio.total).toBe(6);
+    expect(relatorio.erros.filter((e) => e.coluna.startsWith('turma'))).toEqual(
+      [],
+    );
+    // Os de e-mail (D7) e o nível vazio da Fabi, como na AC-006.
+    expect(relatorio.erros.filter((e) => e.coluna !== 'email')).toEqual([
+      { linha: 7, coluna: 'nivel', mensagem: 'O nível é obrigatório.' },
+    ]);
+  });
+
+  it('D9 — com um aluno em 11 turmas, o arquivo sai com Turma 11, e a importação o recusa dizendo o máximo', async () => {
+    await anaEmMais(9);
+    const { conteudo } = await exportacao.exportar(EMPRESA);
+    expect(analisarCsv(conteudo, ';')[0].slice(-2)).toEqual([
+      'Turma 11',
+      'Status',
+    ]);
+    await expect(
+      importacao().conferir(EMPRESA, semStatus(conteudo)),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'COLUNA_DESCONHECIDA',
+        colunas: ['Turma 11'],
+        message: expect.stringContaining('O máximo é turma 10') as unknown,
+      },
+    });
+  });
+});
