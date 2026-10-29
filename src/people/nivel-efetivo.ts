@@ -3,9 +3,9 @@ import { ChaveDeLock } from '../common/lock/chave-de-lock';
 import {
   instrucaoInicialDaMatricula,
   MARCADOR_DO_PRAZO,
-  PRAZO_DA_MATRICULA_MS,
   RESTO_DO_PRAZO,
 } from '../common/lock/prazo-de-espera';
+import { PRAZO_DA_IMPORTACAO_MS } from './importacao/prazo-da-importacao';
 
 /**
  * SPEC-075 — **o nível decide o acesso, e a regra mora aqui, num lugar só.**
@@ -605,13 +605,16 @@ export class LoteNovo {
  * (`instrucaoInicialDaMatricula`) sem o último passo, a trava do aluno — e
  * mora aqui, e não ao lado dela, porque é este modo que a dispensa e é aqui
  * que está a razão.
+ *
+ * **O prazo é o da importação** (`PRAZO_DA_IMPORTACAO_MS`, DEF-040), e não os
+ * 2 s da matrícula: o `lote-novo` é o modo da importação, e só ela o toma.
  */
 function instrucaoInicialDoLoteNovo(chaveDoClube: bigint): Prisma.Sql {
   return Prisma.sql`
     SELECT 1 AS ok
       FROM (SELECT set_config('${Prisma.raw(MARCADOR_DO_PRAZO)}',
                      (clock_timestamp()
-                      + ${PRAZO_DA_MATRICULA_MS}::int * interval '1 millisecond')::text,
+                      + ${PRAZO_DA_IMPORTACAO_MS}::int * interval '1 millisecond')::text,
                      true) AS p) a,
            LATERAL (SELECT set_config('lock_timeout', ${RESTO_DO_PRAZO}, true) AS cfg
                      WHERE a.p IS NOT NULL) r1,

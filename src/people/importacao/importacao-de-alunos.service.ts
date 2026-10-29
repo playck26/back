@@ -162,7 +162,15 @@ const TETO_DE_TURMAS_NA_MENSAGEM = 10;
  * D4 — o `timeout` da transação da importação. Ver a D3, passo 6.
  *
  * SPEC-086: os 15 s de antes **mais** o orçamento da trava de e-mail, que
- * agora vem antes de tudo e pode consumir até 5 s esperando outro cadastro.
+ * agora vem antes de tudo e pode consumir até 5 s esperando outro cadastro —
+ * **20 s**.
+ *
+ * DEF-040: com o prazo da importação em 6,69 s (`PRAZO_DA_IMPORTACAO_MS`), o
+ * pior caso da transação é o `BEGIN` e a trava de e-mail (duas instruções
+ * frias), os 5 s dela, e os 6,69 s do prazo — que já contam as instruções até
+ * o `COMMIT` —, com 1 s de folga: 13,4 s. Os 20 s continuam acima disso com
+ * 6,6 s de sobra, e por isso não mudaram; `prazo-da-importacao.spec.ts`
+ * amarra a desigualdade.
  */
 export const TIMEOUT_DA_IMPORTACAO_MS = 15_000 + PRAZO_DA_TRAVA_DE_EMAIL_MS;
 
@@ -458,7 +466,7 @@ async function carregarDadosDeTurma(
  * binária. **Nenhum passo vai ao banco** (DEF-040): as aulas e os conjuntos já
  * vieram lidos, e a mesma pergunta com outra capacidade é conta em memória.
  * Antes, cada passo eram quatro idas — e sob a trava do clube elas comiam o
- * prazo de 2 s das escritas.
+ * prazo das escritas (então de 2 s).
  */
 function primeiraLinhaQueLotaAula(
   aulas: AulasFuturas,
@@ -748,7 +756,7 @@ export const MARCADOR_DOS_DADOS_SOB_A_TRAVA =
  *
  * Eram seis a nove idas (contagem, chave, primeiro nível, aulas e três
  * conjuntos, mais quatro por passo da busca binária), todas descontadas do
- * prazo de 2 s das escritas.
+ * prazo das escritas (então de 2 s).
  */
 async function lerDadosSobATrava(
   tx: Prisma.TransactionClient,
@@ -1484,8 +1492,9 @@ export class ImportacaoDeAlunosService {
    * Devolve o nome do clube, lido sob a trava, para o e-mail.
    *
    * A ordem das travas é a da spec, e é ela que evita ciclo com as matrículas:
-   * 1. a trava do clube, **compartilhada**, com o prazo absoluto de 2 s
-   *    (modo `lote-novo`, sem trava de aluno);
+   * 1. a trava do clube, **compartilhada**, com o prazo absoluto da
+   *    importação, 6,69 s (`PRAZO_DA_IMPORTACAO_MS`, DEF-040; modo
+   *    `lote-novo`, sem trava de aluno);
    * 2. as linhas referenciadas — a empresa, os níveis citados e o gestor —
    *    em `FOR KEY SHARE`, numa instrução, com o `lock_timeout` recalculado
    *    por linha;
@@ -1495,9 +1504,9 @@ export class ImportacaoDeAlunosService {
    * 5. as quatro escritas, cada uma depois do ajuste do prazo; e a reposição
    *    do `statement_timeout` antes do `COMMIT`.
    *
-   * **O `timeout` é de 15 s** (D4): a espera por travas e as escritas ficam
-   * presas aos 2 s do prazo; os 15 s cobrem as idas de rede, que nenhum dos
-   * dois conta.
+   * **O `timeout` é de 20 s** (D4 e SPEC-086): a espera por travas e as
+   * escritas ficam presas ao prazo da importação; o resto cobre a trava de
+   * e-mail e a folga (ver `TIMEOUT_DA_IMPORTACAO_MS`).
    */
   private async escreverNaTransacao(
     companyId: string,
@@ -1540,21 +1549,25 @@ export class ImportacaoDeAlunosService {
         // SPEC-086 — **os e-mails primeiro, antes de qualquer outra trava**:
         // nenhum caminho toma trava de e-mail depois de clube ou turma, e por
         // isso não há ciclo (spec, "Ordem das travas"). São dois orçamentos
-        // sucessivos, declarados: até 2 s para os e-mails (o da função), e o
-        // de hoje, que `travarNivelDaEmpresa` grava em seguida, para o resto.
+        // sucessivos, declarados: até 5 s para os e-mails (o da função,
+        // `PRAZO_DA_TRAVA_DE_EMAIL_MS`), e o da importação
+        // (`PRAZO_DA_IMPORTACAO_MS`), que `travarNivelDaEmpresa` grava em
+        // seguida, para o resto.
         await travarEmailsParaCriarConta(tx, emails);
         const lote: LoteNovo = await naEtapa(
           'travas',
           travarNivelDaEmpresa(tx, companyId, 'lote-novo'),
         );
 
-        // DEF-040 — **do prazo de 2 s que a trava do clube acabou de fixar,
-        // as leituras levam três idas** (e o ajuste, a quarta) antes da
+        // DEF-040 — **do prazo que a trava do clube acabou de fixar, as
+        // leituras levam três instruções** (e o ajuste, a quarta) antes da
         // primeira escrita: as referenciadas com as contas dos e-mails, as
         // turmas, e os dados da conferência de turma. Eram dez; a 167 ms por
         // ida, a escrita chegava com 1 ms de prazo e o arquivo com turma
-        // levava 409 sem disputa nenhuma. O `spec-083-importacao.db-spec.ts`
-        // trava esse teto.
+        // levava 409 sem disputa nenhuma. O prazo é o da importação
+        // (`PRAZO_DA_IMPORTACAO_MS`), contado sobre um teto de instruções da
+        // trava ao `COMMIT`; o `spec-083-importacao.db-spec.ts` conta as
+        // instruções e trava os dois tetos.
         //
         // A conferência de conflito vem DEPOIS da trava do clube, não antes:
         // ainda sob a trava dos e-mails (que é o que a torna correta), e sem

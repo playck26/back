@@ -2565,20 +2565,53 @@ conta, pelo evento `query` do Prisma, as instruções da sessão entre a trava d
 clube e o `INSERT` de usuários (teto 4) e até o `ROLLBACK` de uma aula lotada
 achada sob a trava (teto 3).
 
-**Limite conhecido, medido e ainda aberto (R4 da validação, 2026-10-28): a
-conexão fria.** O gate acima conta **instruções**, não idas de rede. O Prisma
+**A conexão fria, e o prazo próprio da importação (DEF-040, decisão do Israel
+em 2026-10-28).** O gate acima conta **instruções**, não idas de rede. O Prisma
 6 (motor Rust, sem `driverAdapters`) prepara cada texto de SQL na primeira vez
 que ele roda numa conexão do pool — `Parse`/`Describe` numa ida, `Execute`
 noutra — e só depois guarda a instrução preparada naquela conexão. Na conexão
-fria, cada instrução sob a trava custa **duas** idas. A 167 ms por ida, com o
-Back recém-subido (pool frio), a importação com turma deu `409` em **6 de 6**
-(`INSERT` de `alunos` ou de `turma_alunos` com `statement_timeout` de 1 ms); com
-a conexão quente, `201`, e a folga na última escrita é de ~430 ms, não de
-0,7 s. Fechar isso sem mudar o prazo de 2 s exigiria aquecer as instruções
-antes das travas — o que toca as tabelas antes da trava do clube e contraria o
-que o FIT-057 (AC-047) afirma — ou fundir o ajuste às escritas, que muda a
-D3 da SPEC-083. As duas coisas são decisão, não conserto; o prazo de 4 s, só
-como medida, deu `201` em 5 de 5 frias.
+fria, cada instrução sob a trava custa **duas** idas. Com o prazo de 2 s da
+matrícula, a 167 ms por ida e o Back recém-subido, a importação com turma deu
+`409` em 6 de 6 (R4 da validação). **A importação tem agora prazo próprio**,
+`PRAZO_DA_IMPORTACAO_MS` em `src/people/importacao/prazo-da-importacao.ts`, no
+molde da SPEC-086: **2.000 ms de espera + 14 instruções × 335 ms = 6.690 ms**.
+As 14 são as da transação **da trava do clube ao `COMMIT`, inclusive**, no
+pior caminho (trava, referenciadas, turmas, dados da conferência, quatro
+escritas com o ajuste antes de cada uma, reposição, `COMMIT`); os 335 ms são o
+que a R4 mediu por instrução fria (duas idas de 167 ms). A margem está na
+contagem, declarada: o teto conta como fria e inteira toda instrução, e não
+são — o ajuste repetido já está preparado, e a trava, a reposição e o
+`COMMIT` não gastam prazo de escrita. Só o modo `lote-novo` da trava do clube
+(`nivel-efetivo.ts`) grava esse prazo; **a matrícula continua com 2 s**
+(`PRAZO_DA_MATRICULA_MS` não mudou). Travas, ordem, regras, mensagens e
+etapas não mudaram. O `timeout` da transação continua 20 s
+(`TIMEOUT_DA_IMPORTACAO_MS`), acima do pior caso de 13,36 s (BEGIN e trava de
+e-mail frios + 5 s da trava de e-mail + 6,69 s + 1 s de folga). Gates: o
+`spec-083-importacao.db-spec.ts` faz o pior caminho e **conta as instruções da
+trava ao `COMMIT`** (hoje 14, exatamente o teto; uma consulta a mais o deixa
+vermelho, e quem a acrescentar sobe o teto e o prazo junto);
+`src/people/importacao/prazo-da-importacao.spec.ts` amarra a conta, o
+`timeout` e o número que cada modo da trava manda ao `set_config`; e
+`test/banco/def-040-prazo-da-importacao.db-spec.ts` lê o prazo gravado na
+sessão, pela rota da matrícula (2 s) e pelo controller da importação (6,69 s).
+O FIT-057 (AC-045/AC-050) passou a ancorar o eixo da medição no **fim** do
+prazo (origem em `playck.prazo − 2 s`), e os números dele continuam dizendo a
+mesma distância do fim.
+
+**Prova local (CLI_AUDIT, não CI), 2026-10-28:** proxy de 75 ms por sentido
+(167 ms medidos por ida, mediana de `SELECT 1`), Postgres local com gatilho de
+20 ms por `INSERT` nas quatro tabelas, o arquivo do sintoma (Ana Maria em três
+turmas, Ana Julia em uma; 63 aulas futuras), um **Back novo por tentativa** e
+a frieza conferida no log do Postgres: a conexão da trava (`pg_backend_pid`) foi
+autorizada depois da subida daquele Back, e a trava foi a primeira vez daquele
+texto nela. **Sem convites: 201 em 8 de 8 frias**, 12 instruções da trava ao
+`COMMIT`, ~3,93 s de prazo sobrando na última escrita (`turma_alunos`).
+**Com convites (pior caminho): 201 em 4 de 4 frias**, 14 instruções, ~3,39 s
+sobrando na última escrita (`convites_de_acesso`). **Não provado em produção**:
+a latência do Neon é a medida de 167 ms, a escrita no Neon foi emulada pelo
+gatilho de 20 ms, e uma disputa real por travas consome o que sobrou do prazo.
+O preço da decisão também é medido, e não estimado: quem disputa com uma
+importação pode esperar por ela até 6,69 s em vez de 2 s.
 
 **Os gates**, por camada:
 
@@ -2589,6 +2622,8 @@ como medida, deu `201` em 5 de 5 frias.
 | `src/acesso/acesso.service.spec.ts`, `traduzir-violacao-de-unicidade.spec.ts` | situação, emissão, ativação; o tradutor |
 | `src/people/importacao/sem-bcrypt-na-transacao.spec.ts` | nenhum `bcrypt` começa dentro do callback do `$transaction` (AC-014, estrutural) |
 | `src/people/importacao/prazo-em-toda-escrita.spec.ts` | cada escrita vem depois do ajuste do prazo, nos dois ramos, e a reposição antes do `COMMIT` (AC-051) |
+| `src/people/importacao/prazo-da-importacao.spec.ts` | o prazo da importação é 2 s + teto × custo; o `timeout` cobre o pior caso; o `lote-novo` grava o prazo da importação e a `leitura` (matrícula), 2 s (DEF-040) |
+| `test/banco/def-040-prazo-da-importacao.db-spec.ts` | o prazo gravado na sessão: 2 s pela rota da matrícula, 6,69 s pelo controller da importação (DEF-040) |
 | `src/classes/escritores-de-matricula.spec.ts` | conhece a importação, com o modo `lote-novo` (AC-047) |
 | `src/acesso/trava-de-email.spec.ts` | `contaEmConflitoNaEmpresa` decide, conta a conta e com a chave nos dois estados, o mesmo que o filtro de `conflitoDeContasDaEmpresa` (DEF-040) |
 | `test/banco/spec-083-*.db-spec.ts` (cinco arquivos) | as constraints da tabela, a corrida do professor e o `meta` real do tradutor, a importação, a importação concorrente, a unicidade inesperada |

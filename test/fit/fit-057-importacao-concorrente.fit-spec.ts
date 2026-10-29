@@ -140,7 +140,7 @@ function conexao(app: string): PrismaClient {
 /**
  * Abre a conexão antes do caso: a primeira ida de um cliente novo custa a
  * conexão inteira (dezenas a centenas de ms nesta máquina), e esse tempo sairia
- * do prazo de 2 s da importação no meio das observações.
+ * do prazo da importação no meio das observações.
  */
 async function aquecer(...apps: string[]): Promise<void> {
   for (const app of apps) await conexao(app).$queryRaw`SELECT 1`;
@@ -223,7 +223,21 @@ function importarComSessao(
   return { pedido, sessao };
 }
 
-/** O início da medição: `playck.prazo − 2 s`, convertido pelo servidor. */
+/**
+ * A origem do eixo da medição: `playck.prazo − 2 s`, convertido pelo servidor.
+ *
+ * **O eixo é ancorado no FIM do prazo, e não no começo.** Os números do AC-045
+ * e do AC-050 (X solta a 1,5 s, desistência até 2,3 s, assinatura tardia a
+ * 3 s, Y até 6 s) foram escritos para o prazo de 2 s, quando o fim do prazo
+ * caía em 2 s. Desde o DEF-040 a importação tem prazo próprio
+ * (`PRAZO_DA_IMPORTACAO_MS`, 6,69 s); com a origem em `playck.prazo − 2 s`, os
+ * mesmos números continuam dizendo a mesma coisa: X solta 500 ms antes do fim
+ * do prazo, a desistência sai até 300 ms depois dele, e a S10/S12 (um prazo
+ * que recomeça na segunda espera) passa de 1 s depois dele. O tempo antes da
+ * origem — a importação já esperando X — fica em ms negativos, e o
+ * classificador só olha a ordem das amostras e o tempo depois da segunda
+ * espera.
+ */
 async function inicioDe(sessao: Sessao): Promise<number> {
   const [r] = await observador().$queryRaw<{ ms: number }[]>`
     SELECT (extract(epoch FROM ${sessao.prazo}::timestamptz) * 1000)::float8 AS ms`;

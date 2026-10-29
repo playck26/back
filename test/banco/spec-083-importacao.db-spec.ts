@@ -54,6 +54,7 @@ import type {
   RelatorioDeImportacaoDto,
 } from '../../src/people/importacao/dto/importacao-response.dto';
 import { mensagemDeNivelIncompativel } from '../../src/people/nivel-efetivo';
+import { MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO } from '../../src/people/importacao/prazo-da-importacao';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(240_000);
@@ -1292,6 +1293,71 @@ describe('DEF-040 — as instruções entre a trava do clube e a primeira escrit
       expect(sob.length).toBeLessThanOrEqual(TETO_ATE_A_ESCRITA);
     });
     expect(await db.turmaAluno.count({ where: { turmaId: a } })).toBe(3);
+  });
+
+  /**
+   * DEF-040 — **o teto em que o prazo da importação foi contado.** O prazo é
+   * 2 s + `MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO` × o custo de uma
+   * instrução fria (`prazo-da-importacao.ts`). Este caso faz o pior caminho —
+   * turma com aula futura, falta e reposição, e convite, para que as quatro
+   * escritas aconteçam — e conta as instruções da sessão da trava do clube
+   * ao `COMMIT`, os dois inclusive. Uma consulta a mais na transação passa do
+   * teto e deixa este caso vermelho: quem a acrescentar sobe o teto, e o
+   * prazo sobe junto.
+   */
+  it(`pior caminho (turma, aula futura, falta, reposição e convite): da trava do clube ao COMMIT, no máximo ${MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO} instruções`, async () => {
+    const a = await turma('DEF-040 pior A', { capacidade: 10 });
+    const b = await turma('DEF-040 pior B', { capacidade: 10 });
+    const c = await turma('DEF-040 pior C', { capacidade: 10 });
+    const aulaA = await aulaFutura(a, emDias(3));
+    await aulaFutura(b, emDias(4));
+    await aulaFutura(c, emDias(5));
+    await reposicaoMarcada(aulaA, c);
+    const membro = await alunoExistente();
+    await matricular(a, membro);
+    await q(
+      `INSERT INTO faltas_avisadas (id,company_id,ocupacao_id,aluno_id,updated_at) VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,now())`,
+      EMPRESA,
+      aulaA,
+      membro,
+    );
+    const csv = [
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Ana;${email('d040p')};;Iniciante;DEF-040 pior A;DEF-040 pior B;DEF-040 pior C`,
+      `Beto;${email('d040p')};;Iniciante;DEF-040 pior A;;`,
+    ].join('\r\n');
+
+    await comClienteQueConta(async (cliente, idas) => {
+      const { r } = await pelaRota(csv, { cliente, convidar: '2' });
+      expect(r.status).toBe(200);
+      const trava = idas.findIndex((i) =>
+        i.includes('pg_advisory_xact_lock_shared'),
+      );
+      expect(trava).toBeGreaterThanOrEqual(0);
+      const commit = idas.findIndex((i, k) => k > trava && /^COMMIT/.test(i));
+      expect(commit).toBeGreaterThan(trava);
+      const sob = idas.slice(trava, commit + 1);
+      console.log(
+        `DEF040_IDAS da_trava_ao_commit=${sob.length} teto=${MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO}\n${sob.map(resumo).join('\n')}`,
+      );
+      // É o pior caminho: as quatro escritas estão nele.
+      for (const tabela of [
+        'usuarios',
+        'alunos',
+        'turma_alunos',
+        'convites_de_acesso',
+      ]) {
+        expect({
+          tabela,
+          escrita: sob.some((i) => i.includes(`INSERT INTO ${tabela} `)),
+        }).toEqual({ tabela, escrita: true });
+      }
+      expect(sob.length).toBeLessThanOrEqual(
+        MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO,
+      );
+    });
+    expect(await db.turmaAluno.count({ where: { turmaId: a } })).toBe(3);
+    expect((await contarTudo()).convites).toBe(1);
   });
 
   it(`aula lotada achada só sob a trava, com busca binária: no máximo ${TETO_ATE_A_RECUSA} instruções até o ROLLBACK`, async () => {
