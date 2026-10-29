@@ -53,11 +53,7 @@ import type {
   ImportacaoConcluidaDto,
   RelatorioDeImportacaoDto,
 } from '../../src/people/importacao/dto/importacao-response.dto';
-import {
-  mensagemDeNivelIncompativel,
-  primeiroNivel,
-  sqlDoPrimeiroNivel,
-} from '../../src/people/nivel-efetivo';
+import { mensagemDeNivelIncompativel } from '../../src/people/nivel-efetivo';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 
 jest.setTimeout(240_000);
@@ -1431,16 +1427,65 @@ describe('DEF-040 — a conferência sob a trava, dado por dado', () => {
     expect(r.status).toBe(200);
     expect(await db.turmaAluno.count({ where: { turmaId: t } })).toBe(1);
   });
+
+  // R4 da validação do DEF-040 — **a chave de nível vale como lida SOB a
+  // trava**, e não como a conferência de fora a viu. Nenhum teste mudava a
+  // chave entre as duas passadas, e um `regraDeNivel(false)` (ou o valor de
+  // fora reaproveitado) na leitura única passava verde. O `UPDATE` da outra
+  // conexão não espera: o `FOR KEY SHARE` da empresa não bloqueia a troca de
+  // uma coluna que não é chave.
+  it('a chave de nível ligada depois da conferência recusa sob a trava o que a conferência aceitou', async () => {
+    await turma('DEF-040 chave', { nivel: INICIANTE });
+    await q(
+      `UPDATE empresas SET nivel_restringe_acesso = false WHERE id = '${EMPRESA}'`,
+    );
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;${email('chave')};;Intermediário;;DEF-040 chave;\r\n`;
+    // Com a chave desligada, a conferência de fora aceita a linha.
+    expect(
+      corpoDe<RelatorioDeImportacaoDto>(
+        (await pelaRota(csv, { conferir: true })).r,
+      ).erros,
+    ).toEqual([]);
+    const antes = await contarTudo();
+    let ligou = false;
+
+    const { r } = await pelaRota(csv, {
+      ganchos: {
+        aoTravar: async () => {
+          await q(
+            `UPDATE empresas SET nivel_restringe_acesso = true WHERE id = '${EMPRESA}'`,
+          );
+          ligou = true;
+        },
+      },
+    });
+
+    expect(ligou).toBe(true);
+    expect(r.status).toBe(422);
+    expect(relatorioDo422(r).erros).toEqual([
+      {
+        linha: 2,
+        coluna: 'turma 2',
+        mensagem: mensagemDeNivelIncompativel('gestor', 'Iniciante', {
+          id: INTERMEDIARIO,
+          nome: 'Intermediário',
+          doPrimeiro: false,
+        }),
+      },
+    ]);
+    expect(await contarTudo()).toEqual(antes);
+  });
 });
 
 /**
  * DEF-040 — **as formas SQL da leitura única concordam com as do Prisma.** A
- * conferência de fora pergunta pelo Prisma (`filtroDasAulasFuturas`,
- * `primeiroNivel`); a de dentro da transação, pelo SQL ao lado delas
- * (`sqlDasAulasFuturas`, `sqlDoPrimeiroNivel`). Uma divergência faria a
- * importação recusar sob a trava o que o relatório aceitou, ou o contrário —
- * e nos cantos: a aula que termina exatamente agora, a de hoje que já passou,
- * a cancelada, os empates de `ordem` e de `created_at` do primeiro nível.
+ * conferência de fora pergunta pelo Prisma (`filtroDasAulasFuturas`); a de
+ * dentro da transação, pelo SQL ao lado dela (`sqlDasAulasFuturas`). Uma
+ * divergência faria a importação recusar sob a trava o que o relatório
+ * aceitou, ou o contrário — e nos cantos: a aula que termina exatamente
+ * agora, a de hoje que já passou, a cancelada. (O primeiro nível não é mais
+ * lido sob a trava — R4 da validação: a linha sem nível não chega lá desde a
+ * SPEC-091/D2.)
  */
 describe('DEF-040 — as formas SQL concordam com as do Prisma', () => {
   async function aulaEm(
@@ -1509,37 +1554,5 @@ describe('DEF-040 — as formas SQL concordam com as do Prisma', () => {
       'depois de amanhã',
     ]);
     expect(peloSql).toEqual(peloPrisma);
-  });
-
-  it('primeiro nível: o mesmo, com empate de `ordem` e de `created_at`', async () => {
-    const sqlEscolhe = async () =>
-      (
-        await db.$queryRaw<{ p: { id: string; nome: string } | null }[]>`
-          SELECT (${sqlDoPrimeiroNivel(EMPRESA)}) AS p`
-      )[0].p;
-    const mesmoInstante = '2026-01-01 10:00:00';
-    // Três níveis de ordem 0, à frente dos da fixture (1 e 2): dois no
-    // mesmo instante, e o de id menor criado depois do maior.
-    await q(
-      `INSERT INTO niveis (id,company_id,nome,ordem,created_at) VALUES
-         ('${base}f3','${EMPRESA}','Zero tarde',0,'2026-01-02 10:00:00'),
-         ('${base}f2','${EMPRESA}','Zero id maior',0,'${mesmoInstante}'),
-         ('${base}f1','${EMPRESA}','Zero id menor',0,'${mesmoInstante}')`,
-    );
-    for (const esperado of [
-      'Zero id menor',
-      'Zero id maior',
-      'Zero tarde',
-      'Iniciante',
-    ]) {
-      const prisma = await primeiroNivel(db, EMPRESA);
-      expect(prisma?.nome).toBe(esperado);
-      expect(await sqlEscolhe()).toEqual(prisma);
-      await q(
-        `DELETE FROM niveis WHERE company_id = $1::uuid AND nome = $2`,
-        EMPRESA,
-        esperado,
-      );
-    }
   });
 });

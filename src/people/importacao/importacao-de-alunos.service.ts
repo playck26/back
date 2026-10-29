@@ -66,7 +66,6 @@ import {
   regraDeNivel,
   regraDeNivelDoLote,
   primeiroNivel,
-  sqlDoPrimeiroNivel,
   travarNivelDaEmpresa,
   type LoteNovo,
   type NivelEfetivo,
@@ -731,15 +730,21 @@ export const MARCADOR_DOS_DADOS_SOB_A_TRAVA =
 /**
  * DEF-040 — **tudo o que a conferência de turma lê sob as travas, numa
  * instrução só**, depois do `FOR UPDATE` das turmas: os matriculados de cada
- * turma (e daí os alocados), a chave de nível do clube, o primeiro nível, as
- * aulas futuras e as faltas e reposições delas.
+ * turma (e daí os alocados), a chave de nível do clube, as aulas futuras e
+ * as faltas e reposições delas.
  *
  * **O banco só devolve dados** (JSON), e nenhuma regra: a ocupação é a
  * `calcularOcupacao` de sempre, montada pelos mesmos `montarConjuntos` e
  * `primeirasAulasQueLotariam`; a regra de nível é a `regraDeNivel`. As formas
- * SQL do que é "aula futura" e "primeiro nível" moram ao lado das formas do
- * Prisma (`sqlDasAulasFuturas`, `sqlDoPrimeiroNivel`), e o teste de banco
- * confere que concordam.
+ * SQL do que é "aula futura" mora ao lado da forma do Prisma
+ * (`sqlDasAulasFuturas`), e o teste de banco confere que concordam.
+ *
+ * **O primeiro nível não é lido aqui** (R4 da validação do DEF-040): ele só
+ * serve à linha SEM nível, e essa linha não chega à transação desde a
+ * SPEC-091/D2 — o nível vazio é recusado na conferência ("O nível é
+ * obrigatório."). Lê-lo sob a trava era código morto, que nenhum teste
+ * conseguia exercitar. `escreverNaTransacao` afirma a premissa antes de
+ * abrir a transação.
  *
  * Eram seis a nove idas (contagem, chave, primeiro nível, aulas e três
  * conjuntos, mais quatro por passo da busca binária), todas descontadas do
@@ -754,7 +759,6 @@ async function lerDadosSobATrava(
   const [linha] = await tx.$queryRaw<
     {
       restringe: boolean | null;
-      primeiro: { id: string; nome: string } | null;
       matriculas: { turmaId: string; alunoId: string }[];
       aulas: { id: string; data: string; turmaId: string }[];
       faltas: { ocupacaoId: string; alunoId: string }[];
@@ -770,7 +774,6 @@ async function lerDadosSobATrava(
     SELECT
       (SELECT e.nivel_restringe_acesso FROM empresas e
         WHERE e.id = ${companyId}::uuid) AS restringe,
-      (${sqlDoPrimeiroNivel(companyId)}) AS primeiro,
       (SELECT coalesce(json_agg(json_build_object(
                 'turmaId', ta.turma_id, 'alunoId', ta.aluno_id)), '[]'::json)
          FROM turma_alunos ta
@@ -817,7 +820,9 @@ async function lerDadosSobATrava(
     dados: {
       // Empresa inexistente responde "restringe", como `nivelRestringe`.
       podeEntrar: regraDeNivel(linha.restringe ?? true),
-      primeiro: linha.primeiro,
+      // Nenhuma linha sem nível chega aqui (SPEC-091/D2; a premissa é
+      // afirmada em `escreverNaTransacao`).
+      primeiro: null,
       aulas: {
         futuras,
         conjuntos: montarConjuntos(
@@ -1500,6 +1505,14 @@ export class ImportacaoDeAlunosService {
     linhas: readonly LinhaParaEscrever[],
     nomesDosNiveis: ReadonlyMap<string, string>,
   ): Promise<string> {
+    // SPEC-091/D2 — o nível é obrigatório, e a conferência recusa o vazio. A
+    // conferência sob a trava parte disso (não lê o primeiro nível): uma
+    // linha sem nível aqui é defeito de programação, e não recusa ao gestor.
+    if (linhas.some((l) => !l.linha.nivelId)) {
+      throw new Error(
+        'importação: uma linha sem nível chegou à transação (a conferência a recusa, SPEC-091/D2)',
+      );
+    }
     const nivelIds = [
       ...new Set(
         linhas.flatMap((l) => (l.linha.nivelId ? [l.linha.nivelId] : [])),

@@ -127,7 +127,7 @@ function montar(
   /**
    * DEF-040 — a instrução dos dados sob a trava, respondida pelos MESMOS
    * dublês de leitura de antes (o `groupBy` dos alocados, a chave do clube,
-   * o primeiro nível, as aulas e os conjuntos), na forma JSON que o banco
+   * as aulas e os conjuntos), na forma JSON que o banco
    * devolve. Os casos que programam o `groupBy` em sequência (fora, sob a
    * trava, refeita) continuam valendo: a 2ª chamada é a de sob a trava.
    */
@@ -138,10 +138,6 @@ function montar(
     }[];
     const empresa = (await leitorDeTurma.empresa.findUnique()) as {
       nivelRestringeAcesso: boolean;
-    } | null;
-    const primeiro = (await leitorDeTurma.nivel.findFirst()) as {
-      id: string;
-      nome: string;
     } | null;
     const aulas = (await leitorDeTurma.ocupacaoQuadra.findMany()) as {
       id: string;
@@ -159,7 +155,6 @@ function montar(
     return [
       {
         restringe: empresa?.nivelRestringeAcesso ?? null,
-        primeiro,
         // Um matriculado por alocado, com id de dublê: só a contagem importa.
         matriculas: grupos
           .filter((g) => turmaIds.includes(g.turmaId))
@@ -2012,5 +2007,59 @@ describe('SPEC-086/E6 — o e-mail por empresa na importação', () => {
         contaCasaComFiltro(c, filtroDaEmpresa({ in: [EMAIL, LIVRE] }, 'c1')),
       ),
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * R4 da validação do DEF-040 — **o primeiro nível não é lido sob a trava.**
+ * Ele só serve à linha sem nível, e ela não chega à transação desde a
+ * SPEC-091/D2 (a conferência recusa o vazio). Lê-lo ali era código morto: as
+ * sabotagens que o anulavam passavam verdes. A premissa passou a ser
+ * afirmada antes da transação abrir.
+ */
+describe('DEF-040 (R4) — a leitura sob a trava sem o primeiro nível', () => {
+  const COM_TURMA = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna;r4@x.com;;Iniciante;Terça;;\r\n`;
+
+  it('a instrução dos dados sob a trava não consulta `niveis`', async () => {
+    const m = montar({
+      turmas: [{ id: 't1', nome: 'Terça', capacidade: 10, nivelId: 'n1' }],
+    });
+    await m.servico.importar('c1', COM_TURMA, { gestorId: GESTOR });
+    const leitura = m.instrucoes.filter((i) =>
+      i.sql.includes(MARCADOR_DOS_DADOS_SOB_A_TRAVA),
+    );
+    expect(leitura).toHaveLength(1);
+    expect(leitura[0].sql).not.toMatch(/\bniveis\b/);
+  });
+
+  it('uma linha sem nível que chegasse à transação é defeito: lança antes de abri-la', async () => {
+    const m = montar();
+    const alvo = m.servico as unknown as {
+      escreverNaTransacao(
+        companyId: string,
+        gestorId: string,
+        linhas: readonly unknown[],
+        nomesDosNiveis: ReadonlyMap<string, string>,
+      ): Promise<string>;
+    };
+    const semNivel = {
+      linha: {
+        linha: 2,
+        nome: 'Ana',
+        email: 'r4@x.com',
+        telefone: null,
+        nivelId: null,
+        turmas: [],
+      },
+      usuarioId: 'u1',
+      alunoId: 'a1',
+      senhaHash: 'h',
+      senha: 'pck-x',
+      convite: null,
+    };
+    await expect(
+      alvo.escreverNaTransacao('c1', GESTOR, [semNivel], new Map()),
+    ).rejects.toThrow(/linha sem nível chegou à transação/);
+    expect(m.prisma.$transaction).not.toHaveBeenCalled();
   });
 });

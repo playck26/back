@@ -95,22 +95,6 @@ export async function primeiroNivel(
 }
 
 /**
- * `primeiroNivel` como subconsulta SQL, que devolve `{ id, nome }` em JSON (ou
- * nulo, sem nível) — para quem lê o primeiro nível junto com outras coisas
- * numa instrução só (DEF-040, a importação sob a trava). **A mesma ordem**,
- * coluna por coluna: `ordem`, `created_at`, `id`. O
- * `spec-083-importacao.db-spec.ts` confere, com empates de `ordem` e de
- * `created_at`, que as duas formas escolhem o mesmo nível.
- */
-export function sqlDoPrimeiroNivel(companyId: string): Prisma.Sql {
-  return Prisma.sql`SELECT json_build_object('id', n.id, 'nome', n.nome)
-                      FROM niveis n
-                     WHERE n.company_id = ${companyId}::uuid
-                     ORDER BY n.ordem, n.created_at, n.id
-                     LIMIT 1`;
-}
-
-/**
  * D1 — **o nível efetivo do aluno**: o dele, ou o primeiro da empresa, ou
  * nenhum. Resolvido na hora, e **nunca gravado** no aluno: reordenar os níveis
  * muda quem é o primeiro, e gravar congelaria uma ordem que o gestor já mudou.

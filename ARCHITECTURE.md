@@ -2549,19 +2549,36 @@ travas não mudaram; as leituras foram juntadas: **(1)** as referenciadas em
 `conflitoDeContasDaEmpresa` em `trava-de-email.ts`, decide o conflito);
 **(2)** o `FOR UPDATE` das turmas, sozinho; **(3)** `lerDadosSobATrava`, uma
 instrução que devolve **dados em JSON** — matriculados (e daí os alocados),
-`nivel_restringe_acesso`, o primeiro nível, as aulas futuras e as faltas e
-reposições delas. **A regra continua em TypeScript**: os conjuntos saem de
+`nivel_restringe_acesso`, as aulas futuras e as faltas e reposições delas.
+**A regra continua em TypeScript**: os conjuntos saem de
 `montarConjuntos` e a lotação de `primeirasAulasQueLotariam` (as metades sem
 banco de `carregarConjuntos` e `aulasQueAMatriculaLotaria`, em
 `ocupacao-da-ocorrencia.ts`), e a regra de nível de `regraDeNivel`. A busca
-binária da aula lotada não vai mais ao banco em passo nenhum. As formas SQL de
-"aula futura" e de "primeiro nível" (`sqlDasAulasFuturas`,
-`sqlDoPrimeiroNivel`) moram ao lado das do Prisma, e um teste de banco confere
-que concordam nos cantos. A conferência de fora usa as mesmas funções puras,
+binária da aula lotada não vai mais ao banco em passo nenhum. A forma SQL de
+"aula futura" (`sqlDasAulasFuturas`) mora ao lado da do Prisma, e um teste de
+banco confere que concordam nos cantos. **O primeiro nível não é lido sob a
+trava**: só serve à linha sem nível, que não chega à transação desde a
+SPEC-091/D2; `escreverNaTransacao` afirma a premissa (lança `Error` antes de
+abrir a transação). A conferência de fora usa as mesmas funções puras,
 com os dados lidos pelo Prisma. Gate: o `spec-083-importacao.db-spec.ts`
 conta, pelo evento `query` do Prisma, as instruções da sessão entre a trava do
 clube e o `INSERT` de usuários (teto 4) e até o `ROLLBACK` de uma aula lotada
 achada sob a trava (teto 3).
+
+**Limite conhecido, medido e ainda aberto (R4 da validação, 2026-10-28): a
+conexão fria.** O gate acima conta **instruções**, não idas de rede. O Prisma
+6 (motor Rust, sem `driverAdapters`) prepara cada texto de SQL na primeira vez
+que ele roda numa conexão do pool — `Parse`/`Describe` numa ida, `Execute`
+noutra — e só depois guarda a instrução preparada naquela conexão. Na conexão
+fria, cada instrução sob a trava custa **duas** idas. A 167 ms por ida, com o
+Back recém-subido (pool frio), a importação com turma deu `409` em **6 de 6**
+(`INSERT` de `alunos` ou de `turma_alunos` com `statement_timeout` de 1 ms); com
+a conexão quente, `201`, e a folga na última escrita é de ~430 ms, não de
+0,7 s. Fechar isso sem mudar o prazo de 2 s exigiria aquecer as instruções
+antes das travas — o que toca as tabelas antes da trava do clube e contraria o
+que o FIT-057 (AC-047) afirma — ou fundir o ajuste às escritas, que muda a
+D3 da SPEC-083. As duas coisas são decisão, não conserto; o prazo de 4 s, só
+como medida, deu `201` em 5 de 5 frias.
 
 **Os gates**, por camada:
 
