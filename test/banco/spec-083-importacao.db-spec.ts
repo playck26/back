@@ -31,7 +31,14 @@ import * as bcrypt from 'bcrypt';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { cancelarOcupacaoNaFixture } from './cancelar-ocupacao';
 import { limparEmpresa } from './limpar-empresa';
-import { resposta, type Resposta, I6 } from './spec-082-fixture';
+import {
+  linhaEmForUpdate,
+  resposta,
+  segurar,
+  type Resposta,
+  I6,
+} from './spec-082-fixture';
+import { MENSAGEM_SERVIDOR_OCUPADO } from '../../src/common/erros/erro-transitorio';
 import { AcessoService } from '../../src/acesso/acesso.service';
 import type { AccessTokenPayload } from '../../src/common/types/jwt-payload.type';
 import { SENHA_TEMPORARIA_VALIDADE_MS } from '../../src/common/utils/senha-temporaria';
@@ -1620,5 +1627,63 @@ describe('DEF-040 — as formas SQL concordam com as do Prisma', () => {
       'depois de amanhã',
     ]);
     expect(peloSql).toEqual(peloPrisma);
+  });
+});
+
+/**
+ * DEF-040/D4 (decisão do Israel, 2026-10-29) — **o 503 de quem espera o mesmo
+ * e-mail atrás de uma importação é aceito**. Com o prazo próprio (6.690 ms), a
+ * importação pode segurar a trava de e-mail por mais que os 5 s de quem espera.
+ * A segunda importação do MESMO arquivo, sem cadastro manual nenhum, recebe
+ * 503 `SERVIDOR_OCUPADO` ("tente de novo"), não grava nada, e a nova tentativa
+ * dá a resposta certa. Este teste fixa as três coisas, para que uma mudança
+ * futura no comportamento seja uma decisão, e não um acidente.
+ */
+describe('DEF-040/D4 — duas importações do mesmo arquivo: a segunda leva 503 e a nova tentativa passa', () => {
+  it('a primeira espera a turma além de 5 s; a segunda leva 503 sem gravar; repetida, importa', async () => {
+    const t = await turma('Espera do D4', { capacidade: 10 });
+    const csv = `nome;email;telefone;nivel;turma 1;turma 2;turma 3\r\nAna D4;${email('d4')};;Iniciante;Espera do D4;;`;
+
+    const soltarTurma = await segurar(db, linhaEmForUpdate('turmas', t));
+    let segunda: Promise<Resposta> | null = null;
+    let primeira: Resposta;
+    try {
+      primeira = (
+        await pelaRota(csv, {
+          ganchos: {
+            // A primeira já tem a trava de e-mail e a do clube: a segunda,
+            // do mesmo arquivo, fica na fila do mesmo e-mail.
+            aoTravar: () => {
+              segunda = pelaRota(csv).then(({ r }) => r);
+              return Promise.resolve();
+            },
+          },
+        })
+      ).r;
+    } finally {
+      await soltarTurma();
+    }
+
+    expect(primeira.status).toBe(409);
+    expect(segunda).not.toBeNull();
+    const r2 = await segunda!;
+    expect(r2.status).toBe(503);
+    expect(r2.code).toBe('SERVIDOR_OCUPADO');
+    expect(r2.message).toBe(MENSAGEM_SERVIDOR_OCUPADO);
+    expect(await contarTudo()).toEqual({
+      usuarios: 0,
+      alunos: 0,
+      matriculas: 0,
+      convites: 0,
+    });
+
+    // A nova tentativa, sem ninguém na frente, dá a resposta certa.
+    const { r: r3 } = await pelaRota(csv);
+    expect(r3.status).toBe(200);
+    expect(await contarTudo()).toMatchObject({
+      usuarios: 1,
+      alunos: 1,
+      matriculas: 1,
+    });
   });
 });
