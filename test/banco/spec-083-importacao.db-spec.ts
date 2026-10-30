@@ -63,6 +63,9 @@ import type {
 import { mensagemDeNivelIncompativel } from '../../src/people/nivel-efetivo';
 import { MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO } from '../../src/people/importacao/prazo-da-importacao';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import type { LogoDaEmpresaService } from '../../src/companies/logo-da-empresa.service';
+import { MeCompanyController } from '../../src/companies/me-company.controller';
+import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 
 jest.setTimeout(240_000);
 exigirBancoLocal();
@@ -106,7 +109,9 @@ function emDias(dias: number): string {
 
 async function montarEmpresas(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','Clube SPEC-083 Importacao','spec-083-imp-${EMPRESA}',now())`,
+    // SPEC-093/D4 — a chave de nível LIGADA de propósito: o clube nasce
+    // liberado desde a SPEC-093, e os casos de nível contam com a regra.
+    `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${EMPRESA}','Clube SPEC-083 Importacao','spec-083-imp-${EMPRESA}',now(),true)`,
   );
   // Dois níveis, e o primeiro é Iniciante (INV-075c): a linha sem nível conta
   // como ele, e a turma de Intermediário recusa a linha sem nível (I4).
@@ -125,7 +130,7 @@ async function montarEmpresas(): Promise<void> {
 
   // A outra empresa, com uma turma de nome que o arquivo vai citar (AC-008).
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA_B}','Outro clube SPEC-083','spec-083-imp-${EMPRESA_B}',now())`,
+    `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${EMPRESA_B}','Outro clube SPEC-083','spec-083-imp-${EMPRESA_B}',now(),true)`,
   );
   await q(
     `INSERT INTO niveis (id,company_id,nome,ordem) VALUES ('${NIVEL_B}','${EMPRESA_B}','Iniciante',1)`,
@@ -544,6 +549,36 @@ describe('SPEC-089/AC-007 — clube que não restringe por nível: a importaçã
     expect(corpoDe<ImportacaoConcluidaDto>(r).criados).toHaveLength(3);
     expect(await db.turmaAluno.count({ where: { turmaId: ini } })).toBe(2);
     expect(await db.turmaAluno.count({ where: { turmaId: int } })).toBe(1);
+  });
+});
+
+describe('SPEC-093/AC-002 — a chave trocada pelo gestor vale na próxima importação', () => {
+  const trocar = (nivelRestringeAcesso: boolean) =>
+    new MeCompanyController(
+      db as unknown as PrismaService,
+      {
+        resolver: () => ({ logoUrl: null }),
+      } as unknown as LogoDaEmpresaService,
+      new ConfigOperacaoService(db as unknown as PrismaService),
+    ).atualizarMinhaEmpresa(GESTOR_DO_TOKEN, { nivelRestringeAcesso });
+
+  it('ligada recusa por nível; desligada pelo `PATCH`, o mesmo arquivo entra', async () => {
+    const ini = await turma('Iniciantes 093', { nivel: INICIANTE });
+    const csv = [
+      'nome;email;telefone;nivel;turma 1;turma 2;turma 3',
+      `Ana;${email('ana093')};;Intermediário;Iniciantes 093;;`,
+    ].join('\r\n');
+
+    const ligada = await pelaRota(csv);
+    expect(ligada.r.status).toBe(422);
+    expect(relatorioDo422(ligada.r).erros.map((e) => e.coluna)).toEqual([
+      'turma 1',
+    ]);
+
+    await trocar(false);
+    const desligada = await pelaRota(csv);
+    expect(desligada.r.status).toBe(200);
+    expect(await db.turmaAluno.count({ where: { turmaId: ini } })).toBe(1);
   });
 });
 

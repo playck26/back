@@ -192,7 +192,9 @@ async function montar(): Promise<void> {
     [EMPRESA_SEM, 'sem nivel'],
   ] as const) {
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${emp}','SPEC-075 ${nome}','spec-075-${emp}',now())`,
+      // SPEC-093/D4 — a chave de nível LIGADA de propósito: desde a SPEC-093 o
+      // clube nasce liberado, e esta suíte prova a regra ligada.
+      `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${emp}','SPEC-075 ${nome}','spec-075-${emp}',now(),true)`,
     );
     await q(
       `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${emp}','Tenis',0,now())`,
@@ -256,7 +258,7 @@ describe('AC-001 a AC-003 — o nível efetivo', () => {
   describe('AC-002 — o primeiro nível, pelas três chaves (INV-075c)', () => {
     beforeEach(async () => {
       await q(
-        `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA_ORD}','SPEC-075 ordem','spec-075-${EMPRESA_ORD}',now())`,
+        `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${EMPRESA_ORD}','SPEC-075 ordem','spec-075-${EMPRESA_ORD}',now(),true)`,
       );
     });
     const nivel = (id: string, nome: string, ordem: number, criado: string) =>

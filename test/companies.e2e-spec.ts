@@ -7,6 +7,7 @@ import {
   loginAndGetTokens,
   SENHA_VALIDA,
 } from './utils/auth-helpers';
+import { TERMO_VERSAO_VIGENTE } from '../src/aceites/termo-vigente';
 import { createTestApp } from './utils/create-test-app';
 import { bodyOf } from './utils/http';
 import { buildPrismaMock, type PrismaMock } from './utils/prisma-mock';
@@ -400,6 +401,108 @@ describe('Companies (e2e) - TEST-002', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ permiteAutoCadastro: 'talvez' })
         .expect(400);
+    });
+  });
+  // SPEC-093/D2 e D5 — a restrição de nível da SPEC-089, que só mudava por
+  // SQL, passa a ser trocada pelo gestor no mesmo `PATCH`. O clube sai do
+  // token (AC-003); quem não é `company_admin` não escreve.
+  describe('PATCH /api/v1/me/company — restrição de nível (SPEC-093)', () => {
+    it('company_admin liga e desliga, e só esse campo é escrito', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+      prisma.empresa.updateMany.mockResolvedValue({ count: 1 });
+
+      for (const valor of [true, false]) {
+        prisma.empresa.findUnique.mockResolvedValue({
+          nome: 'Clube Teste',
+          slug: 'clube-teste',
+          logoUrl: null,
+          status: 'ativa',
+          permiteAutoCadastro: true,
+          nivelRestringeAcesso: valor,
+        });
+        const res = await request(app.getHttpServer())
+          .patch('/api/v1/me/company')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ nivelRestringeAcesso: valor })
+          .expect(200);
+
+        expect(
+          bodyOf<{ nivelRestringeAcesso: boolean }>(res).nivelRestringeAcesso,
+        ).toBe(valor);
+        expect(prisma.empresa.updateMany).toHaveBeenLastCalledWith({
+          where: { id: COMPANY_ID },
+          data: { nivelRestringeAcesso: valor },
+        });
+      }
+    });
+
+    it('um id de outro clube no corpo não muda o alvo: o clube sai do token', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+      prisma.empresa.updateMany.mockResolvedValue({ count: 1 });
+      prisma.empresa.findUnique.mockResolvedValue({
+        nome: 'Clube Teste',
+        slug: 'clube-teste',
+        logoUrl: null,
+        status: 'ativa',
+        permiteAutoCadastro: true,
+        nivelRestringeAcesso: true,
+      });
+
+      // O `ValidationPipe` recusa campo que o DTO não declara.
+      await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ nivelRestringeAcesso: true, id: OUTRA_COMPANY_ID })
+        .expect(400);
+      expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each(['professor', 'aluno', 'super_admin'] as const)(
+      '%s recebe 403 e nada é escrito',
+      async (role) => {
+        // Termo em dia e clube sem contrato: sem isso, professor e aluno
+        // levariam o 403 `ACEITE_PENDENTE` do `JwtAuthGuard`, e o teste
+        // passaria mesmo com a rota aberta a eles (sabotagem S4 da SPEC-093).
+        const usuario = {
+          ...(await buildUsuarioAtivo({
+            id: `u-${role}`,
+            email: `${role}@empresa.demo`,
+            role,
+            companyId: role === 'super_admin' ? null : COMPANY_ID,
+          })),
+          termoVersaoAceita: TERMO_VERSAO_VIGENTE,
+          contratoVersaoAceita: null,
+        };
+        const { accessToken } = await loginAndGetTokens(app, prisma, usuario);
+
+        const res = await request(app.getHttpServer())
+          .patch('/api/v1/me/company')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ nivelRestringeAcesso: true })
+          .expect(403);
+        // O 403 é o do `RolesGuard` (sem `code`), e não o de outro portão.
+        expect(res.body).toEqual({ message: 'Forbidden', statusCode: 403 });
+        expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('sem token recebe 401', async () => {
+      await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .send({ nivelRestringeAcesso: true })
+        .expect(401);
+      expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('valor que não é booleano recebe 400', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+
+      await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ nivelRestringeAcesso: 'sim' })
+        .expect(400);
+      expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
     });
   });
   // SPEC-016 — recuperação de senha do gestor. O que a suíte prova aqui é a

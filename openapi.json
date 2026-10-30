@@ -9466,6 +9466,10 @@
             "minimum": 1,
             "example": 2,
             "description": "Quantas turmas um aluno pode entrar por conta própria. `null` = sem limite. Vale para ENTRAR, nunca para expulsar (INV-023a): baixar o limite não tira ninguém de turma em que já está."
+          },
+          "nivelRestringeAcesso": {
+            "type": "boolean",
+            "description": "SPEC-093 — liga (`true`) ou desliga (`false`) a restrição de nível: ligada, cada aluno só entra nas turmas do seu nível; desligada, o nível é só um rótulo. Vale para entrar, nunca para expulsar (SPEC-089/D2): ligar não tira ninguém de turma."
           }
         }
       },

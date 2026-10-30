@@ -146,12 +146,18 @@ export class MeCompanyController {
     const dados: {
       permiteAutoCadastro?: boolean;
       limiteTurmasPorAluno?: number | null;
+      nivelRestringeAcesso?: boolean;
     } = {};
     if (dto.permiteAutoCadastro !== undefined) {
       dados.permiteAutoCadastro = dto.permiteAutoCadastro;
     }
     if (dto.limiteTurmasPorAluno !== undefined) {
       dados.limiteTurmasPorAluno = dto.limiteTurmasPorAluno;
+    }
+    // SPEC-093/D2 — a chave da SPEC-089, que antes só mudava por SQL. A regra
+    // não muda: quem a lê é o `nivelRestringe`, a cada gesto, sem cache (D3).
+    if (dto.nivelRestringeAcesso !== undefined) {
+      dados.nivelRestringeAcesso = dto.nivelRestringeAcesso;
     }
     // Corpo vazio é engano de chamada, não "não mude nada": deixar passar
     // devolveria 200 para quem acha que salvou algo.
