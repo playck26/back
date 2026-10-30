@@ -494,6 +494,60 @@ describe('Companies (e2e) - TEST-002', () => {
       expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
     });
 
+    // A1 da validação independente: `null` atravessava o `@IsOptional()` e o
+    // Prisma recusava com 500. Vale para os dois booleanos do DTO, sozinhos ou
+    // ao lado de um campo válido — e nada chega ao `updateMany`.
+    it.each([
+      ['nivelRestringeAcesso null', { nivelRestringeAcesso: null }],
+      [
+        'nivelRestringeAcesso null com campos válidos',
+        {
+          nivelRestringeAcesso: null,
+          permiteAutoCadastro: true,
+          limiteTurmasPorAluno: 2,
+        },
+      ],
+      ['permiteAutoCadastro null', { permiteAutoCadastro: null }],
+      [
+        'permiteAutoCadastro null com campo válido',
+        { permiteAutoCadastro: null, nivelRestringeAcesso: true },
+      ],
+    ])('%s recebe 400 e nada é escrito', async (_nome, corpo) => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+
+      const res = await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(corpo)
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/boolean/);
+      expect(prisma.empresa.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('`limiteTurmasPorAluno: null` continua aceito (é "sem limite")', async () => {
+      const accessToken = await loginCompanyAdmin(app, prisma);
+      prisma.empresa.updateMany.mockResolvedValue({ count: 1 });
+      prisma.empresa.findUnique.mockResolvedValue({
+        nome: 'Clube Teste',
+        slug: 'clube-teste',
+        logoUrl: null,
+        status: 'ativa',
+        permiteAutoCadastro: true,
+        limiteTurmasPorAluno: null,
+        nivelRestringeAcesso: false,
+      });
+
+      await request(app.getHttpServer())
+        .patch('/api/v1/me/company')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ limiteTurmasPorAluno: null })
+        .expect(200);
+      expect(prisma.empresa.updateMany).toHaveBeenCalledWith({
+        where: { id: COMPANY_ID },
+        data: { limiteTurmasPorAluno: null },
+      });
+    });
+
     it('valor que não é booleano recebe 400', async () => {
       const accessToken = await loginCompanyAdmin(app, prisma);
 
