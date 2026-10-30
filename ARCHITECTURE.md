@@ -1,6 +1,13 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-10-26** (era 2026-10-25).
+**Fonte: análise direta do código.** Data: **2026-10-29** (era 2026-10-26).
+
+**SPEC-092, na branch `spec-092-exportar-alunos` (sobre o `main` em `0ed8861`),
+2026-10-29.** Conferidos por comando: **129 caminhos / 178 operações** no
+`openapi.json` (lido por `node`; o do `main`, 128 / 177): `GET
+/api/v1/students/exportar`, que devolve `text/csv`. **Nenhuma migration,
+nenhum modelo, nenhum enum.** Ver "A exportação de alunos (SPEC-092)", na
+seção 5.
 
 **SPEC-090, na branch `spec090/esqueci-senha` (sobre o `main` em `f13013e`),
 2026-10-26.** Conferidos por comando: **62 migrations** (`ls -d
@@ -893,7 +900,8 @@ src/
                    `registro.ts`. **Sem controller e sem tabela**
   companies/       MOD-002 — tenants (+ rota pública por slug)
   people/          MOD-003 — alunos, professores, níveis; `importacao/`
-                   (SPEC-038; SPEC-083: cinco colunas, turma, convidados)
+                   (SPEC-038; SPEC-083: cinco colunas, turma, convidados;
+                   SPEC-092: a exportação, no mesmo formato)
   classes/         MOD-004 — turmas, chamada e presença.
                    `estado-da-chamada.ts` é a **fonte única** do estado de
                    uma chamada (SPEC-030/INV-030b) e é importado também por
@@ -946,9 +954,9 @@ agenda) porque MOD-005 é dono da linha do tempo da quadra e tudo ali a toca.
 
 ## 5. Contratos de API
 
-**Hoje: 128 caminhos, 177 operações HTTP** (conferido em **2026-10-26**, na
-branch da SPEC-090, lendo o `openapi.json` por `node`; +3 / +3 sobre o `main`
-em `f13013e`). A contagem por spec desde a SPEC-047 está no topo do arquivo.
+**Hoje: 129 caminhos, 178 operações HTTP** (conferido em **2026-10-29**, na
+branch da SPEC-092, lendo o `openapi.json` por `node`; +1 / +1 sobre o `main`
+em `0ed8861`). A contagem por spec desde a SPEC-047 está no topo do arquivo.
 
 *Registro de 2026-09-11:* **99 caminhos, 138 operações HTTP** (contra o
 `openapi.json`, depois da SPEC-047). A progressão: 85/120 depois da
@@ -986,6 +994,61 @@ analisador de CSV que o projeto precisa cabe em ~50 linhas testáveis. O caso
 que mais dá trabalho ali é o **BOM do Excel**: sem removê-lo, a primeira
 coluna se chama `﻿nome` e a planilha inteira é recusada apontando para
 uma coluna que, na tela do gestor, está escrita certa.
+
+**A SPEC-092 acrescenta a volta: `GET /students/exportar`**, só
+`company_admin`, que devolve **todos** os alunos do clube no formato do modelo
+(BOM, `;`, CRLF), com `Turma 4…N` quando alguém passa de três e `Status` no
+fim. Mora em `people/importacao/`: `planilha-de-alunos.ts` é o escritor puro
+(o inverso do `csv.ts`, com a proteção contra fórmula do Excel) e
+`exportacao-de-alunos.service.ts` é **uma** consulta para o clube inteiro, com
+as turmas por `array_agg` (DEF-013). O handler está na `StudentsController`,
+**antes** do `@Get(':id')` (o gate da SPEC-067 confere). O nome do arquivo vai
+em `Content-Disposition`, e a própria resposta manda
+`Access-Control-Expose-Headers: Content-Disposition` — as opções de CORS
+continuam com o conjunto fechado delas. **Até a fase 2, o arquivo não volta
+pela importação** (`Status` é `COLUNA_DESCONHECIDA`). O `JOIN` de turmas
+também casa pelo clube (`t.company_id = a.company_id`), porque `turma_alunos`
+não carrega o clube e o banco aceita a matrícula cruzada; o teste de banco
+grava uma e confere que o nome da turma do outro clube não vaza.
+
+**O `Status` tem cinco valores (D3), decididos por `statusNaPlanilha`** a partir
+de `alunos.status`, `usuarios.status`, `alunos.vinculo` e
+`usuarios.senha_temporaria`, lidos na mesma consulta: `desativado` >
+`recusado` > `aguardando aprovação` > `pendente` > `ativo`. **E a importação
+tira o `'` da exportação (D5):** a lista de caracteres de fórmula
+(`CARACTERES_DE_FORMULA`, em `planilha-de-alunos.ts`) é uma só para as duas
+pontas — `celulaDaPlanilha` põe o `'`, `semProtecaoDeFormula` o tira — e a
+importação a aplica no `valorDe` da `conferirComContexto`, o ponto único por
+onde passa toda célula lida (nome, e-mail, telefone, nível, turma 1 a 10),
+antes do `trim`. O `'` antes de outro caractere fica. O teste de banco faz a
+ida e volta: exporta `=Ana`, `-x@y.local`, `+55…` e `@Sab`, importa noutro
+clube e confere que o gravado é idêntico. **Limite que fica, e é da regra, não
+do código:** com a D5 como está escrita (a importação tira o `'` só antes de
+`=`, `+`, `-`, `@`, tab ou CR), **nenhuma célula volta como um valor que já
+começa com `'` seguido de um desses** — `'=x` vira `=x`, e `''=x` fica `''=x`.
+A exportação de `=x` e a de `'=x` são a mesma célula, `'=x`. Três efeitos,
+reproduzidos em 2026-10-29 e levados ao Israel como decisão (não consertados):
+o nome `'=Ana` volta `=Ana`; o e-mail `'-x@y.com` (que a regex aceita) volta
+`-x@y.com`, outra conta, sem erro; e a turma `'@Sab` não pode ser citada pela
+planilha, nem pelo próprio arquivo exportado. Fechar exigiria mudar a regra
+das duas pontas (proteger e tirar o `'` também antes de `'…'` seguido de
+fórmula). E o `'` só sai se for o **primeiro** caractere da célula: o `trim`
+vem depois, então ` '=Ana` (espaço antes, só à mão) grava `'=Ana`.
+
+**E a importação passa a aceitar até dez colunas de turma (SPEC-092/D8).**
+`Turma 1` a `Turma 3` continuam obrigatórias no cabeçalho (SPEC-091/D1);
+`Turma 4` a `Turma 10` são opcionais, **em sequência**. As constantes moram no
+DTO (`COLUNAS_DE_TURMA`, `MAXIMO_DE_COLUNAS_DE_TURMA`, `ColunaDeTurma`), porque
+o tipo de `TurmaDaLinhaDto.coluna` sai delas — no `openapi.json` é o `enum` de
+`turma 1` a `turma 10`. No `lerCabecalho`, a extra fora de sequência conta
+como ausente (`PLANILHA_SEM_CABECALHO` nomeando a que falta, ou
+`COLUNA_SEM_NOME` se a célula do nome estiver vazia) e `Turma 11` em diante é
+`COLUNA_DESCONHECIDA` dizendo que o máximo é 10; a precedência da SPEC-091
+(desconhecida → repetida → sem nome → ausente) não mudou. **Nada mudou na
+regra de turma nem na escrita**: `errosDeTurma` já recebia a coluna como
+texto, e as leituras e o `INSERT` de `turma_alunos` já iam em lote — o teste
+de banco do DEF-040 com dez turmas conta **14 instruções da trava ao
+`COMMIT`**, as mesmas de três (teto 14).
 
 **As rotas da SPEC-037** são cinco, e a mais interessante é a que o banco
 guarda:

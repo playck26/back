@@ -12,6 +12,7 @@ import { StudentsController } from './students.controller';
 import { MeCadastroController } from './me-cadastro.controller';
 import { ImportacaoController } from './importacao/importacao.controller';
 import { ImportacaoDeAlunosService } from './importacao/importacao-de-alunos.service';
+import { ExportacaoDeAlunosService } from './importacao/exportacao-de-alunos.service';
 import { StudentsService } from './students.service';
 import { TeacherPhotoController } from './teacher-photo.controller';
 import { MeProfessoresController } from './me-professores.controller';
@@ -55,6 +56,8 @@ import { TeachersService } from './teachers.service';
     ProfessoresParaAlunoService,
     StudentsService,
     ImportacaoDeAlunosService,
+    // SPEC-092 — a exportação, que a `StudentsController` serve.
+    ExportacaoDeAlunosService,
     TeachersService,
     LevelsService,
     FotoDeProfessorService,

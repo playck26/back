@@ -367,7 +367,7 @@ describe('SPEC-091/D1 — coluna sem nome no cabeçalho (A1)', () => {
         code: 'COLUNA_SEM_NOME',
         posicoes: [2],
         message:
-          'A coluna 2 do cabeçalho está sem nome. O modelo tem exatamente as sete colunas: nome, email, telefone, nivel, turma 1, turma 2, turma 3. Apague a coluna vazia (ou o separador sobrando no fim do cabeçalho) e envie de novo.',
+          'A coluna 2 do cabeçalho está sem nome. O modelo tem as sete colunas: nome, email, telefone, nivel, turma 1, turma 2, turma 3 (e, para mais turmas, turma 4 até turma 10, em sequência). Apague a coluna vazia (ou o separador sobrando no fim do cabeçalho) e envie de novo.',
       },
     });
   });
@@ -396,7 +396,7 @@ describe('SPEC-091/D1 — coluna sem nome no cabeçalho (A1)', () => {
           statusCode: 422,
           code: 'COLUNA_SEM_NOME',
           posicoes: [posicao],
-          message: `A coluna ${posicao} do cabeçalho está sem nome. O modelo tem exatamente as sete colunas: nome, email, telefone, nivel, turma 1, turma 2, turma 3. Falta: ${falta}. Escreva na coluna sem nome o nome que falta (ou apague a que sobrar) e envie de novo.`,
+          message: `A coluna ${posicao} do cabeçalho está sem nome. O modelo tem as sete colunas: nome, email, telefone, nivel, turma 1, turma 2, turma 3 (e, para mais turmas, turma 4 até turma 10, em sequência). Falta: ${falta}. Escreva na coluna sem nome o nome que falta (ou apague a que sobrar) e envie de novo.`,
         },
       });
     },
@@ -487,7 +487,7 @@ describe('SPEC-091/D1 — conteúdo além da última coluna do cabeçalho', () =
         linha: 2,
         coluna: 'coluna 8',
         mensagem:
-          'Esta linha tem conteúdo depois da última coluna do cabeçalho (coluna 8: "PERDIDO"). O modelo tem sete colunas: apague o que sobrou ou mova para a coluna certa.',
+          'Esta linha tem conteúdo depois da última coluna do cabeçalho (coluna 8: "PERDIDO"). Apague o que sobrou, mova para a coluna certa ou, se for mais uma turma, dê nome à coluna no cabeçalho (turma 4 até turma 10, em sequência).',
       },
     ]);
     expect(r.linhas.map((l) => l.linha)).toEqual([3]);
@@ -500,7 +500,7 @@ describe('SPEC-091/D1 — conteúdo além da última coluna do cabeçalho', () =
         linha: 2,
         coluna: 'coluna 9',
         mensagem:
-          'Esta linha tem conteúdo depois da última coluna do cabeçalho (coluna 9: "X"; coluna 11: "Y"). O modelo tem sete colunas: apague o que sobrou ou mova para a coluna certa.',
+          'Esta linha tem conteúdo depois da última coluna do cabeçalho (coluna 9: "X"; coluna 11: "Y"). Apague o que sobrou, mova para a coluna certa ou, se for mais uma turma, dê nome à coluna no cabeçalho (turma 4 até turma 10, em sequência).',
       },
     ]);
   });
@@ -2061,5 +2061,414 @@ describe('DEF-040 (R4) — a leitura sob a trava sem o primeiro nível', () => {
       alvo.escreverNaTransacao('c1', GESTOR, [semNivel], new Map()),
     ).rejects.toThrow(/linha sem nível chegou à transação/);
     expect(m.prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SPEC-092/D8 — **a importação aceita Turma 4 até Turma 10, em sequência.**
+ *
+ * Turma 1 a 3 continuam obrigatórias no cabeçalho (SPEC-091/D1); as extras
+ * seguem as mesmas regras de turma (SPEC-091/D3 e D6), com o erro na coluna
+ * `turma N` certa. A precedência dos erros de cabeçalho é a da SPEC-091:
+ * desconhecida → repetida → sem nome → ausente.
+ */
+describe('SPEC-092/D8 — até dez colunas de turma (AC-008, AC-009)', () => {
+  const LETRAS = 'ABCDEFGHIJ'.split('');
+  /** Dez turmas ativas do nível Iniciante: `Aula A` … `Aula J`. */
+  const DEZ: TurmaDoDuble[] = LETRAS.map((l) => ({
+    id: `t-${l.toLowerCase()}`,
+    nome: `Aula ${l}`,
+    capacidade: 10,
+    nivelId: 'n1',
+  }));
+  const cabecalhoAte = (n: number) =>
+    ['Nome', 'E-mail', 'Telefone', 'Nível']
+      .concat(Array.from({ length: n }, (_, i) => `Turma ${i + 1}`))
+      .join(';');
+  const linhaCom = (nome: string, email: string, turmas: string[], n: number) =>
+    [nome, email, '', 'Iniciante']
+      .concat(Array.from({ length: n }, (_, i) => turmas[i] ?? ''))
+      .join(';');
+  const CHEIA: TurmaDoDuble = {
+    id: 't-cheia',
+    nome: 'Cheia',
+    capacidade: 1,
+    nivelId: 'n1',
+    alocados: 1,
+  };
+
+  describe('AC-008 — as extras entram na conferência e na escrita', () => {
+    it('Turma 1 a 5 preenchidas: as cinco, na ordem das colunas', async () => {
+      const r = await servico({ niveis: NIVEIS, turmas: DEZ }).conferir(
+        'c1',
+        [
+          cabecalhoAte(5),
+          linhaCom(
+            'Ana',
+            'ana@x.com',
+            ['Aula E', 'Aula A', 'Aula C', 'Aula B', 'Aula D'],
+            5,
+          ),
+        ].join('\r\n'),
+      );
+      expect(r.erros).toEqual([]);
+      expect(r.linhas[0].turmas).toEqual([
+        { id: 't-e', nome: 'Aula E', coluna: 'turma 1' },
+        { id: 't-a', nome: 'Aula A', coluna: 'turma 2' },
+        { id: 't-c', nome: 'Aula C', coluna: 'turma 3' },
+        { id: 't-b', nome: 'Aula B', coluna: 'turma 4' },
+        { id: 't-d', nome: 'Aula D', coluna: 'turma 5' },
+      ]);
+    });
+
+    it('Turma 1 a 10, com os apelidos (`turma4`, `TURMA 6`) e a décima na frente do cabeçalho', async () => {
+      const cab =
+        'turma10;nome;email;telefone;nivel;turma 1;turma 2;turma 3;turma4;Turma 5;TURMA 6;turma7;Turma 8;turma 9';
+      const linha = ['Aula J', 'Ana', 'ana@x.com', '', 'Iniciante']
+        .concat(LETRAS.slice(0, 9).map((l) => `Aula ${l}`))
+        .join(';');
+      const r = await servico({ niveis: NIVEIS, turmas: DEZ }).conferir(
+        'c1',
+        `${cab}\r\n${linha}\r\n`,
+      );
+      expect(r.erros).toEqual([]);
+      expect(r.linhas[0].turmas.map((t) => [t.coluna, t.nome])).toEqual(
+        LETRAS.map((l, i) => [`turma ${i + 1}`, `Aula ${l}`]),
+      );
+    });
+
+    it('a escrita leva as dez matrículas do aluno, e não só as três primeiras', async () => {
+      const { servico: s, escritaDe } = montar({ niveis: NIVEIS, turmas: DEZ });
+      await s.importar(
+        'c1',
+        [
+          cabecalhoAte(10),
+          linhaCom(
+            'Ana',
+            'ana@x.com',
+            LETRAS.map((l) => `Aula ${l}`),
+            10,
+          ),
+        ].join('\r\n'),
+        { gestorId: GESTOR },
+      );
+      const matriculas = escritaDe('turma_alunos');
+      expect(matriculas).toBeDefined();
+      const [turmaIds, alunoIds] = arranjos(matriculas as Instrucao);
+      expect([...(turmaIds as string[])].sort()).toEqual(
+        DEZ.map((t) => t.id).sort(),
+      );
+      expect(new Set(alunoIds).size).toBe(1);
+    });
+  });
+
+  describe('AC-009 — o cabeçalho', () => {
+    it('Turma 6 sem Turma 5 → 422 PLANILHA_SEM_CABECALHO dizendo que falta turma 5', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          `${cabecalhoAte(4)};Turma 6\r\nAna;ana@x.com;;Iniciante;;;;;\r\n`,
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          statusCode: 422,
+          code: 'PLANILHA_SEM_CABECALHO',
+          message:
+            'As colunas de turma vão em sequência, sem pular número: o cabeçalho tem turma 6, e falta turma 5. Acrescente a que falta (pode ficar vazia) ou renumere as de depois, e envie de novo.',
+        },
+      });
+    });
+
+    it('Turma 9 logo depois da 3 → nomeia as cinco que faltam', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          `${cabecalhoAte(3)};Turma 9\r\nAna;ana@x.com;;Iniciante;;;;\r\n`,
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PLANILHA_SEM_CABECALHO',
+          message: expect.stringContaining(
+            'o cabeçalho tem turma 9, e faltam turma 4, turma 5, turma 6, turma 7, turma 8.',
+          ) as unknown,
+        },
+      });
+    });
+
+    it.each(['Turma 11', 'turma11', 'Turma 25'])(
+      '`%s` → 422 COLUNA_DESCONHECIDA dizendo que o máximo é 10',
+      async (coluna) => {
+        await expect(
+          servico().conferir(
+            'c1',
+            `${cabecalhoAte(10)};${coluna}\r\nAna;ana@x.com;;Iniciante;;;;;;;;;;;\r\n`,
+          ),
+        ).rejects.toMatchObject({
+          response: {
+            statusCode: 422,
+            code: 'COLUNA_DESCONHECIDA',
+            colunas: [coluna],
+            message: expect.stringContaining(
+              'O máximo é turma 10: um aluno entra em até 10 turmas pela planilha.',
+            ) as unknown,
+          },
+        });
+      },
+    );
+
+    it('uma coluna desconhecida comum não fala de máximo', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          `${cabecalhoAte(3)};Apelido\r\nAna;a@x.com;;;;;;\r\n`,
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'COLUNA_DESCONHECIDA',
+          message: expect.not.stringContaining('máximo') as unknown,
+        },
+      });
+    });
+
+    it('precedência: Turma 11 e Turma 4 repetida → a desconhecida vence', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          `${cabecalhoAte(4)};turma4;Turma 11\r\nAna;a@x.com;;;;;;;;\r\n`,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'COLUNA_DESCONHECIDA', colunas: ['Turma 11'] },
+      });
+    });
+
+    it('precedência: `Turma 4` e `turma4` → COLUNA_REPETIDA, antes da coluna sem nome', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          `${cabecalhoAte(4)};turma4;\r\nAna;a@x.com;;;;;;;;\r\n`,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: 'COLUNA_REPETIDA', colunas: ['turma4'] },
+      });
+    });
+
+    it('precedência: o nome da Turma 5 apagado entre a 4 e a 6 → COLUNA_SEM_NOME, dizendo que falta turma 5', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          `${cabecalhoAte(4)};;Turma 6\r\nAna;a@x.com;;;;;;;;\r\n`,
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'COLUNA_SEM_NOME',
+          posicoes: [9],
+          message: expect.stringContaining(
+            'Falta: turma 5. Escreva na coluna sem nome o nome que falta',
+          ) as unknown,
+        },
+      });
+    });
+
+    it('Turma 4 sem Turma 3 → a obrigatória ausente, pela mensagem de sempre', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          'Nome;E-mail;Telefone;Nível;Turma 1;Turma 2;Turma 4\r\nAna;a@x.com;;;;;\r\n',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PLANILHA_SEM_CABECALHO',
+          message: expect.stringMatching(/Faltam: turma 3\.$/) as unknown,
+        },
+      });
+    });
+
+    // Revisão de 2026-10-29: a turma 4 que falta na SEQUÊNCIA não pode sair
+    // na lista das que faltam do MODELO — a mesma frase cita o modelo só até
+    // a turma 3, e o gestor procuraria a turma 4 nele.
+    it('Turma 3 e Turma 4 faltando com a 5 → o modelo pede a 3, e a sequência pede a 4, em frases separadas', async () => {
+      await expect(
+        servico().conferir(
+          'c1',
+          'Nome;E-mail;Telefone;Nível;Turma 1;Turma 2;Turma 5\r\nAna;a@x.com;;;;;\r\n',
+        ),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'PLANILHA_SEM_CABECALHO',
+          message:
+            'A primeira linha precisa ser o cabeçalho do modelo: nome, email, telefone, nivel, turma 1, turma 2, turma 3. Faltam: turma 3. E as colunas de turma vão em sequência, sem pular número: o cabeçalho tem turma 5, e falta turma 4.',
+        },
+      });
+    });
+
+    it('com Turma 1 a 10, conteúdo depois da décima é erro de linha', async () => {
+      const r = await servico({ niveis: NIVEIS }).conferir(
+        'c1',
+        `${cabecalhoAte(10)}\r\nAna;ana@x.com;;Iniciante;;;;;;;;;;;PERDIDO\r\n`,
+      );
+      expect(r.erros.map((e) => [e.linha, e.coluna])).toEqual([
+        [2, 'coluna 15'],
+      ]);
+    });
+  });
+
+  describe('AC-009 — as regras de turma valem em cada coluna extra', () => {
+    it('inexistente, repetida e de nível incompatível → o erro na coluna `turma N` certa', async () => {
+      const INTER: TurmaDoDuble = {
+        id: 't-inter',
+        nome: 'Aula Inter',
+        capacidade: 10,
+        nivelId: 'n2',
+      };
+      const r = await servico({
+        niveis: NIVEIS,
+        turmas: [...DEZ, INTER],
+      }).conferir(
+        'c1',
+        [
+          cabecalhoAte(7),
+          linhaCom('Ana', 'ana@x.com', ['Aula A', '', '', '', 'Sumida'], 7),
+          linhaCom(
+            'Beto',
+            'beto@x.com',
+            ['Aula A', 'Aula B', '', '', '', '', 'aula b'],
+            7,
+          ),
+          linhaCom('Cris', 'cris@x.com', ['', '', '', 'Aula Inter'], 7),
+        ].join('\r\n'),
+      );
+      expect(r.erros.map((e) => [e.linha, e.coluna])).toEqual([
+        [2, 'turma 5'],
+        [3, 'turma 7'],
+        [4, 'turma 4'],
+      ]);
+      expect(r.erros[0].mensagem).toMatch(/^A turma "Sumida" não existe/);
+      expect(r.erros[1].mensagem).toBe(
+        'A turma "Aula B" já aparece em outra coluna desta linha.',
+      );
+      expect(r.erros[2].mensagem).toBe(
+        'Esta turma é do nível Intermediário, e este aluno é Iniciante. Para alocá-lo, mude o nível dele.',
+      );
+    });
+
+    it('lotada na `turma 6` → o erro aponta `turma 6`', async () => {
+      const r = await servico({
+        niveis: NIVEIS,
+        turmas: [...DEZ, CHEIA],
+      }).conferir(
+        'c1',
+        [
+          cabecalhoAte(6),
+          linhaCom('Ana', 'ana@x.com', ['Aula A', '', '', '', '', 'Cheia'], 6),
+        ].join('\r\n'),
+      );
+      expect(r.erros).toEqual([
+        {
+          linha: 2,
+          coluna: 'turma 6',
+          mensagem: 'A turma "Cheia" já está cheia (capacidade 1).',
+        },
+      ]);
+    });
+
+    it('SPEC-091/D6 entre extras: Ana recusada pela Cheia na `turma 9` não toma a vaga da Livre na `turma 8`', async () => {
+      const LIVRE: TurmaDoDuble = {
+        id: 't-livre',
+        nome: 'Livre',
+        capacidade: 1,
+        nivelId: 'n1',
+      };
+      const r = await servico({
+        niveis: NIVEIS,
+        turmas: [CHEIA, LIVRE],
+      }).conferir(
+        'c1',
+        [
+          cabecalhoAte(9),
+          linhaCom(
+            'Ana',
+            'ana@x.com',
+            ['', '', '', '', '', '', '', 'Livre', 'Cheia'],
+            9,
+          ),
+          linhaCom('Beto', 'beto@x.com', ['', '', '', 'Livre'], 9),
+        ].join('\r\n'),
+      );
+      expect(r.erros).toEqual([
+        {
+          linha: 2,
+          coluna: 'turma 9',
+          mensagem: 'A turma "Cheia" já está cheia (capacidade 1).',
+        },
+      ]);
+      expect(r.linhas.map((l) => l.linha)).toEqual([3]);
+    });
+  });
+});
+
+describe("SPEC-092/AC-011 — a importação tira o `'` que a exportação pôs (D5)", () => {
+  const ARROBA_X: TurmaDoDuble = {
+    id: 't-arroba',
+    nome: '@x',
+    capacidade: 10,
+    nivelId: 'n1',
+  };
+  const COM_FORMULA = [...NIVEIS, { id: 'n3', nome: '=Topo' }];
+
+  it("nome, e-mail, telefone, nível e turma: o `'` antes de =, +, -, @ sai", async () => {
+    const r = await conferir(
+      [
+        "'=Ana,'-ana@x.com,'+55 11 98888-7777,Iniciante,'@x,,",
+        "Beto,beto@x.com,,'=Topo,,,",
+      ],
+      { niveis: COM_FORMULA, turmas: [ARROBA_X] },
+    );
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0]).toMatchObject({
+      nome: '=Ana',
+      email: '-ana@x.com',
+      telefone: '+55 11 98888-7777',
+      nivelId: 'n1',
+      turmas: [{ id: 't-arroba', nome: '@x', coluna: 'turma 1' }],
+    });
+    expect(r.linhas[1]).toMatchObject({ nome: 'Beto', nivelId: 'n3' });
+  });
+
+  it("o `'` antes de outro caractere fica como veio — em todas as colunas", async () => {
+    const r = await conferir(
+      [
+        "'Ana,ana@x.com,'(11) 9,Iniciante,,,",
+        "Beto,beto@x.com,,'Iniciante,,,",
+        "Caio,caio@x.com,,Iniciante,'x,,",
+      ],
+      { niveis: NIVEIS, turmas: [ARROBA_X] },
+    );
+    expect(r.linhas.map((l) => [l.nome, l.telefone])).toEqual([
+      ["'Ana", "'(11) 9"],
+    ]);
+    // O nível e a turma com `'` na frente são outros nomes, e não existem.
+    expect(r.erros).toEqual([
+      {
+        linha: 3,
+        coluna: 'nivel',
+        mensagem: expect.stringContaining(`"'Iniciante"`) as unknown,
+      },
+      {
+        linha: 4,
+        coluna: 'turma 1',
+        mensagem: expect.stringContaining(`"'x"`) as unknown,
+      },
+    ]);
+  });
+
+  it('nas turmas extras também (turma 4 a 10)', async () => {
+    const r = await servico({ niveis: NIVEIS, turmas: [ARROBA_X] }).conferir(
+      'c1',
+      [`${CABECALHO},turma 4`, "Ana,ana@x.com,,Iniciante,,,,'@x"].join('\n'),
+    );
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0].turmas).toEqual([
+      { id: 't-arroba', nome: '@x', coluna: 'turma 4' },
+    ]);
   });
 });

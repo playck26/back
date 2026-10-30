@@ -1367,6 +1367,94 @@ describe('DEF-040 — as instruções entre a trava do clube e a primeira escrit
     expect((await contarTudo()).convites).toBe(1);
   });
 
+  /**
+   * SPEC-092/D8 e AC-008/AC-009 — **dez colunas de turma não mudam o teto.**
+   * As leituras e a escrita de `turma_alunos` vão em lote: dez turmas, cada
+   * uma com aula futura, são as mesmas instruções que três. E a escrita leva
+   * TODAS as matrículas: Ana em dez turmas, Beto em cinco.
+   */
+  it(`SPEC-092 — Turma 1 a 10, todas com aula futura: as 10 e as 5 matrículas gravadas, e no máximo ${MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO} instruções da trava ao COMMIT`, async () => {
+    const nomes = Array.from({ length: 10 }, (_, i) => `SPEC-092 dez ${i + 1}`);
+    const ids: string[] = [];
+    for (const [i, nome] of nomes.entries()) {
+      const id = await turma(nome, { capacidade: 10 });
+      await aulaFutura(id, emDias(3 + i));
+      ids.push(id);
+    }
+    await reposicaoMarcada(
+      (
+        await db.ocupacaoQuadra.findFirstOrThrow({
+          where: { origemTurmaId: ids[0] },
+          select: { id: true },
+        })
+      ).id,
+      ids[9],
+    );
+    const anaEmail = email('d092');
+    const betoEmail = email('d092');
+    const csv = [
+      [
+        'nome;email;telefone;nivel',
+        ...nomes.map((_, i) => `Turma ${i + 1}`),
+      ].join(';'),
+      [`Ana;${anaEmail};;Iniciante`, ...nomes].join(';'),
+      [
+        `Beto;${betoEmail};;Iniciante`,
+        ...nomes.slice(5),
+        '',
+        '',
+        '',
+        '',
+        '',
+      ].join(';'),
+    ].join('\r\n');
+
+    await comClienteQueConta(async (cliente, idas) => {
+      const { r } = await pelaRota(csv, { cliente, convidar: '2' });
+      expect(r.status).toBe(200);
+      const trava = idas.findIndex((i) =>
+        i.includes('pg_advisory_xact_lock_shared'),
+      );
+      expect(trava).toBeGreaterThanOrEqual(0);
+      const commit = idas.findIndex((i, k) => k > trava && /^COMMIT/.test(i));
+      expect(commit).toBeGreaterThan(trava);
+      const sob = idas.slice(trava, commit + 1);
+      console.log(
+        `SPEC092_IDAS dez_turmas da_trava_ao_commit=${sob.length} teto=${MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO}\n${sob.map(resumo).join('\n')}`,
+      );
+      for (const tabela of [
+        'usuarios',
+        'alunos',
+        'turma_alunos',
+        'convites_de_acesso',
+      ]) {
+        expect({
+          tabela,
+          escrita: sob.some((i) => i.includes(`INSERT INTO ${tabela} `)),
+        }).toEqual({ tabela, escrita: true });
+      }
+      // Uma escrita de `turma_alunos` só, para as quinze matrículas.
+      expect(
+        sob.filter((i) => i.includes('INSERT INTO turma_alunos ')),
+      ).toHaveLength(1);
+      expect(sob.length).toBeLessThanOrEqual(
+        MAX_INSTRUCOES_SOB_A_TRAVA_DA_IMPORTACAO,
+      );
+    });
+
+    const naTurma = async (emailDoAluno: string) =>
+      (
+        await db.turmaAluno.findMany({
+          where: { aluno: { usuario: { email: emailDoAluno } } },
+          select: { turmaId: true },
+        })
+      )
+        .map((m) => m.turmaId)
+        .sort();
+    expect(await naTurma(anaEmail)).toEqual([...ids].sort());
+    expect(await naTurma(betoEmail)).toEqual(ids.slice(5).sort());
+  });
+
   it(`aula lotada achada só sob a trava, com busca binária: no máximo ${TETO_ATE_A_RECUSA} instruções até o ROLLBACK`, async () => {
     // Fora da trava cabem as três linhas na aula (capacidade 5, nenhuma
     // reposição). Sob a trava, outra conexão marca três reposições na aula:
