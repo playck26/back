@@ -92,11 +92,13 @@ model Empresa {
   /// nao tira ninguem de turma em que ja esta.
   limiteTurmasPorAluno Int? @map("limite_turmas_por_aluno")
 
-  /// SPEC-089 — **o nível restringe o acesso às turmas?** `true` (padrão) é a
-  /// regra da SPEC-075; `false` faz do nível só um rótulo. Quem lê é o
-  /// `nivelRestringe` de `nivel-efetivo.ts`, e mais ninguém (D1). Vale para
-  /// entrar, nunca para expulsar (D2): trocar não tira ninguém de turma.
-  nivelRestringeAcesso Boolean @default(true) @map("nivel_restringe_acesso")
+  /// SPEC-089 — **o nível restringe o acesso às turmas?** `true` é a regra da
+  /// SPEC-075; `false` faz do nível só um rótulo. Quem lê é o `nivelRestringe`
+  /// de `nivel-efetivo.ts`, e mais ninguém (D1). Vale para entrar, nunca para
+  /// expulsar (D2): trocar não tira ninguém de turma. **Padrão `false` desde a
+  /// SPEC-093/D1** (clube novo nasce liberado); o gestor troca em
+  /// `PATCH /me/company`.
+  nivelRestringeAcesso Boolean @default(false) @map("nivel_restringe_acesso")
 
   /// SPEC-024 — a versao do contrato do clube que esta valendo.
   /// `NULL` = o clube nao publicou contrato, e nesse caso so o termo da

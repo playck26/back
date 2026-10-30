@@ -11,15 +11,23 @@ import { IsBoolean, IsInt, IsOptional, Min, ValidateIf } from 'class-validator';
  * reenviar o auto-cadastro, e reenviar valor que não se quis mudar é como
  * se perde configuração sem ninguém perceber.
  *
- * Por isso os dois são opcionais e **pelo menos um é exigido** — corpo vazio
+ * Por isso todos são opcionais (a SPEC-093 trouxe o terceiro) e **pelo menos um é exigido** — corpo vazio
  * é engano de chamada, não "não mude nada".
  */
+/**
+ * Ausente é "não mude"; **`null` não é ausente**. O `@IsOptional()` dispensa os
+ * dois, e com ele um `null` num booleano chegava ao Prisma, que recusa coluna
+ * `NOT NULL` com 500 (A1 da validação da SPEC-093). Com este `ValidateIf`, o
+ * `null` passa pelo `@IsBoolean()` e vira 400.
+ */
+const campoPresente = (_objeto: object, valor: unknown) => valor !== undefined;
+
 export class UpdateMinhaEmpresaDto {
   @ApiPropertyOptional({
     description:
       'Liga ou desliga o link público de auto-cadastro de alunos desta empresa.',
   })
-  @IsOptional()
+  @ValidateIf(campoPresente)
   @IsBoolean()
   permiteAutoCadastro?: boolean;
 
@@ -42,4 +50,12 @@ export class UpdateMinhaEmpresaDto {
       'O limite começa em 1. Zero seria "ninguém entra", que é desligar a turma, não limitar — para isso existe desativar a turma.',
   })
   limiteTurmasPorAluno?: number | null;
+
+  @ApiPropertyOptional({
+    description:
+      'SPEC-093 — liga (`true`) ou desliga (`false`) a restrição de nível: ligada, cada aluno só entra nas turmas do seu nível; desligada, o nível é só um rótulo. Vale para entrar, nunca para expulsar (SPEC-089/D2): ligar não tira ninguém de turma.',
+  })
+  @ValidateIf(campoPresente)
+  @IsBoolean()
+  nivelRestringeAcesso?: boolean;
 }

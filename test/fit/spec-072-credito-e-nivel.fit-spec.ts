@@ -125,6 +125,11 @@ async function ocorrencia(
 beforeAll(async () => {
   await limparEmpresa(db, C.EMPRESA);
   await montarCenario(db, C);
+  // SPEC-093/D4 — o clube nasce liberado; esta suíte prova a regra de nível
+  // ligada (INV-075a), então liga a chave.
+  await db.$executeRawUnsafe(
+    `UPDATE empresas SET nivel_restringe_acesso = true WHERE id = '${C.EMPRESA}'`,
+  );
 
   for (const [id, nome, ordem] of [
     [NIVEL_A, 'Iniciante', 0],

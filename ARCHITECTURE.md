@@ -1,6 +1,15 @@
 # ARCHITECTURE — `back` (PlayCK)
 
-**Fonte: análise direta do código.** Data: **2026-10-29** (era 2026-10-26).
+**Fonte: análise direta do código.** Data: **2026-10-30** (era 2026-10-29).
+
+**SPEC-093, na branch `spec-093-restricao-de-nivel-no-admin` (sobre o `main` em
+`16f9950`), 2026-10-30.** Conferidos por comando: **63 migrations** (`ls -d
+prisma/migrations/*/`; +1, `20261030120000_spec093_clube_novo_liberado`), **45
+modelos e 19 enums** (sem mudança), **129 caminhos / 178 operações** no
+`openapi.json` (sem mudança: só o campo `nivelRestringeAcesso` em
+`UpdateMinhaEmpresaDto`). A migration só troca o `DEFAULT` de
+`empresas.nivel_restringe_acesso` para `false`; nenhuma linha muda. Ver "O
+clube escolhe (SPEC-089)".
 
 **SPEC-092, na branch `spec-092-exportar-alunos` (sobre o `main` em `0ed8861`),
 2026-10-29.** Conferidos por comando: **129 caminhos / 178 operações** no
@@ -1177,7 +1186,10 @@ recusado pelo `forbidNonWhitelisted`. O banco recusa o que passar por fora:
 ### O nível decide o acesso (SPEC-075, ADR-026)
 
 > **O clube escolhe (SPEC-089).** `empresas.nivel_restringe_acesso` (padrão
-> `true`) liga e desliga tudo o que esta seção descreve. **Quem lê a coluna é
+> `false` desde a SPEC-093: clube novo nasce liberado; era `true`) liga e
+> desliga tudo o que esta seção descreve. **Quem escreve é o gestor**, pelo
+> `PATCH /me/company` (`nivelRestringeAcesso`, só `company_admin`, o clube do
+> token), desde a SPEC-093; antes, só por SQL. **Quem lê a coluna é
 > `nivelRestringe` (`nivel-efetivo.ts`), e mais ninguém**: `recusaPorNivel` e
 > `conferirEdicaoDeNivel` perguntam a ela; as listas usam
 > `acessoPorNivelDoAluno`, que devolve `SEM_RESTRICAO` (aceito por

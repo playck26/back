@@ -25,6 +25,12 @@ jest.setTimeout(600_000);
 exigirBancoLocal();
 
 const MIGRATION_089 = '20261025120000_spec089_nivel_restringe_acesso';
+/**
+ * SPEC-093 — troca o `DEFAULT` da coluna que a 089 cria, e por isso não roda
+ * sem ela: fica de fora da primeira passada. A sequência dela tem suíte
+ * própria (`spec-093-migracao.db-spec.ts`).
+ */
+const MIGRATION_093 = '20261030120000_spec093_clube_novo_liberado';
 const PRISMA_CLI = require.resolve('prisma/build/index.js');
 const RAIZ_PRISMA = join(__dirname, '../../prisma');
 
@@ -71,13 +77,17 @@ it('AC-001 — empresa inserida com o banco na migration anterior sai `true` dep
   cpSync(join(RAIZ_PRISMA, 'schema.prisma'), schema);
   cpSync(join(RAIZ_PRISMA, 'migrations'), join(dir, 'migrations'), {
     recursive: true,
-    filter: (origem) => !origem.includes(MIGRATION_089),
+    filter: (origem) =>
+      !origem.includes(MIGRATION_089) && !origem.includes(MIGRATION_093),
   });
-  // A premissa, afirmada: a cópia não tem a 089, e tem todas as outras.
+  // A premissa, afirmada: a cópia não tem a 089 nem a 093, e tem todas as
+  // outras.
   const copiadas = readdirSync(join(dir, 'migrations'));
   const todas = readdirSync(join(RAIZ_PRISMA, 'migrations'));
   expect(copiadas).not.toContain(MIGRATION_089);
-  expect(copiadas.length).toBe(todas.length - 1);
+  expect(copiadas).not.toContain(MIGRATION_093);
+  expect(todas).toContain(MIGRATION_093);
+  expect(copiadas.length).toBe(todas.length - 2);
 
   deploy(schema, url);
 

@@ -120,7 +120,9 @@ const intermediarioPrimeiro = () => niveis().update(EMPRESA, INT, { ordem: 0 });
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-075 edicoes','spec-075-e-${EMPRESA}',now())`,
+    // SPEC-093/D4 — a chave de nível LIGADA de propósito: desde a SPEC-093 o
+    // clube nasce liberado, e esta suíte prova a regra ligada.
+    `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${EMPRESA}','SPEC-075 edicoes','spec-075-e-${EMPRESA}',now(),true)`,
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${GESTOR}','s075e.gestor@x.com','h','Gestor','company_admin','${EMPRESA}',now())`,

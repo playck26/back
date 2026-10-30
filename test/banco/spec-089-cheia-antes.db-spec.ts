@@ -128,6 +128,8 @@ describe('controle — chave ligada: a mesma turma ESPERA a trava, e a recusa é
       clube = await montarClube(db);
       const turma = await turmaCheiaDeOutroNivel(clube);
       const a = await criarAluno(db, clube);
+      // SPEC-093/D4 — o clube nasce liberado: o controle liga a chave.
+      await chave(clube, true);
 
       const app = `spec089-controle-${nome.toLowerCase()}`;
       const soltar = await segurar(db, travaDoClube(clube.id, 'exclusiva'));

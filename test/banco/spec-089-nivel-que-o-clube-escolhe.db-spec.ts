@@ -43,7 +43,7 @@ jest.setTimeout(300_000);
 exigirBancoLocal();
 
 const EMPRESA = '08900000-0000-4000-8000-000000000001';
-/** Só para o AC-001: nasce pelo Prisma, sem informar a coluna. */
+/** Só para o AC-001 (e o par de clube alheio da SPEC-093): nasce sem informar a coluna. */
 const EMPRESA_NOVA = '08900000-0000-4000-8000-000000000002';
 const GESTOR = '08900000-0000-4000-8000-000000000003';
 const QUADRA = '08900000-0000-4000-8000-000000000011';
@@ -187,7 +187,9 @@ const mudarTurma = (id: string, nivelId: string) =>
 
 async function montar(): Promise<void> {
   await q(
-    `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA}','SPEC-089','spec-089-${EMPRESA}',now())`,
+    // SPEC-093/D4 — a chave LIGADA de propósito: desde a SPEC-093 o clube
+    // nasce liberado, e os casos sem `desligar()` contam com a regra ligada.
+    `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${EMPRESA}','SPEC-089','spec-089-${EMPRESA}',now(),true)`,
   );
   await q(
     `INSERT INTO usuarios (id,email,senha_hash,nome,role,company_id,updated_at) VALUES ('${GESTOR}','s089.gestor@x.com','h','Gestor','company_admin','${EMPRESA}',now())`,
@@ -233,7 +235,10 @@ afterAll(async () => {
 // REQ-001 — a coluna e o padrão
 // ==========================================================================
 
-describe('AC-001 — o padrão é `true`, observado sem gravar a coluna', () => {
+// SPEC-093/D1 e AC-001 — o padrão mudou para `false`: clube novo nasce
+// liberado. Era `true` na SPEC-089/AC-001; os três caminhos de criação são os
+// mesmos, e o valor esperado é o novo.
+describe('SPEC-093/AC-001 — o padrão é `false`, observado sem gravar a coluna', () => {
   const ler = async (id: string) =>
     (
       await db.$queryRawUnsafe<{ v: boolean }[]>(
@@ -242,8 +247,10 @@ describe('AC-001 — o padrão é `true`, observado sem gravar a coluna', () => 
     )[0]?.v;
 
   it('INSERT sem a coluna (o DEFAULT do banco)', async () => {
-    // A `EMPRESA` do `montar()` nasce por INSERT sem a coluna.
-    expect(await ler(EMPRESA)).toBe(true);
+    await q(
+      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${EMPRESA_NOVA}','SPEC-093 nova','spec-093-${EMPRESA_NOVA}',now())`,
+    );
+    expect(await ler(EMPRESA_NOVA)).toBe(false);
   });
 
   it('pelo Prisma, sem informar o campo', async () => {
@@ -254,13 +261,13 @@ describe('AC-001 — o padrão é `true`, observado sem gravar a coluna', () => 
         slug: `spec-089-${EMPRESA_NOVA}`,
       },
     });
-    expect(await ler(EMPRESA_NOVA)).toBe(true);
+    expect(await ler(EMPRESA_NOVA)).toBe(false);
   });
 
   it('pelo serviço de criação de empresa (`CompaniesService.create`), o valor persistido', async () => {
     // IMPL-089-02 — o serviço de verdade, e a coluna lida do banco depois:
-    // um `nivelRestringeAcesso: false` no `data` da criação (N1) fica
-    // vermelho aqui.
+    // um `nivelRestringeAcesso: true` no `data` da criação fica vermelho
+    // aqui (SPEC-093/D1).
     const servico = new CompaniesService(
       p,
       // `create` não usa o AuthService (gera o hash com bcrypt direto).
@@ -280,15 +287,15 @@ describe('AC-001 — o padrão é `true`, observado sem gravar a coluna', () => 
       },
     });
     try {
-      expect(await ler(criada.empresa.id)).toBe(true);
+      expect(await ler(criada.empresa.id)).toBe(false);
     } finally {
       await limparEmpresa(db, criada.empresa.id);
     }
   });
 
-  // A empresa que já existia ANTES da migration: a sequência literal (banco
-  // até a migration anterior, a empresa, e só então a da 089) mora em
-  // `spec-089-migracao.db-spec.ts`, num banco descartável próprio.
+  // A empresa que já existia ANTES da migration: a sequência literal mora em
+  // `spec-089-migracao.db-spec.ts` (a da 089) e em
+  // `spec-093-migracao.db-spec.ts` (a da 093), cada uma num banco descartável.
 });
 
 // ==========================================================================
@@ -503,5 +510,61 @@ describe('AC-010 — `GET /me/company` devolve a coluna, nos dois valores', () =
     expect((await ler()).nivelRestringeAcesso).toBe(true);
     await desligar();
     expect((await ler()).nivelRestringeAcesso).toBe(false);
+  });
+});
+
+// ==========================================================================
+// SPEC-093 — o gestor troca a chave pelo `PATCH /me/company`
+// ==========================================================================
+
+describe('SPEC-093 — a chave trocada pelo `PATCH /me/company` do gestor', () => {
+  const controller = () =>
+    new MeCompanyController(
+      p,
+      {
+        resolver: () => ({ logoUrl: null }),
+      } as unknown as LogoDaEmpresaService,
+      operacao(),
+    );
+  const gestor = {
+    sub: GESTOR,
+    role: 'company_admin',
+    companyId: EMPRESA,
+  } as unknown as AccessTokenPayload;
+  const trocar = (nivelRestringeAcesso: boolean) =>
+    controller().atualizarMinhaEmpresa(gestor, { nivelRestringeAcesso });
+
+  it('AC-002 e AC-004 — desligar libera a próxima matrícula; religar recusa a próxima e não tira ninguém', async () => {
+    const a = await aluno(INT);
+    expect(
+      (await desfecho(matricula().entrar(EMPRESA, a.usuarioId, T_AVA))).code,
+    ).toBe('NIVEL_INCOMPATIVEL');
+
+    expect((await trocar(false)).nivelRestringeAcesso).toBe(false);
+    expect(
+      (await desfecho(matricula().entrar(EMPRESA, a.usuarioId, T_AVA))).code,
+    ).toBe('OK');
+
+    expect((await trocar(true)).nivelRestringeAcesso).toBe(true);
+    // AC-004 — ligar não tira ninguém de turma (SPEC-089/D2).
+    expect(await matriculas(a.alunoId, T_AVA)).toBe(1);
+    const b = await aluno(INT);
+    expect(
+      (await desfecho(matricula().entrar(EMPRESA, b.usuarioId, T_AVA))).code,
+    ).toBe('NIVEL_INCOMPATIVEL');
+  });
+
+  it('AC-003 — o clube sai do token: o `PATCH` do gestor não toca outro clube', async () => {
+    await q(
+      `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${EMPRESA_NOVA}','SPEC-093 alheia','spec-093-${EMPRESA_NOVA}',now(),true)`,
+    );
+    await trocar(false);
+    const linhas = await db.$queryRawUnsafe<{ id: string; v: boolean }[]>(
+      `SELECT id::text AS id, nivel_restringe_acesso AS v FROM empresas WHERE id IN ('${EMPRESA}','${EMPRESA_NOVA}') ORDER BY id`,
+    );
+    expect(linhas).toEqual([
+      { id: EMPRESA, v: false },
+      { id: EMPRESA_NOVA, v: true },
+    ]);
   });
 });

@@ -178,7 +178,9 @@ async function montar(): Promise<void> {
     [E2, QUADRA2],
   ] as const) {
     await q(
-      `INSERT INTO empresas (id,nome,slug,updated_at) VALUES ('${emp}','FIT-055 ${emp.slice(-1)}','fit-055-${emp}',now())`,
+      // SPEC-093/D4 — a chave de nível LIGADA de propósito: desde a SPEC-093
+      // o clube nasce liberado, e esta suíte prova a trava da regra ligada.
+      `INSERT INTO empresas (id,nome,slug,updated_at,nivel_restringe_acesso) VALUES ('${emp}','FIT-055 ${emp.slice(-1)}','fit-055-${emp}',now(),true)`,
     );
     await q(
       `INSERT INTO esportes_de_quadra (id,company_id,nome,ordem,created_at) VALUES (gen_random_uuid(),'${emp}','Tenis',0,now())`,
