@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
+import type { PrazoDeCancelamento } from '../company-settings/prazo-de-cancelamento';
 import {
   aulaQueAMatriculaLotaria,
   calcularOcupacao,
@@ -368,9 +369,20 @@ export class VarredorDaFilaService {
         // SPEC-064/TASK-008 — **pelo `tx`**, e so quando ha aula: a fila de
         // turma nao tem antecedencia (D4), e ler por outra conexao segurando
         // os locks de turma e ocorrencia e o defeito que a SPEC-034 pagou caro.
+        //
+        // DEF-041 — e nunca menos que o prazo de aula do clube. A confirmação
+        // passa pelo `marcar`, que recusa dentro desse prazo: com prazo de 24h
+        // e antecedência de 2h, o chamado a 9h da aula era convite que a
+        // confirmação recusava (LIM-064e), e a fila inteira caía um a um.
+        // Pelo maior dos dois, o prazo vencido vira `prazo_impossivel` (D4) e
+        // o `chamado_ate` nunca entra no prazo.
         const antecedenciaMs = ocupacao
-          ? (await this.config.antecedenciaDaFilaDeAula(alvo.companyId, tx)) *
-            UMA_HORA_MS
+          ? Math.max(
+              await this.config.antecedenciaDaFilaDeAula(alvo.companyId, tx),
+              horasDoPrazo(
+                (await this.config.prazosDaEmpresa(alvo.companyId, tx)).aula,
+              ),
+            ) * UMA_HORA_MS
           : 0;
         const chamadoAte = this.prazoDoChamado(
           chamadoEm,
@@ -507,6 +519,15 @@ export class VarredorDaFilaService {
     const prazo = limite < teto ? limite : teto;
     return prazo > chamadoEm ? prazo : null;
   }
+}
+
+/**
+ * DEF-041 — o prazo de aula em horas, para entrar no `max` da antecedência.
+ * Sem prazo é 0: a antecedência da fila (>= 1h, CHECK do banco) já cobre a
+ * única recusa que sobra, a da aula que já começou.
+ */
+function horasDoPrazo(prazo: PrazoDeCancelamento): number {
+  return prazo.regra === 'HORAS' ? prazo.horas : 0;
 }
 
 /** O `23505` dos dois índices de `chamado`, venha ele do Prisma ou cru. */
