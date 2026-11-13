@@ -11,6 +11,7 @@ import { ConfigOperacaoService } from '../company-settings/config-operacao.servi
 import { MatriculaDoAlunoService } from '../classes/matricula-do-aluno.service';
 import { ReposicaoService } from '../classes/reposicao.service';
 import { situacaoDoCredito } from '../classes/credito-de-reposicao';
+import { recusaDoPrazoDeReposicao } from '../classes/ocorrencia-relevante';
 import { recusaPorNivel, travarNivelDaEmpresa } from '../people/nivel-efetivo';
 import {
   CTE_DO_PRAZO,
@@ -302,6 +303,7 @@ export class FilaDeEsperaService {
       select: {
         id: true,
         data: true,
+        horaInicio: true,
         statusPagamento: true,
         origemTurmaId: true,
         // SPEC-075 — o nivel da turma da aula, para a recusa por nivel.
@@ -324,6 +326,18 @@ export class FilaDeEsperaService {
         message: 'Esta aula já passou.',
       });
     }
+    // DEF-041 — e a de HOJE que já começou, ou que está dentro do prazo do
+    // clube: a fila só leva ao `marcar`, que a recusaria. Sem isto a linha
+    // nascia `aguardando` numa aula das 7h às 18h38, e ninguém nunca seria
+    // chamado — o convite que não se pode cumprir da LIM-064e.
+    const { aula: prazo } = await this.operacao.prazosDaEmpresa(companyId);
+    const recusaDoPrazo = recusaDoPrazoDeReposicao(
+      prazo,
+      alvo.data,
+      alvo.horaInicio,
+      new Date(),
+    );
+    if (recusaDoPrazo) throw new ConflictException(recusaDoPrazo);
 
     await this.recusarSeJaMatriculado(alvo.origemTurmaId, aluno.id);
 

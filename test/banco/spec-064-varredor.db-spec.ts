@@ -487,6 +487,58 @@ describe('SPEC-064/TASK-008 — a antecedência configurada pelo clube', () => {
     const depois = await linha(fila);
     expect(depois.chamadoAte!.getTime()).toBe(agora + 12 * HORA);
   });
+
+  /**
+   * DEF-041 — **o prazo de aula do clube também limita o chamado.** A
+   * confirmação passa pelo `marcar`, que recusa dentro desse prazo: chamar
+   * depois dele era convite que a confirmação recusava (LIM-064e), e a fila
+   * inteira caía um a um. A antecedência efetiva é o MAIOR dos dois.
+   */
+  async function comPrazoDeAula(horas: number) {
+    await q(
+      `INSERT INTO config_operacao_empresa (id,company_id,prazo_cancelamento_aula_horas,created_at,updated_at)
+       VALUES (gen_random_uuid(),'${EMPRESA}',${horas},now(),now())
+       ON CONFLICT (company_id) DO UPDATE SET prazo_cancelamento_aula_horas = ${horas}`,
+    );
+  }
+
+  it('DEF-041: prazo de aula de 5h, antecedência no padrão (2h) — o limite é início − 5h', async () => {
+    await comPrazoDeAula(5);
+    const fila = await filaDeAulaAsDezoito();
+
+    const r = await varredor().executarCiclo(meioDia);
+
+    expect(r.chamados).toBe(1);
+    const depois = await linha(fila);
+    // Antes do DEF-041 seria início − 2h: a vaga confirmada às 17h UTC seria
+    // recusada pelo `marcar`, que exige 5h.
+    expect(depois.chamadoAte!.getTime()).toBe(inicioUtc() - 5 * HORA);
+  });
+
+  it('DEF-041: prazo de aula de 10h — a aula que a antecedência chamaria vira prazo impossível', async () => {
+    await comPrazoDeAula(10);
+    const fila = await filaDeAulaAsDezoito();
+
+    const r = await varredor().executarCiclo(meioDia);
+
+    expect(r.chamados).toBe(0);
+    expect(r.prazoImpossivel).toBe(1);
+    const depois = await linha(fila);
+    expect(depois.estado).toBe('encerrada');
+    expect(depois.motivoFim).toBe('prazo impossivel');
+  });
+
+  it('DEF-041: prazo de aula MENOR que a antecedência não muda nada — vale a antecedência', async () => {
+    await comPrazoDeAula(1);
+    await comAntecedencia(5);
+    const fila = await filaDeAulaAsDezoito();
+
+    const r = await varredor().executarCiclo(meioDia);
+
+    expect(r.chamados).toBe(1);
+    const depois = await linha(fila);
+    expect(depois.chamadoAte!.getTime()).toBe(inicioUtc() - 5 * HORA);
+  });
 });
 
 describe('SPEC-064/TASK-003 — expirar e a rede de alvo morto', () => {

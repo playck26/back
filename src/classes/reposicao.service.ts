@@ -9,7 +9,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
-import { antecedenciaEmMinutos } from './ocorrencia-relevante';
+import {
+  aindaSePodeMarcar,
+  antecedenciaEmMinutos,
+  recusaDoPrazoDeReposicao,
+} from './ocorrencia-relevante';
 import {
   filtroDeTurmaPorNivel,
   acessoPorNivelDoAluno,
@@ -240,7 +244,9 @@ export class ReposicaoService {
     incluirSemVaga = false,
   ): Promise<OportunidadeDeReposicaoResponseDto[]> {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
-    const hoje = hojeNoFusoDoClube();
+    // DEF-041 — o prazo entra na LISTA, e não só no `POST`: é ele que decide
+    // a partir de que hora a aula de hoje ainda pode ser marcada.
+    const { aula: prazo } = await this.operacao.prazosDaEmpresa(companyId);
 
     // AC-005 — turma em que ele JÁ está não aparece: ele já é esperado lá, e a
     // chamada o mostraria duas vezes.
@@ -266,7 +272,9 @@ export class ReposicaoService {
         companyId,
         origemTipo: 'TURMA',
         statusPagamento: { not: 'cancelado' },
-        data: { gte: hoje },
+        // DEF-041 — o que o `POST` aceitaria agora, pela mesma conta. Era
+        // `data >= hoje`, e às 18h38 oferecia a aula das 7h de hoje.
+        ...aindaSePodeMarcar(prazo, new Date()),
         origemTurmaId: { notIn: minhasIds.length > 0 ? minhasIds : undefined },
         // AC-006 — turma inativa não recebe visita (SPEC-035): ela está fora de
         // operação, e a grade dela só existe por legado.
@@ -540,26 +548,16 @@ export class ReposicaoService {
     }
 
     // AC-014 — o prazo, o mesmo da falta e com o mesmo código (SPEC-031/D23).
+    // DEF-041 — a recusa mora em `ocorrencia-relevante.ts`, porque a entrada
+    // na fila de aula usa a mesma.
     const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
-    const veredicto = avaliarSaidaDeTurma({
-      papelDoAutor: 'aluno',
+    const recusaDoPrazo = recusaDoPrazoDeReposicao(
+      prazos.aula,
+      alvo.data,
+      alvo.horaInicio,
       agora,
-      ocorrenciaRelevante: {
-        tipo: 'MINUTOS',
-        minutos: antecedenciaEmMinutos(alvo.data, alvo.horaInicio, agora),
-      },
-      prazo: prazos.aula,
-    });
-    if (!veredicto.permitido) {
-      throw new ConflictException({
-        statusCode: 409,
-        code: veredicto.code,
-        message:
-          prazos.aula.regra === 'HORAS'
-            ? `Marcar reposição exige ${prazos.aula.horas}h de antecedência.`
-            : 'Esta aula já começou.',
-      });
-    }
+    );
+    if (recusaDoPrazo) throw new ConflictException(recusaDoPrazo);
 
     // SPEC-075/D3 — **o nível, a última recusa antes da de vaga.** Depois de
     // tudo o que já existia (a falta, o crédito, o teto, o prazo), e antes de

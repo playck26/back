@@ -119,8 +119,9 @@ export class MeFilaDeEsperaController {
   @ApiConflictResponse({
     description:
       'Já está nesta fila (`JA_NA_FILA`), sem crédito de reposição ' +
-      '(`SEM_CREDITO`), aula cancelada (`OCUPACAO_CANCELADA`) ou já passada ' +
-      '(`PRAZO_DE_CANCELAMENTO`).',
+      '(`SEM_CREDITO`), aula cancelada (`OCUPACAO_CANCELADA`), ou já ' +
+      'começada ou dentro do prazo de antecedência do clube ' +
+      '(`PRAZO_DE_CANCELAMENTO`, a mesma recusa de marcar a reposição).',
   })
   @ApiUnprocessableEntityResponse({
     description:
