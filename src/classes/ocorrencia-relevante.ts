@@ -4,9 +4,10 @@ import {
   horaDeMinutos,
   minutosDaHora,
 } from '../courts/date-time.util';
-import type {
-  Antecedencia,
-  PrazoDeCancelamento,
+import {
+  avaliarSaidaDeTurma,
+  type Antecedencia,
+  type PrazoDeCancelamento,
 } from '../company-settings/prazo-de-cancelamento';
 
 /**
@@ -67,8 +68,46 @@ export function antecedenciaEmMinutos(
 }
 
 /**
+ * SPEC-046/AC-014 — **a recusa por hora de quem marca reposição**, escrita uma
+ * vez.
+ *
+ * Nasceu dentro de `marcarNaTransacao`. Saiu para cá no DEF-041, quando a
+ * entrada na fila de AULA passou a precisar da mesma recusa: a fila só serve
+ * para chegar ao `marcar`, e aceitar entrada numa aula que ele recusaria é
+ * criar convite que não se pode cumprir (LIM-064e). Duas cópias divergiriam
+ * na mensagem primeiro, e no prazo depois.
+ *
+ * Devolve o corpo do 409, ou `null` quando pode.
+ */
+export function recusaDoPrazoDeReposicao(
+  prazo: PrazoDeCancelamento,
+  data: Date,
+  horaInicio: Date,
+  agora: Date,
+): { statusCode: 409; code: string; message: string } | null {
+  const veredicto = avaliarSaidaDeTurma({
+    papelDoAutor: 'aluno',
+    agora,
+    ocorrenciaRelevante: {
+      tipo: 'MINUTOS',
+      minutos: antecedenciaEmMinutos(data, horaInicio, agora),
+    },
+    prazo,
+  });
+  if (veredicto.permitido) return null;
+  return {
+    statusCode: 409,
+    code: veredicto.code,
+    message:
+      prazo.regra === 'HORAS'
+        ? `Marcar reposição exige ${prazo.horas}h de antecedência.`
+        : 'Esta aula já começou.',
+  };
+}
+
+/**
  * DEF-041 — **o `where` das ocorrências que o aluno ainda pode marcar, pela
- * hora.**
+ * hora** — o complemento exato de `recusaDoPrazoDeReposicao`.
  *
  * A lista de reposição filtrava só `data >= hoje`. Às 18h38 ela oferecia a
  * aula das 7h de hoje, e o `POST` recusava com "Esta aula já começou" — a

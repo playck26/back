@@ -18,6 +18,7 @@ import { PrismaClient } from '@prisma/client';
 import { exigirBancoLocal } from './exigir-banco-local';
 import { limparEmpresa } from './limpar-empresa';
 import { ReposicaoService } from '../../src/classes/reposicao.service';
+import { FilaDeEsperaService } from '../../src/fila-de-espera/fila-de-espera.service';
 import { ConfigOperacaoService } from '../../src/company-settings/config-operacao.service';
 import {
   formatDateOnly,
@@ -251,6 +252,52 @@ describe('DEF-041 — a lista oferece só o que o POST aceita', () => {
       const aceitas = await aceitasPeloPost(Object.values(destinos));
       expect(lista).toEqual(aceitas);
       expect(aceitas).toEqual([destinos['amanha 18:38']]);
+    });
+  });
+
+  /**
+   * A fila de espera de AULA só leva ao `marcar`: entrar nela numa aula que o
+   * `marcar` recusa é convite que não se pode cumprir (LIM-064e). Antes do
+   * conserto, a aula das 7h de hoje aceitava a entrada às 18h38.
+   */
+  const entrarNaFila = async (rotulo: string) => {
+    const p = db as unknown as PrismaService;
+    const op = new ConfigOperacaoService(p);
+    const fila = new FilaDeEsperaService(
+      p,
+      op,
+      null as never,
+      new ReposicaoService(p, op),
+    );
+    try {
+      await fila.entrarNaAula(EMPRESA, USUARIO, destinos[rotulo]);
+      return 'entrou';
+    } catch (e) {
+      const r = (
+        e as { getResponse?: () => { code?: string; message?: string } }
+      ).getResponse?.();
+      return `${r?.code} ${r?.message}`;
+    } finally {
+      await q(`DELETE FROM lista_de_espera WHERE company_id='${EMPRESA}'`);
+    }
+  };
+
+  it('fila de aula, sem prazo: a das 7h e a das 18h de hoje são recusadas; a das 18h39 entra', async () => {
+    expect(await entrarNaFila('hoje 07:00')).toBe(
+      'PRAZO_DE_CANCELAMENTO Esta aula já começou.',
+    );
+    expect(await entrarNaFila('hoje 18:00')).toBe(
+      'PRAZO_DE_CANCELAMENTO Esta aula já começou.',
+    );
+    expect(await entrarNaFila('hoje 18:39')).toBe('entrou');
+  });
+
+  it('fila de aula, com prazo de 2h: a das 19h é recusada com a mensagem do marcar; a das 21h entra', async () => {
+    await comPrazo(2, async () => {
+      expect(await entrarNaFila('hoje 19:00')).toBe(
+        'PRAZO_DE_CANCELAMENTO Marcar reposição exige 2h de antecedência.',
+      );
+      expect(await entrarNaFila('hoje 21:00')).toBe('entrou');
     });
   });
 

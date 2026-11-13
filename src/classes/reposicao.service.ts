@@ -12,6 +12,7 @@ import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
 import {
   aindaSePodeMarcar,
   antecedenciaEmMinutos,
+  recusaDoPrazoDeReposicao,
 } from './ocorrencia-relevante';
 import {
   filtroDeTurmaPorNivel,
@@ -547,26 +548,16 @@ export class ReposicaoService {
     }
 
     // AC-014 — o prazo, o mesmo da falta e com o mesmo código (SPEC-031/D23).
+    // DEF-041 — a recusa mora em `ocorrencia-relevante.ts`, porque a entrada
+    // na fila de aula usa a mesma.
     const prazos = await this.operacao.prazosDaEmpresa(companyId, tx);
-    const veredicto = avaliarSaidaDeTurma({
-      papelDoAutor: 'aluno',
+    const recusaDoPrazo = recusaDoPrazoDeReposicao(
+      prazos.aula,
+      alvo.data,
+      alvo.horaInicio,
       agora,
-      ocorrenciaRelevante: {
-        tipo: 'MINUTOS',
-        minutos: antecedenciaEmMinutos(alvo.data, alvo.horaInicio, agora),
-      },
-      prazo: prazos.aula,
-    });
-    if (!veredicto.permitido) {
-      throw new ConflictException({
-        statusCode: 409,
-        code: veredicto.code,
-        message:
-          prazos.aula.regra === 'HORAS'
-            ? `Marcar reposição exige ${prazos.aula.horas}h de antecedência.`
-            : 'Esta aula já começou.',
-      });
-    }
+    );
+    if (recusaDoPrazo) throw new ConflictException(recusaDoPrazo);
 
     // SPEC-075/D3 — **o nível, a última recusa antes da de vaga.** Depois de
     // tudo o que já existia (a falta, o crédito, o teto, o prazo), e antes de
