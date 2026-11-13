@@ -4,7 +4,10 @@ import {
   horaDeMinutos,
   minutosDaHora,
 } from '../courts/date-time.util';
-import type { Antecedencia } from '../company-settings/prazo-de-cancelamento';
+import type {
+  Antecedencia,
+  PrazoDeCancelamento,
+} from '../company-settings/prazo-de-cancelamento';
 
 /**
  * SPEC-031/D15 — **a ocorrência relevante é a EM ANDAMENTO, se houver; senão,
@@ -61,6 +64,62 @@ export function antecedenciaEmMinutos(
   const agoraLocal = agoraNoFusoDoClube(agora);
   const diaEmMinutos = (data.getTime() - agoraLocal.dia.getTime()) / 60_000;
   return diaEmMinutos + minutosDaHora(horaInicio) - agoraLocal.minutos;
+}
+
+/**
+ * DEF-041 — **o `where` das ocorrências que o aluno ainda pode marcar, pela
+ * hora.**
+ *
+ * A lista de reposição filtrava só `data >= hoje`. Às 18h38 ela oferecia a
+ * aula das 7h de hoje, e o `POST` recusava com "Esta aula já começou" — a
+ * tela oferecendo o que o servidor recusa, que a SPEC-042 proibiu para a
+ * reserva avulsa e que a SPEC-046 (AC-004, "ocorrências **futuras**") já
+ * proibia aqui.
+ *
+ * ## É a mesma conta do `POST`, e não uma parecida
+ *
+ * `marcarNaTransacao` recusa por `podeCancelar(prazo, antecedenciaEmMinutos)`:
+ * sem prazo, aceita `minutos > 0`; com prazo, `minutos >= horas * 60`. Em
+ * minutos inteiros as duas são `minutos >= alvo`, com alvo `1` ou
+ * `horas * 60`. Cortar só o que já começou deixaria, num clube com prazo de
+ * 2h, a aula das 19h oferecida às 18h38 e recusada com "exige 2h de
+ * antecedência" — o mesmo defeito, uma hora adiante.
+ *
+ * O alvo pode cair num dia seguinte (prazo de 2h às 23h, ou de 48h), e por
+ * isso o corte é um **dia** e uma **hora**, em duas pernas — a forma de
+ * `recorteTemporal`, e sem somar `date` com `time` (bloco no topo).
+ *
+ * Vai no `where`, antes do `take: 200` de quem chama: cortado depois, as
+ * aulas que já passaram ocupariam o limite (o motivo da INV-075b).
+ */
+export function aindaSePodeMarcar(
+  prazo: PrazoDeCancelamento,
+  agora: Date,
+): Prisma.OcupacaoQuadraWhereInput {
+  const agoraLocal = agoraNoFusoDoClube(agora);
+  let antecedenciaMinima: number;
+  switch (prazo.regra) {
+    case 'SEM_PRAZO':
+      antecedenciaMinima = 1;
+      break;
+    case 'HORAS':
+      antecedenciaMinima = prazo.horas * 60;
+      break;
+    default: {
+      const _exaustivo: never = prazo;
+      return _exaustivo;
+    }
+  }
+  const alvo = agoraLocal.minutos + antecedenciaMinima;
+  const diaDoCorte = new Date(
+    agoraLocal.dia.getTime() + Math.floor(alvo / 1440) * 86_400_000,
+  );
+  return {
+    OR: [
+      { data: { gt: diaDoCorte } },
+      { data: diaDoCorte, horaInicio: { gte: horaDeMinutos(alvo % 1440) } },
+    ],
+  };
 }
 
 export async function ocorrenciaRelevante(

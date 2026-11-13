@@ -9,7 +9,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { encerrarFila, MOTIVO } from '../fila-de-espera/encerramento-da-fila';
 import { ConfigOperacaoService } from '../company-settings/config-operacao.service';
 import { avaliarSaidaDeTurma } from '../company-settings/prazo-de-cancelamento';
-import { antecedenciaEmMinutos } from './ocorrencia-relevante';
+import {
+  aindaSePodeMarcar,
+  antecedenciaEmMinutos,
+} from './ocorrencia-relevante';
 import {
   filtroDeTurmaPorNivel,
   acessoPorNivelDoAluno,
@@ -240,7 +243,9 @@ export class ReposicaoService {
     incluirSemVaga = false,
   ): Promise<OportunidadeDeReposicaoResponseDto[]> {
     const aluno = await this.alunoDoUsuario(companyId, usuarioId);
-    const hoje = hojeNoFusoDoClube();
+    // DEF-041 — o prazo entra na LISTA, e não só no `POST`: é ele que decide
+    // a partir de que hora a aula de hoje ainda pode ser marcada.
+    const { aula: prazo } = await this.operacao.prazosDaEmpresa(companyId);
 
     // AC-005 — turma em que ele JÁ está não aparece: ele já é esperado lá, e a
     // chamada o mostraria duas vezes.
@@ -266,7 +271,9 @@ export class ReposicaoService {
         companyId,
         origemTipo: 'TURMA',
         statusPagamento: { not: 'cancelado' },
-        data: { gte: hoje },
+        // DEF-041 — o que o `POST` aceitaria agora, pela mesma conta. Era
+        // `data >= hoje`, e às 18h38 oferecia a aula das 7h de hoje.
+        ...aindaSePodeMarcar(prazo, new Date()),
         origemTurmaId: { notIn: minhasIds.length > 0 ? minhasIds : undefined },
         // AC-006 — turma inativa não recebe visita (SPEC-035): ela está fora de
         // operação, e a grade dela só existe por legado.
