@@ -13,6 +13,7 @@ import {
   hojeNoFusoDoClube,
   parseTimeOnly,
   parseDateOnly,
+  recorteTemporal,
 } from '../courts/date-time.util';
 import { StudentsService } from '../people/students.service';
 import {
@@ -1239,18 +1240,30 @@ export class ClassesService {
     });
     const turmaIds = alocacoes.map((alocacao) => alocacao.turmaId);
 
-    // Mesmo `hojeNoFusoDoClube` do metodo de cima, e pelo mesmo motivo: com
-    // `CURRENT_DATE` ou UTC, das 21h a meia-noite a aula de hoje as 22h
-    // desaparece uma hora antes de comecar. E o DEF-020.
+    // O dia e a hora sao os do FUSO DO CLUBE (`recorteTemporal` le
+    // `agoraNoFusoDoClube`): com `CURRENT_DATE` ou UTC, das 21h a meia-noite a
+    // aula de hoje as 22h desaparece uma hora antes de comecar. E o DEF-020.
     // Tipado, e nao inferido: sem a anotacao o literal `'cancelado'` alarga
     // para `string` e o Prisma recusa o enum. Tipar aqui tambem garante que o
     // MESMO `where` vai para a pagina e para a contagem.
+    //
+    // DEF-042 — e **sem a aula de hoje que ja terminou**. Era `data >= hoje`:
+    // as 10h30 a aula das 9h as 10h seguia em "proximas", com "Vou faltar", e
+    // o toque dava `PRAZO_DE_CANCELAMENTO`. O corte e pelo FIM (o mesmo
+    // `recorteTemporal` das reservas, D-I4 da SPEC-041): a aula em andamento
+    // fica. Decisao do Israel (2026-11-13): so sai a que terminou; a de hoje
+    // reaparece em "Aulas que ja passaram" no dia seguinte (LIM-025d).
+    //
+    // **Sem a `referenciaTemporal` congelada que as reservas tem
+    // (SPEC-041/AC-016)** — LIM-042a: o corte anda a cada fim de aula, e uma
+    // aula que termina entre a pagina 1 e a 2 empurra a lista uma posicao.
+    // Congelar exige o Cliente reenviar o instante, e o Cliente ficou fora.
     const where: Prisma.OcupacaoQuadraWhereInput = {
       companyId,
       origemTipo: 'TURMA',
       origemTurmaId: { in: turmaIds },
       statusPagamento: { not: 'cancelado' },
-      data: { gte: hojeNoFusoDoClube() },
+      ...recorteTemporal('futuras'),
     };
 
     const [ocupacoes, total] = await this.prisma.$transaction([
